@@ -8,6 +8,7 @@ import pytest
 
 from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType, ExclusionKind
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.lifecycle.services import remediation_log
@@ -212,6 +213,7 @@ async def test_self_heal_clears_in_flight_residue_immediately(
 async def test_reconcile_self_heal_locked_clears_residue_and_restores_run(
     db_session: AsyncSession,
     db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await _make_available_device(db_session, db_host, identity="self-heal-locked")
     device_id = device.id
@@ -229,15 +231,36 @@ async def test_reconcile_self_heal_locked_clears_residue_and_restores_run(
     await db_session.commit()
 
     locked = await device_locking.lock_device_handle(db_session, device_id)
-    result = await _build_lifecycle_policy_service().reconcile_self_heal_locked(
+    svc = _build_lifecycle_policy_service()
+
+    def _raise(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("legacy reader must not be called")
+
+    async def _async_raise(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("legacy reader must not be called")
+
+    monkeypatch.setattr(svc._actions, "has_running_client_session", _async_raise)
+    monkeypatch.setattr(remediation_log, "load_ladder", _async_raise)
+    monkeypatch.setattr(run_reservation_service, "get_device_reservation_with_entry", _async_raise)
+    monkeypatch.setattr("app.lifecycle.services.policy.operator_stop_active", _async_raise)
+
+    snapshot = await load_device_decision_snapshot(
         db_session,
         locked,
+        packs={},
+        now=datetime.now(UTC),
+    )
+    result = await svc.reconcile_self_heal_locked(
+        db_session,
+        locked,
+        snapshot,
         operational_state=DeviceOperationalState.available,
         residue_reason="Device self-healed after healthy reconnect",
         run_reason="Device healthy after self-heal",
     )
 
     assert result == (True, True)
+    monkeypatch.undo()
     ladder = await remediation_log.load_ladder(db_session, device_id)
     assert ladder.last_action == "self_healed"
     _run, entry = await run_reservation_service.get_device_reservation_with_entry(db_session, device_id)

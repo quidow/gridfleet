@@ -122,12 +122,14 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
             return self
 
         def all(self) -> list[object]:
-            return [node]
+            # Node-health inventory now selects (AppiumNode, Device.pack_id) rows; a
+            # None pack_id keeps load_packs_by_ids a no-op for this deleted-device probe.
+            return [(node, None)]
 
     db = AsyncMock()
     db.execute = AsyncMock(return_value=Result())
     db.commit = AsyncMock()
-    monkeypatch.setattr(node_health.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
+    monkeypatch.setattr(node_health.device_locking, "lock_device_handle", AsyncMock(side_effect=NoResultFound))
 
     from tests.fakes import FakeSettingsReader
 

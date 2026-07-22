@@ -6,15 +6,14 @@ must skip it; only sanctioned operator actions clear it back.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
-from functools import partial
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services.intent import IntentService
 from app.devices.services.maintenance import MaintenanceService
 from app.lifecycle.services import policy as lifecycle_policy_module
 from app.lifecycle.services import remediation_log
@@ -248,9 +247,13 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     db_host: Host,
     _speed_up_recovery_probe_retries: None,
 ) -> None:
-    """Drive the recovery loop past the configured threshold and verify the
+    """Drive the recovery finalize past the configured threshold and verify the
     device is shelved into ``review_required``. Below the threshold the
     counter accumulates without shelving; crossing it shelves."""
+    from app.devices import locking as device_locking
+    from app.devices.services.decision_snapshot import load_device_decision_snapshot
+    from app.devices.services.lifecycle_policy_state import set_recovery_generation
+
     threshold = 2
     device = await _make_offline_verified_device(db_session, db_host, "review-promotion")
 
@@ -261,8 +264,6 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
             "general.lifecycle_recovery_backoff_max_sec": 0,
         }
     )
-    viability = AsyncMock()
-    viability.run_session_viability_probe = _failing_probe()
     svc = LifecyclePolicyService(
         review=build_review_service(),
         publisher=Mock(),
@@ -273,29 +274,54 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
-        viability=viability,
+        viability=AsyncMock(),
         node_manager=AsyncMock(),
     )
-    with patch.object(
-        IntentService,
-        "register_intents_and_reconcile",
-        new=AsyncMock(side_effect=partial(_mark_device_available, db_session)),
-    ):
-        # Attempt #1 — first probe failure. recovery_backoff_attempts -> 1
-        # which is below the threshold of 2, so no promotion yet.
-        first = await svc.attempt_auto_recovery(db_session, device, source="device_checks", reason="r1")
-        await db_session.refresh(device)
-        assert first is False
-        assert device.review_required is False
-        attempts_after_first = (await remediation_log.load_ladder(db_session, device.id)).attempts
-        assert attempts_after_first == 1
+    # Attempt #1 — first probe failure. recovery_backoff_attempts -> 1
+    # which is below the threshold of 2, so no promotion yet.
+    gen1 = uuid.uuid4()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    set_recovery_generation(locked.device, gen1)
+    await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    outcome1 = await svc.finalize_auto_recovery_locked(
+        db_session,
+        locked,
+        snapshot,
+        generation=gen1,
+        result={"status": "failed", "error": "Probe failed"},
+        source="device_checks",
+        reason="r1",
+    )
+    await db_session.commit()
+    await db_session.refresh(device)
+    assert outcome1 == "failed"
+    assert device.review_required is False
+    attempts_after_first = (await remediation_log.load_ladder(db_session, device.id)).attempts
+    assert attempts_after_first == 1
 
-        # Attempt #2 — counter crosses threshold, device gets shelved.
-        second = await svc.attempt_auto_recovery(db_session, device, source="device_checks", reason="r2")
-        await db_session.refresh(device)
-        assert second is False
-        assert device.review_required is True
-        assert device.review_reason == "Probe failed"
+    # Attempt #2 — counter crosses threshold, device gets shelved.
+    gen2 = uuid.uuid4()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    set_recovery_generation(locked.device, gen2)
+    await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    outcome2 = await svc.finalize_auto_recovery_locked(
+        db_session,
+        locked,
+        snapshot,
+        generation=gen2,
+        result={"status": "failed", "error": "Probe failed"},
+        source="device_checks",
+        reason="r2",
+    )
+    await db_session.commit()
+    await db_session.refresh(device)
+    assert outcome2 == "failed"
+    assert device.review_required is True
+    assert device.review_reason == "Probe failed"
 
 
 async def test_review_required_short_circuits_auto_recovery(
@@ -303,8 +329,11 @@ async def test_review_required_short_circuits_auto_recovery(
     db_host: Host,
     _speed_up_recovery_probe_retries: None,
 ) -> None:
-    """When the flag is on, ``attempt_auto_recovery`` must not even reach
+    """When the flag is on, ``prepare_auto_recovery_locked`` must not even reach
     the probe — backoff and intent state stay frozen."""
+    from app.devices import locking as device_locking
+    from app.devices.services.decision_snapshot import load_device_decision_snapshot
+
     device = await _make_offline_verified_device(db_session, db_host, "review-shortcircuit")
     await build_review_service().mark_review_required(
         db_session, device, reason="shelved earlier", source="session_viability"
@@ -326,12 +355,18 @@ async def test_review_required_short_circuits_auto_recovery(
         viability=viability_mock,
         node_manager=AsyncMock(),
     )
-    recovered = await svc.attempt_auto_recovery(
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    prepared = await svc.prepare_auto_recovery_locked(
         db_session,
-        device,
+        locked,
+        snapshot,
+        generation=uuid.uuid4(),
         source="device_checks",
         reason="ignored",
+        enqueue_job=False,
     )
+    await db_session.commit()
 
-    assert recovered is False
+    assert prepared is False
     viability_mock.run_session_viability_probe.assert_not_awaited()

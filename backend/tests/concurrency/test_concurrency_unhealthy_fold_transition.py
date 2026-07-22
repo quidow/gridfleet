@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
     from app.devices.locking import LockedDevice
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.devices.services.device_health_fold_context import LockedDeviceFold
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -131,16 +132,18 @@ async def test_unhealthy_fold_holds_device_lock_after_health_write(
         self: DeviceHealthService,
         db: AsyncSession,
         locked: LockedDeviceFold,
+        snapshot: DeviceDecisionSnapshot,
         *,
         healthy: bool,
         summary: str,
         revision: int | None = None,
         observed_at: datetime | None = None,
-    ) -> bool:
+    ) -> DeviceDecisionSnapshot | None:
         applied = await original(
             self,
             db,
             locked,
+            snapshot,
             healthy=healthy,
             summary=summary,
             revision=revision,

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
@@ -7,13 +9,14 @@ from sqlalchemy import func, select
 from app.appium_nodes.services import locking as appium_node_locking
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import DeviceEventType, DeviceOperationalState
+from app.devices.models import DeviceEventType, DeviceOperationalState, ExclusionKind
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.event import build_device_crashed_payload, record_event
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
 from app.devices.services.review import ReviewService
-from app.devices.services.state import derive_operational_state
+from app.devices.services.state import derive_operational_state, evaluate_operational_state
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.escalation import EscalationOutcome, escalate_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
@@ -31,8 +34,10 @@ if TYPE_CHECKING:
     from app.devices.locking import LockedDevice
     from app.devices.models import Device, DeviceReservation
     from app.devices.protocols import RunReservationWriter
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.incidents import LifecycleIncidentService
+    from app.lifecycle.services.remediation_log import LadderState
     from app.runs.models import TestRun
 
 
@@ -80,33 +85,107 @@ class LifecyclePolicyActionsService:
         self,
         db: AsyncSession,
         locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
         *,
         source: str,
         reason: str,
         detail: str,
-    ) -> tuple[TestRun | None, DeviceReservation | None]:
+    ) -> DeviceDecisionSnapshot:
         locked.assert_active(db)
-        run, entry = await self.exclude_run_if_needed_locked(
+        device = locked.device
+        updated = snapshot
+        reservation = snapshot.reservation
+        if reservation is not None and reservation.run_state not in TERMINAL_STATES and not reservation.excluded:
+            excluded = await self._reservation.exclude_locked_reservation(db, locked, reservation.id, reason=reason)
+            if excluded:
+                updated = replace(
+                    snapshot,
+                    reservation=replace(
+                        reservation,
+                        excluded=True,
+                        exclusion_kind=ExclusionKind.exclusion,
+                        exclusion_reason=reason,
+                        excluded_until=None,
+                    ),
+                    decision_facts=replace(snapshot.decision_facts, reservation_run_id=None),
+                )
+                await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
+                await self._incidents.record_lifecycle_incident(
+                    db,
+                    device,
+                    DeviceEventType.lifecycle_run_excluded,
+                    LifecycleIncidentDetails(
+                        summary_state=DeviceLifecyclePolicySummaryState.excluded,
+                        reason=reason,
+                        detail=f"Excluded from {reservation.run_name}",
+                        source=source,
+                        run_id=reservation.run_id,
+                        run_name=reservation.run_name,
+                    ),
+                )
+        await record_event(
             db,
-            locked,
-            source=source,
-            reason=reason,
+            device.id,
+            failure_event_type(source),
+            {"source": source, "reason": reason},
         )
-        await self.handle_node_crash_locked(
-            db,
-            locked,
-            source=source,
-            reason=reason,
+        operational_state = evaluate_operational_state(updated.state_facts)
+        if operational_state != DeviceOperationalState.offline:
+            await record_event(
+                db,
+                device.id,
+                DeviceEventType.node_crash,
+                {"error": reason, "source": source, "will_restart": True},
+            )
+            self._publisher.queue_for_session(
+                db,
+                "device.crashed",
+                build_device_crashed_payload(
+                    device_id=str(device.id),
+                    device_name=device.name,
+                    source=source,
+                    reason=reason,
+                    will_restart=True,
+                ),
+                severity="warning",
+            )
+        node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
+        if node is not None:
+            action_entry = await remediation_log.append_action(
+                db,
+                device.id,
+                source=source,
+                action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
+                reason=reason,
+            )
+            next_ladder = remediation_log.advance_ladder(updated.ladder, action_entry)
+            updated = replace(
+                updated,
+                ladder=next_ladder,
+                decision_facts=replace(updated.decision_facts, remediation_directive=next_ladder.node_directive),
+            )
+            await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
+        else:
+            health = DeviceHealthService(publisher=self._publisher)
+            health_updated = await health.update_device_checks_locked(
+                db, locked, updated, healthy=False, summary=reason
+            )
+            if health_updated is not None:
+                updated = health_updated
+        run_id = reservation.run_id if reservation is not None else None
+        run_name = reservation.run_name if reservation is not None else None
+        run_ns: TestRun | None = (
+            SimpleNamespace(id=run_id, name=run_name) if reservation is not None else None  # type: ignore[assignment]
         )
         await self.record_auto_stopped_incident(
             db,
-            locked.device,
-            run=run,
+            device,
+            run=run_ns,
             source=source,
             reason=reason,
             detail=detail,
         )
-        return run, entry
+        return updated
 
     async def handle_node_crash(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> None:
         """Record a node crash and stop the underlying Appium node.
@@ -185,7 +264,8 @@ class LifecyclePolicyActionsService:
             if locked is None:
                 await health.update_device_checks(db, device, healthy=False, summary=reason)
             else:
-                await health._update_device_checks_locked(db, locked, healthy=False, summary=reason)
+                snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+                await health.update_device_checks_locked(db, locked, snapshot, healthy=False, summary=reason)
             return
 
         if node is not None:
@@ -205,7 +285,8 @@ class LifecyclePolicyActionsService:
             if locked is None:
                 await health.update_device_checks(db, device, healthy=False, summary=reason)
             else:
-                await health._update_device_checks_locked(db, locked, healthy=False, summary=reason)
+                snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+                await health.update_device_checks_locked(db, locked, snapshot, healthy=False, summary=reason)
 
     async def _reconcile(self, db: AsyncSession, device: Device, *, locked: LockedDevice | None) -> None:
         if locked is None:
@@ -332,6 +413,68 @@ class LifecyclePolicyActionsService:
             )
         return run, entry
 
+    async def restore_run_after_self_heal_locked(  # noqa: PLR0911
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        operational_state: DeviceOperationalState,
+        operator_stopped: bool,
+        reason: str,
+    ) -> tuple[bool, DeviceDecisionSnapshot]:
+        locked.assert_active(db)
+        device = locked.device
+        if operator_stopped:
+            return False, snapshot
+        if operational_state != DeviceOperationalState.available:
+            return False, snapshot
+        reservation = snapshot.reservation
+        if reservation is None or reservation.run_state in TERMINAL_STATES:
+            return False, snapshot
+        if not reservation.excluded:
+            return False, snapshot
+        if (
+            reservation.exclusion_kind == ExclusionKind.cooldown
+            and reservation.excluded_until is not None
+            and reservation.excluded_until > now_utc()
+        ):
+            return False, snapshot
+        restored = await self._reservation.restore_locked_reservation(db, locked, reservation.id)
+        if not restored:
+            return False, snapshot
+        updated = replace(
+            snapshot,
+            reservation=replace(
+                reservation,
+                excluded=False,
+                exclusion_kind=None,
+                exclusion_reason=None,
+                excluded_until=None,
+            ),
+            decision_facts=replace(
+                snapshot.decision_facts,
+                reservation_run_id=reservation.run_id,
+                cooldown_active=False,
+                cooldown_reason=None,
+            ),
+        )
+        await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
+        await self._incidents.record_lifecycle_incident(
+            db,
+            device,
+            DeviceEventType.lifecycle_run_restored,
+            LifecycleIncidentDetails(
+                summary_state=DeviceLifecyclePolicySummaryState.idle,
+                reason=reason,
+                detail=f"Restored to {reservation.run_name}",
+                source="self_heal",
+                run_id=reservation.run_id,
+                run_name=reservation.run_name,
+            ),
+        )
+        return True, updated
+
     async def record_auto_stopped_incident(
         self,
         db: AsyncSession,
@@ -403,6 +546,7 @@ async def escalate_device_remediation_failure(
     settings: SettingsReader,
     source: str,
     reason: str,
+    ladder: LadderState | None = None,
 ) -> EscalationOutcome:
     """Shared-ladder escalation for callers outside the lifecycle write_state allowlist."""
     return await escalate_remediation_failure(
@@ -412,6 +556,7 @@ async def escalate_device_remediation_failure(
         review=ReviewService(),
         source=source,
         reason=reason,
+        prior=ladder,
     )
 
 

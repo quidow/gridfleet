@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.locking import LockedDevice
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.devices.services.intent_types import IntentRegistration
     from app.events.protocols import EventPublisher
 
@@ -189,6 +190,7 @@ class IntentService:
         locked: LockedDevice,
         *,
         publisher: EventPublisher,
+        snapshot: DeviceDecisionSnapshot | None = None,
     ) -> None:
         locked.assert_active(self._db)
         await self._db.flush()
@@ -196,6 +198,7 @@ class IntentService:
             self._db,
             locked,
             publisher=publisher,
+            snapshot=snapshot,
         )
 
     async def register_intents_and_reconcile(

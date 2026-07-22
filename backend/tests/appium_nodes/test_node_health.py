@@ -37,11 +37,23 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 
+class FakeRecoveryControl:
+    async def record_control_action_locked(
+        self, db: object, locked: object, snapshot: object, **kwargs: object
+    ) -> object:
+        return snapshot
+
+    async def clear_pending_auto_stop_on_recovery_locked(
+        self, db: object, locked: object, snapshot: object, **kwargs: object
+    ) -> tuple[bool, object]:
+        return False, snapshot
+
+
 def _service(*, settings: FakeSettingsReader, recovery_control: object = None) -> NodeHealthService:
     return NodeHealthService(
         publisher=event_bus,
         settings=settings,
-        recovery_control=recovery_control if recovery_control is not None else AsyncMock(),
+        recovery_control=recovery_control if recovery_control is not None else FakeRecoveryControl(),  # type: ignore[arg-type]
         health=DeviceHealthService(publisher=event_bus),
         incidents=AsyncMock(),
     )
@@ -287,20 +299,80 @@ async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch
     )
     db = AsyncMock()
     svc = _service(settings=FakeSettingsReader({"general.node_fail_window_sec": 60}))
-    monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=None))
+    monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=None))  # type: ignore[attr-defined]
     await svc._process_node_health(
-        db, AppiumNode(device_id=device.id, port=4723), device, observation=_NodeObservation(ProbeResult(status="ack"))
+        db,
+        AppiumNode(device_id=device.id, port=4723),
+        type("", (), {"device": device})(),
+        object(),  # type: ignore[arg-type]
+        observation=_NodeObservation(ProbeResult(status="ack")),
     )
 
     node = AppiumNode(device_id=device.id, port=4723, pid=1, active_connection_target="old")
-    monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=node))
+    monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=node))  # type: ignore[attr-defined]
     await svc._process_node_health(
         db,
         node,
-        device,
+        type("", (), {"device": device})(),
+        object(),  # type: ignore[arg-type]
         observation=_NodeObservation(ProbeResult(status="ack"), port=4724, pid=1, active_connection_target="old"),
     )
     node.pid = None
-    await svc._process_node_health(db, node, device, observation=_NodeObservation(ProbeResult(status="ack")))
+    await svc._process_node_health(
+        db,
+        node,
+        type("", (), {"device": device})(),
+        object(),  # type: ignore[arg-type]
+        observation=_NodeObservation(ProbeResult(status="ack")),
+    )
     node.pid = 1
-    await svc._process_node_health(db, node, device, observation=_NodeObservation(ProbeResult(status="indeterminate")))
+    await svc._process_node_health(
+        db,
+        node,
+        type("", (), {"device": device})(),
+        object(),  # type: ignore[arg-type]
+        observation=_NodeObservation(ProbeResult(status="indeterminate")),
+    )
+
+
+async def test_ack_recovery_and_receipt_roll_back_together(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, node = await _running_node(
+        db_session,
+        db_host,
+        name="atomic ack",
+        identity="atomic-ack",
+        port=4791,
+    )
+    node.health_running = False
+    node.health_state = "error"
+    node.health_failing_since = now_utc() - timedelta(minutes=2)
+    await db_session.commit()
+    service = _service(
+        settings=FakeSettingsReader({"general.node_fail_window_sec": 60, "appium_reconciler.restart_window_sec": 300})
+    )
+
+    async def fail_late(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("late incident failure")
+
+    monkeypatch.setattr(service._incidents, "record_lifecycle_incident", fail_late)
+    section = _section(_entry(node, running=True))
+    section["observation_revision"] = 22
+
+    from tests.concurrency.group_lock_helpers import capture_statements
+
+    async with capture_statements(db_session) as statements:
+        settled = await service.fold_host_nodes(db_session, db_host.id, section)
+
+    await db_session.refresh(node)
+    assert settled is False
+    assert node.health_running is False
+    assert node.health_fold_applied_revision < 22
+
+    device_locks = [sql for sql in statements if "FROM devices" in sql and "FOR UPDATE" in sql]
+    node_locks = [sql for sql in statements if "FROM appium_nodes" in sql and "FOR UPDATE" in sql]
+    assert len(device_locks) == 1, device_locks
+    assert len(node_locks) == 1, node_locks

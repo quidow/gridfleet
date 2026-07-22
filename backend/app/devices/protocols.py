@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         DeviceVerificationUpdate,
     )
     from app.devices.schemas.filters import DeviceQueryFilters
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.devices.services.device_health_fold_context import LockedDeviceFold
     from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
@@ -124,6 +125,20 @@ class RunReservationWriter(Protocol):
     async def restore_device_to_run(
         self, db: AsyncSession, device_id: uuid.UUID, *, commit: bool = ...
     ) -> TestRun | None: ...
+    async def exclude_locked_reservation(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        reservation_id: uuid.UUID,
+        *,
+        reason: str,
+    ) -> bool: ...
+    async def restore_locked_reservation(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        reservation_id: uuid.UUID,
+    ) -> bool: ...
 
 
 class DeviceCapabilityProtocol(Protocol):
@@ -161,15 +176,32 @@ class OperatorNodeLifecycleProtocol(Protocol):
 class HealthFailureHandler(Protocol):
     async def handle_health_failure(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> str: ...
     async def handle_health_failure_locked(
-        self, db: AsyncSession, locked: LockedDevice, *, source: str, reason: str
-    ) -> str: ...
-    async def attempt_auto_recovery(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> bool: ...
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        source: str,
+        reason: str,
+    ) -> DeviceDecisionSnapshot: ...
+    async def prepare_auto_recovery_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        generation: uuid.UUID,
+        source: str,
+        reason: str,
+        enqueue_job: bool,
+    ) -> bool: ...
     async def note_connectivity_loss(self, db: AsyncSession, device: Device, *, reason: str) -> None: ...
 
     async def reconcile_self_heal_locked(
         self,
         db: AsyncSession,
         locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
         *,
         operational_state: DeviceOperationalState,
         residue_reason: str,
@@ -195,12 +227,13 @@ class DeviceHealthProtocol(Protocol):
         self,
         db: AsyncSession,
         locked: LockedDeviceFold,
+        snapshot: DeviceDecisionSnapshot,
         *,
         healthy: bool,
         summary: str,
         revision: int | None = ...,
         observed_at: datetime | None = ...,
-    ) -> bool: ...
+    ) -> DeviceDecisionSnapshot | None: ...
     async def update_session_viability(
         self, db: AsyncSession, device: Device, *, status: str | None, error: str | None
     ) -> None: ...
@@ -215,3 +248,17 @@ class DeviceHealthProtocol(Protocol):
         revision: int | None = ...,
         observed_at: datetime | None = ...,
     ) -> None: ...
+
+    async def apply_locked_node_state_transition(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        locked_node: AppiumNode,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        health_running: bool | None | UnsetType = ...,
+        health_state: str | None | UnsetType = ...,
+        mark_offline: bool = ...,
+        revision: int | None = ...,
+        observed_at: datetime | None = ...,
+    ) -> DeviceDecisionSnapshot: ...

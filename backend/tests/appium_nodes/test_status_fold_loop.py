@@ -26,7 +26,8 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.devices.models import Device
+    from app.devices.locking import LockedDevice
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -286,14 +287,15 @@ async def test_terminal_noop_receipt_prevents_peer_replay_after_partial_failure(
     async def fail_one(
         db: AsyncSession,
         node: AppiumNode,
-        device: Device,
+        locked_device: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
         *,
         observation: _NodeObservation,
     ) -> NodeFoldOutcome:
-        calls.append(device.id)
-        if device.id == retryable_device_id:
+        calls.append(locked_device.device.id)
+        if locked_device.device.id == retryable_device_id:
             raise RuntimeError("retry this node")
-        return await real_process(db, node, device, observation=observation)
+        return await real_process(db, node, locked_device, snapshot, observation=observation)
 
     service._process_node_health = fail_one  # type: ignore[method-assign]
 

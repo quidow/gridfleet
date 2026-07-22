@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import uuid
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observation_revision import next_observation_revision
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceOperationalState
+from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.services import link_repair
 from app.devices.services.connectivity import (
     CONNECTIVITY_NAMESPACE,
@@ -21,18 +23,28 @@ from app.devices.services.connectivity import (
     ConnectivityService,
 )
 from app.devices.services.health import DeviceHealthService
+from app.devices.services.lifecycle_policy_state import recovery_generation
+from app.devices.services.review import ReviewService
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY
+from app.jobs import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
+from app.lifecycle.services.actions import LifecyclePolicyActionsService
+from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.lifecycle.services.policy import LifecyclePolicyService
 from app.packs.models import DriverPack, PackState
+from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import build_connectivity_service, seed_host_and_device, seed_host_with_devices
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.devices.locking import LockedDevice
     from app.devices.protocols import HealthFailureHandler
     from app.devices.schemas.device_health_push import DeviceHealthItem
     from app.devices.services.connectivity import DeviceFoldOutcome
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.devices.services.device_health_fold_context import LockedDeviceFold
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -155,6 +167,86 @@ async def test_fold_applies_healthy_and_advances_receipt(
     assert device.device_checks_healthy is True
     assert device.device_checks_fold_applied_revision == revision
     assert device.device_checks_fold_section_sequence == 3
+
+
+async def test_fold_loads_one_decision_snapshot_per_applied_device(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.devices.services import connectivity
+
+    host, devices = await seed_host_with_devices(db_session, count=4, identity_prefix="fold-one-snapshot")
+    healthy_one, unhealthy_one, maintenance_one, probe_error_one = devices
+    maintenance_one.lifecycle_policy_state = {"maintenance_reason": "operator hold"}
+    await db_session.commit()
+    revision = await next_observation_revision(db_session)
+
+    def _present(dev_id: uuid.UUID, *, health: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "device_id": str(dev_id),
+            "probe_status": "observed",
+            "presence": "present",
+            "health": health,
+            "lifecycle_state": {"status": "unsupported", "value": None},
+        }
+
+    def _errored(dev_id: uuid.UUID) -> dict[str, Any]:
+        return {
+            "device_id": str(dev_id),
+            "probe_status": "error",
+            "presence": "unknown",
+            "health": {},
+            "lifecycle_state": {"status": "error", "value": None},
+        }
+
+    section: dict[str, Any] = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 2,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": True,
+        "devices": [
+            _present(healthy_one.id, health={"healthy": True, "checks": []}),
+            _present(unhealthy_one.id, health={"healthy": False, "checks": [{"check_id": "ping", "ok": False}]}),
+            _present(maintenance_one.id, health={"healthy": False, "checks": [{"check_id": "ping", "ok": False}]}),
+            _errored(probe_error_one.id),
+        ],
+    }
+    real_loader = connectivity.load_device_decision_snapshot
+    loader = AsyncMock(wraps=real_loader)
+    monkeypatch.setattr(connectivity, "load_device_decision_snapshot", loader)
+    review = ReviewService()
+    incidents = LifecycleIncidentService(publisher=event_bus)
+    reservation = RunReservationService(review=review)
+    actions = LifecyclePolicyActionsService(
+        publisher=event_bus,
+        reservation=reservation,
+        incidents=incidents,
+    )
+    lifecycle = LifecyclePolicyService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=actions,
+        incidents=incidents,
+        viability=AsyncMock(),
+        node_manager=AsyncMock(),
+        review=review,
+    )
+    service = ConnectivityService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=lifecycle,
+        health=DeviceHealthService(publisher=event_bus),
+    )
+
+    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+
+    loaded_device_ids = {call.args[1].device.id for call in loader.await_args_list}
+    assert healthy_one.id in loaded_device_ids
+    assert unhealthy_one.id in loaded_device_ids
+    assert maintenance_one.id not in loaded_device_ids
+    assert probe_error_one.id not in loaded_device_ids
 
 
 async def test_fold_acquires_one_fold_owned_health_lock_per_processed_device(
@@ -494,7 +586,7 @@ async def test_fold_healthy_device_reuses_lock_for_self_heal(
     )
 
     lifecycle_policy.reconcile_self_heal_locked.assert_awaited_once()
-    _, locked = lifecycle_policy.reconcile_self_heal_locked.await_args.args
+    _, locked, _snapshot = lifecycle_policy.reconcile_self_heal_locked.await_args.args
     assert locked.device.id == device.id
     assert lifecycle_policy.reconcile_self_heal_locked.await_args.kwargs["operational_state"] is (
         DeviceOperationalState.available
@@ -505,15 +597,15 @@ async def test_fold_healthy_device_reuses_lock_for_self_heal(
 
 async def test_fold_healthy_offline_device_attempts_auto_recovery(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     host, device = await seed_host_and_device(
         db_session,
         identity="fold-offline-recovery",
         operational_state=DeviceOperationalState.offline,
     )
-    lifecycle_policy = MagicMock()
-    lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=True)
-    service = _loop_service(lifecycle_policy=lifecycle_policy)
+    service = build_connectivity_service(db_session_maker)
+    service = _connectivity_with_real_lifecycle(db_session_maker)
 
     await _fold_health_once(
         db_session,
@@ -524,10 +616,8 @@ async def test_fold_healthy_offline_device_attempts_auto_recovery(
         health={"healthy": True, "checks": []},
     )
 
-    lifecycle_policy.attempt_auto_recovery.assert_awaited_once()
-    assert lifecycle_policy.attempt_auto_recovery.await_args.kwargs["reason"] == (
-        "Startup recovery after healthy reconnect"
-    )
+    await db_session.refresh(device)
+    assert recovery_generation(device) is not None
 
 
 async def test_fold_does_not_enqueue_remediation_for_draining_pack(
@@ -742,16 +832,20 @@ async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
     host, devices = await seed_host_with_devices(db_session, count=2, identity_prefix="fold-partial")
     # The fold orders by id. Force the retryable device to run first so its
     # rollback cannot hide catalog-lifecycle bugs behind random UUID ordering.
-    bad_id, good_id = sorted(device.id for device in devices)
+    failed_id, settled_id = sorted(device.id for device in devices)
+    failed = await db_session.get(Device, failed_id)
+    settled = await db_session.get(Device, settled_id)
+    assert failed is not None and settled is not None
     host_id = host.id
     revision = await next_observation_revision(db_session)
+    boot_id = uuid.uuid4()
 
-    def _present(dev_id: uuid.UUID) -> dict[str, Any]:
+    def _unhealthy(dev_id: uuid.UUID) -> dict[str, Any]:
         return {
             "device_id": str(dev_id),
             "probe_status": "observed",
             "presence": "present",
-            "health": {"healthy": True, "checks": []},
+            "health": {"healthy": False, "checks": [{"check_id": "ping", "ok": False}]},
             "lifecycle_state": {"status": "unsupported", "value": None},
         }
 
@@ -760,42 +854,85 @@ async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
         "section_sequence": 5,
         OBSERVATION_REVISION_KEY: revision,
         "complete_gather": True,
-        "devices": [_present(good_id), _present(bad_id)],
+        "devices": [_unhealthy(settled_id), _unhealthy(failed_id)],
     }
-    service = build_connectivity_service(db_session_maker)
-    real_apply = service._apply_device_health
-    calls: list[uuid.UUID] = []
+    review = ReviewService()
+    incidents = LifecycleIncidentService(publisher=event_bus)
+    reservation = RunReservationService(review=review)
+    actions = LifecyclePolicyActionsService(
+        publisher=event_bus,
+        reservation=reservation,
+        incidents=incidents,
+    )
+    lifecycle_policy = LifecyclePolicyService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=actions,
+        incidents=incidents,
+        viability=AsyncMock(),
+        node_manager=AsyncMock(),
+        review=review,
+    )
+    service = ConnectivityService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=lifecycle_policy,
+        health=DeviceHealthService(publisher=event_bus),
+    )
+    apply_counts: Counter[uuid.UUID] = Counter()
+    real_handle = lifecycle_policy.handle_health_failure_locked
 
-    async def flaky(
+    async def fail_first_attempt_for_one_device(
         db: AsyncSession,
-        locked: LockedDeviceFold,
-        item: DeviceHealthItem,
-        **kw: object,
-    ) -> DeviceFoldOutcome:
-        device_id = locked.device.id
-        calls.append(device_id)
-        if device_id == bad_id:
-            raise RuntimeError("boom")
-        return await real_apply(db, locked, item, **kw)  # type: ignore[arg-type]
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        source: str,
+        reason: str,
+    ) -> DeviceDecisionSnapshot:
+        apply_counts[locked.device.id] += 1
+        if locked.device.id == failed_id and apply_counts[locked.device.id] == 1:
+            raise RuntimeError("late lifecycle failure")
+        return await real_handle(db, locked, snapshot, source=source, reason=reason)
 
-    service._apply_device_health = flaky  # type: ignore[method-assign]
-    settled = await service.fold_host_devices(db_session, host_id, section, boot_id=uuid.uuid4())
-    assert settled is False  # one device retryable -> host watermark held by the loop
+    lifecycle_policy.handle_health_failure_locked = AsyncMock(  # type: ignore[method-assign]
+        side_effect=fail_first_attempt_for_one_device
+    )
 
-    async def _fold_rev(dev_id: uuid.UUID) -> int:
-        # Read the committed receipt directly: the fold's per-device rollback expires
-        # the loaded rows, so an ORM attribute read here can trigger a sync lazy-load.
-        value = await db_session.scalar(select(Device.device_checks_fold_applied_revision).where(Device.id == dev_id))
-        assert value is not None
-        return value
+    settled_result = await service.fold_host_devices(db_session, host_id, section, boot_id=boot_id)
+    assert settled_result is False  # one device retryable -> host watermark held by the loop
 
-    assert await _fold_rev(good_id) == revision
-    assert await _fold_rev(bad_id) < revision
+    await db_session.refresh(failed)
+    await db_session.refresh(settled)
+    assert failed.device_checks_fold_applied_revision < revision
+    assert settled.device_checks_fold_applied_revision == revision
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(DeviceRemediationLogEntry)
+            .where(DeviceRemediationLogEntry.device_id == failed.id)
+        )
+        == 0
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(DeviceRemediationLogEntry)
+            .where(DeviceRemediationLogEntry.device_id == settled.id)
+        )
+        > 0
+    )
 
-    # Second pass replays only the retryable device: the committed peer is skipped.
-    assert await service.fold_host_devices(db_session, host_id, section, boot_id=uuid.uuid4()) is False
-    assert calls.count(good_id) == 1
-    assert calls.count(bad_id) == 2
+    replayed = await service.fold_host_devices(db_session, host_id, section, boot_id=boot_id)
+    assert replayed is True
+    await db_session.refresh(failed)
+    await db_session.refresh(settled)
+    assert settled.device_checks_fold_applied_revision == revision
+    assert failed.device_checks_fold_applied_revision == revision
+
+    assert apply_counts[settled.id] == 1
+    assert apply_counts[failed.id] == 2
 
 
 async def test_fold_ignores_device_absent_from_gather(
@@ -829,7 +966,6 @@ async def test_fold_ignores_device_absent_from_gather(
 async def test_stale_device_fold_does_not_override_fresh_synchronous_write(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
 ) -> None:
-    from app.devices.services.health import DeviceHealthService
     from tests.helpers import test_event_bus as bus
 
     host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-guard")
@@ -931,3 +1067,117 @@ async def test_stale_failing_fold_enqueues_remediation_that_self_cancels(
     # if a newer healthy fact commits before it runs.
     enqueue.assert_awaited_once()
     assert enqueue.await_args.kwargs["action_id"] == "reconnect"
+
+
+def _connectivity_with_real_lifecycle(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> ConnectivityService:
+    review = ReviewService()
+    incidents = LifecycleIncidentService(publisher=event_bus)
+    reservation = RunReservationService(review=review)
+    actions = LifecyclePolicyActionsService(
+        publisher=event_bus,
+        reservation=reservation,
+        incidents=incidents,
+    )
+    lifecycle = LifecyclePolicyService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        actions=actions,
+        incidents=incidents,
+        viability=AsyncMock(),
+        node_manager=AsyncMock(),
+        review=review,
+    )
+    return ConnectivityService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=Mock(),
+        lifecycle_policy=lifecycle,
+        health=DeviceHealthService(publisher=event_bus),
+    )
+
+
+async def test_fold_healthy_offline_device_prepares_one_recovery_job(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    host, device = await seed_host_and_device(
+        db_session,
+        identity="fold-offline-recovery-job",
+        operational_state=DeviceOperationalState.offline,
+    )
+    connectivity = _connectivity_with_real_lifecycle(db_session_maker)
+    section = _health_section(
+        device.id,
+        revision=71,
+        reported_at=now_utc().isoformat(),
+        health={"healthy": True, "checks": []},
+    )
+
+    assert await connectivity.fold_host_devices(db_session, host.id, section) is True
+    await db_session.refresh(device)
+    generation = recovery_generation(device)
+    assert generation is not None
+    jobs = (await db_session.scalars(select(Job).where(Job.id == generation))).all()
+    assert len(jobs) == 1
+    assert jobs[0].kind == JOB_KIND_DEVICE_RECOVERY
+    assert device.device_checks_fold_applied_revision == 71
+
+    second = _health_section(
+        device.id,
+        revision=72,
+        reported_at=now_utc().isoformat(),
+        health={"healthy": True, "checks": []},
+    )
+    assert await connectivity.fold_host_devices(db_session, host.id, second) is True
+    assert (
+        await db_session.scalar(select(func.count()).select_from(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY)) == 1
+    )
+
+
+async def test_fold_rollback_after_recovery_prepare_leaves_no_state(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.devices.services.device_health_fold_context import LockedDeviceFold
+
+    host, device = await seed_host_and_device(
+        db_session,
+        identity="fold-offline-recovery-rollback",
+        operational_state=DeviceOperationalState.offline,
+    )
+    await db_session.commit()
+    device_id = device.id
+    connectivity = _connectivity_with_real_lifecycle(db_session_maker)
+    real_mark_applied = LockedDeviceFold.mark_applied
+
+    def raise_after_prepare(self: LockedDeviceFold, receipt: object) -> None:
+        real_mark_applied(self, receipt)  # type: ignore[arg-type]
+        raise RuntimeError("fold rolled back after recovery prepare")
+
+    monkeypatch.setattr(LockedDeviceFold, "mark_applied", raise_after_prepare)
+
+    section = _health_section(
+        device.id,
+        revision=73,
+        reported_at=now_utc().isoformat(),
+        health={"healthy": True, "checks": []},
+    )
+    assert await connectivity.fold_host_devices(db_session, host.id, section) is False
+
+    await db_session.refresh(device)
+    assert recovery_generation(device) is None
+    assert (
+        await db_session.scalar(select(func.count()).select_from(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY)) == 0
+    )
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(DeviceRemediationLogEntry)
+            .where(DeviceRemediationLogEntry.device_id == device_id)
+        )
+        == 0
+    )
+    assert device.device_checks_fold_applied_revision != 73

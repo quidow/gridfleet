@@ -59,10 +59,11 @@ async def test_node_health_failure_path_locks_appium_node(
         async with db_session_maker() as session:
             from app.devices import locking as device_locking
 
-            locked_device = await device_locking.lock_device(session, device_id)
+            locked_device = await device_locking.lock_device_handle(session, device_id)
             with patch("app.appium_nodes.services.node_health.record_event", racing_record_event):
                 from app.appium_nodes.services.node_health import NodeHealthService, _NodeObservation
 
+                assert locked_device.device.appium_node is not None
                 await NodeHealthService(
                     publisher=event_bus,
                     settings=FakeSettingsReader({}),
@@ -71,8 +72,9 @@ async def test_node_health_failure_path_locks_appium_node(
                     incidents=AsyncMock(),
                 )._process_node_health(
                     session,
-                    locked_device.appium_node,
+                    locked_device.device.appium_node,
                     locked_device,
+                    object(),  # type: ignore[arg-type]
                     observation=_NodeObservation(ProbeResult(status="refused")),
                 )
             await session.commit()
@@ -101,3 +103,74 @@ async def test_node_health_failure_path_locks_appium_node(
     )
     assert verify_node.pid == 12345
     assert verify_node.active_connection_target == "stomper-target"
+
+
+async def test_node_health_lock_order(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.appium_nodes.services import locking as appium_node_locking
+    from app.appium_nodes.services.node_health import NodeHealthService
+    from app.devices import locking as device_locking
+    from tests.fakes import FakeSettingsReader
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="nh-lock-order",
+        operational_state=DeviceOperationalState.busy,
+        verified=True,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1,
+        active_connection_target="target",
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    lock_order = []
+
+    original_lock_device = device_locking.lock_device
+    original_lock_device_handle = getattr(device_locking, "lock_device_handle", None)
+    original_lock_node = appium_node_locking.lock_appium_node_for_device
+
+    async def track_lock_device(*args: object, **kwargs: object) -> object:
+        lock_order.append("device")
+        return await original_lock_device(*args, **kwargs)
+
+    async def track_lock_device_handle(*args: object, **kwargs: object) -> object:
+        lock_order.append("device")
+        if original_lock_device_handle:
+            return await original_lock_device_handle(*args, **kwargs)
+        raise RuntimeError("No lock_device_handle")
+
+    async def track_lock_node(*args: object, **kwargs: object) -> object:
+        lock_order.append("node")
+        return await original_lock_node(*args, **kwargs)
+
+    monkeypatch.setattr(device_locking, "lock_device", track_lock_device)
+    if hasattr(device_locking, "lock_device_handle"):
+        monkeypatch.setattr(device_locking, "lock_device_handle", track_lock_device_handle)
+    monkeypatch.setattr(appium_node_locking, "lock_appium_node_for_device", track_lock_node)
+
+    from app.devices.services.health import DeviceHealthService
+
+    svc = NodeHealthService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"general.node_fail_window_sec": 60, "appium_reconciler.restart_window_sec": 300}),
+        recovery_control=AsyncMock(),
+        health=DeviceHealthService(publisher=event_bus),
+        incidents=AsyncMock(),
+    )
+    section = {
+        "reported_at": "2026-07-22T00:00:00Z",
+        "nodes": [{"port": 4723, "pid": 1, "connection_target": "target", "running": True}],
+    }
+    await svc.fold_host_nodes(db_session, db_host.id, section)
+
+    assert lock_order == ["device", "node"]

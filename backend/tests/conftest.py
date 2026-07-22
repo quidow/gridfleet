@@ -437,6 +437,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 publisher=test_event_bus,
                 settings=settings_service,
                 lifecycle_policy=_policy_svc,
+                viability=AsyncMock(),
             ),
         )
 

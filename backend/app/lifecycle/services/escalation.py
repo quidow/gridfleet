@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.devices.models import Device
     from app.devices.protocols import ReviewProtocol
+    from app.lifecycle.services.remediation_log import LadderState
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class EscalationOutcome:
     backoff_until_iso: str
     attempts: int
     shelved: bool
+    ladder: LadderState
 
 
 async def escalate_remediation_failure(
@@ -46,6 +48,7 @@ async def escalate_remediation_failure(
     review: ReviewProtocol,
     source: str,
     reason: str,
+    prior: LadderState | None = None,
 ) -> EscalationOutcome:
     """Record one failed automated remediation as an append-only attempt row."""
     entry, ladder = await remediation_log.append_attempt(
@@ -54,6 +57,7 @@ async def escalate_remediation_failure(
         source=source,
         reason=reason,
         settings=settings,
+        prior=prior,
     )
     shelved = ladder.attempts >= settings.get_int("general.lifecycle_recovery_review_threshold")
     if shelved:
@@ -63,4 +67,5 @@ async def escalate_remediation_failure(
         backoff_until_iso=entry.backoff_until.isoformat(),
         attempts=ladder.attempts,
         shelved=shelved,
+        ladder=ladder,
     )

@@ -16,6 +16,7 @@ from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.readiness import assess_device_with_pack, load_packs_by_ids
 from app.devices.services.state import DeviceStateFacts, WithdrawalFacts, appium_node_stop_in_flight
 from app.lifecycle.services import remediation_log
+from app.runs.models import RunState, TestRun
 from app.sessions.live_session_predicate import live_session_predicate, masking_live_session_predicate
 from app.sessions.models import Session
 
@@ -42,7 +43,11 @@ class IntentSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class ReservationDecisionSnapshot:
+    id: uuid.UUID
     run_id: uuid.UUID
+    run_name: str
+    run_state: RunState
+    excluded: bool
     exclusion_kind: str | None
     exclusion_reason: str | None
     excluded_until: datetime | None
@@ -59,6 +64,12 @@ class DeviceDecisionSnapshot:
     host_agent_port: int | None
     node_observed_pack_release: str | None
     node_port: int | None
+    reservation: ReservationDecisionSnapshot | None
+    is_ready_for_use: bool
+    review_required: bool
+    review_reason: str | None
+    node_observed_running: bool
+    recovery_generation: uuid.UUID | None
 
 
 def _uuid(value: object) -> uuid.UUID:
@@ -97,7 +108,11 @@ def _reservation_snapshot(raw: object) -> ReservationDecisionSnapshot | None:
     if not isinstance(raw, dict):
         return None
     return ReservationDecisionSnapshot(
+        id=_uuid(raw["id"]),
         run_id=_uuid(raw["run_id"]),
+        run_name=str(raw["run_name"]),
+        run_state=RunState(str(raw["run_state"])),
+        excluded=bool(raw["excluded"]),
         exclusion_kind=str(raw["exclusion_kind"]) if raw.get("exclusion_kind") is not None else None,
         exclusion_reason=str(raw["exclusion_reason"]) if raw.get("exclusion_reason") is not None else None,
         excluded_until=_optional_datetime(raw.get("excluded_until")),
@@ -145,8 +160,16 @@ async def _load_claims_intents_and_reservation(
     reservation = (
         select(
             func.jsonb_build_object(
+                "id",
+                DeviceReservation.id,
                 "run_id",
                 DeviceReservation.run_id,
+                "run_name",
+                TestRun.name,
+                "run_state",
+                TestRun.state,
+                "excluded",
+                DeviceReservation.excluded,
                 "exclusion_kind",
                 DeviceReservation.exclusion_kind,
                 "exclusion_reason",
@@ -155,6 +178,7 @@ async def _load_claims_intents_and_reservation(
                 DeviceReservation.excluded_until,
             )
         )
+        .join(TestRun, TestRun.id == DeviceReservation.run_id)
         .where(DeviceReservation.device_id == device_id, reservation_active())
         .order_by(DeviceReservation.created_at.desc())
         .limit(1)
@@ -228,10 +252,20 @@ async def load_device_decision_snapshot(
     if pack is None:
         pack = (await load_packs_by_ids(db, [device.pack_id])).get(device.pack_id)
     withdrawal = WithdrawalFacts.from_device(device)
-    ready = (
-        assess_device_with_pack(device, pack).readiness_state == "verified"
-        and device_allows_allocation(device)
-        and withdrawal.in_service()
+    assessment_ready = assess_device_with_pack(device, pack).readiness_state == "verified"
+    raw_policy_state = device.lifecycle_policy_state if isinstance(device.lifecycle_policy_state, dict) else {}
+    raw_generation = raw_policy_state.get("recovery_generation")
+    recovery_generation = _optional_uuid(raw_generation)
+    ready = assessment_ready and device_allows_allocation(device) and withdrawal.in_service()
+    has_verification_lease = any(
+        is_verification_lease_active(
+            source=intent.source,
+            payload=intent.payload,
+            expires_at=intent.expires_at,
+            device_id=device.id,
+            now=now,
+        )
+        for intent in intents
     )
     reservation_run_id = None
     cooldown_active = False
@@ -261,16 +295,7 @@ async def load_device_decision_snapshot(
         ),
         state_facts=DeviceStateFacts(
             has_running_session=has_masking,
-            has_verification_lease=any(
-                is_verification_lease_active(
-                    source=intent.source,
-                    payload=intent.payload,
-                    expires_at=intent.expires_at,
-                    device_id=device.id,
-                    now=now,
-                )
-                for intent in intents
-            ),
+            has_verification_lease=has_verification_lease,
             in_maintenance=withdrawal.in_maintenance,
             stop_in_flight=appium_node_stop_in_flight(device),
             ready=ready,
@@ -281,4 +306,10 @@ async def load_device_decision_snapshot(
             device.appium_node.observed_pack_release if device.appium_node is not None else None
         ),
         node_port=device.appium_node.port if device.appium_node is not None else None,
+        reservation=reservation,
+        is_ready_for_use=assessment_ready,
+        review_required=device.review_required,
+        review_reason=device.review_reason,
+        node_observed_running=device.appium_node.observed_running if device.appium_node is not None else False,
+        recovery_generation=recovery_generation,
     )

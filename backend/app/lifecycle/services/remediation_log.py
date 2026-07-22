@@ -65,6 +65,7 @@ class LadderState:
     deferred_stop_pending: bool = False
     deferred_stop_reason: str | None = None
     deferred_stop_since: datetime | None = None
+    last_restart_at: datetime | None = None
 
     @property
     def armed(self) -> bool:
@@ -107,15 +108,16 @@ def derive_ladder(entries: Sequence[DeviceRemediationLogEntry]) -> LadderState:
     last_attempt = attempts[-1] if attempts else None
     last_failure = failures[-1] if failures else None
     directive_rows = [entry for entry in window if entry.action in _DIRECTIVE_BY_ACTION]
+    restarts = [entry for entry in directive_rows if entry.action == ACTION_RESTART_COMMISSIONED]
+    last_restart_at = restarts[-1].at if restarts else None
     node_directive = None
     if directive_rows:
         newest = directive_rows[-1]
         kind = _DIRECTIVE_BY_ACTION[newest.action]
-        restarts = [entry for entry in directive_rows if entry.action == ACTION_RESTART_COMMISSIONED]
         node_directive = NodeDirective(
             kind=kind,
             reason=newest.reason,
-            restart_watermark=restarts[-1].at if kind == DIRECTIVE_START and restarts else None,
+            restart_watermark=last_restart_at if kind == DIRECTIVE_START else None,
         )
     deferred_rows = [entry for entry in window if entry.action in _DEFERRED_LIFECYCLE_ACTIONS]
     deferred_pending = bool(deferred_rows) and deferred_rows[-1].action == ACTION_AUTO_STOP_DEFERRED
@@ -131,6 +133,57 @@ def derive_ladder(entries: Sequence[DeviceRemediationLogEntry]) -> LadderState:
         deferred_stop_pending=deferred_pending,
         deferred_stop_reason=deferred_row.reason if deferred_row is not None else None,
         deferred_stop_since=deferred_row.at if deferred_row is not None else None,
+        last_restart_at=last_restart_at,
+    )
+
+
+def advance_ladder(ladder: LadderState, entry: DeviceRemediationLogEntry) -> LadderState:
+    if entry.kind == KIND_RESET:
+        return LadderState(0, None, None, None, entry.action, entry.at)
+    if entry.kind == KIND_ATTEMPT:
+        return LadderState(
+            ladder.attempts + 1,
+            entry.backoff_until,
+            entry.source,
+            entry.reason,
+            entry.action,
+            entry.at,
+            ladder.node_directive,
+            ladder.deferred_stop_pending,
+            ladder.deferred_stop_reason,
+            ladder.deferred_stop_since,
+            ladder.last_restart_at,
+        )
+    last_restart_at = entry.at if entry.action == ACTION_RESTART_COMMISSIONED else ladder.last_restart_at
+    node_directive = ladder.node_directive
+    if entry.action in _DIRECTIVE_BY_ACTION:
+        kind = _DIRECTIVE_BY_ACTION[entry.action]
+        node_directive = NodeDirective(
+            kind=kind,
+            reason=entry.reason,
+            restart_watermark=last_restart_at if kind == DIRECTIVE_START else None,
+        )
+    deferred = ladder.deferred_stop_pending
+    deferred_reason = ladder.deferred_stop_reason
+    deferred_since = ladder.deferred_stop_since
+    if entry.action == ACTION_AUTO_STOP_DEFERRED:
+        deferred, deferred_reason, deferred_since = True, entry.reason, entry.at
+    elif entry.action in {ACTION_AUTO_STOPPED, ACTION_AUTO_STOP_CLEARED}:
+        deferred, deferred_reason, deferred_since = False, None, None
+    failure_source = entry.source if entry.kind == KIND_FAILURE else ladder.last_failure_source
+    failure_reason = entry.reason if entry.kind == KIND_FAILURE else ladder.last_failure_reason
+    return LadderState(
+        ladder.attempts,
+        ladder.backoff_until,
+        failure_source,
+        failure_reason,
+        entry.action,
+        entry.at,
+        node_directive,
+        deferred,
+        deferred_reason,
+        deferred_since,
+        last_restart_at,
     )
 
 
@@ -183,8 +236,10 @@ async def append_attempt(
     source: str,
     reason: str,
     settings: SettingsReader,
+    prior: LadderState | None = None,
 ) -> tuple[DeviceRemediationLogEntry, LadderState]:
-    prior = await load_ladder(db, device_id)
+    if prior is None:
+        prior = await load_ladder(db, device_id)
     attempts = prior.attempts + 1
     base = settings.get_int("general.lifecycle_recovery_backoff_base_sec")
     cap = max(base, settings.get_int("general.lifecycle_recovery_backoff_max_sec"))
@@ -199,18 +254,7 @@ async def append_attempt(
         backoff_until=now_utc() + timedelta(seconds=seconds),
     )
     assert entry.backoff_until is not None
-    ladder = LadderState(
-        attempts=attempts,
-        backoff_until=entry.backoff_until,
-        last_failure_source=source,
-        last_failure_reason=reason,
-        last_action="recovery_failed",
-        last_action_at=entry.at,
-        node_directive=prior.node_directive,
-        deferred_stop_pending=prior.deferred_stop_pending,
-        deferred_stop_reason=prior.deferred_stop_reason,
-        deferred_stop_since=prior.deferred_stop_since,
-    )
+    ladder = advance_ladder(prior, entry)
     return entry, ladder
 
 

@@ -13,7 +13,7 @@ from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
-from app.devices.services import intent_reconciler
+from app.devices.services import health as device_health_module
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, run_one_heartbeat_cycle
 
@@ -56,13 +56,13 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
     race_attempted_lock = asyncio.Event()
     race_committed = asyncio.Event()
 
-    # The host-offline write now derives through update_device_checks -> reconcile ->
-    # the edge detector in intent_reconciler. Reconcile loads the decision snapshot
-    # (async, right after lock_device_handle) before applying the synchronous
-    # operational-state edge, all inside evaluate_host's lock_devices window. Gate on
-    # that async loader to prove the lock window covers the offline write (the sync
-    # apply_operational_state_transition cannot be patched with an async gate).
-    original_loader = intent_reconciler.load_device_decision_snapshot
+    # The host-offline write now derives through DeviceHealthService.update_device_checks,
+    # which loads the decision snapshot (async, right after locking the device) before
+    # reconciling the synchronous operational-state edge. evaluate_host calls it inside
+    # the lock_devices window, so gating on that loader proves the lock window covers the
+    # offline write (the sync apply_operational_state_transition cannot be patched with an
+    # async gate).
+    original_loader = device_health_module.load_device_decision_snapshot
 
     async def gated_loader(
         db: AsyncSession,
@@ -83,7 +83,7 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
         return await original_loader(db, locked, packs=packs, now=now)
 
     async def heartbeat_caller() -> None:
-        with patch.object(intent_reconciler, "load_device_decision_snapshot", new=gated_loader):
+        with patch.object(device_health_module, "load_device_decision_snapshot", new=gated_loader):
             async with db_session_maker() as db:
                 svc = HeartbeatService(
                     publisher=Mock(),

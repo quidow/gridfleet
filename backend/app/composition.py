@@ -288,6 +288,7 @@ def compose_app(
         publisher=bus,
         settings=settings_svc,
         lifecycle_policy=lifecycle_policy_svc,
+        viability=viability_svc,
     )
     verification_svc = VerificationService()
     portability_import_svc = PortabilityImportService(verification_enqueuer=verification_svc)
