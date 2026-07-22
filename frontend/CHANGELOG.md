@@ -12,6 +12,18 @@ All notable changes to the GridFleet operator dashboard (React + TypeScript + Vi
 
 - Run frontend nginx container as non-root user.
 
+## [0.6.1](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.6.0...gridfleet-frontend-v0.6.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* **backend:** close membership-staging race in commit_import ([3efe784](https://github.com/quidow/gridfleet/commit/3efe784b90c1c5f81846db828449317457548d39))
+* **backend:** close the member_of dangling-reference race ([b034fd1](https://github.com/quidow/gridfleet/commit/b034fd180df9ae1b8e110b82bb597c65e303d4b7))
+* **backend:** tighten group mutation safeguards ([3af3195](https://github.com/quidow/gridfleet/commit/3af31951d942fe2acff0c0372a2c5e9f2853f36e))
+* **frontend:** narrow tooltip label type for recharts 3.10 ([7fd6312](https://github.com/quidow/gridfleet/commit/7fd631250db312801a5638cb13bd554cfaa2ffe8))
+* **frontend:** pluralize the memberships-skipped badge on count ([00ed9ee](https://github.com/quidow/gridfleet/commit/00ed9ee44350907168905e4bc3d134246a9a5302))
+* **frontend:** show memberships skipped during import ([a146f3b](https://github.com/quidow/gridfleet/commit/a146f3b11847d0556649906bc703ffb9d4993d5c))
+
 ## [0.6.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.5.0...gridfleet-frontend-v0.6.0) (2026-07-21)
 
 
