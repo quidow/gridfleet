@@ -13,7 +13,7 @@ from app.packs.services.platform_resolver import pack_platform_resolution_cache
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import AsyncIterator, Iterable, Iterator
+    from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -80,6 +80,10 @@ class DeviceHealthFoldScope:
     def __init__(self, packs: dict[str, DriverPack], presence: PresenceSnapshot) -> None:
         self._packs = packs
         self._presence = presence
+
+    @property
+    def packs(self) -> Mapping[str, DriverPack]:
+        return self._packs
 
     @classmethod
     async def create(

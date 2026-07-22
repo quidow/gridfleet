@@ -24,6 +24,7 @@ from app.devices.models import (
 )
 from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.services.claims import device_is_reserved
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy_state import set_maintenance_reason
@@ -229,14 +230,17 @@ async def test_handle_health_failure_locked_reuses_lock_and_does_not_commit(
 
     event.listen(db_session.sync_session, "after_commit", count_commit)
     try:
+        snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
         outcome = await _make_svc(publisher=event_bus, publish_incidents=True).handle_health_failure_locked(
             db_session,
             locked,
+            snapshot,
             source="device_checks",
             reason="ADB not responsive",
         )
 
-        assert outcome == "stopped"
+        assert outcome.decision_facts.in_maintenance is False
+        assert outcome.ladder.deferred_stop_pending is False
         lock_spy.assert_not_awaited()
         assert commits == 0
         history = (
@@ -305,14 +309,16 @@ async def test_handle_health_failure_locked_defers_without_commit(
 
     event.listen(db_session.sync_session, "after_commit", count_commit)
     try:
+        snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
         outcome = await _make_svc(publisher=event_bus, publish_incidents=True).handle_health_failure_locked(
             db_session,
             locked,
+            snapshot,
             source="device_checks",
             reason="ADB not responsive",
         )
 
-        assert outcome == "deferred"
+        assert outcome.ladder.deferred_stop_pending is True
         lock_spy.assert_not_awaited()
         assert commits == 0
         history = (
@@ -368,8 +374,8 @@ async def test_handle_health_failure_compatibility_wrapper_locks_and_commits_bot
     )
     db_session.add(Session(session_id="compat-deferred", device_id=deferred.id, status=SessionStatus.running))
     await db_session.commit()
-    lock_spy = AsyncMock(wraps=device_locking.lock_device)
-    monkeypatch.setattr(device_locking, "lock_device", lock_spy)
+    lock_spy = AsyncMock(wraps=device_locking.lock_device_handle)
+    monkeypatch.setattr(device_locking, "lock_device_handle", lock_spy)
     commits = 0
 
     def count_commit(_session: object) -> None:
@@ -388,7 +394,7 @@ async def test_handle_health_failure_compatibility_wrapper_locks_and_commits_bot
             )
             == "stopped"
         )
-        assert commits == 2
+        assert commits == 1
         assert any(call.args[1] == stopped.id for call in lock_spy.await_args_list)
 
         lock_spy.reset_mock()
@@ -401,7 +407,7 @@ async def test_handle_health_failure_compatibility_wrapper_locks_and_commits_bot
             )
             == "deferred"
         )
-        assert commits == 3
+        assert commits == 2
         lock_spy.assert_awaited_once_with(db_session, deferred.id, load_sessions=True)
     finally:
         event.remove(db_session.sync_session, "after_commit", count_commit)
@@ -1844,6 +1850,48 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
     monkeypatch.setattr(lifecycle_policy_module.remediation_log, "append_failure", append_failure)
     incident = AsyncMock()
     monkeypatch.setattr(LifecycleIncidentService, "record_lifecycle_incident", incident)
+    locked = SimpleNamespace(device=device, assert_active=lambda _db: None)
+    monkeypatch.setattr(lifecycle_policy_module.device_locking, "lock_device_handle", AsyncMock(return_value=locked))
+    from app.devices.services.decision import DecisionFacts
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
+    from app.devices.services.state import DeviceStateFacts
+    from app.lifecycle.services.remediation_log import EMPTY_LADDER
+
+    snapshot = DeviceDecisionSnapshot(
+        intents=(),
+        has_live_session=False,
+        ladder=EMPTY_LADDER,
+        decision_facts=DecisionFacts(
+            in_maintenance=True,
+            device_checks_unhealthy=False,
+            in_service=False,
+            reservation_run_id=None,
+            cooldown_active=False,
+            cooldown_reason=None,
+        ),
+        state_facts=DeviceStateFacts(
+            has_running_session=False,
+            has_verification_lease=False,
+            in_maintenance=True,
+            stop_in_flight=False,
+            ready=False,
+        ),
+        host_ip=None,
+        host_agent_port=None,
+        node_observed_pack_release=None,
+        node_port=None,
+        reservation=None,
+        is_ready_for_use=False,
+        review_required=False,
+        review_reason=None,
+        node_observed_running=False,
+        recovery_generation=None,
+    )
+    monkeypatch.setattr(
+        lifecycle_policy_module,
+        "load_device_decision_snapshot",
+        AsyncMock(return_value=snapshot),
+    )
 
     svc = _make_svc(publisher=event_bus)
     assert await svc.handle_health_failure(db, device, source="checks", reason="bad") == "suppressed"

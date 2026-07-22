@@ -16,6 +16,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.schemas.device_health_push import DeviceHealthItem, parse_device_health_items
 from app.devices.services import link_repair
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.device_health_fold_context import (
     DeviceHealthFoldReceipt,
     DeviceHealthFoldScope,
@@ -24,7 +25,7 @@ from app.devices.services.device_health_fold_context import (
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.readiness import is_ready_for_use_async
 from app.devices.services.remediation import enqueue_device_health_remediation
-from app.devices.services.state import derive_operational_state
+from app.devices.services.state import evaluate_operational_state
 from app.packs.services import platform_catalog as pack_platform_catalog
 from app.packs.services import platform_resolver as pack_platform_resolver
 
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
     from app.devices.protocols import DeviceHealthProtocol, HealthFailureHandler
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.events.protocols import EventPublisher
     from app.hosts.models import Host
     from app.packs.services.platform_resolver import ResolvedPackPlatform
@@ -275,6 +277,7 @@ class ConnectivityService:
         self,
         db: AsyncSession,
         locked: LockedDeviceFold,
+        snapshot: DeviceDecisionSnapshot,
         *,
         ip_ping_entry: dict[str, Any] | None,
         ip_ping_window_sec: float,
@@ -291,19 +294,20 @@ class ConnectivityService:
         summary = (
             f"Healthy (ip_ping failing for {elapsed:.0f}s/{ip_ping_window_sec:.0f}s)" if elapsed > 0 else "Healthy"
         )
-        applied = await self._health.update_locked_device_checks(
-            db, locked, healthy=True, summary=summary, observed_at=observed_at, revision=revision
+        updated = await self._health.update_locked_device_checks(
+            db, locked, snapshot, healthy=True, summary=summary, observed_at=observed_at, revision=revision
         )
-        if not applied:
+        if updated is None:
             return
         # A healthy probe re-arms link repair only after its fact write lands.
         await link_repair.reset_repair_attempts(db, device.identity_value)
-        await self._maybe_auto_recover(db, locked)
+        await self._maybe_auto_recover(db, locked, updated)
 
     async def _escalate_health_failure(
         self,
         db: AsyncSession,
         locked: LockedDeviceFold,
+        snapshot: DeviceDecisionSnapshot,
         *,
         summary: str,
         observed_at: datetime | None = None,
@@ -314,12 +318,12 @@ class ConnectivityService:
         device to lifecycle policy unless it is already offline (re-escalating
         an offline device would churn recovery intents every cycle)."""
         device = locked.device
-        operational_state = await derive_operational_state(db, device, now=now_utc())
+        operational_state = evaluate_operational_state(snapshot.state_facts)
         was_offline = operational_state == DeviceOperationalState.offline
-        applied = await self._health.update_locked_device_checks(
-            db, locked, healthy=False, summary=summary, observed_at=observed_at, revision=revision
+        updated = await self._health.update_locked_device_checks(
+            db, locked, snapshot, healthy=False, summary=summary, observed_at=observed_at, revision=revision
         )
-        if not applied:
+        if updated is None:
             return False
         if remediation_result is not None:
             # Keep the episode-bearing fact, connectivity marker, and durable
@@ -330,6 +334,7 @@ class ConnectivityService:
             await self._lifecycle_policy.handle_health_failure_locked(
                 db,
                 locked.locked_device,
+                updated,
                 source="device_checks",
                 reason=summary,
             )
@@ -355,9 +360,11 @@ class ConnectivityService:
             commit=False,
         )
 
-    async def _maybe_auto_recover(self, db: AsyncSession, locked: LockedDeviceFold) -> None:
+    async def _maybe_auto_recover(
+        self, db: AsyncSession, locked: LockedDeviceFold, snapshot: DeviceDecisionSnapshot
+    ) -> None:
         device = locked.device
-        operational_state = await derive_operational_state(db, device, now=now_utc())
+        operational_state = evaluate_operational_state(snapshot.state_facts)
         if operational_state != DeviceOperationalState.offline:
             # Healthy without being offline: clear any stale previously-offline
             # flag so a later genuine offline->online recovery reports the
@@ -376,6 +383,7 @@ class ConnectivityService:
             await self._lifecycle_policy.reconcile_self_heal_locked(
                 db,
                 locked.locked_device,
+                snapshot,
                 operational_state=operational_state,
                 residue_reason="Device self-healed after healthy reconnect",
                 run_reason="Device healthy after self-heal",
@@ -492,6 +500,7 @@ class ConnectivityService:
                                 db,
                                 locked,
                                 item,
+                                fold_scope=fold_scope,
                                 receipt=receipt,
                                 observed_at=observed_at,
                                 debounce_windows=debounce_windows,
@@ -513,6 +522,7 @@ class ConnectivityService:
         locked: LockedDeviceFold,
         item: DeviceHealthItem,
         *,
+        fold_scope: DeviceHealthFoldScope,
         receipt: DeviceHealthFoldReceipt,
         observed_at: datetime,
         debounce_windows: _DebounceWindows,
@@ -549,10 +559,17 @@ class ConnectivityService:
         healthy, ip_ping_entry = await self._evaluate_health_result(
             db, device, host, health_result, debounce_windows=debounce_windows, observed_at=observed_at
         )
+        snapshot = await load_device_decision_snapshot(
+            db,
+            locked.locked_device,
+            packs=fold_scope.packs,
+            now=now_utc(),
+        )
         if healthy:
             await self._handle_healthy_device(
                 db,
                 locked,
+                snapshot,
                 ip_ping_entry=ip_ping_entry,
                 ip_ping_window_sec=debounce_windows.ip_ping,
                 observed_at=observed_at,
@@ -565,6 +582,7 @@ class ConnectivityService:
             await self._escalate_health_failure(
                 db,
                 locked,
+                snapshot,
                 summary=_summarize_unhealthy_result(health_result),
                 observed_at=observed_at,
                 remediation_result=health_result,

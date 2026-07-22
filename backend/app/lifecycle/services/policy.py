@@ -15,6 +15,7 @@ from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType, DeviceOperationalState, ExclusionKind
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services import health as device_health
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
@@ -398,44 +399,64 @@ class LifecyclePolicyService:
         return last_result
 
     async def handle_health_failure(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> str:
-        device = await _reload_device(db, device)
-        outcome = await self._prepare_health_failure(db, device, source=source, reason=reason)
-        if outcome == "deferred":
+        locked = await device_locking.lock_device_handle(db, device.id, load_sessions=True)
+        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        updated = await self.handle_health_failure_locked(db, locked, snapshot, source=source, reason=reason)
+        if updated.decision_facts.in_maintenance:
+            return "suppressed"
+        if updated.ladder.deferred_stop_pending:
             await db.commit()
-        elif outcome == "stopped":
-            await self._actions.complete_auto_stop(
-                db,
-                device,
-                reason=reason,
-                source=source,
-                detail="Manager stopped the device automatically after a lifecycle failure",
-            )
-        return outcome
+            return "deferred"
+        await db.commit()
+        return "stopped"
 
     async def handle_health_failure_locked(
         self,
         db: AsyncSession,
         locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
         *,
         source: str,
         reason: str,
-    ) -> str:
+    ) -> DeviceDecisionSnapshot:
         locked.assert_active(db)
-        outcome = await self._prepare_health_failure(
+        entry = await remediation_log.append_failure(db, locked.device.id, source=source, reason=reason)
+        ladder = remediation_log.advance_ladder(snapshot.ladder, entry)
+        updated = replace(
+            snapshot,
+            ladder=ladder,
+            decision_facts=replace(snapshot.decision_facts, remediation_directive=ladder.node_directive),
+        )
+        if updated.decision_facts.in_maintenance:
+            return updated
+        if updated.has_live_session:
+            deferred = await remediation_log.append_action(
+                db,
+                locked.device.id,
+                source=source,
+                action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
+                reason=reason,
+            )
+            await self._incidents.record_lifecycle_incident(
+                db,
+                locked.device,
+                DeviceEventType.lifecycle_deferred_stop,
+                LifecycleIncidentDetails(
+                    summary_state=DeviceLifecyclePolicySummaryState.deferred_stop,
+                    reason=reason,
+                    detail="Waiting for the active client session to finish",
+                    source=source,
+                ),
+            )
+            return replace(updated, ladder=remediation_log.advance_ladder(ladder, deferred))
+        return await self._actions.complete_auto_stop_locked(
             db,
-            locked.device,
+            locked,
+            updated,
             source=source,
             reason=reason,
+            detail="Manager stopped the device automatically after a lifecycle failure",
         )
-        if outcome == "stopped":
-            await self._actions.complete_auto_stop_locked(
-                db,
-                locked,
-                source=source,
-                reason=reason,
-                detail="Manager stopped the device automatically after a lifecycle failure",
-            )
-        return outcome
 
     async def _prepare_health_failure(
         self,
@@ -614,24 +635,37 @@ class LifecyclePolicyService:
         self,
         db: AsyncSession,
         locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
         *,
         operational_state: DeviceOperationalState,
         residue_reason: str,
         run_reason: str,
     ) -> tuple[bool, bool]:
-        """Clear healthy-path lifecycle residue through an already-held device lock."""
         locked.assert_active(db)
-        device = locked.device
-        operator_stopped = await operator_stop_active(db, device.id)
-        cleared = await self._clear_escalation_residue_locked(
-            db,
-            device,
-            operator_stopped=operator_stopped,
-            reason=residue_reason,
+        operator_stopped = any(
+            row.source == f"operator:stop:node:{locked.device.id}"
+            and (row.expires_at is None or row.expires_at > now_utc())
+            for row in snapshot.intents
         )
-        restored = await self._restore_run_after_self_heal_locked(
+        cleared = False
+        if not operator_stopped and snapshot.ladder.episode_active:
+            reset = await remediation_log.append_reset(
+                db,
+                locked.device.id,
+                source="device_checks",
+                action="self_healed",
+                reason=residue_reason,
+            )
+            snapshot = replace(
+                snapshot,
+                ladder=remediation_log.advance_ladder(snapshot.ladder, reset),
+                decision_facts=replace(snapshot.decision_facts, remediation_directive=None),
+            )
+            cleared = True
+        restored, snapshot = await self._actions.restore_run_after_self_heal_locked(
             db,
-            device,
+            locked,
+            snapshot,
             operational_state=operational_state,
             operator_stopped=operator_stopped,
             reason=run_reason,

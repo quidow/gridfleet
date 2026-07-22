@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.elements import ColumnElement
 
+    from app.devices.locking import LockedDevice
     from app.devices.protocols import ReviewProtocol
     from app.events.protocols import EventPublisher
 
@@ -113,11 +114,17 @@ async def _lock_active_reservation_entry(
     Returns ``None`` when the reservation was released between the
     unlocked read and the locked re-fetch.
     """
+    return await _lock_active_reservation_entry_by_id(db, entry.id)
 
+
+async def _lock_active_reservation_entry_by_id(
+    db: AsyncSession,
+    reservation_id: uuid.UUID,
+) -> DeviceReservation | None:
     stmt = (
         select(DeviceReservation)
         .where(
-            DeviceReservation.id == entry.id,
+            DeviceReservation.id == reservation_id,
             reservation_active(),
         )
         .with_for_update()
@@ -231,6 +238,53 @@ class RunReservationService:
             await db.commit()
             run = await get_run(db, run.id)
         return run
+
+    async def exclude_locked_reservation(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        reservation_id: uuid.UUID,
+        *,
+        reason: str,
+    ) -> bool:
+        locked.assert_active(db)
+        entry = await _lock_active_reservation_entry_by_id(db, reservation_id)
+        if entry is None:
+            return False
+        if _reservation_entry_is_excluded(entry) and entry.exclusion_reason == reason:
+            return False
+        entry.excluded = True
+        entry.exclusion_kind = ExclusionKind.exclusion
+        entry.exclusion_reason = reason
+        entry.excluded_at = now_utc()
+        entry.excluded_until = None
+        return True
+
+    async def restore_locked_reservation(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        reservation_id: uuid.UUID,
+    ) -> bool:
+        locked.assert_active(db)
+        entry = await _lock_active_reservation_entry_by_id(db, reservation_id)
+        if entry is None or (entry.excluded_until is not None and entry.excluded_until > now_utc()):
+            return False
+        if not _reservation_entry_is_excluded(entry):
+            return False
+        entry.excluded = False
+        entry.exclusion_kind = None
+        entry.exclusion_reason = None
+        entry.excluded_at = None
+        entry.excluded_until = None
+        entry.cooldown_count = 0
+        await self._review.clear_review_required(
+            db,
+            locked.device,
+            reason="Reservation restored to run",
+            source="restore_device_to_run",
+        )
+        return True
 
     async def release_device_from_run(
         self,
