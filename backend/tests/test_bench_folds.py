@@ -1119,3 +1119,79 @@ async def test_bench_device_health_loop_fold(
         event.remove(engine, "before_cursor_execute", tap)
         event.remove(engine, "after_cursor_execute", tap.after)
         event.remove(engine, "commit", commits)
+
+
+async def test_bench_healthy_fold_statement_budget(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Statement-category budget for a 10-device healthy real-lifecycle fold.
+
+    Phase 3 folds each device's claims/reservation and remediation ladder into
+    the locked decision snapshot, so a healthy fold issues exactly one device
+    lock, one combined claims/intents/reservation select, one ladder select, and
+    one commit per device -- and zero of the standalone ladder / reservation
+    reads Phase 3 removed. Self-contained (fixed 10-device healthy fold) so it is
+    independent of the FOLD_BENCH_* size/scenario knobs.
+    """
+    install_async_session_callsite_profiler(monkeypatch)
+    device_count = 10
+    service = _build_real_lifecycle_connectivity_service()
+    tap = QueryTap()
+    commits = CommitTap()
+    engine = db_session.bind.sync_engine
+    event.listen(engine, "before_cursor_execute", tap)
+    event.listen(engine, "commit", commits)
+    tap.armed = False
+    commits.armed = False
+    try:
+        host, devices = await _seed_fleet(db_session, FLEET, device_count, generation=0)
+        revision = await next_observation_revision(db_session)
+        section = _device_health_loop_section(
+            devices,
+            unhealthy_count=0,
+            revision=revision,
+            section_sequence=1,
+        )
+        tap.armed = True
+        commits.armed = True
+        settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
+        tap.armed = False
+        commits.armed = False
+        await settle_after_commit_tasks()
+        assert settled is True
+    finally:
+        event.remove(engine, "before_cursor_execute", tap)
+        event.remove(engine, "commit", commits)
+
+    device_lock = tap.callsite_counter[("app.devices.locking.lock_device_handle", "SELECT devices")]
+    snapshot_claims = tap.callsite_counter[
+        ("app.devices.services.decision_snapshot._load_claims_intents_and_reservation", "SELECT device_intents")
+    ]
+    snapshot_ladder = tap.callsite_counter[
+        ("app.devices.services.decision_snapshot._load_current_ladder", "SELECT device_remediation_log")
+    ]
+    source_commits = commits.source_count
+    # Any remediation-ladder read not attributed to the snapshot loader is a
+    # standalone read Phase 3 removed; likewise any reservation-table select
+    # (the snapshot folds the reservation into the claims/intents select).
+    legacy_ladder_load = tap.counter["SELECT device_remediation_log"] - snapshot_ladder
+    legacy_reservation_load = tap.counter["SELECT device_reservations"]
+
+    budget = {
+        "device_lock": device_lock,
+        "snapshot_claims": snapshot_claims,
+        "snapshot_ladder": snapshot_ladder,
+        "source_commits": source_commits,
+        "legacy_ladder_load": legacy_ladder_load,
+        "legacy_reservation_load": legacy_reservation_load,
+    }
+    expected = {
+        "device_lock": device_count,
+        "snapshot_claims": device_count,
+        "snapshot_ladder": device_count,
+        "source_commits": device_count,
+        "legacy_ladder_load": 0,
+        "legacy_reservation_load": 0,
+    }
+    assert budget == expected, f"healthy-fold statement budget drift: {budget} != {expected}"
