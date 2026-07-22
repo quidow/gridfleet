@@ -27,9 +27,18 @@ from app.lifecycle.services.remediation_log import DIRECTIVE_START, DIRECTIVE_ST
 
 if TYPE_CHECKING:
     import uuid
+    from typing import Any, Protocol
 
-    from app.devices.models import DeviceIntent
     from app.lifecycle.services.remediation_log import NodeDirective
+
+    class IntentLike(Protocol):
+        device_id: uuid.UUID
+        source: str
+        kind: str
+        run_id: uuid.UUID | None
+        payload: dict[str, Any]
+        expires_at: datetime | None
+
 
 logger = get_logger(__name__)
 
@@ -82,7 +91,7 @@ class RecoveryDecision:
     source: str | None
 
 
-def parse_command(intent: DeviceIntent, now: datetime) -> Command | None:
+def parse_command(intent: IntentLike, now: datetime) -> Command | None:
     """Parse a stored row into a typed command; None for expired or unknown rows.
 
     Unknown kinds are logged and ignored (the retired arbiter ranked them at
