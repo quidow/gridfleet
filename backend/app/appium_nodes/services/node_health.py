@@ -191,6 +191,12 @@ class NodeHealthService:
             pack_ids.add(pack_id)
 
         packs = await load_packs_by_ids(db, pack_ids)
+        # Detach the eager-loaded catalog from the session: a per-device rollback in the
+        # settlement loop below expires every attached ORM row, and a later device's
+        # snapshot load would then sync-lazy-load pack.releases (MissingGreenlet). The
+        # device-health fold detaches its catalog for the same reason.
+        for pack in packs.values():
+            db.expunge(pack)
 
         apply_started = perf_counter()
         retryable = 0
