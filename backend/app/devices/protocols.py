@@ -25,6 +25,7 @@ if TYPE_CHECKING:
         DeviceVerificationUpdate,
     )
     from app.devices.schemas.filters import DeviceQueryFilters
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.devices.services.device_health_fold_context import LockedDeviceFold
     from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
@@ -215,3 +216,17 @@ class DeviceHealthProtocol(Protocol):
         revision: int | None = ...,
         observed_at: datetime | None = ...,
     ) -> None: ...
+
+    async def apply_locked_node_state_transition(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        locked_node: AppiumNode,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        health_running: bool | None | UnsetType = ...,
+        health_state: str | None | UnsetType = ...,
+        mark_offline: bool = ...,
+        revision: int | None = ...,
+        observed_at: datetime | None = ...,
+    ) -> DeviceDecisionSnapshot: ...

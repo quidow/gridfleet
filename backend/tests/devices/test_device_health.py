@@ -301,10 +301,10 @@ async def test_update_device_checks_healthy_success_skips_inline_reconcile(
 
     calls: list[str] = []
 
-    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
+    async def _spy(self: object, locked: object, **kwargs: object) -> None:
         calls.append("called")
 
-    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_locked", _spy)
 
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="Healthy")
     await db.commit()
@@ -555,10 +555,10 @@ async def test_update_session_viability_passed_skips_inline_reconcile(
 
     calls: list[str] = []
 
-    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
+    async def _spy(self: object, locked: object, **kwargs: object) -> None:
         calls.append("called")
 
-    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_locked", _spy)
 
     await DeviceHealthService(publisher=event_bus).update_session_viability(db, device, status="passed", error=None)
     await db.commit()
@@ -592,10 +592,10 @@ async def test_apply_node_state_transition_steady_healthy_skips_reconcile(
 
     calls: list[str] = []
 
-    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
+    async def _spy(self: object, locked: object, **kwargs: object) -> None:
         calls.append("called")
 
-    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_locked", _spy)
 
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
         db, device, health_running=True, health_state=None, mark_offline=False
@@ -632,10 +632,10 @@ async def test_apply_node_state_transition_recovery_reconciles(
 
     calls: list[str] = []
 
-    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
+    async def _spy(self: object, locked: object, **kwargs: object) -> None:
         calls.append("called")
 
-    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_locked", _spy)
 
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
         db, device, health_running=True, health_state=None, mark_offline=False
@@ -672,10 +672,10 @@ async def test_apply_node_state_transition_unset_caller_still_reconciles(
 
     calls: list[str] = []
 
-    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
+    async def _spy(self: object, locked: object, **kwargs: object) -> None:
         calls.append("called")
 
-    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_locked", _spy)
 
     # No health_running/health_state args → UNSET sentinel.
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(db, device, mark_offline=False)
@@ -710,10 +710,10 @@ async def test_apply_node_state_transition_mark_offline_always_acts(
 
     calls: list[str] = []
 
-    async def _spy(self: object, device_id: object, **kwargs: object) -> None:
+    async def _spy(self: object, locked: object, **kwargs: object) -> None:
         calls.append("called")
 
-    monkeypatch.setattr(svc.IntentService, "reconcile_now", _spy)
+    monkeypatch.setattr(svc.IntentService, "reconcile_locked", _spy)
 
     # Health columns are unchanged (True/None == True/None), but mark_offline=True
     # is an explicit offline intent and must still force the node-axis reconcile.
@@ -729,8 +729,10 @@ async def test_device_health_missing_lock_guard_branch(monkeypatch: pytest.Monke
     db = object()
     device = SimpleNamespace(id=__import__("uuid").uuid4())
     monkeypatch.setattr(svc.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
+    monkeypatch.setattr(svc.device_locking, "lock_device_handle", AsyncMock(side_effect=NoResultFound))
 
     assert await svc._lock(db, device) is None  # type: ignore[arg-type]
+    assert await svc._lock_handle(db, device) is None  # type: ignore[arg-type]
     _health = DeviceHealthService(publisher=event_bus)
     await _health.update_device_checks(db, device, healthy=True, summary="ok")  # type: ignore[arg-type]
     await _health.update_session_viability(db, device, status="failed", error="bad")  # type: ignore[arg-type]

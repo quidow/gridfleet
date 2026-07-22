@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -18,8 +18,10 @@ from app.core.timeutil import now_utc, parse_iso
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
+from app.devices.services.decision_snapshot import DeviceDecisionSnapshot, load_device_decision_snapshot
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
+from app.devices.services.readiness import load_packs_by_ids
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import escalate_device_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
 
     from app.appium_nodes.protocols import DeviceNodeHealthWriter, DeviceRecoveryControl
     from app.core.protocols import SettingsReader
+    from app.devices.locking import LockedDevice
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.incidents import LifecycleIncidentService
 
@@ -128,7 +131,7 @@ class NodeHealthService:
             if isinstance(entry, dict) and isinstance(entry.get("port"), int)
         }
         stmt = (
-            select(AppiumNode)
+            select(AppiumNode, Device.pack_id)
             .join(Device, Device.id == AppiumNode.device_id)
             .where(
                 Device.host_id == host_id,
@@ -149,13 +152,14 @@ class NodeHealthService:
             )
             .order_by(AppiumNode.device_id)
         )
-        nodes = (await db.execute(stmt)).scalars().all()
+        nodes_with_packs = (await db.execute(stmt)).all()
         # Snapshot the per-node work up front: a rollback below expires every
         # loaded ORM row, so an attribute read on an un-processed node afterward
         # would trigger a sync lazy-load (MissingGreenlet). device_id + the
         # observation carry everything the loop needs.
-        work: list[tuple[AppiumNode, uuid.UUID, _NodeObservation]] = []
-        for node in nodes:
+        work: list[tuple[AppiumNode, uuid.UUID, str, _NodeObservation]] = []
+        pack_ids = set()
+        for node, pack_id in nodes_with_packs:
             entry = by_port.get(node.port)
             if entry is None:
                 continue
@@ -169,6 +173,7 @@ class NodeHealthService:
                 (
                     node,
                     node.device_id,
+                    pack_id,
                     _NodeObservation(
                         result=from_status_response(entry),
                         port=node.port,
@@ -183,10 +188,13 @@ class NodeHealthService:
                     ),
                 )
             )
+            pack_ids.add(pack_id)
+
+        packs = await load_packs_by_ids(db, pack_ids)
 
         apply_started = perf_counter()
         retryable = 0
-        for index, (node, device_id, observation) in enumerate(work):
+        for index, (node, device_id, _pack_id, observation) in enumerate(work):
             if index > 0 and deadline is not None and perf_counter() >= deadline:
                 # Receipts committed for earlier peers keep them settled. Leave
                 # the host watermark behind so the remaining nodes resume next
@@ -198,14 +206,15 @@ class NodeHealthService:
                 # No load_sessions: the node-health path never reads device.sessions
                 # off this row — apply_node_state_transition and the recovery-control
                 # methods each re-lock the device and load what they need.
-                locked_device = await device_locking.lock_device(db, device_id)
+                locked_device = await device_locking.lock_device_handle(db, device_id)
             except NoResultFound:
                 logger.warning("Node health fold skipped: device %s no longer exists", device_id)
                 record_node_health_fold_result("terminal_noop")
                 await db.commit()
                 continue
             try:
-                outcome = await self._process_node_health(db, node, locked_device, observation=observation)
+                snapshot = await load_device_decision_snapshot(db, locked_device, packs=packs, now=now_utc())
+                outcome = await self._process_node_health(db, node, locked_device, snapshot, observation=observation)
                 await db.commit()
                 record_node_health_fold_result(outcome)
             except Exception:
@@ -216,30 +225,38 @@ class NodeHealthService:
         record_background_loop_phase(LOOP_NAME, "apply", perf_counter() - apply_started)
         return retryable == 0
 
-    async def _attempt_node_restart(self, db: AsyncSession, *, device: Device) -> None:
-        node = (await db.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one_or_none()
-        if node is None:
-            return
-        # The commission row's timestamp IS the restart watermark ("spawned at
-        # or after T"); a satisfied watermark is inert, so no TTL is needed.
-        await remediation_log.append_action(
+    async def _attempt_node_restart(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+    ) -> DeviceDecisionSnapshot:
+        entry = await remediation_log.append_action(
             db,
-            device.id,
+            locked.device.id,
             source="node_health",
             action=remediation_log.ACTION_RESTART_COMMISSIONED,
             reason="Node health restart",
         )
-        await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
-        await db.commit()
+        ladder = remediation_log.advance_ladder(snapshot.ladder, entry)
+        updated = replace(
+            snapshot,
+            ladder=ladder,
+            decision_facts=replace(snapshot.decision_facts, remediation_directive=ladder.node_directive),
+        )
+        await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
+        return updated
 
     async def _process_node_health(  # noqa: PLR0911 - explicit terminal-noop state machine
         self,
         db: AsyncSession,
         node: AppiumNode,
-        device: Device,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
         *,
         observation: _NodeObservation,
     ) -> NodeFoldOutcome:
+        device = locked.device
         result = observation.result
         locked_node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
         if locked_node is None:
@@ -302,9 +319,10 @@ class NodeHealthService:
         if result.status == "ack":
             if locked_node.health_failing_since is not None:
                 logger.info("Node for device %s (%s) recovered", device.name, device.identity_value)
-                await self._recovery_control.record_control_action(
+                snapshot = await self._recovery_control.record_control_action_locked(
                     db,
-                    device,
+                    locked,
+                    snapshot,
                     action="node_monitor_recovered",
                     failure_source="node_health",
                     failure_reason="Node health checks recovered",
@@ -313,9 +331,10 @@ class NodeHealthService:
                 # describes the recovery; pass ``record_incident=False`` to avoid
                 # publishing a duplicate ``lifecycle_recovered`` event for the
                 # same recovery moment.
-                await self._recovery_control.clear_pending_auto_stop_on_recovery(
+                _, snapshot = await self._recovery_control.clear_pending_auto_stop_on_recovery_locked(
                     db,
-                    device,
+                    locked,
+                    snapshot,
                     source="node_health",
                     reason="Node health checks recovered",
                     record_incident=False,
@@ -356,9 +375,11 @@ class NodeHealthService:
             # pid-based fallback in node_running_signal. ``health_state`` is
             # cleared so the public summary label stays "running" rather than
             # echoing an "error" stamp.
-            await self._health.apply_node_state_transition(
+            snapshot = await self._health.apply_locked_node_state_transition(
                 db,
-                device,
+                locked,
+                locked_node,
+                snapshot,
                 health_running=True,
                 health_state=None,
                 mark_offline=False,
@@ -366,8 +387,14 @@ class NodeHealthService:
                 observed_at=observation.observed_at,
             )
         else:
-            await self._record_health_failure(
-                db, node, locked_node, device, observed_at=observation.observed_at, revision=observation.revision
+            snapshot = await self._record_health_failure(
+                db,
+                node,
+                locked_node,
+                locked,
+                snapshot,
+                observed_at=observation.observed_at,
+                revision=observation.revision,
             )
         _mark_fold_applied(locked_node, observation)
         return "applied"
@@ -377,11 +404,13 @@ class NodeHealthService:
         db: AsyncSession,
         node: AppiumNode,
         locked_node: AppiumNode,
-        device: Device,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
         *,
         observed_at: datetime,
         revision: int | None = None,
-    ) -> None:
+    ) -> DeviceDecisionSnapshot:
+        device = locked.device
         if locked_node.health_failing_since is None:
             locked_node.health_failing_since = observed_at
             onset = True
@@ -392,9 +421,11 @@ class NodeHealthService:
         verdict = (onset and window_sec <= 0) or (
             not onset and observed_at > locked_node.health_failing_since and failing_for_sec >= window_sec
         )
-        await self._health.apply_node_state_transition(
+        snapshot = await self._health.apply_locked_node_state_transition(
             db,
-            device,
+            locked,
+            locked_node,
+            snapshot,
             health_running=False,
             health_state="error",
             mark_offline=verdict,
@@ -420,19 +451,19 @@ class NodeHealthService:
             )
             locked_node.health_failing_since = observed_at
 
-            ladder = await remediation_log.load_ladder(db, device.id)
-            deadline = ladder.backoff_active(now=now_utc())
+            deadline = snapshot.ladder.backoff_active(now=now_utc())
             if deadline is not None:
                 logger.warning(
                     "Node for device %s reached failure window; restart deferred by shared backoff until %s",
                     device.name,
                     deadline.isoformat(),
                 )
-                return
+                return snapshot
 
             outcome = await escalate_device_remediation_failure(
                 db,
                 device,
+                ladder=snapshot.ladder,
                 settings=self._settings,
                 source="node_health",
                 reason="Node health checks kept failing; automated restart escalation",
@@ -443,7 +474,10 @@ class NodeHealthService:
                     device.name,
                     outcome.attempts,
                 )
-                return
+                return snapshot
 
+            snapshot = replace(snapshot, ladder=outcome.ladder)
             logger.error("Node for device %s reached failure window, attempting restart", device.name)
-            await self._attempt_node_restart(db, device=device)
+            snapshot = await self._attempt_node_restart(db, locked=locked, snapshot=snapshot)
+
+        return snapshot

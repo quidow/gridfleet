@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from dataclasses import replace
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -40,6 +41,7 @@ if TYPE_CHECKING:
     from app.devices.locking import LockedDevice
     from app.devices.models import DeviceReservation
     from app.devices.protocols import RemoteNodeManager, ReviewProtocol, SessionViabilityProbe
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -753,6 +755,60 @@ class LifecyclePolicyService:
             )
         return True
 
+    async def clear_pending_auto_stop_on_recovery_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        source: str,
+        reason: str,
+        action: str | None = None,
+        record_incident: bool = True,
+    ) -> tuple[bool, DeviceDecisionSnapshot]:
+        device = locked.device
+        if not snapshot.ladder.deferred_stop_pending:
+            return False, snapshot
+
+        pending_since = snapshot.ladder.deferred_stop_since
+        pending_reason = snapshot.ladder.deferred_stop_reason
+        entry = await remediation_log.append_action(
+            db,
+            device.id,
+            source=source,
+            action=action or remediation_log.ACTION_AUTO_STOP_CLEARED,
+            reason=reason,
+        )
+        ladder = remediation_log.advance_ladder(snapshot.ladder, entry)
+        updated = replace(
+            snapshot,
+            ladder=ladder,
+            decision_facts=replace(snapshot.decision_facts, remediation_directive=ladder.node_directive),
+        )
+
+        if record_incident:
+            detail = (
+                f"Recovery cleared deferred stop queued at {pending_since.isoformat() if pending_since else 'unknown'}"
+                if pending_since
+                else "Recovery cleared deferred stop"
+            )
+            if pending_reason:
+                detail = f"{detail} (was: {pending_reason})"
+
+            await self._incidents.record_lifecycle_incident(
+                db,
+                device,
+                DeviceEventType.lifecycle_recovered,
+                LifecycleIncidentDetails(
+                    summary_state=DeviceLifecyclePolicySummaryState.idle,
+                    reason=reason,
+                    detail=detail,
+                    source=source,
+                ),
+            )
+        await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
+        return True, updated
+
     async def record_control_action(
         self,
         db: AsyncSession,
@@ -771,6 +827,40 @@ class LifecyclePolicyService:
                 reason=failure_reason or "Control action failure",
             )
         await remediation_log.append_action(db, device.id, source=failure_source or "lifecycle", action=action)
+
+    async def record_control_action_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        action: str,
+        failure_source: str | None = None,
+        failure_reason: str | None = None,
+    ) -> DeviceDecisionSnapshot:
+        device = locked.device
+        ladder = snapshot.ladder
+        if failure_source is not None:
+            failure_entry = await remediation_log.append_failure(
+                db,
+                device.id,
+                source=failure_source,
+                reason=failure_reason or "Control action failure",
+            )
+            ladder = remediation_log.advance_ladder(ladder, failure_entry)
+
+        action_entry = await remediation_log.append_action(
+            db, device.id, source=failure_source or "lifecycle", action=action
+        )
+        ladder = remediation_log.advance_ladder(ladder, action_entry)
+
+        updated = replace(
+            snapshot,
+            ladder=ladder,
+            decision_facts=replace(snapshot.decision_facts, remediation_directive=ladder.node_directive),
+        )
+        await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
+        return updated
 
 
 RECOVERY_PROBE_ATTEMPTS = 3

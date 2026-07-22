@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import select
 
 from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent, DeviceReservation, ExclusionKind
@@ -72,6 +73,8 @@ async def test_locked_snapshot_matches_current_facts_in_three_reads(
             excluded_until=datetime.now(UTC) + timedelta(minutes=1),
         )
     )
+    generation = uuid.uuid4()
+    device.lifecycle_policy_state = {"maintenance_reason": None, "recovery_generation": str(generation)}
     db_session.add(
         DeviceIntent(
             device_id=device.id,
@@ -117,6 +120,27 @@ async def test_locked_snapshot_matches_current_facts_in_three_reads(
     assert snapshot.host_ip == host.ip
     assert snapshot.host_agent_port == host.agent_port
     assert snapshot.node_port == node.port
+
+    from app.devices.services.decision_snapshot import ReservationDecisionSnapshot
+
+    reservation_row = (
+        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+    ).scalar_one()
+    assert snapshot.reservation == ReservationDecisionSnapshot(
+        id=reservation_row.id,
+        run_id=run.id,
+        run_name=run.name,
+        run_state=RunState.active,
+        excluded=True,
+        exclusion_kind=ExclusionKind.cooldown,
+        exclusion_reason="cooling down",
+        excluded_until=reservation_row.excluded_until,
+    )
+    assert snapshot.is_ready_for_use is True
+    assert snapshot.review_required is False
+    assert snapshot.review_reason is None
+    assert snapshot.node_observed_running is True
+    assert snapshot.recovery_generation == generation
 
 
 async def test_locked_snapshot_preserves_terminal_reset_metadata(

@@ -14,7 +14,9 @@ if TYPE_CHECKING:
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.appium_nodes.services.reconciler_convergence import DesiredRow
     from app.core.sentinels import UnsetType
+    from app.devices.locking import LockedDevice
     from app.devices.models import Device
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
 
 
 class ReconcilerProtocol(Protocol):
@@ -56,6 +58,29 @@ class DeviceRecoveryControl(Protocol):
         record_incident: bool = True,
     ) -> bool: ...
 
+    async def record_control_action_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        action: str,
+        failure_source: str | None = None,
+        failure_reason: str | None = None,
+    ) -> DeviceDecisionSnapshot: ...
+
+    async def clear_pending_auto_stop_on_recovery_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        source: str,
+        reason: str,
+        action: str | None = None,
+        record_incident: bool = True,
+    ) -> tuple[bool, DeviceDecisionSnapshot]: ...
+
 
 class OperatorNodeManager(Protocol):
     async def request_start(
@@ -81,3 +106,17 @@ class DeviceNodeHealthWriter(Protocol):
         revision: int | None = ...,
         observed_at: datetime | None = ...,
     ) -> None: ...
+
+    async def apply_locked_node_state_transition(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        locked_node: AppiumNode,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        health_running: bool | None | UnsetType = ...,
+        health_state: str | None | UnsetType = ...,
+        mark_offline: bool = ...,
+        revision: int | None = ...,
+        observed_at: datetime | None = ...,
+    ) -> DeviceDecisionSnapshot: ...

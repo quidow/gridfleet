@@ -77,6 +77,33 @@ async def test_reconcile_uses_one_locked_snapshot(
     await reconcile_device(db_session, device.id, publisher=event_bus)
 
 
+async def test_locked_reconcile_uses_supplied_snapshot_without_loading(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot, load_device_decision_snapshot
+    from app.devices.services.intent_reconciler import reconcile_locked_device
+
+    device = await create_device(db_session, host_id=db_host.id, name="supplied-health-snapshot")
+    await _seed_node(db_session, device.id)
+    await db_session.commit()
+    async with db_session.begin():
+        locked = await device_locking.lock_device_handle(db_session, device.id)
+        snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+
+        async def forbidden(*args: object, **kwargs: object) -> DeviceDecisionSnapshot:
+            raise AssertionError("snapshot reloaded")
+
+        monkeypatch.setattr(intent_reconciler, "load_device_decision_snapshot", forbidden)
+        await reconcile_locked_device(
+            db_session,
+            locked,
+            publisher=event_bus,
+            snapshot=snapshot,
+        )
+
+
 async def test_reconcile_uses_facts_directly_for_maintenance(db_session: AsyncSession, db_host: Host) -> None:
     """Maintenance must stop the node with NO intent row present — the fact is
     read directly, not synthesized into a transient intent."""

@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from app.devices.protocols import RunReservationWriter
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.incidents import LifecycleIncidentService
+    from app.lifecycle.services.remediation_log import LadderState
     from app.runs.models import TestRun
 
 
@@ -403,6 +404,7 @@ async def escalate_device_remediation_failure(
     settings: SettingsReader,
     source: str,
     reason: str,
+    ladder: LadderState | None = None,
 ) -> EscalationOutcome:
     """Shared-ladder escalation for callers outside the lifecycle write_state allowlist."""
     return await escalate_remediation_failure(
@@ -412,6 +414,7 @@ async def escalate_device_remediation_failure(
         review=ReviewService(),
         source=source,
         reason=reason,
+        prior=ladder,
     )
 
 
