@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent
-from app.devices.services.intent_reconciler import reconcile_device, reconcile_locked_device
+from app.devices.services.intent_reconciler import reconcile_locked_device
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -159,10 +159,10 @@ class IntentService:
             await self._db.flush()
         # Lock the Device row before mutating DeviceIntent so this inline path
         # and the background scan serialize on the same single lock.
-        await device_locking.lock_device(self._db, device_id)
+        locked = await device_locking.lock_device_handle(self._db, device_id)
         if mutate is not None:
             await mutate()
-        await reconcile_device(self._db, device_id, publisher=publisher)
+        await reconcile_locked_device(self._db, locked, publisher=publisher)
 
     async def reconcile_now(
         self,

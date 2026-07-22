@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -22,6 +23,29 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class NodeRefreshTarget:
+    ip: str
+    agent_port: int
+
+
+async def poke_node_refresh_target(
+    target: NodeRefreshTarget,
+    *,
+    circuit_breaker: CircuitBreakerProtocol,
+    pool: AgentHttpPool | None = None,
+) -> None:
+    try:
+        await agent_operations.agent_nodes_refresh(
+            target.ip,
+            target.agent_port,
+            pool=pool,
+            circuit_breaker=circuit_breaker,
+        )
+    except Exception:  # noqa: BLE001 - poke is best-effort
+        logger.debug("agent nodes refresh poke failed for %s:%d", target.ip, target.agent_port, exc_info=True)
+
+
 async def poke_node_refresh(
     db: AsyncSession,
     device_id: uuid.UUID,
@@ -41,7 +65,8 @@ async def poke_node_refresh(
     ).scalar_one_or_none()
     if host is None:
         return
-    try:
-        await agent_operations.agent_nodes_refresh(host.ip, host.agent_port, pool=pool, circuit_breaker=circuit_breaker)
-    except Exception:  # noqa: BLE001 - poke is best-effort
-        logger.debug("agent nodes refresh poke failed for host %s", host.id, exc_info=True)
+    await poke_node_refresh_target(
+        NodeRefreshTarget(ip=host.ip, agent_port=host.agent_port),
+        circuit_breaker=circuit_breaker,
+        pool=pool,
+    )

@@ -15,12 +15,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from app.devices.services.intent_reconciler import reconcile_device
+from app.devices.services.intent_reconciler import (
+    ReconcileCandidate,
+    ReconcileCommandResult,
+    reconcile_device,
+    reconcile_device_command,
+)
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -30,6 +35,19 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 async def test_reconcile_device_no_ops_when_device_missing(db_session: AsyncSession) -> None:
     """A device id with no row must reconcile to a clean no-op, not raise."""
     await reconcile_device(db_session, uuid.uuid4(), publisher=event_bus)
+
+
+async def test_reconcile_command_no_ops_when_device_missing(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    result = await reconcile_device_command(
+        db_session_maker,
+        ReconcileCandidate(uuid.uuid4()),
+        publisher=event_bus,
+        packs={},
+    )
+
+    assert result == ReconcileCommandResult(changed=False, target=None)
 
 
 async def test_reconcile_device_tolerates_concurrent_delete(

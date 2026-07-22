@@ -9,13 +9,14 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import connectivity as device_connectivity
 from app.devices.services.health import DeviceHealthService
-from app.devices.services.intent_reconciler import reconcile_device as real_reconcile_device
+from app.devices.services.intent_reconciler import reconcile_locked_device as real_reconcile_locked_device
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.devices.locking import LockedDevice
     from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -56,7 +57,7 @@ async def test_stop_disconnected_node_locks_device_and_node(
 
     async def fake_reconcile(
         db: object,
-        device_id: object,
+        locked: LockedDevice,
         *,
         publisher: object,
     ) -> None:
@@ -64,12 +65,12 @@ async def test_stop_disconnected_node_locks_device_and_node(
         # locked, so the stomper's concurrent AppiumNode UPDATE blocks until we commit.
         stomper_can_go.set()
         await asyncio.sleep(0.15)
-        await real_reconcile_device(db, device_id, publisher=publisher)
+        await real_reconcile_locked_device(db, locked, publisher=publisher)
 
     async def runner() -> None:
         async with db_session_maker() as session:
             target = await session.get(Device, device_id)
-            with patch("app.devices.services.intent.reconcile_device", fake_reconcile):
+            with patch("app.devices.services.intent.reconcile_locked_device", fake_reconcile):
                 await device_connectivity._stop_disconnected_node(
                     session, target, health=DeviceHealthService(publisher=event_bus)
                 )

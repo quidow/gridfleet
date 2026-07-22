@@ -5,22 +5,23 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
 
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceReservation, ExclusionKind
-from app.devices.services.intent_reconciler import _clear_elapsed_cooldowns, gather_decision_facts
+from app.devices.services.intent_reconciler import ReconcileCandidate, gather_decision_facts, reconcile_device_command
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import build_review_service
 from tests.helpers import create_device_record
+from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 @pytest.fixture(autouse=True)
@@ -149,7 +150,10 @@ async def test_kind_is_authoritative_over_window(
 
 
 async def test_expiry_clears_kind_and_skips_indefinite_exclusions(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    default_host_id: str,
 ) -> None:
     device = await _create_available_device(db_session, default_host_id, "exkind-005")
     run = await _create_run(client)
@@ -169,7 +173,12 @@ async def test_expiry_clears_kind_and_skips_indefinite_exclusions(
     svc = RunReservationService(review=build_review_service())
     await svc.exclude_device_from_run(db_session, excluded_device.id, reason="health failure")
 
-    await _clear_elapsed_cooldowns(db_session, publisher=Mock())
+    await reconcile_device_command(
+        db_session_maker,
+        ReconcileCandidate(device.id, delete_expired_intents=False, clear_elapsed_cooldown=True),
+        publisher=event_bus,
+        packs={},
+    )
 
     await db_session.refresh(entry)
     assert entry.excluded is False

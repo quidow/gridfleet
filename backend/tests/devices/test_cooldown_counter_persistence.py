@@ -19,7 +19,7 @@ from sqlalchemy import select
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceReservation, ExclusionKind
-from app.devices.services.intent_reconciler import _clear_elapsed_cooldowns
+from app.devices.services.intent_reconciler import ReconcileCandidate, reconcile_device_command
 from app.devices.services.maintenance import MaintenanceService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_lifecycle_failures import RunFailureService
@@ -41,7 +41,7 @@ _failure_svc = RunFailureService(
 )
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -73,7 +73,11 @@ async def _reservation_for(db_session: AsyncSession, device_id: object) -> Devic
     return result.scalar_one()
 
 
-async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSession, db_host: Host) -> None:
+async def test_cooldown_counter_survives_intent_ttl_expiry(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
     """A cooldown TTL window lapses, then a fresh cooldown lands. The
     counter must accumulate to 2 — not reset to 1 — so the escalation
     threshold is reachable on slow-burn intermittent flakes."""
@@ -108,7 +112,12 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(db_session: AsyncSess
     reservation.excluded_until = past
     await db_session.commit()
 
-    await _clear_elapsed_cooldowns(db_session, publisher=event_bus)
+    await reconcile_device_command(
+        db_session_maker,
+        ReconcileCandidate(device.id, delete_expired_intents=False, clear_elapsed_cooldown=True),
+        publisher=event_bus,
+        packs={},
+    )
 
     await db_session.refresh(reservation)
     assert reservation.excluded is False
@@ -159,6 +168,7 @@ async def test_restore_device_to_run_resets_cooldown_counter(db_session: AsyncSe
 
 async def test_expired_cooldown_preserves_counter(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     """Regression: cooldown TTL clearing must not zero ``cooldown_count``.
@@ -187,7 +197,12 @@ async def test_expired_cooldown_preserves_counter(
     reservation.cooldown_count = 2
     await db_session.commit()
 
-    await _clear_elapsed_cooldowns(db_session, publisher=event_bus)
+    await reconcile_device_command(
+        db_session_maker,
+        ReconcileCandidate(device.id, delete_expired_intents=False, clear_elapsed_cooldown=True),
+        publisher=event_bus,
+        packs={},
+    )
 
     await db_session.refresh(reservation)
     assert reservation.excluded is False

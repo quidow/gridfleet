@@ -50,11 +50,8 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
 
     monkeypatch.setattr(intent_reconciler, "INTENT_RECONCILE_INTERVAL_SEC", 1.0)
     monkeypatch.setattr(background_loop, "observe_background_loop", Mock(return_value=_Observation()))
-    monkeypatch.setattr(
-        intent_reconciler,
-        "run_device_intent_reconciler_once",
-        AsyncMock(side_effect=RuntimeError("boom")),
-    )
+    run_once = AsyncMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr(intent_reconciler, "run_device_intent_reconciler_once", run_once)
     sleep = AsyncMock(side_effect=asyncio.CancelledError())
     monkeypatch.setattr(background_loop.asyncio, "sleep", sleep)
 
@@ -105,6 +102,9 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
 
     with pytest.raises(asyncio.CancelledError):
         await loop.run()
+
+    assert run_once.await_args.kwargs["session_factory"] is _fake_session
+    assert "settings" not in run_once.await_args.kwargs
 
     # Sleeps the remainder of the 1s interval after a near-instant failed cycle
     # (cadence = interval - elapsed), not the full interval on top of cycle time.

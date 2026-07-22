@@ -7,16 +7,19 @@ from unittest.mock import ANY, AsyncMock, Mock, patch
 import pytest
 from sqlalchemy import select
 
-from app.agent_comm.node_poke import poke_node_refresh
+from app.agent_comm.node_poke import NodeRefreshTarget, poke_node_refresh
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceIntent, DeviceOperationalState, DeviceReservation, ExclusionKind
+from app.devices.services import intent_reconciler
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import (
-    _gc_expired_intents,
-    _reconcile_commit_deliver,
+    ReconcileCandidate,
+    _load_reconcile_candidates,
+    _reconcile_and_deliver,
     reconcile_device,
+    reconcile_device_command,
     run_device_intent_reconciler_once,
 )
 from app.devices.services.intent_types import CommandKind, IntentRegistration
@@ -30,7 +33,7 @@ from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -126,7 +129,11 @@ async def test_cooldown_intents_derive_metadata_reservation_and_recovery(
     assert reservation.excluded is True
 
 
-async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSession, db_host: Host) -> None:
+async def test_expired_intents_are_deleted_and_reconciled(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="expired")
     await _seed_node(db_session, device.id)
     service = IntentService(db_session)
@@ -144,7 +151,7 @@ async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSessi
     await db_session.commit()
 
     await run_device_intent_reconciler_once(
-        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+        db_session, session_factory=db_session_maker, circuit_breaker=Mock(), publisher=event_bus
     )
 
     intents = (
@@ -153,6 +160,33 @@ async def test_expired_intents_are_deleted_and_reconciled(db_session: AsyncSessi
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
     assert intents == []
     assert node.accepting_new_sessions is True
+
+
+async def test_inventory_flags_only_devices_with_expired_intents(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    expired = await create_device(db_session, host_id=db_host.id, name="inventory-expired")
+    healthy = await create_device(db_session, host_id=db_host.id, name="inventory-healthy")
+    await IntentService(db_session).register_intents(
+        device_id=expired.id,
+        intents=[
+            IntentRegistration(
+                source=f"operator:start:{expired.id}",
+                kind=CommandKind.operator_start,
+                payload={},
+                expires_at=datetime.now(UTC) - timedelta(seconds=1),
+            )
+        ],
+    )
+    await db_session.commit()
+
+    async with db_session.begin():
+        candidates = await _load_reconcile_candidates(db_session, now=datetime.now(UTC))
+
+    by_id = {candidate.device_id: candidate for candidate in candidates}
+    assert by_id[expired.id].delete_expired_intents is True
+    assert by_id[healthy.id].delete_expired_intents is False
 
 
 async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
@@ -468,7 +502,10 @@ async def test_pull_host_watermark_only_change_pokes_agent(
 
 
 async def test_scan_rederives_stale_available_device_without_intents(
-    db_session: AsyncSession, db_host: Host, seeded_driver_packs: None
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    seeded_driver_packs: None,
 ) -> None:
     """The case the old dirty queue existed for: a fact changes on a steady
     `available` device with no intent rows and nobody calls an inline
@@ -490,7 +527,7 @@ async def test_scan_rederives_stale_available_device_without_intents(
 
     await run_device_intent_reconciler_once(
         db_session,
-        settings=FakeSettingsReader(),
+        session_factory=db_session_maker,
         circuit_breaker=Mock(),
         publisher=event_bus,
     )
@@ -499,7 +536,11 @@ async def test_scan_rederives_stale_available_device_without_intents(
     assert await derive_operational_state(db_session, refreshed, now=now_utc()) is DeviceOperationalState.offline
 
 
-async def test_gc_expired_intents_deletes_rows_only(db_session: AsyncSession, db_host: Host) -> None:
+async def test_gc_expired_intents_deletes_rows_only(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="gc-expired")
     await IntentService(db_session).register_intents(
         device_id=device.id,
@@ -514,7 +555,12 @@ async def test_gc_expired_intents_deletes_rows_only(db_session: AsyncSession, db
     )
     await db_session.commit()
 
-    await _gc_expired_intents(db_session)
+    await reconcile_device_command(
+        db_session_maker,
+        ReconcileCandidate(device.id, delete_expired_intents=True, clear_elapsed_cooldown=False),
+        publisher=event_bus,
+        packs={},
+    )
     remaining = (await db_session.execute(select(DeviceIntent))).scalars().all()
     assert remaining == []
 
@@ -650,6 +696,7 @@ async def test_start_intent_stale_payload_port_is_overridden_by_live_node_port(
 
 async def test_full_scan_corrects_drifted_offline_device_end_to_end(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
     seeded_driver_packs: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -669,40 +716,84 @@ async def test_full_scan_corrects_drifted_offline_device_end_to_end(
     device.operational_state_last_emitted = DeviceOperationalState.offline  # the drift
     await db_session.commit()
 
-    monkeypatch.setattr("app.devices.services.intent_reconciler.poke_node_refresh", AsyncMock())
+    monkeypatch.setattr("app.devices.services.intent_reconciler.poke_node_refresh_target", AsyncMock())
 
     await run_device_intent_reconciler_once(
-        db_session, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+        db_session, session_factory=db_session_maker, circuit_breaker=Mock(), publisher=event_bus
     )
     await db_session.refresh(device)
     assert device.operational_state_last_emitted != DeviceOperationalState.offline  # drift corrected
 
 
-async def test_steady_state_reconcile_does_not_poke(db_session: AsyncSession, db_host: Host) -> None:
+async def test_steady_state_reconcile_does_not_poke(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
     """A reconcile that changes nothing must not wake the agent."""
     device = await create_device(db_session, host_id=db_host.id, name="steady-state")
     await _seed_node(db_session, device.id)
-    settings = FakeSettingsReader()
     # First reconcile settles initial derivation; the second is steady-state.
-    await _reconcile_commit_deliver(
-        db_session, device.id, settings=settings, circuit_breaker=Mock(), publisher=event_bus
+    await _reconcile_and_deliver(
+        db_session_maker,
+        ReconcileCandidate(device.id, delete_expired_intents=False, clear_elapsed_cooldown=False),
+        circuit_breaker=Mock(),
+        publisher=event_bus,
+        packs={},
     )
     poke = AsyncMock()
-    with patch("app.devices.services.intent_reconciler.poke_node_refresh", poke):
-        await _reconcile_commit_deliver(
-            db_session, device.id, settings=settings, circuit_breaker=Mock(), publisher=event_bus
+    with patch("app.devices.services.intent_reconciler.poke_node_refresh_target", poke):
+        await _reconcile_and_deliver(
+            db_session_maker,
+            ReconcileCandidate(device.id, delete_expired_intents=False, clear_elapsed_cooldown=False),
+            circuit_breaker=Mock(),
+            publisher=event_bus,
+            packs={},
         )
     poke.assert_not_awaited()
 
 
-async def test_desired_state_change_pokes_agent(db_session: AsyncSession, db_host: Host) -> None:
+async def test_desired_state_change_pokes_agent(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
     """A reconcile that flips desired node state must wake the agent."""
     device = await create_device(db_session, host_id=db_host.id, name="pokes-agent")
     await _seed_node(db_session, device.id)
 
     poke = AsyncMock()
-    with patch("app.devices.services.intent_reconciler.poke_node_refresh", poke):
-        await _reconcile_commit_deliver(
-            db_session, device.id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
+    with patch("app.devices.services.intent_reconciler.poke_node_refresh_target", poke):
+        await _reconcile_and_deliver(
+            db_session_maker,
+            ReconcileCandidate(device.id, delete_expired_intents=False, clear_elapsed_cooldown=False),
+            circuit_breaker=Mock(),
+            publisher=event_bus,
+            packs={},
         )
     poke.assert_awaited_once()
+
+
+async def test_desired_state_poke_runs_after_command_transaction(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(db_session, host_id=db_host.id, name="post-commit-poke")
+    await _seed_node(db_session, device.id)
+    observed: list[NodeRefreshTarget] = []
+
+    async def record(target: NodeRefreshTarget, **kwargs: object) -> None:
+        observed.append(target)
+
+    monkeypatch.setattr(intent_reconciler, "poke_node_refresh_target", record)
+    await _reconcile_and_deliver(
+        db_session_maker,
+        ReconcileCandidate(device.id, delete_expired_intents=False, clear_elapsed_cooldown=False),
+        circuit_breaker=Mock(),
+        publisher=event_bus,
+        packs={},
+    )
+
+    assert observed == [NodeRefreshTarget(ip=db_host.ip, agent_port=db_host.agent_port)]
