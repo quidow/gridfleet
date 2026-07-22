@@ -32,12 +32,23 @@ if TYPE_CHECKING:
     from app.lifecycle.services.remediation_log import NodeDirective
 
     class IntentLike(Protocol):
-        device_id: uuid.UUID
-        source: str
-        kind: str
-        run_id: uuid.UUID | None
-        payload: dict[str, Any]
-        expires_at: datetime | None
+        @property
+        def device_id(self) -> uuid.UUID: ...
+
+        @property
+        def source(self) -> str: ...
+
+        @property
+        def kind(self) -> str: ...
+
+        @property
+        def run_id(self) -> uuid.UUID | None: ...
+
+        @property
+        def payload(self) -> dict[str, Any]: ...
+
+        @property
+        def expires_at(self) -> datetime | None: ...
 
 
 logger = get_logger(__name__)
