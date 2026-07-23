@@ -20,13 +20,21 @@ async def test_device_verification_job_state_persist_and_stage_resolution_branch
             return self.row
 
     missing_job = job_state.hydrate_job(
-        job_state.new_job("missing"), db_job_id="missing", session_factory=lambda: Session(None), publisher=AsyncMock()
+        job_state.new_job("missing"),
+        db_job_id="missing",
+        payload={"operation_id": "missing"},
+        session_factory=lambda: Session(None),
+        publisher=AsyncMock(),
     )
     await job_state.persist_job(missing_job)
 
     row = SimpleNamespace(snapshot=None, status=None, completed_at=None)
     completed = job_state.hydrate_job(
-        job_state.new_job("done"), db_job_id="done", session_factory=lambda: Session(row), publisher=AsyncMock()
+        job_state.new_job("done"),
+        db_job_id="done",
+        payload={"operation_id": "done"},
+        session_factory=lambda: Session(row),
+        publisher=AsyncMock(),
     )
     completed["status"] = "completed"
     completed["finished_at"] = "2026-05-13T12:00:00+00:00"
