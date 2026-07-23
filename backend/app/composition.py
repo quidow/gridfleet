@@ -218,9 +218,15 @@ def compose_app(
         settings=settings_svc,
         deferred_stop=lifecycle_policy_svc,
     )
-    run_lifecycle = RunLifecycleService(publisher=bus, settings=settings_svc, release=run_release)
+    run_lifecycle = RunLifecycleService(
+        publisher=bus, settings=settings_svc, release=run_release, session_factory=session_factory
+    )
     run_allocator = RunAllocatorService(
-        publisher=bus, settings=settings_svc, circuit_breaker=circuit_breaker, pool=http_pool
+        publisher=bus,
+        settings=settings_svc,
+        circuit_breaker=circuit_breaker,
+        session_factory=session_factory,
+        pool=http_pool,
     )
     run_failure = RunFailureService(
         publisher=bus,
@@ -230,6 +236,7 @@ def compose_app(
         lifecycle_actions=lifecycle_actions_svc,
         reservation=reservation_svc,
         incidents=incidents_svc,
+        session_factory=session_factory,
         pool=http_pool,
     )
     run_query = RunQueryService()

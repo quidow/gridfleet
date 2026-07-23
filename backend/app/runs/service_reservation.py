@@ -10,7 +10,7 @@ from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceReservation, ExclusionKind
 from app.devices.services.claims import reservation_active
-from app.devices.services.intent import IntentService
+from app.devices.services.intent_reconciler import reconcile_locked_device
 from app.runs.models import TERMINAL_STATES, TestRun
 
 if TYPE_CHECKING:
@@ -98,29 +98,20 @@ def get_reservation_entry_for_device(run: TestRun, device_id: uuid.UUID | str) -
     return _reservation_entry_for_device(run, device_id, active_only=True)
 
 
-async def _lock_active_reservation_entry(
-    db: AsyncSession,
-    entry: DeviceReservation,
-) -> DeviceReservation | None:
-    """Re-fetch ``entry`` under ``SELECT ... FOR UPDATE WHERE released_at IS NULL``.
-
-    The unlocked ``get_device_reservation_with_entry`` snapshot can be
-    invalidated by a concurrent ``_release_devices`` commit that lands
-    ``released_at = NOW``. Calling sites that mutate ``excluded`` /
-    cooldown fields MUST proceed only against the locked, still-active
-    row — otherwise the ORM-buffered write flushes onto a released
-    reservation, leaving the row in a contradictory state.
-
-    Returns ``None`` when the reservation was released between the
-    unlocked read and the locked re-fetch.
-    """
-    return await _lock_active_reservation_entry_by_id(db, entry.id)
-
-
 async def _lock_active_reservation_entry_by_id(
     db: AsyncSession,
     reservation_id: uuid.UUID,
 ) -> DeviceReservation | None:
+    """Re-fetch a reservation under ``SELECT ... FOR UPDATE WHERE released_at IS NULL``.
+
+    The unlocked ``get_device_reservation_with_entry`` snapshot can be
+    invalidated by a concurrent ``release_devices`` commit that lands
+    ``released_at = NOW``. Calling sites that mutate ``excluded`` / cooldown
+    fields MUST proceed only against the locked, still-active row — otherwise
+    the ORM-buffered write flushes onto a released reservation, leaving the row
+    in a contradictory state. Returns ``None`` when the reservation was released
+    between the unlocked read and the locked re-fetch.
+    """
     stmt = (
         select(DeviceReservation)
         .where(
@@ -131,6 +122,25 @@ async def _lock_active_reservation_entry_by_id(
         .execution_options(populate_existing=True)
     )
     result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def lock_active_reservation(
+    db: AsyncSession,
+    locked: LockedDevice,
+    *,
+    run_id: uuid.UUID | None = None,
+) -> DeviceReservation | None:
+    """Lock the active reservation child for an already-locked device (Device
+    before child). Returns ``None`` when the device carries no active reservation
+    (or none for ``run_id`` when supplied)."""
+    locked.assert_active(db)
+    predicates = [DeviceReservation.device_id == locked.device.id, reservation_active()]
+    if run_id is not None:
+        predicates.append(DeviceReservation.run_id == run_id)
+    result = await db.execute(
+        select(DeviceReservation).where(*predicates).with_for_update().execution_options(populate_existing=True)
+    )
     return result.scalar_one_or_none()
 
 
@@ -173,35 +183,31 @@ class RunReservationService:
         device_id: uuid.UUID,
         *,
         reason: str,
-        commit: bool = True,
     ) -> TestRun | None:
+        """Transaction-local exclude keyed by device (no Device lock held). The
+        caller owns the surrounding transaction boundary."""
         run, entry = await get_device_reservation_with_entry(db, device_id)
         if run is None or entry is None:
             return None
         if _reservation_entry_is_excluded(entry) and entry.exclusion_reason == reason:
             return run
-        locked_entry = await _lock_active_reservation_entry(db, entry)
+        locked_entry = await _lock_active_reservation_entry_by_id(db, entry.id)
         if locked_entry is None:
-            if commit:
-                await db.commit()
             return run
         locked_entry.excluded = True
         locked_entry.exclusion_kind = ExclusionKind.exclusion
         locked_entry.exclusion_reason = reason
         locked_entry.excluded_at = now_utc()
         locked_entry.excluded_until = None
-        if commit:
-            await db.commit()
-            run = await get_run(db, run.id)
         return run
 
     async def restore_device_to_run(
         self,
         db: AsyncSession,
         device_id: uuid.UUID,
-        *,
-        commit: bool = True,
     ) -> TestRun | None:
+        """Transaction-local restore keyed by device. The caller owns the
+        surrounding transaction boundary."""
         run, entry = await get_device_reservation_with_entry(db, device_id)
         if run is None or entry is None:
             return None
@@ -209,10 +215,8 @@ class RunReservationService:
             return run
         if not _reservation_entry_is_excluded(entry):
             return run
-        locked_entry = await _lock_active_reservation_entry(db, entry)
+        locked_entry = await _lock_active_reservation_entry_by_id(db, entry.id)
         if locked_entry is None:
-            if commit:
-                await db.commit()
             return run
         locked_entry.excluded = False
         locked_entry.exclusion_kind = None
@@ -234,10 +238,86 @@ class RunReservationService:
                 reason="Reservation restored to run",
                 source="restore_device_to_run",
             )
-        if commit:
-            await db.commit()
-            run = await get_run(db, run.id)
         return run
+
+    async def exclude_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        reason: str,
+    ) -> uuid.UUID | None:
+        """Exclude the active reservation for an already-locked device (Device
+        before child). Flushes only; returns the reservation's ``run_id`` (or
+        ``None`` when the device carries no active reservation)."""
+        locked.assert_active(db)
+        entry = await lock_active_reservation(db, locked)
+        if entry is None:
+            return None
+        entry.excluded = True
+        entry.exclusion_kind = ExclusionKind.exclusion
+        entry.exclusion_reason = reason
+        entry.excluded_at = now_utc()
+        entry.excluded_until = None
+        await db.flush()
+        return entry.run_id
+
+    async def restore_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+    ) -> uuid.UUID | None:
+        """Clear every exclusion field (and the cooldown count) for an
+        already-locked device, then clear its review flag. Flushes only; returns
+        the reservation's ``run_id`` (or ``None`` when absent)."""
+        locked.assert_active(db)
+        entry = await lock_active_reservation(db, locked)
+        if entry is None:
+            return None
+        entry.excluded = False
+        entry.exclusion_kind = None
+        entry.exclusion_reason = None
+        entry.excluded_at = None
+        entry.excluded_until = None
+        entry.cooldown_count = 0
+        await self._review.clear_review_required(
+            db,
+            locked.device,
+            reason="Reservation restored to run",
+            source="restore_device_to_run",
+        )
+        await db.flush()
+        return entry.run_id
+
+    async def release_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        reason: str,
+        publisher: EventPublisher,
+    ) -> uuid.UUID | None:
+        """Permanently release the active reservation for an already-locked device
+        and reconcile the node teardown under the held proof. Flushes only;
+        returns the reservation's ``run_id`` (or ``None`` when absent)."""
+        locked.assert_active(db)
+        entry = await lock_active_reservation(db, locked)
+        if entry is None:
+            return None
+        # Set released_at + reason, and clear any pre-existing exclusion so a
+        # released row is never ``excluded`` (invariant not (released_at and
+        # excluded)) and carries no live excluded_window for the GiST constraint.
+        entry.released_at = now_utc()
+        entry.exclusion_reason = reason
+        entry.excluded = False
+        entry.exclusion_kind = None
+        entry.excluded_at = None
+        entry.excluded_until = None
+        # released_at written above; routing and cooldown denies derive from the
+        # reservation row, so reconcile to tear them down (no stored release intents).
+        await reconcile_locked_device(db, locked, publisher=publisher)
+        await db.flush()
+        return entry.run_id
 
     async def exclude_locked_reservation(
         self,
@@ -285,56 +365,6 @@ class RunReservationService:
             source="restore_device_to_run",
         )
         return True
-
-    async def release_device_from_run(
-        self,
-        db: AsyncSession,
-        device_id: uuid.UUID,
-        *,
-        reason: str,
-        publisher: EventPublisher,
-        commit: bool = True,
-    ) -> TestRun | None:
-        """Permanently remove a device from its active run.
-
-        Unlike ``exclude_device_from_run`` (a restorable hold), this releases the
-        reservation (``released_at``) so the device can never rejoin the run — runs
-        never re-allocate, and the self-heal restore loop only sees active
-        reservations — and frees it for other runs to allocate. Revoking the full
-        intent set (run-scoped intents, sub-threshold cooldowns, device-keyed
-        health-failure) and reconciling tears down the device's Appium node / grid
-        routing. The reason is recorded on the released entry for run history; the
-        row is left not-excluded so the released⇒not-excluded invariant holds.
-        """
-        run, entry = await get_device_reservation_with_entry(db, device_id)
-        if run is None or entry is None:
-            return None
-        locked_entry = await _lock_active_reservation_entry(db, entry)
-        if locked_entry is None:
-            if commit:
-                await db.commit()
-            return run
-        # Set released_at + reason, and clear any pre-existing exclusion so a released
-        # row is never `excluded` (invariant `not (released_at and excluded)`) and carries
-        # no live excluded_window for the GiST exclusion constraint.
-        locked_entry.released_at = now_utc()
-        locked_entry.exclusion_reason = reason
-        locked_entry.excluded = False
-        locked_entry.exclusion_kind = None
-        locked_entry.excluded_at = None
-        locked_entry.excluded_until = None
-        try:
-            device = await device_locking.lock_device(db, device_id, load_sessions=False)
-        except NoResultFound:
-            device = None
-        if device is not None:
-            # released_at written above; run: routing and cooldown denies derive from the
-            # reservation row, so reconcile to tear them down (no stored release intents now).
-            await IntentService(db).reconcile_now(device.id, publisher=publisher)
-        if commit:
-            await db.commit()
-            run = await get_run(db, run.id)
-        return run
 
 
 def reservation_entry_is_excluded(entry: DeviceReservation | None) -> bool:

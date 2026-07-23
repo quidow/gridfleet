@@ -352,7 +352,7 @@ class LifecyclePolicyActionsService:
             return None, entry
 
         was_excluded = run_reservation_service.reservation_entry_is_excluded(entry)
-        run = await self._reservation.exclude_device_from_run(db, device.id, reason=reason, commit=False)
+        run = await self._reservation.exclude_device_from_run(db, device.id, reason=reason)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
             # exclude_device_from_run wrote the indefinite exclusion on the reservation
@@ -392,7 +392,7 @@ class LifecyclePolicyActionsService:
         ):
             return run, entry
 
-        run = await self._reservation.restore_device_to_run(db, device.id, commit=False)
+        run = await self._reservation.restore_device_to_run(db, device.id)
         entry = run_reservation_service.get_reservation_entry_for_device(run, device.id) if run is not None else None
         if run is not None:
             # restore_device_to_run un-excluded the reservation row above; reconcile so

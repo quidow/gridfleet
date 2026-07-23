@@ -31,6 +31,16 @@ RUN_ERROR_RESPONSES = {**STANDARD_ERROR_RESPONSES, **RESPONSES_422}
 
 router = APIRouter(prefix="/api/runs", tags=["runs"], responses=RUN_ERROR_RESPONSES)
 
+
+async def _build_run_read(run_services: RunServicesDep, run_id: uuid.UUID) -> RunRead:
+    """Build the ``RunRead`` DTO in a short read session after a mutating command
+    committed in its own transaction (commands no longer accept a request session)."""
+    async with run_services.session_factory() as read_db:
+        run = found_or_404(await run_service.get_run(read_db, run_id), "Run not found")
+        counts_map = await run_services.query.fetch_session_counts(read_db, [run.id])
+        return run_service.build_run_read(run, counts_map.get(run.id))
+
+
 # Length of a bare "YYYY-MM-DD" date (no time component).
 _ISO_DATE_LENGTH = 10
 
@@ -53,11 +63,10 @@ def _parse_run_filter_datetime(value: str | None, *, end_of_day: bool = False) -
 @router.post("", response_model=RunCreateResponse, status_code=201)
 async def create_run(
     data: RunCreate,
-    db: DbDep,
     run_services: RunServicesDep,
-) -> dict[str, Any]:
+) -> RunCreateResponse:
     try:
-        run, device_infos = await run_services.allocator.create_run(db, data)
+        result = await run_services.allocator.create_run(data)
     except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
         raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
     except UnknownGroupKeysError as exc:
@@ -65,15 +74,7 @@ async def create_run(
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
-    return {
-        "id": run.id,
-        "name": run.name,
-        "state": run.state,
-        "devices": device_infos,
-        "ttl_minutes": run.ttl_minutes,
-        "heartbeat_timeout_sec": run.heartbeat_timeout_sec,
-        "created_at": run.created_at,
-    }
+    return result.response
 
 
 @router.get("", response_model=RunListRead)
@@ -139,23 +140,21 @@ async def get_run(run_id: uuid.UUID, db: DbDep, run_services: RunServicesDep) ->
 
 
 @router.post("/{run_id}/ready", response_model=RunRead)
-async def signal_ready(run_id: uuid.UUID, db: DbDep, run_services: RunServicesDep) -> RunRead:
+async def signal_ready(run_id: uuid.UUID, run_services: RunServicesDep) -> RunRead:
     try:
-        run = await run_services.lifecycle.signal_ready(db, run_id)
+        result = await run_services.lifecycle.signal_ready(run_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
-    return run_service.build_run_read(run, counts_map.get(run.id))
+    return await _build_run_read(run_services, result.run_id)
 
 
 @router.post("/{run_id}/active", response_model=RunRead)
-async def signal_active(run_id: uuid.UUID, db: DbDep, run_services: RunServicesDep) -> RunRead:
+async def signal_active(run_id: uuid.UUID, run_services: RunServicesDep) -> RunRead:
     try:
-        run = await run_services.lifecycle.signal_active(db, run_id)
+        result = await run_services.lifecycle.signal_active(run_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
-    return run_service.build_run_read(run, counts_map.get(run.id))
+    return await _build_run_read(run_services, result.run_id)
 
 
 @router.post("/{run_id}/devices/{device_id}/preparation-failed", response_model=RunRead)
@@ -163,12 +162,10 @@ async def report_preparation_failed(
     run_id: uuid.UUID,
     device_id: uuid.UUID,
     payload: RunPreparationFailureReport,
-    db: DbDep,
     run_services: RunServicesDep,
 ) -> RunRead:
     try:
-        run = await run_services.failure.report_preparation_failure(
-            db,
+        result = await run_services.failure.report_preparation_failure(
             run_id,
             device_id,
             message=payload.message,
@@ -176,8 +173,7 @@ async def report_preparation_failed(
         )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
-    return run_service.build_run_read(run, counts_map.get(run.id))
+    return await _build_run_read(run_services, result.run_id)
 
 
 @router.post("/{run_id}/devices/{device_id}/cooldown", status_code=200)
@@ -185,18 +181,10 @@ async def cooldown_device_endpoint(
     run_id: uuid.UUID,
     device_id: uuid.UUID,
     payload: RunCooldownRequest,
-    db: DbDep,
     run_services: RunServicesDep,
 ) -> RunCooldownResponse | RunCooldownEscalatedResponse:
     try:
-        (
-            excluded_until,
-            cooldown_count,
-            escalated,
-            threshold,
-            entered_maintenance,
-        ) = await run_services.failure.cooldown_device(
-            db,
+        result = await run_services.failure.cooldown_device(
             run_id,
             device_id,
             reason=payload.reason,
@@ -210,67 +198,63 @@ async def cooldown_device_endpoint(
             raise HTTPException(status_code=422, detail=msg) from e
         raise HTTPException(status_code=409, detail=msg) from e
 
-    if escalated:
+    if result.escalated:
         return RunCooldownEscalatedResponse(
-            status="maintenance_escalated" if entered_maintenance else "released",
-            cooldown_count=cooldown_count,
-            threshold=threshold,
+            status="maintenance_escalated" if result.entered_maintenance else "released",
+            cooldown_count=result.cooldown_count,
+            threshold=result.threshold,
         )
-    if excluded_until is None:
+    if result.excluded_until is None:
         raise HTTPException(status_code=500, detail="Cooldown returned no expiry")
     return RunCooldownResponse(
         status="cooldown_set",
-        excluded_until=excluded_until,
-        cooldown_count=cooldown_count,
+        excluded_until=result.excluded_until,
+        cooldown_count=result.cooldown_count,
     )
 
 
 @router.post("/{run_id}/heartbeat", response_model=HeartbeatResponse)
-async def heartbeat(run_id: uuid.UUID, db: DbDep, run_services: RunServicesDep) -> dict[str, Any]:
+async def heartbeat(run_id: uuid.UUID, run_services: RunServicesDep) -> dict[str, Any]:
     try:
-        run = await run_services.lifecycle.heartbeat(db, run_id)
+        result = await run_services.lifecycle.heartbeat(run_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    return {"state": run.state, "last_heartbeat": run.last_heartbeat}
+    async with run_services.session_factory() as read_db:
+        run = found_or_404(await run_service.get_run(read_db, result.run_id), "Run not found")
+        return {"state": run.state, "last_heartbeat": run.last_heartbeat}
 
 
 @router.post("/{run_id}/complete", response_model=RunRead)
 async def complete_run(
     run_id: uuid.UUID,
-    db: DbDep,
     run_services: RunServicesDep,
 ) -> RunRead:
     try:
-        run = await run_services.lifecycle.complete_run(db, run_id)
+        result = await run_services.lifecycle.complete_run(run_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
-    return run_service.build_run_read(run, counts_map.get(run.id))
+    return await _build_run_read(run_services, result.run_id)
 
 
 @router.post("/{run_id}/cancel", response_model=RunRead)
 async def cancel_run(
     run_id: uuid.UUID,
-    db: DbDep,
     run_services: RunServicesDep,
 ) -> RunRead:
     try:
-        run = await run_services.lifecycle.cancel_run(db, run_id)
+        result = await run_services.lifecycle.cancel_run(run_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
-    return run_service.build_run_read(run, counts_map.get(run.id))
+    return await _build_run_read(run_services, result.run_id)
 
 
 @router.post("/{run_id}/force-release", response_model=RunRead)
 async def force_release(
     run_id: uuid.UUID,
-    db: DbDep,
     run_services: RunServicesDep,
 ) -> RunRead:
     try:
-        run = await run_services.lifecycle.force_release(db, run_id)
+        result = await run_services.lifecycle.force_release(run_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
-    counts_map = await run_services.query.fetch_session_counts(db, [run.id])
-    return run_service.build_run_read(run, counts_map.get(run.id))
+    return await _build_run_read(run_services, result.run_id)

@@ -534,11 +534,14 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             deferred_stop=_lifecycle_policy_svc_runs,
         )
-        run_lifecycle = RunLifecycleService(publisher=test_event_bus, settings=settings_service, release=run_release)
+        run_lifecycle = RunLifecycleService(
+            publisher=test_event_bus, settings=settings_service, release=run_release, session_factory=sf
+        )
         run_allocator = RunAllocatorService(
             publisher=test_event_bus,
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
+            session_factory=sf,
         )
         run_failure = RunFailureService(
             publisher=test_event_bus,
@@ -554,6 +557,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             reservation=RunReservationService(review=build_review_service()),
             incidents=LifecycleIncidentService(),
+            session_factory=sf,
         )
         run_query = RunQueryService()
         return RunServices(
