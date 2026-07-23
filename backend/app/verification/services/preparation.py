@@ -166,6 +166,12 @@ class VerificationPreparationService:
         # the create runs in a plain session; the tokenized lease and the
         # atomic device-id stamp follow in their own committed transaction so a
         # crashed retry resumes from ``Job.payload`` instead of duplicating.
+        # This window is deliberately non-atomic: a crash between the two
+        # commits below orphans an unverified ``verifying`` device (the
+        # device_id/lease commit never lands, so ``Job.payload`` has no
+        # ``device_id`` to resume from), and the retry re-runs
+        # ``create_device`` fresh — the identity gate rejects it as a
+        # duplicate rather than resuming the original row.
         async with self._session_factory() as db:
             try:
                 saved = await self._crud.create_device(

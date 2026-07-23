@@ -906,6 +906,59 @@ async def test_existing_device_verification_marks_device_verified(
     assert updated["verified_at"] is not None
 
 
+async def test_existing_device_verification_update_persists_new_host_id(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    other_host_resp = await client.post(
+        "/api/hosts",
+        json={**HOST_PAYLOAD, "hostname": "verify-host-2", "ip": "10.0.0.21"},
+    )
+    assert other_host_resp.status_code == 201
+    other_host_id = str(other_host_resp.json()["id"])
+
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"discovered-{uuid.uuid4()}",
+        connection_target=f"discovered-{uuid.uuid4()}",
+        name="Discovered Pixel",
+        os_version="14",
+        operational_state=DeviceOperationalState.offline,
+        host_id=uuid.UUID(default_host_id),
+        verified_at=None,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.commit()
+    await db_session.refresh(device)
+
+    with (
+        _patch_running_node(),
+        patch.object(ReconcilerAgentService, "stop_node", new=AsyncMock()),
+        patch(
+            "app.verification.services.runner.httpx.AsyncClient",
+            return_value=_mock_http_client(payload={"healthy": True, "adb_connected": {"connected": True}}),
+        ),
+    ):
+        resp = await client.post(
+            f"/api/verification/devices/{device.id}/jobs",
+            json={"host_id": other_host_id},
+        )
+        assert resp.status_code == 202
+        job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
+
+    assert job["status"] == "completed"
+    updated = (await client.get(f"/api/devices/{device.id}")).json()
+    assert updated["readiness_state"] == "verified"
+    assert updated["host_id"] == other_host_id
+
+
 async def test_existing_running_device_verification_can_enter_verifying(
     client: AsyncClient,
     db_session: AsyncSession,
