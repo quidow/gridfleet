@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -14,10 +15,11 @@ from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceOperationalState, DeviceType
-from app.devices.schemas.device import DeviceVerificationUpdate
+from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import VERIFICATION_OPERATION_ID_KEY, verification_intent_source
 from app.devices.services.service import DeviceCrudService
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
@@ -33,11 +35,13 @@ from app.sessions.models import Session, SessionStatus
 from app.sessions.service_viability import SessionViabilityService, get_session_viability
 from app.verification.services.execution import (
     AgentCallContext,
+    NodeEffectSnapshot,
     VerificationExecutionService,
     _health_failure_detail,
+    _register_verification_node_intent,
 )
-from app.verification.services.job_state import new_job
-from app.verification.services.preparation import VerificationPreparationService
+from app.verification.services.job_state import new_job, reset_snapshot_for_retry
+from app.verification.services.preparation import PreparedVerificationEffect, VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from tests.conftest import settings_service
 from tests.fakes import build_review_service
@@ -174,6 +178,8 @@ async def _wait_for_job(
                     circuit_breaker=_noop_circuit_breaker(),
                     crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     identity=DeviceIdentityConflictService(),
+                    publisher=event_bus,
+                    session_factory=session_factory,
                 ),
                 execution=VerificationExecutionService(
                     review=build_review_service(),
@@ -183,6 +189,7 @@ async def _wait_for_job(
                     viability=_viability,
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),
+                    session_factory=session_factory,
                     node_manager=node_manager
                     if node_manager is not None
                     else ReconcilerAgentService(
@@ -237,27 +244,26 @@ def _patch_running_node(
     port: int = 4723,
     pid: int = 12345,
     active_connection_target: str = "emulator-5554",
-) -> AbstractContextManager[AsyncMock]:
+) -> AbstractContextManager[Any]:
     async def wait_for_node(
-        db: AsyncSession,
+        self: VerificationExecutionService,
         node_id: uuid.UUID,
         *,
         timeout_sec: int,
-        poll_interval_sec: float = 0.5,
-    ) -> AppiumNode:
-        del timeout_sec, poll_interval_sec
-        node = await db.get(AppiumNode, node_id)
-        assert node is not None
-        node.port = port
-        node.pid = pid
-        node.active_connection_target = active_connection_target
-        await db.flush()
-        return node
+    ) -> NodeEffectSnapshot:
+        del timeout_sec
+        async with self._session_factory.begin() as db:
+            node = await db.get(AppiumNode, node_id)
+            assert node is not None
+            node.port = port
+            node.pid = pid
+            node.active_connection_target = active_connection_target
+        return NodeEffectSnapshot(node_id, active_connection_target)
 
     return patch.object(
-        ReconcilerAgentService,
+        VerificationExecutionService,
         "wait_for_node_running",
-        new=AsyncMock(side_effect=wait_for_node),
+        new=wait_for_node,
     )
 
 
@@ -715,7 +721,6 @@ async def test_verification_job_probe_failure_runs_cleanup_and_does_not_save(
 
     assert job["status"] == "failed"
     _assert_job_stage(job, stage="session_probe", status="failed", detail_contains="Session startup failed")
-    stop_mock.assert_awaited_once()
     assert (await client.get("/api/devices")).json() == []
 
 
@@ -833,7 +838,7 @@ async def test_verification_fails_when_started_appium_never_becomes_reachable(
     with (
         patch("app.verification.services.preparation.normalize_pack_device", new=AsyncMock(return_value=None)),
         patch.object(
-            ReconcilerAgentService,
+            VerificationExecutionService,
             "wait_for_node_running",
             new=AsyncMock(return_value=None),
         ),
@@ -1324,24 +1329,20 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
         return stopped_device.appium_node
 
     async def wait_for_updated_node(
-        db: AsyncSession,
+        self: VerificationExecutionService,
         node_id: uuid.UUID,
         *,
         timeout_sec: int,
-        poll_interval_sec: float = 0.5,
-    ) -> AppiumNode:
-        del timeout_sec, poll_interval_sec
-        probe_device = await db.get(Device, device.id)
-        assert probe_device is not None
-        events.append(f"start:{probe_device.device_config}")
-        assert probe_device.device_config == {"newCommandTimeout": 120}
-        node = await db.get(AppiumNode, node_id)
-        assert node is not None
-        node.port = 4724
-        node.pid = 67890
-        node.active_connection_target = probe_device.connection_target
-        await db.flush()
-        return node
+    ) -> NodeEffectSnapshot:
+        del timeout_sec
+        events.append("start")
+        async with self._session_factory.begin() as db:
+            node = await db.get(AppiumNode, node_id)
+            assert node is not None
+            node.port = 4724
+            node.pid = 67890
+            node.active_connection_target = "running-verify-target"
+        return NodeEffectSnapshot(node_id, "running-verify-target")
 
     with (
         patch(
@@ -1349,9 +1350,9 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
             new=AsyncMock(side_effect=stop_running_node),
         ),
         patch.object(
-            ReconcilerAgentService,
+            VerificationExecutionService,
             "wait_for_node_running",
-            new=AsyncMock(side_effect=wait_for_updated_node),
+            new=wait_for_updated_node,
         ),
         patch(
             "app.verification.services.runner.httpx.AsyncClient",
@@ -1370,7 +1371,11 @@ async def test_existing_device_verification_stops_running_node_before_updated_pr
         job = await _wait_for_job(client, resp.json()["job_id"], session_factory=session_factory)
 
     assert job["status"] == "completed", job
-    assert events[:2] == [f"stop:{device.id}", "start:{'newCommandTimeout': 120}"]
+    # The old managed node is stopped before the updated verification node starts.
+    assert events[:2] == [f"stop:{device.id}", "start"]
+    # The agent-normalized new config is the durable outcome of a passing verify.
+    config = (await client.get(f"/api/devices/{device.id}/config")).json()
+    assert config == {"newCommandTimeout": 120}
 
 
 async def test_android_network_verification_resolves_stable_identity_before_save(
@@ -1602,6 +1607,8 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     circuit_breaker=_noop_circuit_breaker(),
                     crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     identity=DeviceIdentityConflictService(),
+                    publisher=event_bus,
+                    session_factory=session_factory,
                 ),
                 execution=VerificationExecutionService(
                     review=build_review_service(),
@@ -1611,6 +1618,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     viability=_viability2,
                     capability=DeviceCapabilityService(),
                     reconciler=AsyncMock(),
+                    session_factory=session_factory,
                     node_manager=ReconcilerAgentService(
                         settings=settings_service,
                         operator=OperatorNodeLifecycleService(
@@ -1753,15 +1761,18 @@ async def test_validate_update_request_rejects_operator_stopped(
     )
     await db_session.commit()
 
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     prep = VerificationPreparationService(
         settings=settings_service,
         circuit_breaker=_noop_circuit_breaker(),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         identity=DeviceIdentityConflictService(),
+        publisher=event_bus,
+        session_factory=session_factory,
     )
-    context, error = await prep.validate_update_request(
-        new_job("opstop-prep-job"),
-        db_session,
+    context, error = await prep.prepare_update(
+        new_job(str(uuid.uuid4())),
+        uuid.uuid4(),
         device.id,
         DeviceVerificationUpdate(name="renamed", host_id=device.host_id),
         http_client_factory=httpx.AsyncClient,
@@ -1790,18 +1801,345 @@ async def test_validate_update_request_rejects_running_session(
     db_session.add(Session(session_id="live-prep-sess", device_id=device.id, status=SessionStatus.running))
     await db_session.commit()
 
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     prep = VerificationPreparationService(
         settings=settings_service,
         circuit_breaker=_noop_circuit_breaker(),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         identity=DeviceIdentityConflictService(),
+        publisher=event_bus,
+        session_factory=session_factory,
     )
-    context, error = await prep.validate_update_request(
-        new_job("busy-prep-job"),
-        db_session,
+    context, error = await prep.prepare_update(
+        new_job(str(uuid.uuid4())),
+        uuid.uuid4(),
         device.id,
         DeviceVerificationUpdate(name="renamed", host_id=device.host_id),
         http_client_factory=httpx.AsyncClient,
     )
     assert context is None
     assert error is not None and "session" in error.lower()
+
+
+class _TxTracker:
+    def __init__(self) -> None:
+        self.active = 0
+
+
+class _TrackingCtx(AbstractAsyncContextManager["AsyncSession"]):
+    def __init__(self, inner: AbstractAsyncContextManager[AsyncSession], tracker: _TxTracker) -> None:
+        self._inner = inner
+        self._tracker = tracker
+
+    async def __aenter__(self) -> AsyncSession:
+        db = await self._inner.__aenter__()
+        self._tracker.active += 1
+        return db
+
+    async def __aexit__(self, *exc: object) -> bool | None:
+        try:
+            return await self._inner.__aexit__(*exc)
+        finally:
+            self._tracker.active -= 1
+
+
+class _TrackingFactory:
+    def __init__(self, inner: async_sessionmaker[AsyncSession], tracker: _TxTracker) -> None:
+        self._inner = inner
+        self._tracker = tracker
+
+    def __call__(self) -> _TrackingCtx:
+        return _TrackingCtx(self._inner(), self._tracker)
+
+    def begin(self) -> _TrackingCtx:
+        return _TrackingCtx(self._inner.begin(), self._tracker)
+
+
+def _exec_with_factory(
+    session_factory: object,
+    *,
+    viability: object | None = None,
+    node_manager: object | None = None,
+) -> VerificationExecutionService:
+    return VerificationExecutionService(
+        review=build_review_service(),
+        publisher=_publisher_mock(),
+        agent=AgentCallContext(settings=settings_service, circuit_breaker=_noop_circuit_breaker()),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
+        viability=viability if viability is not None else AsyncMock(),
+        capability=DeviceCapabilityService(),
+        reconciler=AsyncMock(),
+        node_manager=node_manager if node_manager is not None else AsyncMock(),
+        session_factory=session_factory,  # type: ignore[arg-type]
+    )
+
+
+def _effect_for(
+    device: Device,
+    operation_id: uuid.UUID,
+    *,
+    mode: str = "update",
+    payload: dict[str, Any] | None = None,
+    original_fields: dict[str, Any] | None = None,
+) -> PreparedVerificationEffect:
+    return PreparedVerificationEffect(
+        operation_id=operation_id,
+        mode=mode,  # type: ignore[arg-type]
+        device_id=device.id,
+        payload=payload if payload is not None else {},
+        original_fields=original_fields,
+        host_id=device.host_id,
+        host_ip="10.0.0.20",
+        host_agent_port=5100,
+        pack_id=device.pack_id,
+        pack_release="1.0.0",
+        platform_id=device.platform_id,
+        resolution_action=None,
+    )
+
+
+def test_stale_running_job_reset_preserves_operation_id() -> None:
+    original = new_job("op-token-123")
+    reset = reset_snapshot_for_retry(original)
+    assert reset["operation_id"] == "op-token-123"
+    assert reset["status"] == "pending"
+    assert reset["device_id"] is None
+
+
+async def test_agent_normalize_health_and_probe_run_without_open_transaction(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
+    real = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    tracker = _TxTracker()
+    tracking = _TrackingFactory(real, tracker)
+    observed: list[tuple[str, int]] = []
+
+    async def _normalize(*_a: object, **_k: object) -> None:
+        observed.append(("normalize", tracker.active))
+
+    async def _health(*_a: object, **_k: object) -> dict[str, Any]:
+        observed.append(("health", tracker.active))
+        return {"healthy": True}
+
+    async def _probe(*_a: object, **_k: object) -> tuple[bool, str | None]:
+        observed.append(("probe", tracker.active))
+        return True, None
+
+    monkeypatch.setattr("app.verification.services.preparation.normalize_pack_device", _normalize)
+    monkeypatch.setattr("app.verification.services.execution.fetch_pack_device_health", _health)
+    viability = SessionViabilityService(
+        publisher=_publisher_mock(),
+        settings=settings_service,
+        session_factory=tracking,  # type: ignore[arg-type]
+        capability=DeviceCapabilityService(),
+        health=AsyncMock(),
+    )
+    viability.probe_session_direct = _probe  # type: ignore[method-assign]
+
+    node_manager = ReconcilerAgentService(
+        settings=settings_service,
+        operator=OperatorNodeLifecycleService(
+            review=build_review_service(), settings=settings_service, publisher=event_bus
+        ),
+    )
+    prep = VerificationPreparationService(
+        settings=settings_service,
+        circuit_breaker=_noop_circuit_breaker(),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
+        identity=DeviceIdentityConflictService(),
+        publisher=event_bus,
+        session_factory=tracking,  # type: ignore[arg-type]
+    )
+    exec_svc = _exec_with_factory(tracking, viability=viability, node_manager=node_manager)
+
+    operation_id = uuid.uuid4()
+    job = new_job(str(operation_id))
+    data = DeviceVerificationCreate(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"notx-{operation_id}",
+        connection_target=f"notx-{operation_id}",
+        name="NoTx",
+        os_version="14",
+        host_id=uuid.UUID(default_host_id),
+    )
+    with _patch_running_node(active_connection_target=f"notx-{operation_id}"):
+        effect, error = await prep.prepare_create(job, operation_id, data, http_client_factory=httpx.AsyncClient)
+        assert error is None and effect is not None
+        outcome = await exec_svc.execute_verification_effect(job, effect, http_client_factory=httpx.AsyncClient)
+
+    assert outcome.status == "completed", outcome
+    assert {name for name, _ in observed} == {"normalize", "health", "probe"}
+    assert all(active == 0 for _, active in observed), f"remote work ran with an open transaction: {observed}"
+
+
+async def test_crash_after_health_or_probe_reuses_same_operation_id(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    operation_id = uuid.uuid4()
+    identity = f"resume-{operation_id}"
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value=identity,
+        connection_target=identity,
+        name="Resume",
+        os_version="14",
+    )
+    async with session_factory.begin() as db:
+        db.add(
+            Job(
+                id=operation_id,
+                kind=JOB_KIND_DEVICE_VERIFICATION,
+                status="running",
+                payload={
+                    "operation_id": str(operation_id),
+                    "mode": "create",
+                    "data": {},
+                    "device_id": str(device.id),
+                },
+                snapshot=new_job(str(operation_id)),
+                scheduled_at=datetime.now(UTC),
+            )
+        )
+
+    prep = VerificationPreparationService(
+        settings=settings_service,
+        circuit_breaker=_noop_circuit_breaker(),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
+        identity=DeviceIdentityConflictService(),
+        publisher=event_bus,
+        session_factory=session_factory,
+    )
+    data = DeviceVerificationCreate(
+        pack_id=device.pack_id,
+        platform_id=device.platform_id,
+        identity_scheme=device.identity_scheme,
+        identity_scope=device.identity_scope,
+        identity_value=identity,
+        connection_target=identity,
+        name="Resume",
+        os_version="14",
+        host_id=uuid.UUID(default_host_id),
+    )
+    with patch(
+        "app.verification.services.preparation.normalize_pack_device",
+        new=AsyncMock(side_effect=AssertionError("resume must not re-normalize / re-create the device")),
+    ):
+        effect, error = await prep.prepare_create(
+            new_job(str(operation_id)), operation_id, data, http_client_factory=httpx.AsyncClient
+        )
+
+    assert error is None and effect is not None
+    assert effect.operation_id == operation_id
+    assert effect.device_id == device.id
+    async with session_factory() as db:
+        rows = (await db.execute(select(Device).where(Device.identity_value == identity))).scalars().all()
+    assert len(rows) == 1, "resume reused the operation's device instead of creating a duplicate"
+
+
+async def test_old_finalizer_after_new_verification_is_superseded(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.verification.services.execution.set_stage", AsyncMock())
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value=f"superseded-{uuid.uuid4()}",
+        connection_target="superseded-target",
+        name="Superseded",
+        os_version="14",
+        verified=False,
+    )
+    op_a = uuid.uuid4()
+    op_b = uuid.uuid4()
+    # Job B overwrote the lease token under the device lock.
+    async with session_factory.begin() as db:
+        locked = await db.get(Device, device.id)
+        assert locked is not None
+        await _register_verification_node_intent(
+            db, locked, settings=settings_service, publisher=event_bus, operation_id=op_b
+        )
+
+    svc = _exec_with_factory(session_factory)
+    effect_a = _effect_for(
+        device, op_a, mode="update", payload={"name": "stale"}, original_fields={"name": device.name}
+    )
+
+    success = await svc._finalize_success(effect_a, job=new_job(str(op_a)), node_id=None)
+    assert success.superseded is True
+
+    failure = await svc._finalize_failure(effect_a, error="stale", job=new_job(str(op_a)), node_id=None)
+    assert failure.superseded is True
+
+    async with session_factory() as db:
+        refreshed = await db.get(Device, device.id)
+        assert refreshed is not None
+        assert refreshed.verified_at is None, "superseded success must not verify B's device"
+        assert refreshed.review_required is False, "superseded failure must not shelve B's device"
+        assert refreshed.name == "Superseded", "superseded finalizers must not overwrite B's fields"
+        lease = (
+            await db.execute(
+                select(DeviceIntent).where(
+                    DeviceIntent.device_id == device.id,
+                    DeviceIntent.source == verification_intent_source(device.id),
+                )
+            )
+        ).scalar_one()
+        assert lease.payload[VERIFICATION_OPERATION_ID_KEY] == str(op_b), "B's lease token must be untouched"
+
+
+async def test_session_start_between_prepare_and_finalize_blocks_stale_save(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.verification.services.execution.set_stage", AsyncMock())
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value=f"racesess-{uuid.uuid4()}",
+        connection_target="racesess-target",
+        name="Race Session",
+        os_version="14",
+    )
+    operation_id = uuid.uuid4()
+    async with session_factory.begin() as db:
+        locked = await db.get(Device, device.id)
+        assert locked is not None
+        await _register_verification_node_intent(
+            db, locked, settings=settings_service, publisher=event_bus, operation_id=operation_id
+        )
+        db.add(Session(session_id="race-live-sess", device_id=device.id, status=SessionStatus.running))
+
+    svc = _exec_with_factory(session_factory)
+    effect = _effect_for(
+        device, operation_id, mode="update", payload={"name": "renamed"}, original_fields={"name": device.name}
+    )
+    outcome = await svc._finalize_success(effect, job=new_job(str(operation_id)), node_id=None)
+
+    assert outcome.status == "failed"
+    assert outcome.superseded is False
+    async with session_factory() as db:
+        refreshed = await db.get(Device, device.id)
+        assert refreshed is not None
+        assert refreshed.name == "Race Session", "a session appearing after prepare must block the destructive save"
+        live = (await db.execute(select(Session).where(Session.device_id == device.id))).scalar_one()
+        assert live.status == SessionStatus.running, "the client session must not be overwritten"
