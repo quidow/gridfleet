@@ -280,6 +280,8 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
         circuit_breaker=circuit_breaker,
         crud=crud_svc,
         identity=identity_conflict_svc,
+        publisher=bus,
+        session_factory=session_factory,
         pool=http_pool,
     )
     verification_execution_svc = VerificationExecutionService(
@@ -291,6 +293,7 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
         reconciler=reconciler_svc,
         node_manager=reconciler_agent_svc,
         review=review_svc,
+        session_factory=session_factory,
     )
     verification_runner_svc = VerificationRunnerService(
         session_factory=session_factory,
