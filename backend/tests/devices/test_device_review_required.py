@@ -171,7 +171,10 @@ async def test_restore_device_to_run_clears_review_required(db_session: AsyncSes
     await build_review_service().mark_review_required(db_session, device, reason="stuck", source="session_viability")
     await db_session.commit()
 
+    # restore_device_to_run is transaction-local now (no internal commit); the
+    # caller owns the boundary, so commit before re-reading the review flag.
     await RunReservationService(review=build_review_service()).restore_device_to_run(db_session, device.id)
+    await db_session.commit()
     await db_session.refresh(device)
     assert device.review_required is False
     assert device.review_reason is None

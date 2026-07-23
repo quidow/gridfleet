@@ -26,7 +26,7 @@ def _make_loop(calls: list[str], *, sync_error: Exception | None = None) -> Appi
         if sync_error is not None:
             raise sync_error
 
-    async def check_due_devices(_db: object) -> None:
+    async def check_due_devices() -> None:
         calls.append("viability")
 
     services = SessionServices(

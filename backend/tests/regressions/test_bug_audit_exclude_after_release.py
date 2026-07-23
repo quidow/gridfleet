@@ -95,9 +95,12 @@ async def test_exclude_marks_released_reservation_as_excluded(
         return snapshot
 
     with patch.object(_reservation, "get_device_reservation_with_entry", side_effect=_get_then_release):
+        # exclude_device_from_run is transaction-local now (no internal commit);
+        # the caller owns the boundary.
         await _reservation.RunReservationService(review=build_review_service()).exclude_device_from_run(
-            db_session, device_id, reason="test race", commit=True
+            db_session, device_id, reason="test race"
         )
+        await db_session.commit()
 
     # Re-read the reservation on a fresh session.
     async with db_session_maker() as side:
