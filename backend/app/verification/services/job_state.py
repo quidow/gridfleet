@@ -51,6 +51,7 @@ def new_stage(name: str) -> dict[str, Any]:
 def new_job(job_id: str) -> dict[str, Any]:
     return {
         "job_id": job_id,
+        "operation_id": job_id,
         "status": "pending",
         "current_stage": None,
         "error": None,
@@ -68,6 +69,10 @@ def snapshot(job: dict[str, Any]) -> dict[str, Any]:
 def reset_snapshot_for_retry(existing: dict[str, Any]) -> dict[str, Any]:
     reset = new_job(str(existing["job_id"]))
     reset["started_at"] = existing.get("started_at", reset["started_at"])
+    # The operation token is immutable across retries — a re-run of the same Job
+    # reuses the same ``operation_id`` so a crashed episode's tokenized lease is
+    # resumed, never duplicated.
+    reset["operation_id"] = existing.get("operation_id", reset["operation_id"])
     return reset
 
 
@@ -75,10 +80,21 @@ def hydrate_job(
     snapshot_data: dict[str, Any],
     *,
     db_job_id: str,
+    payload: dict[str, Any],
     session_factory: SessionFactory,
     publisher: EventPublisher,
 ) -> dict[str, Any]:
     job = snapshot(snapshot_data)
+    # The operation token is ``str(Job.id)``: the payload the request was
+    # enqueued with, the persisted snapshot, and the database Job id must all
+    # agree, or the job row was tampered with / built by a stale writer.
+    snapshot_operation_id = str(job.get("operation_id"))
+    payload_operation_id = str(payload.get("operation_id"))
+    if snapshot_operation_id != db_job_id or payload_operation_id != db_job_id:
+        raise ValueError(
+            f"verification job {db_job_id} operation-id mismatch "
+            f"(snapshot={snapshot_operation_id!r}, payload={payload_operation_id!r})"
+        )
     job[_DB_JOB_ID_KEY] = db_job_id
     job[_SESSION_FACTORY_KEY] = session_factory
     job[_PUBLISHER_KEY] = publisher

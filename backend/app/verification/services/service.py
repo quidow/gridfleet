@@ -41,7 +41,11 @@ class VerificationService:
             row = await job_queue.create_job(
                 db,
                 kind=JOB_KIND_DEVICE_VERIFICATION,
-                payload={"mode": "create", "data": data.model_dump(mode="json")},
+                payload={
+                    "operation_id": str(job_uuid),
+                    "mode": "create",
+                    "data": data.model_dump(mode="json"),
+                },
                 snapshot=new_job(str(job_uuid)),
                 max_attempts=1,
                 job_id=job_uuid,
@@ -57,6 +61,7 @@ class VerificationService:
                 db,
                 kind=JOB_KIND_DEVICE_VERIFICATION,
                 payload={
+                    "operation_id": str(job_uuid),
                     "mode": "update",
                     "device_id": str(device_id),
                     "data": data.model_dump(mode="json", exclude_unset=True),
@@ -103,7 +108,11 @@ class VerificationService:
         await job_queue.create_job(
             db,
             kind=JOB_KIND_DEVICE_VERIFICATION,
-            payload={"mode": "create", "data": data.model_dump(mode="json")},
+            payload={
+                "operation_id": str(job_id),
+                "mode": "create",
+                "data": data.model_dump(mode="json"),
+            },
             snapshot=new_job(str(job_id)),
             max_attempts=1,
             job_id=job_id,

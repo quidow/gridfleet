@@ -49,7 +49,11 @@ class VerificationRunnerService:
         if row is None or row.kind != JOB_KIND_DEVICE_VERIFICATION:
             return None
         return hydrate_job(
-            row.snapshot, db_job_id=job_id, session_factory=self._session_factory, publisher=self._publisher
+            row.snapshot,
+            db_job_id=job_id,
+            payload=row.payload,
+            session_factory=self._session_factory,
+            publisher=self._publisher,
         )
 
     async def run_persisted_verification_job(self, job_id: str, request: dict[str, Any]) -> None:
