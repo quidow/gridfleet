@@ -56,7 +56,6 @@ def _mock_release() -> AsyncMock:
     mock.lock_run_devices = AsyncMock(return_value={})
     mock.release_devices = AsyncMock(return_value=[])
     mock.clear_desired_grid_run_id_for_run = AsyncMock()
-    mock.terminate_run_sessions_and_probe_survivors = AsyncMock(return_value=set())
     mock.complete_deferred_stops_post_commit = AsyncMock()
     return mock
 

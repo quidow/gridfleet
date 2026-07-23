@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -10,13 +9,10 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core import metrics_recorders
-from app.core.concurrency import per_key_semaphores
 
 if TYPE_CHECKING:
     import uuid
-    from collections import defaultdict
     from collections.abc import Mapping
-    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +33,6 @@ from app.devices.services.intent_types import (
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import in_maintenance
-from app.grid import appium_direct
 from app.grid.allocation import resolve_router_target
 from app.packs.services import lifecycle as pack_lifecycle
 from app.sessions import service as session_service
@@ -269,127 +264,3 @@ class RunReleaseService:
             if device is None:
                 continue
             await self._deferred_stop.complete_deferred_stop_if_session_ended(db, device)
-
-    async def _mark_running_sessions_released(
-        self,
-        db: AsyncSession,
-        run: TestRun,
-        released_at: datetime,
-        *,
-        probe_survivors: bool = False,
-        close_rows: bool = True,
-    ) -> set[uuid.UUID]:
-        del released_at  # close_running_session stamps ended_at itself
-
-        # ``pending`` is the grid allocate->confirm window. A run cancelled while a
-        # session is pending must terminalize that row too (#3).
-        stmt = (
-            select(Session)
-            .options(selectinload(Session.device), selectinload(Session.run))
-            .where(
-                Session.run_id == run.id,
-                live_session_predicate(),
-            )
-        )
-        result = await db.execute(stmt)
-        sessions = result.scalars().all()
-        if not sessions:
-            return set()
-
-        running_device_ids = {
-            session.device_id
-            for session in sessions
-            if session.status == SessionStatus.running and session.device_id is not None
-        }
-        devices_by_id: dict[uuid.UUID, Device] = {}
-        if running_device_ids:
-            device_stmt = (
-                select(Device)
-                .options(selectinload(Device.appium_node), selectinload(Device.host))
-                .where(Device.id.in_(running_device_ids))
-            )
-            devices_by_id = {device.id: device for device in (await db.execute(device_stmt)).scalars()}
-
-        targets: dict[uuid.UUID, str | None] = {}
-        for session in sessions:
-            if session.status == SessionStatus.running:
-                targets[session.id] = _resolve_session_target(session, devices_by_id)
-
-        host_semaphores: defaultdict[uuid.UUID | None, asyncio.Semaphore] = per_key_semaphores(
-            TERMINATE_CONCURRENCY_PER_HOST
-        )
-
-        async def _terminate(session: Session, target: str) -> bool:
-            host_id = session.device.host_id if session.device is not None else None
-            async with host_semaphores[host_id]:
-                return await appium_direct.terminate_session(target, session.session_id)
-
-        running_with_target = [
-            (session, target)
-            for session in sessions
-            if session.status == SessionStatus.running and (target := targets.get(session.id)) is not None
-        ]
-        results = await asyncio.gather(*[_terminate(session, target) for session, target in running_with_target])
-        terminated_ok = {session.id: ok for (session, _), ok in zip(running_with_target, results, strict=True)}
-
-        survivors: set[uuid.UUID] = set()
-        if probe_survivors:
-            survivors = await self._probe_session_survivors(running_with_target, host_semaphores)
-            survivors |= {
-                session.device_id
-                for session in sessions
-                if session.status == SessionStatus.running
-                and targets.get(session.id) is None
-                and session.device_id is not None
-            }
-
-        if not close_rows:
-            return survivors
-        for session in sessions:
-            if session.status == SessionStatus.running:
-                if targets.get(session.id) is None:
-                    logger.warning(
-                        "Leaving session %s running because no Appium node target was resolvable during run %s release",
-                        session.session_id,
-                        run.id,
-                    )
-                    continue
-                if not terminated_ok[session.id]:
-                    logger.warning(
-                        "Leaving session %s running because Appium deletion failed during run %s release",
-                        session.session_id,
-                        run.id,
-                    )
-                    continue
-            await session_service.close_running_session(
-                db, session, attached_run=session.run, publisher=self._publisher
-            )
-        return survivors
-
-    async def _probe_session_survivors(
-        self,
-        running_with_target: list[tuple[Session, str]],
-        host_semaphores: defaultdict[uuid.UUID | None, asyncio.Semaphore],
-    ) -> set[uuid.UUID]:
-        """After the W3C DELETE, probe each session's liveness (design P3)."""
-
-        async def _alive(session: Session, target: str) -> bool:
-            host_id = session.device.host_id if session.device is not None else None
-            async with host_semaphores[host_id]:
-                verdict = await appium_direct.session_alive(target, session.session_id)
-                if verdict is None:
-                    await asyncio.sleep(SURVIVAL_PROBE_RETRY_DELAY_SEC)
-                    verdict = await appium_direct.session_alive(target, session.session_id)
-            return verdict is not False  # True (alive) or None (indeterminate) -> survivor
-
-        results = await asyncio.gather(*[_alive(session, target) for session, target in running_with_target])
-        return {
-            session.device_id
-            for (session, _), alive in zip(running_with_target, results, strict=True)
-            if alive and session.device_id is not None
-        }
-
-    async def terminate_run_sessions_and_probe_survivors(self, db: AsyncSession, run: TestRun) -> set[uuid.UUID]:
-        """Force-release pre-step (design P3): W3C DELETE every live session for the
-        run, then probe which genuinely survived."""
-        return await self._mark_running_sessions_released(db, run, now_utc(), probe_survivors=True, close_rows=False)

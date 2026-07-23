@@ -129,7 +129,6 @@ async def test_terminal_transition_retries_with_fresh_session_and_ordered_locks(
     release.lock_run_devices = AsyncMock(side_effect=lock_run_devices)
     release.release_devices = AsyncMock(side_effect=release_devices)
     release.clear_desired_grid_run_id_for_run = AsyncMock()
-    release.terminate_run_sessions_and_probe_survivors = AsyncMock(return_value=set())
     release.complete_deferred_stops_post_commit = AsyncMock()
 
     lifecycle = _make_lifecycle(release, factory)

@@ -785,9 +785,9 @@ async def test_force_release_restores_busy_run_devices(
     async def fake_terminate(target: str, _session_id: str, *, timeout: float = 10.0) -> bool:
         return True
 
-    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
+    monkeypatch.setattr("app.runs.service_teardown.appium_direct.terminate_session", fake_terminate)
     monkeypatch.setattr(
-        "app.runs.service_lifecycle_release.appium_direct.session_alive",
+        "app.runs.service_teardown.appium_direct.session_alive",
         AsyncMock(return_value=True),
     )
 

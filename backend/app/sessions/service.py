@@ -487,7 +487,7 @@ class SessionCrudService:
         # event, intent reconcile, and pack-drain completion (Step 3 delegation).
         # Capture any caller-pre-stamped ``error_type``/``error_message`` on the
         # identity-map instance (e.g. operator-kill provenance from
-        # ``service_kill.kill_session``) and forward them into the locked helper.
+        # ``SessionKillService.kill``) and forward them into the locked helper.
         # ``close_running_session_locked`` re-SELECTs the row under the lock, but
         # the identity map returns the same instance, so pending attribute
         # changes survive; the helper applies them AFTER ``_apply_session_terminal_status``
