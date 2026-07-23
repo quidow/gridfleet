@@ -496,7 +496,19 @@ class AllocationService:
         row = (await db.execute(stmt)).scalars().first()
         if row is None:
             return
-        await session_service.close_running_session(db, row, attached_run=row.run, publisher=self._publisher)
+        device_id = row.device_id
+        if device_id is None:
+            # No device to lock: fall back to the compatibility wrapper, which
+            # terminalizes the row inline without device reconcile.
+            await session_service.close_running_session(db, row, attached_run=row.run, publisher=self._publisher)
+            return
+        try:
+            locked = await device_locking.lock_device_handle(db, device_id)
+        except NoResultFound:
+            # Device row vanished: the wrapper terminalizes the row inline.
+            await session_service.close_running_session(db, row, attached_run=row.run, publisher=self._publisher)
+            return
+        await session_service.close_running_session_locked(db, locked, session_pk=row.id, publisher=self._publisher)
 
     async def reap_expired(self, db: DbSession) -> dict[str, int]:
         # Fails expired claims one by one (each `fail` reconciles + flushes). Batch

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
@@ -21,8 +21,6 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
     from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
@@ -73,14 +71,14 @@ async def test_probe_lock_collision_raises_typed_in_progress_error(
     svc = SessionViabilityService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
-        session_factory=AsyncMock(),
+        session_factory=async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False),
         capability=DeviceCapabilityService(),
         health=AsyncMock(),
     )
 
     assert issubclass(SessionViabilityProbeInProgressError, ValueError)
     with pytest.raises(SessionViabilityProbeInProgressError):
-        await svc.run_session_viability_probe(db_session, device, checked_by="recovery")
+        await svc.run_session_viability_probe(device.id, checked_by="recovery")
 
 
 @pytest.mark.usefixtures("seeded_driver_packs")
@@ -155,14 +153,8 @@ async def test_session_viability_restore_handles_external_reservation(
     monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", fake_get_caps)
 
     async def run_probe() -> None:
-        async with db_session_maker() as session:
-            stmt = (
-                select(Device)
-                .where(Device.id == device_id)
-                .options(selectinload(Device.appium_node), selectinload(Device.host))
-            )
-            device_obj = (await session.execute(stmt)).scalar_one()
-            await svc.run_session_viability_probe(session, device_obj, checked_by="manual")
+        # The probe owns its own fresh sessions; only the device id crosses in.
+        await svc.run_session_viability_probe(device_id, checked_by="manual")
 
     async def reserve_externally() -> None:
         await probe_started.wait()

@@ -218,10 +218,11 @@ class VerificationExecutionService:
         ok = False
         error: str | None = "Session create request failed: probe aborted"
         probe_result = ProbeResult(status="indeterminate", detail=error)
+        probe_id = probe_row.id
         try:
 
             async def _promote(appium_session_id: str) -> None:
-                if await confirm_probe_session(db, probe_row, appium_session_id=appium_session_id):
+                if await confirm_probe_session(db, probe_id, appium_session_id=appium_session_id):
                     await db.commit()
 
             ok, error = await self._viability.probe_session_direct(
@@ -229,7 +230,7 @@ class VerificationExecutionService:
             )
             probe_result = grid_probe_response_to_result((ok, error))
         finally:
-            await finalize_probe_session(db, probe_row, result=probe_result)
+            await finalize_probe_session(db, probe_id, result=probe_result)
             await db.commit()
 
         if ok:

@@ -35,7 +35,6 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
 from app.core.observability import get_logger
@@ -212,26 +211,23 @@ class RecoveryJobService:
     async def _run_probe(self, device_id: uuid.UUID) -> dict[str, Any]:
         last: dict[str, Any] = {}
         for attempt in range(max(1, RECOVERY_PROBE_ATTEMPTS)):
+            # Preflight: confirm the device still exists in a short read session
+            # that is CLOSED before the viability command runs. The viability
+            # probe owns its own fresh sessions (prepare/confirm/finalize/escalate);
+            # no session or ORM ``Device`` crosses into it — only the device id.
             async with self._session_factory() as db:
-                device = (
-                    await db.execute(
-                        select(Device)
-                        .where(Device.id == device_id)
-                        .options(selectinload(Device.host), selectinload(Device.appium_node))
-                    )
-                ).scalar_one_or_none()
-                if device is None:
-                    return {"status": "skipped", "note": "device no longer exists"}
-                try:
-                    last = await self._viability.run_session_viability_probe(
-                        db,
-                        device,
-                        checked_by=SessionViabilityCheckedBy.recovery,
-                    )
-                except SessionViabilityProbeInProgressError, SessionViabilityProbeNotPermittedError:
-                    return {"status": "skipped"}
-                except Exception as exc:  # noqa: BLE001 - failed effect is finalized durably
-                    last = {"status": "failed", "error": str(exc)}
+                exists = (await db.execute(select(Device.id).where(Device.id == device_id))).one_or_none()
+            if exists is None:
+                return {"status": "skipped", "note": "device no longer exists"}
+            try:
+                last = await self._viability.run_session_viability_probe(
+                    device_id,
+                    checked_by=SessionViabilityCheckedBy.recovery,
+                )
+            except SessionViabilityProbeInProgressError, SessionViabilityProbeNotPermittedError:
+                return {"status": "skipped"}
+            except Exception as exc:  # noqa: BLE001 - failed effect is finalized durably
+                last = {"status": "failed", "error": str(exc)}
             if last.get("status") == "passed":
                 return last
             if attempt < RECOVERY_PROBE_ATTEMPTS - 1:

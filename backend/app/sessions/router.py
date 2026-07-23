@@ -149,6 +149,10 @@ async def update_session_status(
     db: DbDep,
     session_services: SessionServicesDep,
 ) -> Session:
-    return found_or_404(
+    session = found_or_404(
         await session_services.crud.update_session_status(db, session_id, data.status), "Session not found"
     )
+    # ``update_session_status`` is transaction-local (no commit); the entry
+    # point owns the boundary for the request-scoped session.
+    await db.commit()
+    return session

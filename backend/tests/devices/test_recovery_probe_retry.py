@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.devices.models import Device, DeviceOperationalState
+from app.devices.models import DeviceOperationalState
 from app.devices.services.lifecycle_policy_state import set_recovery_generation
 from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.sessions.service_viability import (
@@ -246,7 +246,7 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(
 
     probe_called: list[bool] = []
 
-    async def _capture_probe(db: AsyncSession, dev: Device, *, checked_by: object) -> dict[str, Any]:
+    async def _capture_probe(device_id: uuid.UUID, *, checked_by: object) -> dict[str, Any]:
         probe_called.append(True)
         return {"status": "passed"}
 

@@ -815,7 +815,7 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
         await sessions.update_session_status(
             "s1",
             status_payload,
-            db=object(),
+            db=DummySession(),
             session_services=SimpleNamespace(crud=crud_upd_ok),  # type: ignore[arg-type]
         )
         is session_obj
@@ -1169,21 +1169,23 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
 
     _viability_raises = AsyncMock(side_effect=ValueError("busy"))
     _session_svc_raises = SimpleNamespace(viability=SimpleNamespace(run_session_viability_probe=_viability_raises))
-    with patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)):
+    with patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)):
         with pytest.raises(HTTPException) as exc:
             await devices_control.device_session_test(
                 device_id,
                 db=object(),
+                device_services=_mock_ds_ctrl,
                 session_services=_session_svc_raises,
             )
     assert exc.value.status_code == 409
 
     _viability_ok = AsyncMock(return_value={"status": "passed"})
     _session_svc_ok = SimpleNamespace(viability=SimpleNamespace(run_session_viability_probe=_viability_ok))
-    with patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)):
+    with patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)):
         assert await devices_control.device_session_test(
             device_id,
             db=object(),
+            device_services=_mock_ds_ctrl,
             session_services=_session_svc_ok,
         ) == {"status": "passed"}
 

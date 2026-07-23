@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -14,7 +13,7 @@ from app.core.pagination import CursorPage, CursorToken, decode_cursor, encode_c
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device
-from app.devices.services.intent import IntentService
+from app.devices.services.intent_reconciler import reconcile_locked_device
 from app.packs.services import lifecycle as pack_lifecycle
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.sessions.filters import SessionFilters, exclude_non_test_sessions, exclude_reserved_sessions
@@ -28,6 +27,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.sql.elements import ColumnElement
 
+    from app.devices.locking import LockedDevice
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
     from app.sessions.protocols import DeviceSessionLifecycle
@@ -156,6 +156,69 @@ def _apply_session_terminal_status(session: Session, *, run_state: RunState | No
         session.status = SessionStatus.passed
 
 
+async def _committed_run_outcome(
+    db: AsyncSession,
+    run_id: uuid.UUID | None,
+) -> tuple[RunState | None, str | None]:
+    """Re-read the owning run's COMMITTED ``state``/``error`` (TR12 guard).
+
+    Non-locking scalar read: the run row is not a lock-order participant for
+    session close (Device -> Session), so a plain column read under the
+    device lock is sufficient and avoids taking a run-row lock that could
+    deadlock with the run-release path.
+    """
+    if run_id is None:
+        return None, None
+    committed = (await db.execute(select(TestRun.state, TestRun.error).where(TestRun.id == run_id))).one_or_none()
+    if committed is None:
+        return None, None
+    return committed.state, committed.error
+
+
+async def close_running_session_locked(
+    db: AsyncSession,
+    locked: LockedDevice,
+    *,
+    session_pk: uuid.UUID,
+    publisher: EventPublisher,
+    status_override: SessionStatus | None = None,
+    error_type: str | None = None,
+    error_message: str | None = None,
+) -> bool:
+    """Terminalize one session row under the caller's device-row proof.
+
+    The single shared close path. The caller MUST hold ``locked`` (acquired via
+    ``lock_device_handle``) for the session's device in this transaction; this
+    enforces the Device -> Session lock order. Returns False (idempotent no-op)
+    when the row is already terminal — a concurrent closer won the race.
+    """
+    locked.assert_active(db)
+    row = await db.scalar(
+        select(Session)
+        .options(selectinload(Session.device), selectinload(Session.run))
+        .where(Session.id == session_pk, Session.ended_at.is_(None))
+        .with_for_update()
+    )
+    if row is None:
+        return False
+    suppress_event = row.status == SessionStatus.pending or row.test_name == PROBE_TEST_NAME
+    run_state, run_error = await _committed_run_outcome(db, row.run_id)
+    row.ended_at = now_utc()
+    _apply_session_terminal_status(row, run_state=run_state, run_error=run_error)
+    if status_override is not None:
+        row.status = status_override
+    if error_type is not None:
+        row.error_type = error_type
+    if error_message is not None:
+        row.error_message = error_message
+    if not suppress_event:
+        queue_session_ended_event(db, row, device=locked.device, publisher=publisher)
+    await reconcile_locked_device(db, locked, publisher=publisher)
+    await pack_lifecycle.complete_drain_if_draining(db, locked.device.pack_id)
+    await db.flush()
+    return True
+
+
 async def close_running_session(
     db: AsyncSession,
     session: Session,
@@ -163,67 +226,49 @@ async def close_running_session(
     attached_run: TestRun | None,
     publisher: EventPublisher,
 ) -> None:
-    """Close one running session: stamp ended_at + terminal status, emit the
-    ended event, and revoke the active-session intent + reconcile its device.
+    """Compatibility wrapper for unmigrated observation callers.
 
-    The single shared close path used by both the session_sync liveness sweep
-    and the grid router's ``mark_ended`` handler. ``session.device`` must be
-    loaded for the event payload; ``attached_run`` carries the run-terminal
-    decision (pass the eager-loaded ``session.run``).
+    Acquires the device row lock once via ``lock_device_handle`` and delegates
+    to ``close_running_session_locked``. ``attached_run`` is accepted for
+    signature compatibility but unused — the locked helper re-reads the run's
+    committed state (TR12 guard). ``session.device`` need not be eager-loaded;
+    the locked helper eager-loads it under the lock.
     """
-    # Lock order (deadlock avoidance): take the device row lock BEFORE the
-    # session row is dirtied below. Otherwise the autoflush invoked by the
-    # ``select(TestRun ...)`` read stamps the session row first — session →
-    # device — the inverse of update_session_status and the run-release path
-    # (which holds device rows while closing their sessions). The two orders
-    # deadlock on the same session under concurrent teardown. A vanished
-    # device row means nothing to lock.
-    if session.device_id is not None:
-        with contextlib.suppress(NoResultFound):
-            await device_locking.lock_device(db, session.device_id)
-        # Re-check under the lock: a concurrent closer — the leader session_sync
-        # sweep, the router /sessions/ended handler, or run-release on another
-        # worker — may have terminalized this row between mark_ended's SELECT and
-        # our lock acquisition. Bail to avoid
-        # a double session.ended emit + double intent revoke. A column read (not
-        # the identity-mapped object) sees the winner's committed ended_at; the
-        # session row is still clean here, so this read does not autoflush a
-        # session UPDATE ahead of the lock.
+    del attached_run  # the locked helper re-reads committed run state
+    if session.device_id is None:
+        # No device to lock: stamp inline without device reconcile. Rare path
+        # (sessions are device-bound in practice); preserved for completeness.
         if await db.scalar(select(Session.ended_at).where(Session.id == session.id)) is not None:
             return
-    # A row still ``pending`` at close was never confirmed: ``session.started`` is queued
-    # only at confirm (allocation.py), and the row carries a placeholder ``alloc-<uuid>``
-    # session_id no consumer ever saw start. Emitting ``session.ended`` for it would be an
-    # unpaired event (a spurious "session ended" toast in the UI), so suppress it —
-    # matching the reaper's silent close of the same pending class (C12). Probe rows are
-    # suppressed for the same unpaired-event reason: probes never emit session.started,
-    # so a sweep-closed crash-orphaned probe row must not emit ended (WS-16.1). A confirmed
-    # (``running``) client row always emits ended.
-    suppress_ended_event = session.status == SessionStatus.pending or session.test_name == PROBE_TEST_NAME
-    session.ended_at = now_utc()
-    # Re-read the owning run's COMMITTED state rather than trust ``attached_run``: a
-    # concurrent cancel/abort can terminalize the run AFTER the caller eager-loaded it
-    # (the session_sync sweep loads ``session.run`` at sweep start). Closing on the stale
-    # ``active`` snapshot masks a cancelled run's session as ``passed`` (TR12 / #7
-    # outcome-masking lost-update). A column read (not the identity-mapped, possibly-stale
-    # object) under default autoflush also picks up the cancel path's own pending state.
-    run_id = session.run_id or (attached_run.id if attached_run is not None else None)
-    run_state: RunState | None = None
-    run_error: str | None = None
-    if run_id is not None:
-        committed = (await db.execute(select(TestRun.state, TestRun.error).where(TestRun.id == run_id))).one_or_none()
-        if committed is not None:
-            run_state, run_error = committed.state, committed.error
-    _apply_session_terminal_status(session, run_state=run_state, run_error=run_error)
-    if not suppress_ended_event:
-        queue_session_ended_event(db, session, device=session.device, publisher=publisher)
-    await db.flush()
-    if session.device_id is not None:
-        # active_session intents no longer exist; reconcile so the device's node reflects
-        # the post-session intent set (baseline/derived).
-        await IntentService(db).reconcile_now(session.device_id, publisher=publisher)
-    if session.device is not None:
-        await pack_lifecycle.complete_drain_if_draining(db, session.device.pack_id)
+        suppress_event = session.status == SessionStatus.pending or session.test_name == PROBE_TEST_NAME
+        run_state, run_error = await _committed_run_outcome(db, session.run_id)
+        session.ended_at = now_utc()
+        _apply_session_terminal_status(session, run_state=run_state, run_error=run_error)
+        if not suppress_event:
+            queue_session_ended_event(db, session, device=session.device, publisher=publisher)
+        await db.flush()
+        return
+    try:
+        locked = await device_locking.lock_device_handle(db, session.device_id)
+    except NoResultFound:
+        # Device row vanished: nothing to lock, terminalize the session inline.
+        if await db.scalar(select(Session.ended_at).where(Session.id == session.id)) is not None:
+            return
+        suppress_event = session.status == SessionStatus.pending or session.test_name == PROBE_TEST_NAME
+        run_state, run_error = await _committed_run_outcome(db, session.run_id)
+        session.ended_at = now_utc()
+        _apply_session_terminal_status(session, run_state=run_state, run_error=run_error)
+        if not suppress_event:
+            queue_session_ended_event(db, session, device=session.device, publisher=publisher)
+        await db.flush()
+        return
+    # Re-check under the lock: a concurrent closer may have terminalized
+    # this row between the caller's SELECT and our lock acquisition. The
+    # locked helper is itself idempotent, but skip the device reconcile when
+    # the row is already terminal.
+    if await db.scalar(select(Session.ended_at).where(Session.id == session.id)) is not None:
+        return
+    await close_running_session_locked(db, locked, session_pk=session.id, publisher=publisher)
 
 
 async def _has_session_rows(
@@ -408,50 +453,83 @@ class SessionCrudService:
         if session is None:
             return None
 
-        event_device = session.device
-        deferred_stop_target: Device | None = None
-        should_publish_ended = (
-            session.status == SessionStatus.running and session.ended_at is None and status != SessionStatus.running
+        if status == SessionStatus.running:
+            # Non-terminal transition: stamp the status only. No device lock,
+            # no close work, no reconcile — the session row stays live.
+            session.status = status
+            await db.refresh(session)
+            return session
+
+        device_id = session.device_id
+        if device_id is None:
+            # No device to lock: terminalize inline (rare path; sessions are
+            # device-bound in practice) mirroring the close wrapper's no-device
+            # branch without device reconcile.
+            should_publish_ended = session.status == SessionStatus.running and session.ended_at is None
+            session.status = status
+            if session.ended_at is None:
+                session.ended_at = now_utc()
+            if should_publish_ended:
+                queue_session_ended_event(db, session, device=None, publisher=self._publisher)
+            await db.flush()
+            await db.refresh(session)
+            return session
+
+        # Deadlock-avoidance: take the device row lock before the session row is
+        # dirtied. The query-invoked autoflush inside the next lock_device call
+        # would otherwise UPDATE the session row first — session → device, the
+        # inverse of the run release path, which holds device rows while closing
+        # their sessions; the two paths deadlock under concurrent teardown.
+        await device_locking.lock_device(db, device_id)
+        # Acquire the locked handle the shared close helper requires. Reuses the
+        # device row lock held above; the helper enforces Device → Session order
+        # and consolidates ended_at stamping, terminal status, the session.ended
+        # event, intent reconcile, and pack-drain completion (Step 3 delegation).
+        # Capture any caller-pre-stamped ``error_type``/``error_message`` on the
+        # identity-map instance (e.g. operator-kill provenance from
+        # ``service_kill.kill_session``) and forward them into the locked helper.
+        # ``close_running_session_locked`` re-SELECTs the row under the lock, but
+        # the identity map returns the same instance, so pending attribute
+        # changes survive; the helper applies them AFTER ``_apply_session_terminal_status``
+        # and so restores a non-None pre-stamped value that the run-derived
+        # attribution would otherwise overwrite. Forwarding ``None`` (the normal
+        # status-patch case with no pre-stamped error) means no override — the
+        # run-derived value stands, unchanged from current behavior.
+        prior_error_type = session.error_type
+        prior_error_message = session.error_message
+        locked = await device_locking.lock_device_handle(db, device_id)
+        closed = await close_running_session_locked(
+            db,
+            locked,
+            session_pk=session.id,
+            publisher=self._publisher,
+            status_override=status,
+            error_type=prior_error_type,
+            error_message=prior_error_message,
         )
-        if status != SessionStatus.running and session.device_id is not None:
-            # Lock order (deadlock avoidance): take the device row lock before
-            # the session row is dirtied. Otherwise the query-invoked autoflush
-            # inside the next lock_device call UPDATEs the session row first —
-            # session → device, the inverse of the run release path, which
-            # holds device rows while closing their sessions; the two paths
-            # deadlock under concurrent teardown.
-            await device_locking.lock_device(db, session.device_id)
-        session.status = status
-        if status != SessionStatus.running and session.ended_at is None:
-            session.ended_at = now_utc()
+        if not closed:
+            # Row was already terminal (a concurrent closer won the race before
+            # our lock, or the row was ended at entry): stamp the caller's
+            # status inline. The helper's event/reconcile/drain already ran on
+            # the first close, so they are not re-run.
+            session.status = status
+            await db.flush()
 
-        if status != SessionStatus.running and session.device_id is not None:
-            # Reconcile the device after the session ends. ``reconcile_device`` runs inside
-            # the helper so ``node.stop_pending`` and ``node.desired_state`` reflect the
-            # post-session intent set when the row lock is taken below.
-            await IntentService(db).reconcile_now(
-                session.device_id,
-                publisher=self._publisher,
-            )
+        # Deferred-stop / still-running detection — unique to this method. The
+        # shared close helper terminalizes the row and reconciles device intent;
+        # the tail decides whether to commission a deferred auto-stop now that
+        # no live session remains. ``complete_deferred_stop_if_session_ended``
+        # commits internally when it runs a deferred stop; the caller owns the
+        # commit for the status change otherwise.
+        running_stmt = select(Session).where(
+            Session.device_id == device_id,
+            Session.status == SessionStatus.running,
+            Session.ended_at.is_(None),
+            Session.session_id != session_id,
+        )
+        still_running = (await db.execute(running_stmt)).scalars().first() is not None
+        if not still_running:
+            await self._lifecycle.complete_deferred_stop_if_session_ended(db, locked.device)
 
-            locked_device = await device_locking.lock_device(db, session.device_id)
-            event_device = locked_device
-            running_stmt = select(Session).where(
-                Session.device_id == session.device_id,
-                Session.status == SessionStatus.running,
-                Session.ended_at.is_(None),
-                Session.session_id != session_id,
-            )
-            running_result = await db.execute(running_stmt)
-            still_running = running_result.scalars().first() is not None
-            if not still_running:
-                deferred_stop_target = locked_device
-            await pack_lifecycle.complete_drain_if_draining(db, locked_device.pack_id)
-
-        if should_publish_ended:
-            queue_session_ended_event(db, session, device=event_device, publisher=self._publisher)
-        await db.commit()
-        if deferred_stop_target is not None:
-            await self._lifecycle.complete_deferred_stop_if_session_ended(db, deferred_stop_target)
         await db.refresh(session)
         return session

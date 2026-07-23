@@ -84,13 +84,15 @@ async def test_claim_confirm_finalize_lifecycle(db_session: AsyncSession, db_hos
     assert row.ticket_id is None
     assert row.router_target == "http://probe-target:4723"
 
-    assert await confirm_probe_session(db_session, row, appium_session_id="real-appium-id") is True
+    assert await confirm_probe_session(db_session, row.id, appium_session_id="real-appium-id") is True
     await db_session.commit()
+    await db_session.refresh(row)
     assert row.status == SessionStatus.running
     assert row.session_id == "real-appium-id"
 
-    assert await finalize_probe_session(db_session, row, result=ProbeResult(status="ack")) is True
+    assert await finalize_probe_session(db_session, row.id, result=ProbeResult(status="ack")) is True
     await db_session.commit()
+    await db_session.refresh(row)
     assert row.status == SessionStatus.passed
     assert row.ended_at is not None
 
@@ -119,31 +121,32 @@ async def test_confirm_does_not_resurrect_a_lost_claim(db_session: AsyncSession,
     the probe's Appium session then converges through the orphan sweep."""
     row = await _claim(db_session, db_host, "probe-row-lost-claim")
     assert await finalize_probe_session(
-        db_session, row, result=ProbeResult(status="indeterminate", detail="claim reaped")
+        db_session, row.id, result=ProbeResult(status="indeterminate", detail="claim reaped")
     )
     await db_session.commit()
-    assert await confirm_probe_session(db_session, row, appium_session_id="late-id") is False
+    assert await confirm_probe_session(db_session, row.id, appium_session_id="late-id") is False
+    await db_session.refresh(row)
     assert row.status == SessionStatus.error
     assert row.session_id != "late-id"
 
 
 async def test_finalize_noop_after_external_close(db_session: AsyncSession, db_host: Host) -> None:
     row = await _claim(db_session, db_host, "probe-row-external-close")
-    assert await confirm_probe_session(db_session, row, appium_session_id="closed-elsewhere")
+    assert await confirm_probe_session(db_session, row.id, appium_session_id="closed-elsewhere")
     await db_session.commit()
     await _attach_device(db_session, row)
     publisher = _RecordingPublisher()
     await close_running_session(db_session, row, attached_run=None, publisher=publisher)
     await db_session.commit()
     assert row.ended_at is not None
-    assert await finalize_probe_session(db_session, row, result=ProbeResult(status="ack")) is False
+    assert await finalize_probe_session(db_session, row.id, result=ProbeResult(status="ack")) is False
 
 
 async def test_sweep_close_of_probe_row_emits_no_session_ended(db_session: AsyncSession, db_host: Host) -> None:
     """Probes never emit session.started, so the shared close path must not emit
     an unpaired session.ended for a crash-orphaned probe row (WS-16.1)."""
     row = await _claim(db_session, db_host, "probe-row-silent-close")
-    assert await confirm_probe_session(db_session, row, appium_session_id="probe-crash-id")
+    assert await confirm_probe_session(db_session, row.id, appium_session_id="probe-crash-id")
     await db_session.commit()
     await _attach_device(db_session, row)
     publisher = _RecordingPublisher()
@@ -163,10 +166,11 @@ async def test_viability_probe_lives_as_row_and_stays_silent(
     from unittest.mock import AsyncMock
 
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+    from sqlalchemy.ext.asyncio import async_sessionmaker
 
     from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-    from app.devices.models import Device, DeviceOperationalState
+    from app.devices.models import DeviceOperationalState
     from app.devices.services.capability import DeviceCapabilityService
     from app.sessions import service_viability
     from app.sessions.models import Session
@@ -211,22 +215,17 @@ async def test_viability_probe_lives_as_row_and_stays_silent(
     )
 
     publisher = _RecordingPublisher()
+    await db_session.commit()
+    factory = async_sessionmaker(db_session.bind, class_=_AsyncSession, expire_on_commit=False)
     svc = service_viability.SessionViabilityService(
         publisher=publisher,
         settings=FakeSettingsReader({}),
-        session_factory=AsyncMock(),
+        session_factory=factory,
         capability=DeviceCapabilityService(),
         health=AsyncMock(),
     )
-    reloaded = (
-        await db_session.execute(
-            select(Device)
-            .where(Device.id == device.id)
-            .options(selectinload(Device.appium_node), selectinload(Device.host))
-        )
-    ).scalar_one()
     state = await svc.run_session_viability_probe(
-        db_session, reloaded, checked_by=service_viability.SessionViabilityCheckedBy.manual
+        device.id, checked_by=service_viability.SessionViabilityCheckedBy.manual
     )
     assert state["status"] == "passed"
 
@@ -245,3 +244,98 @@ async def test_viability_probe_lives_as_row_and_stays_silent(
     # Event silence: no session.* and no operational-state edges from probe activity.
     assert [e for e in publisher.events if e[0].startswith("session.")] == []
     assert [e for e in publisher.events if e[0] == "device.operational_state_changed"] == []
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_confirm_and_finalize_lock_device_before_session_child(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Confirm and finalize acquire the Device proof before touching the Session
+    child (SQL lock order ``Device -> Session``). The phases receive the
+    immutable ``ProbeEffect`` — no ORM ``Session``/``Device`` crosses a
+    transaction boundary."""
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.models import DeviceOperationalState
+    from app.devices.services.capability import DeviceCapabilityService
+    from app.sessions import service_viability
+    from app.sessions.service_viability import ProbeEffect
+    from app.sessions.viability_types import SessionViabilityCheckedBy
+    from tests.fakes import FakeSettingsReader
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="probe-lock-order",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4724,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4724,
+            pid=42,
+            active_connection_target=device.connection_target,
+        )
+    )
+    await db_session.commit()
+    row = await claim_probe_session(
+        db_session,
+        device=device,
+        source=ProbeSource.manual,
+        capabilities={"platformName": "Android"},
+        router_target="http://probe-target:4724",
+    )
+    await db_session.commit()
+
+    await db_session.commit()
+    factory = async_sessionmaker(db_session.bind, class_=_AsyncSession, expire_on_commit=False)
+    svc = service_viability.SessionViabilityService(
+        publisher=_RecordingPublisher(),
+        settings=FakeSettingsReader({}),
+        session_factory=factory,
+        capability=DeviceCapabilityService(),
+        health=AsyncMock(),
+    )
+    effect = ProbeEffect(row.id, device.id, "http://probe-target:4724", {"platformName": "Android"}, 5)
+
+    events: list[str] = []
+    real_lock = service_viability.device_locking.lock_device_handle
+
+    async def tracking_lock(db: AsyncSession, device_id: object, **kwargs: object) -> object:
+        events.append("device_lock")
+        return await real_lock(db, device_id, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(service_viability.device_locking, "lock_device_handle", tracking_lock)
+
+    real_confirm = service_viability.confirm_probe_session
+
+    async def tracking_confirm(db: AsyncSession, probe_id: object, *, appium_session_id: str) -> bool:
+        events.append("session_update")
+        return await real_confirm(db, probe_id, appium_session_id=appium_session_id)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(service_viability, "confirm_probe_session", tracking_confirm)
+
+    await svc._confirm_probe(effect, "appium-id")
+    # Confirm phase: the device row lock is acquired BEFORE the Session child update.
+    assert events == ["device_lock", "session_update"], events
+
+    events.clear()
+    # Finalize uses finalize_probe_session (the Session child update); record it.
+    real_finalize = service_viability.finalize_probe_session
+
+    async def tracking_finalize(db: AsyncSession, probe_id: object, *, result: object) -> bool:
+        events.append("session_update")
+        return await real_finalize(db, probe_id, result=result)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(service_viability, "finalize_probe_session", tracking_finalize)
+
+    await svc._finalize_probe(effect, result=ProbeResult(status="ack"), checked_by=SessionViabilityCheckedBy.manual)
+    # Finalize phase: the device row lock is acquired BEFORE the Session child update.
+    assert events == ["device_lock", "session_update"], events

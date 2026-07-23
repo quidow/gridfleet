@@ -92,7 +92,7 @@ class DeviceCrudProtocol(Protocol):
 
 class SessionViabilityProbe(Protocol):
     async def run_session_viability_probe(
-        self, db: AsyncSession, device: Device, *, checked_by: SessionViabilityCheckedBy
+        self, device_id: uuid.UUID, *, checked_by: SessionViabilityCheckedBy
     ) -> dict[str, Any]: ...
     async def record_session_viability_result(
         self,

@@ -160,17 +160,14 @@ async def test_recovery_job_runs_probe_with_no_open_transaction(
 
     prepared = await _seed_prepared_recovery(db_session, device)
 
-    probe_db_refs: list[AsyncSession] = []
-    effect_calls: list[str] = []
+    probe_args: list[Any] = []
 
-    async def _capturing_probe(db: AsyncSession, dev: Device, *, checked_by: object) -> dict[str, Any]:
-        # The real run_session_viability_probe commits the probe claim before
-        # the remote probe_session_direct call. Simulate that: the worker's
-        # session must not hold an open transaction during the remote effect.
-        await db.commit()
-        assert db.in_transaction() is False, "probe ran inside an open DB transaction"
-        probe_db_refs.append(db)
-        effect_calls.append(dev.connection_target or "")
+    async def _capturing_probe(device_id: object, *, checked_by: object) -> dict[str, Any]:
+        # The viability command owns its own fresh sessions; only the device id
+        # crosses in — no Session or ORM Device is passed by the worker.
+        assert isinstance(device_id, uuid.UUID), "viability received a non-UUID (session/Device leaked in)"
+        assert not isinstance(device_id, (AsyncSession, Device)), "ORM object leaked into viability"
+        probe_args.append(device_id)
         return {"status": "passed"}
 
     viability = Mock()
@@ -180,7 +177,8 @@ async def test_recovery_job_runs_probe_with_no_open_transaction(
     with patch.object(RecoveryJobService, "_wait_for_node_running", new=AsyncMock(return_value=True)):
         await service.run_device_recovery_job(str(prepared.job_id), prepared.payload)
 
-    assert effect_calls, "run_session_viability_probe was not called"
+    assert probe_args, "run_session_viability_probe was not called"
+    assert probe_args == [prepared.device_id]
     db_session.expire_all()
     await db_session.refresh(device)
     assert recovery_generation(device) is None
@@ -311,17 +309,21 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     from app.devices.models import DeviceIntent
     from app.devices.services.intent_types import verification_intent_source
 
-    async def _probe_and_revoke_lease(db: AsyncSession, dev: Device, *, checked_by: object) -> dict[str, Any]:
-        await db.execute(select(DeviceIntent).where(DeviceIntent.device_id == dev.id))
-        from sqlalchemy import delete
+    async def _probe_and_revoke_lease(device_id: object, *, checked_by: object) -> dict[str, Any]:
+        # The viability command owns its own fresh session; only the device id
+        # crosses in. Simulate a passed probe that revokes the verification lease
+        # (the real probe does this in its finalize phase).
+        assert isinstance(device_id, uuid.UUID), "viability received a non-UUID (session/Device leaked in)"
+        async with _session_factory(db_session) as probe_db:
+            from sqlalchemy import delete
 
-        await db.execute(
-            delete(DeviceIntent).where(
-                DeviceIntent.device_id == dev.id,
-                DeviceIntent.source == verification_intent_source(dev.id),
+            await probe_db.execute(
+                delete(DeviceIntent).where(
+                    DeviceIntent.device_id == device_id,
+                    DeviceIntent.source == verification_intent_source(device_id),
+                )
             )
-        )
-        await db.commit()
+            await probe_db.commit()
         return {
             "status": "passed",
             "last_attempted_at": datetime.now(UTC).isoformat(),

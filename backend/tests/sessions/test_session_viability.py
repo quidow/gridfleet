@@ -1,10 +1,11 @@
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
@@ -35,8 +36,6 @@ from tests.helpers import test_event_bus as _test_event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-    from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host
 
@@ -82,25 +81,14 @@ async def run_session_viability_probe(
     settings: FakeSettingsReader | None = None,
 ) -> dict[str, Any]:
     _svc._settings = settings or FakeSettingsReader({})
-    if not isinstance(device, Device):
-        real_derive = session_viability.derive_operational_state
-
-        async def _derive_for_test_objects(_db: object, candidate: object, *, now: object) -> DeviceOperationalState:
-            if isinstance(candidate, Device):
-                return await real_derive(_db, candidate, now=now)  # type: ignore[arg-type]
-            return cast("DeviceOperationalState", cast("Any", candidate).operational_state)
-
-        with patch.object(session_viability, "derive_operational_state", new=_derive_for_test_objects):
-            return await _svc.run_session_viability_probe(db, device, checked_by=checked_by)
-    real_derive = session_viability.derive_operational_state
-
-    async def _derive_for_locked_test_objects(_db: object, candidate: object, *, now: object) -> DeviceOperationalState:
-        if isinstance(candidate, Device):
-            return await real_derive(_db, candidate, now=now)  # type: ignore[arg-type]
-        return cast("DeviceOperationalState", cast("Any", candidate).operational_state)
-
-    with patch.object(session_viability, "derive_operational_state", new=_derive_for_locked_test_objects):
-        return await _svc.run_session_viability_probe(db, device, checked_by=checked_by)
+    # The probe now owns its own fresh sessions via ``_session_factory``; commit
+    # the test setup so those fresh sessions can see it, and bind a real
+    # sessionmaker to the same engine. No ORM object is carried across the
+    # probe's transaction phases — only ``device.id``.
+    await db.commit()
+    engine = db.bind
+    _svc._session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return await _svc.run_session_viability_probe(device.id, checked_by=checked_by)
 
 
 async def probe_session_direct(
@@ -122,7 +110,10 @@ async def probe_session_direct(
 
 async def _check_due_devices(db: AsyncSession, *, settings: FakeSettingsReader | None = None) -> None:
     _svc._settings = settings or FakeSettingsReader({})
-    await _svc.check_due_devices(db)
+    await db.commit()
+    engine = db.bind
+    _svc._session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    await _svc.check_due_devices()
 
 
 async def test_session_viability_state_is_not_persisted_in_device_config(
@@ -560,7 +551,7 @@ async def test_check_due_devices_respects_interval(db_session: AsyncSession, db_
     assert mock_probe.await_count == 1
     assert mock_probe.await_args is not None
     assert mock_probe.await_args.kwargs["checked_by"] == "scheduled"
-    assert mock_probe.await_args.args[1].connection_target == "probe-003"
+    assert mock_probe.await_args.args[0] == due.id
     control_plane_state = await get_session_viability_control_plane_state(db_session)
     assert str(recent.id) in control_plane_state["state"]
 
@@ -1015,6 +1006,8 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.usb,
     )
+    db_session.add(device)
+    await db_session.flush()
     node = AppiumNode(
         device_id=device.id,
         port=4780,
@@ -1023,28 +1016,12 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
         pid=1234,
         active_connection_target="probe-handler-001",
     )
-    device.appium_node = node
-    db_session.add_all([device, node])
+    db_session.add(node)
     await db_session.commit()
 
-    # After Task 10: no SESSION_STARTED/SESSION_ENDED transitions; reconcile_now
-    # calls reconcile_device which calls lock_device again. Provide extra mocks.
-    locked = MagicMock(id=device.id, operational_state=DeviceOperationalState.available, hold=None)
-    monkeypatch.setattr(session_viability.control_plane_state_store, "delete_value", AsyncMock())
-    monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(return_value=locked))
-    # Patch reconcile_device to avoid real DB ops with MagicMock objects.
     monkeypatch.setattr(
-        session_viability,
-        "IntentService",
-        MagicMock(
-            return_value=MagicMock(
-                reconcile_now=AsyncMock(),
-                mark_dirty=AsyncMock(),
-            )
-        ),
+        DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={"platformName": "Android"})
     )
-    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
     monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(False, None)))
     monkeypatch.setattr(
         session_viability,
@@ -1069,6 +1046,7 @@ async def test_run_session_viability_probe_changed_state_and_health_handler_path
         _svc.configure_health_failure_handler(None)
 
     assert state == {"status": "failed", "consecutive_failures": 1}
+    await db_session.refresh(device)
     assert device.device_config == {}
     handler.assert_awaited_once()
     assert handler.await_args.kwargs["reason"] == "Appium session viability probe failed"
@@ -1252,47 +1230,72 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    no_node = MagicMock(
-        id=uuid.uuid4(),
+    # Sub-case 1: a real device with no Appium node. ``_prepare_probe`` records
+    # a ``failed`` terminal state (no probe run) and commits via its own
+    # ``begin()`` context — no outer transaction is held across any remote call.
+    no_node_device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-no-node-001",
+        connection_target="probe-no-node-001",
+        name="No Node Device",
+        os_version="14",
+        host_id=db_host.id,
         operational_state=DeviceOperationalState.available,
-        hold=None,
-        appium_node=None,
+        verified_at=datetime.now(UTC),
         device_config={"session_viability": {"status": "legacy"}},
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
     )
-    fake_db = AsyncMock()
-    # device_is_reserved calls db.execute(...).first(); return None so the device reads as unreserved.
-    fake_db.execute = AsyncMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+    db_session.add(no_node_device)
+    await db_session.commit()
+
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", AsyncMock(return_value=True))
-    monkeypatch.setattr(session_viability, "_write_session_viability", AsyncMock(return_value={"status": "failed"}))
 
     state = await run_session_viability_probe(
-        fake_db,
-        no_node,
+        db_session,
+        no_node_device,
         checked_by=session_viability.SessionViabilityCheckedBy.manual,
         settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
     )
 
     assert state["status"] == "failed"
-    assert no_node.device_config == {}
-    assert fake_db.commit.await_count >= 1
+    await db_session.refresh(no_node_device)
+    assert no_node_device.device_config == {}
 
-    device_id = uuid.uuid4()
-    available = MagicMock(id=device_id, operational_state=DeviceOperationalState.available, hold=None)
-    available.appium_node = MagicMock(observed_running=True)
-    locked = MagicMock(id=device_id, operational_state=DeviceOperationalState.available, hold=None)
-    monkeypatch.setattr(session_viability.device_locking, "lock_device", AsyncMock(return_value=locked))
-    # After Task 10: no _MACHINE; exception path calls reconcile_now.
-    mark_dirty2 = AsyncMock()
-    monkeypatch.setattr(
-        session_viability,
-        "IntentService",
-        MagicMock(
-            return_value=MagicMock(
-                reconcile_now=mark_dirty2,
-                mark_dirty=AsyncMock(),
-            )
-        ),
+    # Sub-case 2: a real device with a running node whose capability read raises.
+    # The exception propagates out of ``_prepare_probe`` (its ``begin()`` context
+    # rolls back); no reconcile runs on the exception path.
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-caps-raise-001",
+        connection_target="probe-caps-raise-001",
+        name="Caps Raise Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
     )
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(
+        device_id=device.id,
+        port=4791,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4791,
+        pid=1234,
+        active_connection_target="probe-caps-raise-001",
+    )
+    db_session.add(node)
+    await db_session.commit()
+
     monkeypatch.setattr(
         DeviceCapabilityService,
         "get_device_capabilities",
@@ -1301,13 +1304,149 @@ async def test_run_session_viability_probe_no_node_commit_and_available_exceptio
     with pytest.raises(RuntimeError, match="caps"):
         await run_session_viability_probe(
             db_session,
-            available,
+            device,
             checked_by=session_viability.SessionViabilityCheckedBy.manual,
             settings=FakeSettingsReader({"general.session_viability_timeout_sec": 5}),
         )
 
-    # Exception paths leave the projection to the reconciler scan.
-    mark_dirty2.assert_not_awaited()
+
+class _CountingSessionFactory:
+    """Duck-typed ``async_sessionmaker`` wrapper that counts open transactions.
+
+    The viability probe opens its own fresh sessions via ``self._session_factory``
+    for each phase (prepare/confirm/finalize/escalate). No transaction may be
+    open across the remote Appium ``create_session``/``terminate_session`` calls.
+    """
+
+    def __init__(self, real: async_sessionmaker[AsyncSession]) -> None:
+        self._real = real
+        self.active = 0
+
+    def __call__(self) -> _CountingSession:
+        return _CountingSession(self._real(), self)
+
+    def begin(self) -> _CountingBegin:
+        return _CountingBegin(self._real.begin(), self)
+
+
+class _CountingSession:
+    def __init__(self, session: AsyncSession, factory: _CountingSessionFactory) -> None:
+        self._session = session
+        self._factory = factory
+
+    async def __aenter__(self) -> AsyncSession:
+        self._factory.active += 1
+        try:
+            await self._session.__aenter__()
+        except BaseException:
+            self._factory.active -= 1
+            raise
+        return self._session
+
+    async def __aexit__(self, *args: object) -> None:
+        try:
+            await self._session.__aexit__(*args)
+        finally:
+            self._factory.active -= 1
+
+
+class _CountingBegin:
+    def __init__(self, cm: object, factory: _CountingSessionFactory) -> None:
+        self._cm = cm
+        self._factory = factory
+
+    async def __aenter__(self) -> AsyncSession:
+        self._factory.active += 1
+        try:
+            return await self._cm.__aenter__()  # type: ignore[attr-defined]
+        except BaseException:
+            self._factory.active -= 1
+            raise
+
+    async def __aexit__(self, *args: object) -> None:
+        try:
+            await self._cm.__aexit__(*args)  # type: ignore[attr-defined]
+        finally:
+            self._factory.active -= 1
+
+
+async def test_probe_phases_hold_no_transaction_across_appium_io(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No DB transaction is open across the remote Appium create/terminate calls.
+
+    Each probe phase owns and closes its own fresh session before the remote
+    effect: ``create_session`` and ``terminate_session`` must observe an active
+    transaction count of 0.
+    """
+    from app.grid import appium_direct
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-txn-001",
+        connection_target="probe-txn-001",
+        name="Txn Tracker Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(
+        device_id=device.id,
+        port=4771,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4771,
+        pid=1234,
+        active_connection_target="probe-txn-001",
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    await db_session.commit()
+    factory = _CountingSessionFactory(async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False))
+    _svc._settings = FakeSettingsReader({"general.session_viability_timeout_sec": 5})
+    _svc._session_factory = factory  # type: ignore[assignment]
+
+    monkeypatch.setattr(
+        DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={"platformName": "Android"})
+    )
+
+    create_txn_counts: list[int] = []
+    terminate_txn_counts: list[int] = []
+
+    async def _tracking_create(
+        base: str, payload: dict[str, Any], *, timeout: int
+    ) -> tuple[str | None, str | None, bool]:
+        create_txn_counts.append(factory.active)
+        return "fake-probe-session", None, False
+
+    async def _tracking_terminate(base: str, session_id: str, *, timeout: int) -> bool:
+        terminate_txn_counts.append(factory.active)
+        return True
+
+    monkeypatch.setattr(appium_direct, "create_session", _tracking_create)
+    monkeypatch.setattr(appium_direct, "terminate_session", _tracking_terminate)
+
+    # Drive the probe via the service directly (the ``run_session_viability_probe``
+    # local wrapper also commits setup, which is already done here).
+    result = await _svc.run_session_viability_probe(
+        device.id, checked_by=session_viability.SessionViabilityCheckedBy.manual
+    )
+
+    assert result["status"] == "passed"
+    assert create_txn_counts == [0], f"active transaction during create_session: {create_txn_counts}; expected 0"
+    assert terminate_txn_counts == [0], (
+        f"active transaction during terminate_session: {terminate_txn_counts}; expected 0"
+    )
 
 
 def test_classify_session_error_recognises_grid_no_slot() -> None:

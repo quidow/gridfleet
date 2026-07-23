@@ -71,9 +71,11 @@ async def kill_session(db: AsyncSession, *, crud: SessionCrudService, session_id
 
     # Stamp the kill provenance on the identity-map instance, then let the
     # existing terminal-status path do ALL bookkeeping (ended_at, intent revoke,
-    # device lock + reconcile, ended event, commit). Pending attribute changes
-    # survive its internal re-select and commit together.
+    # device lock + reconcile, ended event). Pending attribute changes survive
+    # its internal re-select. ``update_session_status`` is transaction-local
+    # (no commit); this entry point owns the boundary.
     session.error_type = OPERATOR_KILL_ERROR_TYPE
     session.error_message = "killed by operator"
     updated = await crud.update_session_status(db, session_id, SessionStatus.error)
+    await db.commit()
     return KillOutcome(session=updated if updated is not None else session, terminated=terminated)
