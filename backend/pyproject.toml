@@ -12,7 +12,7 @@ dependencies = [
     "asyncpg==0.31.0",
     "pydantic-settings==2.14.2",
     "alembic==1.18.5",
-    "greenlet==3.5.3",
+    "greenlet==3.5.4",
     "httpx2==2.7.0",
     "sse-starlette==3.4.6",
     "prometheus-client==0.25.0",
@@ -37,7 +37,7 @@ dev = [
     "pytest-xdist>=3.6.0",
     "mypy>=2.3.0",
     "ruff>=0.15.22",
-    "datamodel-code-generator==0.69.0",
+    "datamodel-code-generator==0.70.0",
 ]
 
 [tool.pytest.ini_options]
