@@ -2080,9 +2080,11 @@ async def test_restore_run_after_self_heal_ignores_released_device(db_session: A
     )
     await create_reserved_run(db_session, name="self-heal-released-run", devices=[device])
     # Release the device from the run (the escalation mechanism) — real services, real reconcile.
-    await RunReservationService(review=build_review_service()).release_device_from_run(
-        db_session, device.id, reason="CI preparation failed", publisher=event_bus, commit=True
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    await RunReservationService(review=build_review_service()).release_locked(
+        db_session, locked, reason="CI preparation failed", publisher=event_bus
     )
+    await db_session.commit()
 
     # The self-heal loop must NOT rejoin a released device.
     restored = await _make_svc(publisher=event_bus).restore_run_after_self_heal(

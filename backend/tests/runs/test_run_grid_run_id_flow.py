@@ -31,26 +31,38 @@ _release_svc = RunReleaseService(
     settings=_settings,
     deferred_stop=AsyncMock(),
 )
-_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, release=_release_svc)
-_allocator_svc = RunAllocatorService(
-    publisher=event_bus,
-    settings=_settings,
-    circuit_breaker=_circuit_breaker,
-)
-_failure_svc = RunFailureService(
-    publisher=event_bus,
-    settings=_settings,
-    circuit_breaker=_circuit_breaker,
-    maintenance=MaintenanceService(review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus),
-    lifecycle_actions=AsyncMock(),
-    reservation=RunReservationService(review=build_review_service()),
-    incidents=LifecycleIncidentService(),
-)
 
 if TYPE_CHECKING:
     import uuid
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+
+def _make_lifecycle_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunLifecycleService:
+    return RunLifecycleService(
+        publisher=event_bus, settings=_settings, release=_release_svc, session_factory=session_factory
+    )
+
+
+def _make_allocator_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunAllocatorService:
+    return RunAllocatorService(
+        publisher=event_bus, settings=_settings, circuit_breaker=_circuit_breaker, session_factory=session_factory
+    )
+
+
+def _make_failure_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunFailureService:
+    return RunFailureService(
+        publisher=event_bus,
+        settings=_settings,
+        circuit_breaker=_circuit_breaker,
+        maintenance=MaintenanceService(
+            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+        ),
+        lifecycle_actions=AsyncMock(),
+        reservation=RunReservationService(review=build_review_service()),
+        incidents=LifecycleIncidentService(),
+        session_factory=session_factory,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -97,11 +109,12 @@ async def _seed_schedulable_node(
     return device.id
 
 
-async def _create_run(db_session: AsyncSession, count: int = 1) -> uuid.UUID:
+async def _create_run(
+    db_session: AsyncSession, session_factory: async_sessionmaker[AsyncSession], count: int = 1
+) -> uuid.UUID:
     await seed_test_packs(db_session)
     await db_session.commit()
-    run, _devices = await _allocator_svc.create_run(
-        db_session,
+    result = await _make_allocator_svc(session_factory).create_run(
         RunCreate(
             name="grid-run-id-test",
             requirements=[DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile", count=count)],
@@ -110,13 +123,14 @@ async def _create_run(db_session: AsyncSession, count: int = 1) -> uuid.UUID:
             created_by="tester",
         ),
     )
-    return run.id
+    return result.response.id
 
 
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_create_run_writes_desired_grid_run_id(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     default_host_id: str,
 ) -> None:
     device_id = await _seed_schedulable_node(
@@ -126,7 +140,7 @@ async def test_create_run_writes_desired_grid_run_id(
         port=4723,
     )
 
-    run_id = await _create_run(db_session)
+    run_id = await _create_run(db_session, db_session_maker)
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
     assert node.desired_grid_run_id == run_id
@@ -136,6 +150,7 @@ async def test_create_run_writes_desired_grid_run_id(
 @pytest.mark.asyncio
 async def test_complete_run_clears_desired_grid_run_id(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     default_host_id: str,
 ) -> None:
     device_id = await _seed_schedulable_node(
@@ -144,10 +159,11 @@ async def test_complete_run_clears_desired_grid_run_id(
         identity_value="grid-run-id-complete-1",
         port=4724,
     )
-    run_id = await _create_run(db_session)
+    run_id = await _create_run(db_session, db_session_maker)
 
-    await _lifecycle_svc.signal_ready(db_session, run_id)
-    await _lifecycle_svc.complete_run(db_session, run_id)
+    lifecycle = _make_lifecycle_svc(db_session_maker)
+    await lifecycle.signal_ready(run_id)
+    await lifecycle.complete_run(run_id)
 
     node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))).scalar_one()
     assert node.desired_grid_run_id is None
@@ -157,6 +173,7 @@ async def test_complete_run_clears_desired_grid_run_id(
 @pytest.mark.asyncio
 async def test_exclude_device_clears_only_that_device(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     default_host_id: str,
 ) -> None:
     device_id = await _seed_schedulable_node(
@@ -171,9 +188,9 @@ async def test_exclude_device_clears_only_that_device(
         identity_value="grid-run-id-exclude-2",
         port=4726,
     )
-    run_id = await _create_run(db_session, count=2)
+    run_id = await _create_run(db_session, db_session_maker, count=2)
 
-    await _failure_svc.report_preparation_failure(db_session, run_id, device_id, message="install failed")
+    await _make_failure_svc(db_session_maker).report_preparation_failure(run_id, device_id, message="install failed")
 
     rows = (
         await db_session.execute(

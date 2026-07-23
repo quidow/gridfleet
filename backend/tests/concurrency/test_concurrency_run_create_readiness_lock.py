@@ -24,11 +24,6 @@ if TYPE_CHECKING:
     from app.packs.models import DriverPack
 
 _settings = FakeSettingsReader({})
-_allocator_svc = RunAllocatorService(
-    publisher=event_bus,
-    settings=_settings,
-    circuit_breaker=test_circuit_breaker,
-)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -94,16 +89,21 @@ async def test_create_run_rechecks_readiness_after_lock(
     monkeypatch.setattr(service_allocator, "assess_devices_async", gated_assess)
     monkeypatch.setattr(service_allocator, "_MATCH_RETRY_BACKOFF_SEC", 0.0)  # keep the test fast
 
+    allocator_svc = RunAllocatorService(
+        publisher=event_bus,
+        settings=_settings,
+        circuit_breaker=test_circuit_breaker,
+        session_factory=db_session_maker,
+    )
+
     async def create_run() -> None:
-        async with db_session_maker() as session:
-            with pytest.raises(ValueError, match="Not enough devices"):
-                await _allocator_svc.create_run(
-                    session,
-                    RunCreate(
-                        name="readiness-race-run",
-                        requirements=[{"pack_id": pack_id, "platform_id": platform_id, "count": 1}],
-                    ),
-                )
+        with pytest.raises(ValueError, match="Not enough devices"):
+            await allocator_svc.create_run(
+                RunCreate(
+                    name="readiness-race-run",
+                    requirements=[{"pack_id": pack_id, "platform_id": platform_id, "count": 1}],
+                ),
+            )
 
     async def clear_setup_field_after_assessment() -> None:
         await asyncio.wait_for(pre_lock_assessed.wait(), timeout=5.0)

@@ -84,11 +84,14 @@ async def test_start_node_locks_device_before_reservation_check(
             settings=settings_service,
             deferred_stop=AsyncMock(),
         )
-        run_lifecycle = RunLifecycleService(publisher=event_bus, settings=settings_service, release=run_release)
+        run_lifecycle = RunLifecycleService(
+            publisher=event_bus, settings=settings_service, release=run_release, session_factory=db_session_maker
+        )
         run_allocator = RunAllocatorService(
             publisher=event_bus,
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
+            session_factory=db_session_maker,
         )
         run_failure = RunFailureService(
             publisher=event_bus,
@@ -100,6 +103,7 @@ async def test_start_node_locks_device_before_reservation_check(
             lifecycle_actions=AsyncMock(),
             reservation=RunReservationService(review=build_review_service()),
             incidents=LifecycleIncidentService(),
+            session_factory=db_session_maker,
         )
         run_query = RunQueryService()
         return RunServices(
