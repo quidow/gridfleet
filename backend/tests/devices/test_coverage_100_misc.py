@@ -319,6 +319,7 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         circuit_breaker=cb,
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         identity=DeviceIdentityConflictService(),
+        publisher=event_bus,
     )
     exec_svc = VerificationExecutionService(
         review=build_review_service(),
@@ -645,6 +646,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
                 circuit_breaker=Mock(),
                 crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 identity=DeviceIdentityConflictService(),
+                publisher=event_bus,
             ),
             execution=VerificationExecutionService(
                 review=build_review_service(),

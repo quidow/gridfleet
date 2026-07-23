@@ -39,18 +39,20 @@ async def test_verification_execution_forwards_pool(monkeypatch: pytest.MonkeyPa
     fetch = AsyncMock(return_value={"healthy": True})
     monkeypatch.setattr(verification_execution, "fetch_pack_device_health", fetch)
     settings = FakeSettingsReader({})
-    device = SimpleNamespace(
-        id=uuid4(),
-        host=SimpleNamespace(ip="10.0.0.1", agent_port=5100),
-        host_id=uuid4(),
+    effect = SimpleNamespace(
+        operation_id=uuid4(),
+        device_id=uuid4(),
+        host_ip="10.0.0.1",
+        host_agent_port=5100,
         pack_id="pack",
         platform_id="platform",
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        ip_address=None,
-        connection_target="target",
-        identity_value="target",
-        appium_node=None,
+        payload={
+            "device_type": DeviceType.real_device,
+            "connection_type": ConnectionType.usb,
+            "ip_address": None,
+            "connection_target": "target",
+            "identity_value": "target",
+        },
     )
 
     await VerificationExecutionService(
@@ -62,7 +64,7 @@ async def test_verification_execution_forwards_pool(monkeypatch: pytest.MonkeyPa
         capability=Mock(),
         reconciler=AsyncMock(),
         node_manager=AsyncMock(),
-    ).run_device_health({"stages": []}, device, http_client_factory=MagicMock())
+    ).run_device_health({"stages": []}, effect, http_client_factory=MagicMock())
 
     assert fetch.await_args.kwargs["pool"] is pool
 
