@@ -409,6 +409,8 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 ),
                 viability=viability,  # type: ignore[arg-type]
             ),
+            run_teardown_runner=AsyncMock(),
+            session_kill_runner=AsyncMock(),
         ).run_pending_once()
 
     assert worked is True
@@ -484,6 +486,8 @@ async def test_device_recovery_job_completed_when_device_missing(
             lifecycle_policy=AsyncMock(),
             viability=AsyncMock(),
         ),
+        run_teardown_runner=AsyncMock(),
+        session_kill_runner=AsyncMock(),
     ).run_pending_once()
 
     assert worked is True

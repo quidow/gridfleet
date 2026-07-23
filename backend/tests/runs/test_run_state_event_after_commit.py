@@ -183,7 +183,7 @@ async def test_expire_run_queues_run_expired(
     await lifecycle.signal_active(result.response.id)
     event_bus_capture.clear()
 
-    await lifecycle.expire_run(db_session, result.response, "ttl")
+    await lifecycle.expire_run(result.response.id, "ttl")
     await settle_after_commit_tasks()
 
     expired = [p for n, p in event_bus_capture if n == "run.expired"]
@@ -205,7 +205,7 @@ async def test_expire_run_from_preparing_queues_never_activated_and_expired(
     result = await allocator.create_run(_build_request(device, "expire-prep-run"))
     event_bus_capture.clear()
 
-    await lifecycle.expire_run(db_session, result.response, "ttl")
+    await lifecycle.expire_run(result.response.id, "ttl")
     await settle_after_commit_tasks()
 
     expired = [p for n, p in event_bus_capture if n == "run.expired"]

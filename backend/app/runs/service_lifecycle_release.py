@@ -100,14 +100,21 @@ class RunReleaseService:
         run: TestRun,
         *,
         locked_by_id: Mapping[uuid.UUID, LockedDevice],
+        close_session_ids: frozenset[uuid.UUID] | None = None,
     ) -> list[uuid.UUID]:
         """Release all active reservations for this run and restore device statuses.
 
         Ordinary completion is a database release only — the caller has already
         acquired every reserved Device lock (``locked_by_id``); this closes the
         run's live session rows and releases the reservation children under those
-        held proofs. Remote Appium teardown is owned by the cancel/expire/force
-        paths (Task 5), not by this ordinary path.
+        held proofs.
+
+        ``close_session_ids`` selects which live rows to terminalize. ``None``
+        (the ordinary complete path) closes every live session. A set (the
+        durable cancel/expire/force finalize path, whose Appium teardown already
+        ran in the effect phase) closes pending rows plus only the running rows
+        the effect actually terminated; failed ordinary DELETE rows are left live
+        for session-sync.
 
         Returns the device IDs that need a follow-up
         ``complete_deferred_stop_if_session_ended`` pass. The caller MUST run
@@ -118,7 +125,7 @@ class RunReleaseService:
             reservation for reservation in run.device_reservations if reservation.released_at is None
         ]
         released_at = now_utc()
-        await self._close_run_sessions_locked(db, run, locked_by_id)
+        await self._close_run_sessions_locked(db, run, locked_by_id, close_session_ids)
 
         if not active_reservations:
             return []
@@ -169,13 +176,18 @@ class RunReleaseService:
         db: AsyncSession,
         run: TestRun,
         locked_by_id: Mapping[uuid.UUID, LockedDevice],
+        close_session_ids: frozenset[uuid.UUID] | None,
     ) -> None:
         """Terminalize the run's live session rows under the held device proofs.
 
-        DB-only close (no Appium DELETE — remote teardown is Task 5). Routed
+        DB-only close (no Appium DELETE — remote teardown ran in the effect phase
+        for the durable finalize path, or is not applicable for complete). Routed
         through ``close_running_session_locked`` so the run-terminal close emits
         ``session.ended`` and reconciles the device under the caller's lock,
         instead of the wrapper re-acquiring its own lock (breaking the ordering).
+
+        When ``close_session_ids`` is a set, running rows are closed only if the
+        effect terminated them; pending rows are always closed.
         """
         stmt = (
             select(Session)
@@ -188,6 +200,17 @@ class RunReleaseService:
                 continue
             locked = locked_by_id.get(session.device_id)
             if locked is None:
+                continue
+            if (
+                close_session_ids is not None
+                and session.status == SessionStatus.running
+                and session.id not in close_session_ids
+            ):
+                logger.warning(
+                    "Leaving session %s running because its Appium teardown did not confirm during run %s release",
+                    session.session_id,
+                    run.id,
+                )
                 continue
             await session_service.close_running_session_locked(
                 db, locked, session_pk=session.id, publisher=self._publisher

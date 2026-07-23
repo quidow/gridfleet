@@ -1,9 +1,9 @@
+from __future__ import annotations
+
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
-
-import pytest
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
@@ -20,6 +20,7 @@ from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
+    import pytest
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
@@ -496,7 +497,6 @@ async def test_force_release_keeps_node_warm_when_session_cleanly_gone(
     assert sess_row.status == SessionStatus.error  # force-released sessions must be error, not passed
 
 
-@pytest.mark.skip(reason="deferred to Phase 4 Task 5: durable force-release teardown")
 async def test_force_release_hard_stops_when_session_survives(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],

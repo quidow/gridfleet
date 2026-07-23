@@ -128,17 +128,16 @@ async def get_session(session_id: str, db: DbDep, session_services: SessionServi
 @router.post("/{session_id}/kill", response_model=SessionKillResult)
 async def kill_session(
     session_id: str,
-    db: DbDep,
     session_services: SessionServicesDep,
 ) -> SessionKillResult:
     try:
-        outcome = await service_kill.kill_session(db, crud=session_services.crud, session_id=session_id)
+        outcome = await session_services.kill.kill(session_id)
     except service_kill.SessionNotKillableError:
         raise HTTPException(status_code=409, detail="Session is not running") from None
     outcome = found_or_404(outcome, "Session not found")
     return SessionKillResult(
         terminated=outcome.terminated,
-        session=SessionRead.model_validate(outcome.session),
+        session=outcome.session,
     )
 
 

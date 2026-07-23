@@ -9,6 +9,7 @@ import pytest
 
 from app.runs.models import RunState
 from app.runs.service_lifecycle import RunLifecycleService
+from app.runs.service_teardown import RunTeardownKind
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -113,6 +114,18 @@ async def test_signal_ready_branches(monkeypatch: pytest.MonkeyPatch) -> None:
         await lifecycle.signal_ready(active.id)
 
 
+def _delegating_lifecycle(teardown: AsyncMock) -> RunLifecycleService:
+    from app.settings.service import SettingsService
+
+    return RunLifecycleService(
+        publisher=event_bus,
+        settings=SettingsService(),
+        release=_mock_release(),
+        session_factory=_FakeSessionFactory(),
+        teardown=teardown,
+    )
+
+
 async def test_terminal_transitions_success_and_guards(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_release = _mock_release()
     lifecycle = _make_lifecycle(mock_release)
@@ -126,54 +139,60 @@ async def test_terminal_transitions_success_and_guards(monkeypatch: pytest.Monke
     assert active.state == RunState.completed
     assert active.completed_at is not None
 
-    for fn_name in ("complete_run", "cancel_run"):
-        fn = getattr(lifecycle, fn_name)
-        monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=None))
-        with pytest.raises(ValueError, match="Run not found"):
-            await fn(uuid.uuid4())
-        monkeypatch.setattr(
-            "app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=_run(RunState.completed))
-        )
-        with pytest.raises(ValueError, match="terminal state"):
-            await fn(uuid.uuid4())
-
-    cancellable = _run(RunState.active)
-    monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=cancellable))
-    assert (await lifecycle.cancel_run(cancellable.id)).run_id == cancellable.id
-    assert cancellable.state == RunState.cancelled
-
+    # complete_run stays a lifecycle-owned single transaction.
     monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=None))
     with pytest.raises(ValueError, match="Run not found"):
-        await lifecycle.force_release(uuid.uuid4())
+        await lifecycle.complete_run(uuid.uuid4())
+    monkeypatch.setattr(
+        "app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=_run(RunState.completed))
+    )
+    with pytest.raises(ValueError, match="terminal state"):
+        await lifecycle.complete_run(uuid.uuid4())
 
+    # cancel / force-release now run the durable teardown; the reject guards live
+    # in RunTeardownService.prepare, before any Appium/job work touches the DB.
+    monkeypatch.setattr("app.runs.service_teardown.get_run_for_update", AsyncMock(return_value=None))
+    with pytest.raises(ValueError, match="Run not found"):
+        await lifecycle.cancel_run(uuid.uuid4())
+    with pytest.raises(ValueError, match="Run not found"):
+        await lifecycle.force_release(uuid.uuid4())
+    monkeypatch.setattr(
+        "app.runs.service_teardown.get_run_for_update", AsyncMock(return_value=_run(RunState.completed))
+    )
+    with pytest.raises(ValueError, match="terminal state"):
+        await lifecycle.cancel_run(uuid.uuid4())
+
+    # A successful terminal teardown is delegated to the durable collaborator.
+    teardown = AsyncMock()
+    delegating = _delegating_lifecycle(teardown)
+    cancellable = _run(RunState.active)
+    assert (await delegating.cancel_run(cancellable.id)).run_id == cancellable.id
+    teardown.teardown_run.assert_awaited_with(RunTeardownKind.cancel, cancellable.id)
     releasable = _run(RunState.active)
-    monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=releasable))
-    forced = await lifecycle.force_release(releasable.id)
-    assert forced.run_id == releasable.id
-    assert releasable.state == RunState.cancelled
-    assert releasable.error == "Force released by admin"
+    assert (await delegating.force_release(releasable.id)).run_id == releasable.id
+    teardown.teardown_run.assert_awaited_with(RunTeardownKind.force_release, releasable.id)
 
 
 async def test_expire_run_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_release = _mock_release()
     lifecycle = _make_lifecycle(mock_release)
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", lambda *args, **kwargs: None)
-    db = AsyncMock()
 
-    missing = _run(RunState.active)
-    monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=None))
-    await lifecycle.expire_run(db, missing, "timeout")
+    # Missing / terminal runs are silent no-ops in the durable prepare step.
+    monkeypatch.setattr("app.runs.service_teardown.get_run_for_update", AsyncMock(return_value=None))
+    await lifecycle.expire_run(uuid.uuid4(), "timeout")
 
     terminal = _run(RunState.completed)
-    monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=terminal))
-    await lifecycle.expire_run(db, terminal, "timeout")
+    monkeypatch.setattr("app.runs.service_teardown.get_run_for_update", AsyncMock(return_value=terminal))
+    await lifecycle.expire_run(terminal.id, "timeout")
     assert terminal.state == RunState.completed
 
-    expiring = _run(RunState.active)
-    monkeypatch.setattr("app.runs.service_lifecycle._get_run_for_update", AsyncMock(return_value=expiring))
-    await lifecycle.expire_run(db, expiring, "timeout")
-    assert expiring.state == RunState.expired
-    assert expiring.error == "timeout"
+    # An active run's expiry is delegated to the durable teardown collaborator.
+    teardown = AsyncMock()
+    delegating = _delegating_lifecycle(teardown)
+    run_id = uuid.uuid4()
+    await delegating.expire_run(run_id, "timeout")
+    teardown.teardown_run.assert_awaited_with(RunTeardownKind.expire, run_id, "timeout")
 
 
 async def test_heartbeat_branches(monkeypatch: pytest.MonkeyPatch) -> None:

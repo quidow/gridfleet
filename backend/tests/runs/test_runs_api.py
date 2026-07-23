@@ -587,7 +587,6 @@ async def test_run_cancel(client: AsyncClient, db_session: AsyncSession, default
     assert resp.json()["state"] == "cancelled"
 
 
-@pytest.mark.skip(reason="deferred to Phase 4 Task 5: durable force-release teardown")
 async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -622,7 +621,7 @@ async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
         deleted.append(session_id)
         return True
 
-    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
+    monkeypatch.setattr("app.runs.service_teardown.appium_direct.terminate_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
 
@@ -636,7 +635,6 @@ async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
     assert device.operational_state_last_emitted == DeviceOperationalState.available
 
 
-@pytest.mark.skip(reason="deferred to Phase 4 Task 5: durable force-release teardown")
 async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -668,7 +666,7 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
     async def fake_terminate(target: str, _session_id: str, *, timeout: float = 10.0) -> bool:
         return False
 
-    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
+    monkeypatch.setattr("app.runs.service_teardown.appium_direct.terminate_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
 
@@ -681,10 +679,12 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
 
     reservation = (
         await db_session.execute(
-            select(DeviceReservation).where(
+            select(DeviceReservation)
+            .where(
                 DeviceReservation.run_id == run_obj.id,
                 DeviceReservation.device_id == device.id,
             )
+            .execution_options(populate_existing=True)
         )
     ).scalar_one()
     assert reservation.released_at is not None

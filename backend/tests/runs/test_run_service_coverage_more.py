@@ -272,13 +272,13 @@ async def test_run_terminal_transition_paths(
     assert force.state == RunState.cancelled
     assert force.error == "Force released by admin"
 
-    await lifecycle.expire_run(db_session, expired, "timeout")
+    await lifecycle.expire_run(expired.id, "timeout")
     await db_session.refresh(expired)
     assert expired.state == RunState.expired
     assert expired.error == "timeout"
 
     before = terminal.completed_at
-    await lifecycle.expire_run(db_session, terminal, "ignored")
+    await lifecycle.expire_run(terminal.id, "ignored")
     await db_session.refresh(terminal)
     assert terminal.completed_at == before
 

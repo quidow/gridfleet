@@ -7,6 +7,7 @@ from app.core.db_retry import retry_on_serialization_failure
 from app.core.timeutil import now_utc
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.runs.service_reservation import get_run_for_update as _get_run_for_update
+from app.runs.service_teardown import RunTeardownKind, RunTeardownService
 
 if TYPE_CHECKING:
     import uuid
@@ -51,11 +52,18 @@ class RunLifecycleService:
         settings: SettingsReader,
         release: RunReleaseService,
         session_factory: SessionFactory,
+        teardown: RunTeardownService | None = None,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._release = release
         self._session_factory = session_factory
+        # The durable teardown collaborator is the same stateless configuration
+        # the lifecycle already holds; build one when composition does not inject
+        # a shared instance (keeps the wide test-construction surface untouched).
+        self._teardown = teardown or RunTeardownService(
+            publisher=publisher, settings=settings, release=release, session_factory=session_factory
+        )
 
     async def signal_ready(self, run_id: uuid.UUID) -> RunCommandResult:
         return await retry_on_serialization_failure(
@@ -151,74 +159,12 @@ class RunLifecycleService:
         return cleanup_ids
 
     async def cancel_run(self, run_id: uuid.UUID) -> RunCommandResult:
-        cleanup_ids = await retry_on_serialization_failure(
-            self._session_factory, lambda db: self._cancel_run_txn(db, run_id), caller="run_lifecycle"
-        )
-        await self._run_deferred_stops(cleanup_ids)
+        await self._teardown.teardown_run(RunTeardownKind.cancel, run_id)
         return RunCommandResult(run_id=run_id)
-
-    async def _cancel_run_txn(self, db: AsyncSession, run_id: uuid.UUID) -> list[uuid.UUID]:
-        run = await _get_run_for_update(db, run_id)
-        if run is None:
-            raise ValueError("Run not found")
-        if run.state in TERMINAL_STATES:
-            raise ValueError(f"Run is already in terminal state '{run.state.value}'")
-
-        locked_by_id = await self._release.lock_run_devices(db, run)
-        await self._release.clear_desired_grid_run_id_for_run(
-            db, run=run, caller="run_cancel", locked_by_id=locked_by_id
-        )
-        run.state = RunState.cancelled
-        run.completed_at = now_utc()
-        cleanup_ids = await self._release.release_devices(db, run, locked_by_id=locked_by_id)
-        self._publisher.queue_for_session(
-            db,
-            "run.cancelled",
-            {
-                "run_id": str(run.id),
-                "name": run.name,
-                "cancelled_by": "user",
-            },
-            severity="warning",
-        )
-        return cleanup_ids
 
     async def force_release(self, run_id: uuid.UUID) -> RunCommandResult:
-        cleanup_ids = await retry_on_serialization_failure(
-            self._session_factory, lambda db: self._force_release_txn(db, run_id), caller="run_lifecycle"
-        )
-        await self._run_deferred_stops(cleanup_ids)
+        await self._teardown.teardown_run(RunTeardownKind.force_release, run_id)
         return RunCommandResult(run_id=run_id)
-
-    async def _force_release_txn(self, db: AsyncSession, run_id: uuid.UUID) -> list[uuid.UUID]:
-        run = await _get_run_for_update(db, run_id)
-        if run is None:
-            raise ValueError("Run not found")
-
-        # Verify-then-stop (design P3): DELETE the run's live sessions and probe
-        # which genuinely survived BEFORE deciding hard-stops. Touches no
-        # reservations (so clear_... still sees them active) and does NOT close
-        # the session rows (release_devices closes them after run.state=cancelled).
-        survivors = await self._release.terminate_run_sessions_and_probe_survivors(db, run)
-        locked_by_id = await self._release.lock_run_devices(db, run)
-        await self._release.clear_desired_grid_run_id_for_run(
-            db, run=run, caller="run_force_release", locked_by_id=locked_by_id, stop_device_ids=survivors
-        )
-        run.state = RunState.cancelled
-        run.error = "Force released by admin"
-        run.completed_at = now_utc()
-        cleanup_ids = await self._release.release_devices(db, run, locked_by_id=locked_by_id)
-        self._publisher.queue_for_session(
-            db,
-            "run.cancelled",
-            {
-                "run_id": str(run.id),
-                "name": run.name,
-                "cancelled_by": "admin (force release)",
-            },
-            severity="warning",
-        )
-        return cleanup_ids
 
     async def _run_deferred_stops(self, device_ids: list[uuid.UUID]) -> None:
         if not device_ids:
@@ -226,54 +172,8 @@ class RunLifecycleService:
         async with self._session_factory() as db:
             await self._release.complete_deferred_stops_post_commit(db, device_ids)
 
-    async def expire_run(self, db: AsyncSession, run: TestRun, reason: str) -> None:
-        """Expire a run due to heartbeat or TTL timeout. Called by the reaper, which
-        owns the transaction and its commit boundary."""
-
-        locked_run = await _get_run_for_update(db, run.id)
-        if locked_run is None:
-            return
-        if locked_run.state in TERMINAL_STATES:
-            await db.commit()
-            return
-
-        expired_from_preparing = locked_run.state == RunState.preparing
-        effective_reason = (
-            f"{reason}; run was still in `preparing` — `/api/runs/{{id}}/active` was never signaled"
-            if expired_from_preparing
-            else reason
-        )
-
-        locked_by_id = await self._release.lock_run_devices(db, locked_run)
-        await self._release.clear_desired_grid_run_id_for_run(
-            db, run=locked_run, caller="run_expire", locked_by_id=locked_by_id, reason=effective_reason
-        )
-        locked_run.state = RunState.expired
-        locked_run.error = effective_reason
-        locked_run.completed_at = now_utc()
-        cleanup_ids = await self._release.release_devices(db, locked_run, locked_by_id=locked_by_id)
-
-        if expired_from_preparing:
-            self._publisher.queue_for_session(
-                db,
-                "run.never_activated",
-                {
-                    "run_id": str(locked_run.id),
-                    "name": locked_run.name,
-                    "reason": effective_reason,
-                },
-                severity="warning",
-            )
-
-        self._publisher.queue_for_session(
-            db,
-            "run.expired",
-            {
-                "run_id": str(locked_run.id),
-                "name": locked_run.name,
-                "reason": effective_reason,
-            },
-            severity="critical",
-        )
-        await db.commit()
-        await self._release.complete_deferred_stops_post_commit(db, cleanup_ids)
+    async def expire_run(self, run_id: uuid.UUID, reason: str) -> None:
+        """Expire a run due to heartbeat or TTL timeout via the durable teardown
+        flow (prepare -> effect -> finalize). Accepts no caller session: the reaper
+        must release the run row lock before calling this so ``prepare`` can re-lock."""
+        await self._teardown.teardown_run(RunTeardownKind.expire, run_id, reason)

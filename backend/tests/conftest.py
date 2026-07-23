@@ -85,6 +85,7 @@ from app.runs.service_reservation import RunReservationService
 from app.runs.services_container import RunServices
 from app.sessions.dependencies import get_session_services
 from app.sessions.service import SessionCrudService
+from app.sessions.service_kill import SessionKillService
 from app.sessions.service_sync import SessionSyncService
 from app.sessions.service_viability import SessionViabilityService
 from app.sessions.services_container import SessionServices
@@ -500,6 +501,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 publisher=test_event_bus,
                 lifecycle=_lifecycle_policy_svc,
             ),
+            kill=SessionKillService(publisher=test_event_bus, session_factory=sf),
             sync=SessionSyncService(
                 publisher=test_event_bus,
                 settings=settings_service,

@@ -200,6 +200,8 @@ async def _wait_for_job(
                 lifecycle_policy=AsyncMock(),
                 viability=AsyncMock(),
             ),
+            run_teardown_runner=AsyncMock(),
+            session_kill_runner=AsyncMock(),
         ).run_pending_once()
         await asyncio.sleep(0.01)
     raise AssertionError(f"Job {job_id} did not finish in time")
@@ -1624,6 +1626,8 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                 lifecycle_policy=AsyncMock(),
                 viability=AsyncMock(),
             ),
+            run_teardown_runner=AsyncMock(),
+            session_kill_runner=AsyncMock(),
         ).reset_stale_running_jobs()
         assert recovered == 1
         job = await _wait_for_job(client, job_id, session_factory=session_factory)

@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
-import pytest
 from sqlalchemy import and_, func, or_, select
 
 from app.runs.models import RunState, TestRun
@@ -15,18 +14,14 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    import pytest
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 _settings = FakeSettingsReader({})
 _release_svc = RunReleaseService(
     publisher=event_bus,
     settings=_settings,
     deferred_stop=AsyncMock(),
-)
-# expire_run keeps the reaper-owned db-argument signature and never touches
-# session_factory; a stub is fine here since only expire_run is exercised.
-_lifecycle_svc = RunLifecycleService(
-    publisher=event_bus, settings=_settings, release=_release_svc, session_factory=AsyncMock()
 )
 
 
@@ -49,8 +44,8 @@ async def test_reap_stale_runs_expires_heartbeat_timeout(db_session: AsyncSessio
 
     mock_lifecycle.expire_run.assert_awaited_once()
     assert mock_lifecycle.expire_run.await_args is not None
-    assert mock_lifecycle.expire_run.await_args.args[1].id == stale_run.id
-    assert mock_lifecycle.expire_run.await_args.args[2] == "Heartbeat timeout"
+    assert mock_lifecycle.expire_run.await_args.args[0] == stale_run.id
+    assert mock_lifecycle.expire_run.await_args.args[1] == "Heartbeat timeout"
 
 
 async def test_reap_stale_runs_expires_ttl(db_session: AsyncSession) -> None:
@@ -72,8 +67,8 @@ async def test_reap_stale_runs_expires_ttl(db_session: AsyncSession) -> None:
 
     mock_lifecycle.expire_run.assert_awaited_once()
     assert mock_lifecycle.expire_run.await_args is not None
-    assert mock_lifecycle.expire_run.await_args.args[1].id == stale_run.id
-    assert mock_lifecycle.expire_run.await_args.args[2] == "TTL exceeded (30 minutes)"
+    assert mock_lifecycle.expire_run.await_args.args[0] == stale_run.id
+    assert mock_lifecycle.expire_run.await_args.args[1] == "TTL exceeded (30 minutes)"
 
 
 async def test_reap_stale_runs_query_filters_at_sql_level(db_session: AsyncSession) -> None:
@@ -157,9 +152,9 @@ async def test_reap_stale_runs_ignores_terminal_and_fresh_runs(db_session: Async
     mock_lifecycle.expire_run.assert_not_awaited()
 
 
-@pytest.mark.skip(reason="deferred to Phase 4 Task 5: durable force-release teardown")
 async def test_expire_run_deletes_active_grid_session(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     default_host_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -210,7 +205,7 @@ async def test_expire_run_deletes_active_grid_session(
         deleted.append(session_id)
         return True
 
-    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
+    monkeypatch.setattr("app.runs.service_teardown.appium_direct.terminate_session", fake_terminate)
 
     release = RunReleaseService(
         publisher=event_bus,
@@ -218,15 +213,16 @@ async def test_expire_run_deletes_active_grid_session(
         deferred_stop=AsyncMock(),
     )
     lifecycle = RunLifecycleService(
-        publisher=event_bus, settings=_settings, release=release, session_factory=AsyncMock()
+        publisher=event_bus, settings=_settings, release=release, session_factory=db_session_maker
     )
-    await lifecycle.expire_run(db_session, run, "Heartbeat timeout")
+    await lifecycle.expire_run(run.id, "Heartbeat timeout")
 
     assert deleted == ["grid-live-expire"]
 
 
 async def test_expire_run_emits_never_activated_for_preparing_run(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run = TestRun(
@@ -250,7 +246,10 @@ async def test_expire_run_emits_never_activated_for_preparing_run(
 
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", capture)
 
-    await _lifecycle_svc.expire_run(db_session, run, "Heartbeat timeout")
+    lifecycle = RunLifecycleService(
+        publisher=event_bus, settings=_settings, release=_release_svc, session_factory=db_session_maker
+    )
+    await lifecycle.expire_run(run.id, "Heartbeat timeout")
 
     names = [name for name, _, _ in events]
     assert "run.never_activated" in names
@@ -274,6 +273,7 @@ async def test_expire_run_emits_never_activated_for_preparing_run(
 
 async def test_expire_run_does_not_emit_never_activated_for_active_run(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run = TestRun(
@@ -298,7 +298,10 @@ async def test_expire_run_does_not_emit_never_activated_for_active_run(
 
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", capture)
 
-    await _lifecycle_svc.expire_run(db_session, run, "Heartbeat timeout")
+    lifecycle = RunLifecycleService(
+        publisher=event_bus, settings=_settings, release=_release_svc, session_factory=db_session_maker
+    )
+    await lifecycle.expire_run(run.id, "Heartbeat timeout")
 
     names = [name for name, _, _ in events]
     assert "run.never_activated" not in names

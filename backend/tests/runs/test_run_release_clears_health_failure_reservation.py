@@ -108,7 +108,7 @@ async def test_expire_run_clears_health_failure_exclusion(
     run = await create_reserved_run(db_session, name="expire-release-run", devices=[device])
     await _seed_health_failure_exclusion(db_session, device_id=device.id)
 
-    await _make_lifecycle_svc(db_session_maker).expire_run(db_session, run, "Heartbeat timeout")
+    await _make_lifecycle_svc(db_session_maker).expire_run(run.id, "Heartbeat timeout")
 
     entry = await _fetch_reservation(db_session, device_id=device.id)
     # Run end releases the reservation; a released row no longer gates the device

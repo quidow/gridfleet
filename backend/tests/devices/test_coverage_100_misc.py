@@ -664,6 +664,8 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
             lifecycle_policy=AsyncMock(),
             viability=AsyncMock(),
         ),
+        run_teardown_runner=AsyncMock(),
+        session_kill_runner=AsyncMock(),
     )
     monkeypatch.setattr(service, "claim_next_job", AsyncMock(return_value=job))
     assert await service.run_pending_once() is True

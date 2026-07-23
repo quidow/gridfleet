@@ -75,8 +75,10 @@ from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_query import RunQueryService
 from app.runs.service_reservation import RunReservationService
+from app.runs.service_teardown import RunTeardownService
 from app.runs.services_container import RunServices
 from app.sessions.service import SessionCrudService
+from app.sessions.service_kill import SessionKillService
 from app.sessions.service_sync import SessionSyncService
 from app.sessions.service_viability import SessionViabilityService
 from app.sessions.services_container import SessionServices
@@ -107,7 +109,7 @@ class AppServices:
     jobs: DurableJobWorkerLoop
 
 
-def compose_app(
+def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inherent
     *,
     session_factory: async_sessionmaker[AsyncSession],
     bus: EventBus,
@@ -218,9 +220,17 @@ def compose_app(
         settings=settings_svc,
         deferred_stop=lifecycle_policy_svc,
     )
-    run_lifecycle = RunLifecycleService(
+    run_teardown = RunTeardownService(
         publisher=bus, settings=settings_svc, release=run_release, session_factory=session_factory
     )
+    run_lifecycle = RunLifecycleService(
+        publisher=bus,
+        settings=settings_svc,
+        release=run_release,
+        session_factory=session_factory,
+        teardown=run_teardown,
+    )
+    session_kill_svc = SessionKillService(publisher=bus, session_factory=session_factory)
     run_allocator = RunAllocatorService(
         publisher=bus,
         settings=settings_svc,
@@ -368,6 +378,7 @@ def compose_app(
         ),
         sessions=SessionServices(
             crud=SessionCrudService(publisher=bus, lifecycle=lifecycle_policy_svc),
+            kill=session_kill_svc,
             sync=SessionSyncService(publisher=bus, settings=settings_svc, lifecycle=lifecycle_policy_svc),
             viability=viability_svc,
             settings=settings_svc,
@@ -421,6 +432,8 @@ def compose_app(
                 verification_runner=verification_runner_svc,
                 recovery_runner=recovery_runner_svc,
                 remediation_runner=remediation_runner_svc,
+                run_teardown_runner=run_teardown,
+                session_kill_runner=session_kill_svc,
             ),
             session_factory=session_factory,
         ),

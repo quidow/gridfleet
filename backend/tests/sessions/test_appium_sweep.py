@@ -31,6 +31,7 @@ def _make_loop(calls: list[str], *, sync_error: Exception | None = None) -> Appi
 
     services = SessionServices(
         crud=Mock(),
+        kill=Mock(),
         sync=Mock(sync=AsyncMock(side_effect=sync), wait_for_wake=AsyncMock()),
         viability=Mock(check_due_devices=AsyncMock(side_effect=check_due_devices)),
         settings=FakeSettingsReader({}),
