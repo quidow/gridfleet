@@ -14,21 +14,6 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class DeviceSerializationContext:
-    """Per-device values precomputed in batch by
-    ``DevicePresenterService.build_serialization_contexts`` so ``serialize_device``
-    can skip its per-device pack-catalog queries.
-
-    Lives in this leaf module (rather than ``presenter``) so ``protocols`` can
-    reference the type without importing ``presenter`` and forming an import cycle.
-    """
-
-    readiness: DeviceReadiness
-    blocked_reason: str | None
-    operational_state: DeviceOperationalState
-
-
-@dataclass(frozen=True)
 class ReservationReadFacts:
     """Scalars copied off a device's active reservation (run + entry) while the read
     session is open, so the synchronous DTO/policy builders can project run-tracking

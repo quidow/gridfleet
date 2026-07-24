@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.devices.services.readiness import DeviceReadiness
     from app.packs.models import DriverPack
 
 
@@ -269,23 +270,28 @@ async def load_group_membership_index(
     pack_catalog: dict[str, DriverPack] | None = None,
     operational_states: Mapping[uuid.UUID, DeviceOperationalState] | None = None,
     static_group_keys_by_device_id: Mapping[uuid.UUID, frozenset[str]] | None = None,
+    readiness_by_device_id: Mapping[uuid.UUID, DeviceReadiness] | None = None,
+    reserved_by_device_id: Mapping[uuid.UUID, bool] | None = None,
 ) -> GroupMembershipIndex:
     """Fixed-count loader: gather every fact the pure evaluator needs in a
     bounded number of reads, then delegate to :func:`evaluate_group_memberships`.
 
-    Optional injected facts let allocation/run paths reuse their own already-
-    loaded batches instead of re-reading. When an optional mapping is absent
-    the loader reads the category exactly once for the whole batch.
+    Optional injected facts let allocation/run/read paths reuse their own
+    already-loaded batches instead of re-reading. When an optional mapping is
+    absent the loader reads the category exactly once for the whole batch; when
+    every mapping is supplied it issues no query and evaluates purely.
 
     Reads performed when facts are missing:
 
-    - one pack-catalog load (only when readiness is needed and no catalog was
-      supplied),
+    - one pack-catalog load (only when a batch that consumes it — operational
+      state or readiness — will actually run and no catalog was supplied),
     - one batch ``derive_operational_states`` (which itself issues one live-
       session lookup, one verification-lease lookup, and a pack-catalog load
-      when no catalog is supplied),
+      when no catalog is supplied) — only when ``operational_states`` is absent,
     - one batch reservation map, projected through ``reservation_gating_run_id``
-      (only when a dynamic group needs native facts),
+      (only when a dynamic group needs native facts and ``reserved_by_device_id``
+      is absent),
+    - one batch readiness assessment (only when ``readiness_by_device_id`` is absent),
     - one joined static-membership read (only when
       ``static_group_keys_by_device_id`` is absent).
     """
@@ -296,28 +302,33 @@ async def load_group_membership_index(
 
     needs_native_facts = any(g.group_type == GroupType.dynamic for g in groups)
     packs = pack_catalog
-    if needs_native_facts and packs is None:
+    # The catalog only feeds derive_operational_states and assess_devices_async.
+    # If both operational state and readiness are injected, neither runs, so a
+    # catalog load here would be an extra query with no consumer.
+    if needs_native_facts and packs is None and (operational_states is None or readiness_by_device_id is None):
         packs = await device_readiness.load_packs_by_ids(db, {d.pack_id for d in device_list if d.pack_id})
 
     # Ensure appium_node is loaded for every device so device_allows_allocation
     # (called inside derive_operational_states) does not trigger a sync lazy
-    # load per device under AsyncSession. Callers that already loaded the
-    # relationship (e.g. the group-detail router via selectinload) skip this.
-    unloaded = [d for d in device_list if "appium_node" in sa_inspect(d).unloaded]
-    if unloaded:
-        reloaded = list(
-            (
-                await db.execute(
-                    select(Device)
-                    .where(Device.id.in_([d.id for d in unloaded]))
-                    .options(selectinload(Device.appium_node))
+    # load per device under AsyncSession. Only needed when we actually run
+    # derive_operational_states; callers injecting operational_states skip it,
+    # as do callers that already loaded the relationship via selectinload.
+    if operational_states is None and needs_native_facts:
+        unloaded = [d for d in device_list if "appium_node" in sa_inspect(d).unloaded]
+        if unloaded:
+            reloaded = list(
+                (
+                    await db.execute(
+                        select(Device)
+                        .where(Device.id.in_([d.id for d in unloaded]))
+                        .options(selectinload(Device.appium_node))
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-        by_id = {d.id: d for d in reloaded}
-        device_list = [by_id.get(d.id, d) for d in device_list]
+            by_id = {d.id: d for d in reloaded}
+            device_list = [by_id.get(d.id, d) for d in device_list]
 
     op_map: Mapping[uuid.UUID, DeviceOperationalState]
     if operational_states is None and needs_native_facts:
@@ -326,7 +337,7 @@ async def load_group_membership_index(
         op_map = operational_states or {}
 
     gating_owner_map: Mapping[uuid.UUID, uuid.UUID | None] = {}
-    if needs_native_facts:
+    if needs_native_facts and reserved_by_device_id is None:
         # Project the gating owner, not "any active reservation row".
         # ``reservation_gating_run_id`` is the single source for the allocator's
         # gate and the read-side badge — it drops terminal-state runs and
@@ -334,7 +345,8 @@ async def load_group_membership_index(
         # (``reservation_gating_owner_sql``) feeds the same fact into the same
         # evaluator. Populating ``is_reserved`` any other way would make a
         # dynamic group's ``reserved`` axis disagree with what the allocator
-        # actually refuses.
+        # actually refuses. Read-side callers inject ``reserved_by_device_id``
+        # derived from the same projection, so the axis stays consistent.
         reservation_map = await get_device_reservation_map(db, device_ids)
         gating_owner_map = {
             device_id: reservation_gating_run_id(run, device_id) for device_id, run in reservation_map.items()
@@ -346,18 +358,23 @@ async def load_group_membership_index(
     else:
         static_keys_map = static_group_keys_by_device_id
 
-    if needs_native_facts:
+    readiness_map: Mapping[uuid.UUID, DeviceReadiness]
+    if needs_native_facts and readiness_by_device_id is None:
         readiness_map = await device_readiness.assess_devices_async(db, device_list, packs=packs)
     else:
-        readiness_map = {}
+        readiness_map = readiness_by_device_id or {}
 
     facts_by_device_id: dict[uuid.UUID, DeviceGroupFacts] = {}
     for device in device_list:
         readiness = readiness_map.get(device.id)
+        if reserved_by_device_id is not None:
+            is_reserved = reserved_by_device_id.get(device.id, False)
+        else:
+            is_reserved = gating_owner_map.get(device.id) is not None
         facts_by_device_id[device.id] = build_device_group_facts(
             device,
             operational_state=op_map.get(device.id, DeviceOperationalState.offline),
-            is_reserved=gating_owner_map.get(device.id) is not None,
+            is_reserved=is_reserved,
             readiness_state=readiness.readiness_state if readiness is not None else "setup_required",
             static_group_keys=static_keys_map.get(device.id, frozenset()),
         )

@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import inspect, select
 
 from app.appium_nodes.services.node_viability import device_node_accepting_new_sessions, device_node_is_viable
-from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
 from app.core.timeutil import now_utc
 from app.devices.models import DeviceIntent, ExclusionKind
 from app.devices.schemas.device import DeviceReservationRead
 from app.devices.services import attention as device_attention
 from app.devices.services import health as device_health
-from app.devices.services import lifecycle_policy_summary
-from app.devices.services import readiness as device_readiness
 from app.devices.services.allocatability import unavailable_reason
 from app.devices.services.decision import (
     decide_grid_routing,
@@ -22,13 +20,14 @@ from app.devices.services.decision import (
     parse_command,
 )
 from app.devices.services.intent_reconciler import gather_decision_facts
-from app.devices.services.serialization_types import DeviceSerializationContext
-from app.devices.services.state import derive_operational_state, derive_operational_states
+from app.devices.services.lifecycle_policy_summary import (
+    build_lifecycle_policy_from_facts,
+    build_lifecycle_policy_summary,
+)
+from app.devices.services.read_projection import load_device_read_projections
 from app.lifecycle.services import remediation_log
-from app.packs.services import platform_resolver as pack_platform_resolver
 from app.runs import service as run_service
 
-assert_runnable = pack_platform_resolver.assert_runnable
 DEFAULT_RESTART_WINDOW_SEC = 120
 
 if TYPE_CHECKING:
@@ -38,7 +37,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device, DeviceReservation
-    from app.devices.services.serialization_types import ReservationReadFacts
+    from app.devices.services.serialization_types import DeviceReadProjection, ReservationReadFacts
     from app.runs.models import TestRun
 
 
@@ -54,99 +53,36 @@ def _cooldown_remaining_sec(reservation_entry: DeviceReservation | None) -> int 
 
 
 class DevicePresenterService:
-    async def build_serialization_contexts(
-        self, db: AsyncSession, devices: list[Device]
-    ) -> dict[uuid.UUID, DeviceSerializationContext]:
-        """Batch-load everything :meth:`serialize_device` would otherwise query
-        per device: readiness and blocked-reason both derive from a single load of
-        the driver-pack catalog, collapsing the previous ~3-queries-per-device into one."""
-        for device in devices:
-            await _ensure_appium_node_loaded(db, device)
-        packs = await device_readiness.load_packs_by_ids(db, {device.pack_id for device in devices if device.pack_id})
-        readiness_map = await device_readiness.assess_devices_async(db, devices, packs=packs)
-        operational_states = await derive_operational_states(db, devices, packs=packs, now=now_utc())
-        contexts: dict[uuid.UUID, DeviceSerializationContext] = {}
-        for device in devices:
-            pack = packs.get(device.pack_id) if device.pack_id else None
-            contexts[device.id] = DeviceSerializationContext(
-                readiness=readiness_map[device.id],
-                blocked_reason=pack_platform_resolver.evaluate_runnable(pack, platform_id=device.platform_id),
-                operational_state=operational_states[device.id],
-            )
-        return contexts
-
-    async def serialize_device(
-        self,
-        db: AsyncSession,
-        device: Device,
-        *,
-        reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
-        health_summary: dict[str, Any] | None = None,
-        platform_label: str | None = None,
-        precomputed: DeviceSerializationContext | None = None,
-    ) -> dict[str, Any]:
-        if reservation_context is None:
-            reservation_context = await run_service.get_device_reservation_with_entry(db, device.id)
-        reservation, reservation_entry = reservation_context
-        operational_state = (
-            precomputed.operational_state
-            if precomputed is not None
-            else await derive_operational_state(db, device, now=now_utc())
-        )
-        is_reserved = reservation is not None
-        # Gate-honest reservation: only a live, non-excluded reservation on a non-terminal
-        # run actually blocks an arbitrary ticket (the same predicate the allocator uses).
-        # Distinct from the broad ``is_reserved`` display flag above.
-        reservation_blocks_allocation = run_service.reservation_gating_run_id(reservation, device.id) is not None
-        # Load the node before the projection: the warm soft-gate reads
-        # AppiumNode.accepting_new_sessions (the flag _eligible_devices_with_facts gates on).
-        await _ensure_appium_node_loaded(db, device)
-        node_accepting = device_node_accepting_new_sessions(device)
-        node_viable = device_node_is_viable(
-            device,
-            now=now_utc(),
-            restart_window_sec=DEFAULT_RESTART_WINDOW_SEC,
-        )
+    def serialize_projected_device(self, device: Device, projection: DeviceReadProjection) -> dict[str, Any]:
+        reservation = projection.reservation
+        reservation_blocks_allocation = bool(reservation and reservation.blocks_allocation)
         allocatability_reason = unavailable_reason(
-            operational_state,
+            projection.operational_state,
             reserved=reservation_blocks_allocation,
-            accepting_new_sessions=node_accepting,
-            node_viable=node_viable,
+            accepting_new_sessions=device_node_accepting_new_sessions(device),
+            node_viable=device_node_is_viable(
+                device, now=projection.now, restart_window_sec=DEFAULT_RESTART_WINDOW_SEC
+            ),
         )
-        readiness = (
-            precomputed.readiness if precomputed is not None else await device_readiness.assess_device_async(db, device)
-        )
-        policy = await lifecycle_policy_summary.build_lifecycle_policy(
-            db,
+        policy = build_lifecycle_policy_from_facts(
             device,
-            reservation_context=reservation_context,
-            ready=readiness.readiness_state == "verified",
-            operational_state=operational_state,
+            ladder=projection.ladder,
+            reservation=reservation,
+            availability=projection.recovery,
+            operational_state=projection.operational_state,
+            now=projection.now,
         )
-        lifecycle_summary = lifecycle_policy_summary.build_lifecycle_policy_summary(policy)
-        if health_summary is None:
-            health_summary = device_health.build_public_summary(device, policy_view=policy)
+        health_summary = device_health.build_public_summary(device, policy_view=policy)
         needs_attention = device_attention.compute_needs_attention(
-            operational_state,
-            readiness.readiness_state,
+            projection.operational_state,
+            projection.readiness.readiness_state,
             review_required=bool(device.review_required),
         )
-
-        blocked_reason: str | None
-        if precomputed is not None:
-            blocked_reason = precomputed.blocked_reason
-        else:
-            blocked_reason = None
-            try:
-                await assert_runnable(db, pack_id=device.pack_id, platform_id=device.platform_id)
-            except (PackUnavailableError, PackDisabledError, PackDrainingError, PlatformRemovedError) as exc:
-                blocked_reason = exc.code
-
         return {
             "id": device.id,
             "pack_id": device.pack_id,
             "platform_id": device.platform_id,
-            "platform_label": platform_label,
+            "platform_label": projection.platform_label,
             "identity_scheme": device.identity_scheme,
             "identity_scope": device.identity_scope,
             "identity_value": device.identity_value,
@@ -159,22 +95,22 @@ class DevicePresenterService:
             "model_number": device.model_number,
             "software_versions": device.software_versions,
             "host_id": device.host_id,
-            "operational_state": operational_state,
-            "is_reserved": is_reserved,
+            "operational_state": projection.operational_state,
+            "is_reserved": reservation is not None,
             "allocatable": allocatability_reason is None,
             "unavailable_reason": allocatability_reason,
             "device_type": device.device_type,
             "connection_type": device.connection_type,
             "ip_address": device.ip_address,
             "device_config": copy.deepcopy(device.device_config or {}),
-            "readiness_state": readiness.readiness_state,
-            "missing_setup_fields": readiness.missing_setup_fields,
+            "readiness_state": projection.readiness.readiness_state,
+            "missing_setup_fields": projection.readiness.missing_setup_fields,
             "verified_at": device.verified_at,
-            "reservation": build_reservation_read(reservation, reservation_entry),
-            "lifecycle_policy_summary": lifecycle_summary,
+            "reservation": build_reservation_read_from_facts(reservation, now=projection.now),
+            "lifecycle_policy_summary": build_lifecycle_policy_summary(policy),
             "needs_attention": needs_attention,
             "health_summary": health_summary,
-            "blocked_reason": blocked_reason,
+            "blocked_reason": projection.blocked_reason,
             "review_required": device.review_required,
             "review_reason": device.review_reason,
             "review_set_at": device.review_set_at,
@@ -182,25 +118,36 @@ class DevicePresenterService:
             "updated_at": device.updated_at,
         }
 
+    async def serialize_device(
+        self,
+        db: AsyncSession,
+        device: Device,
+        *,
+        platform_label: str | None = None,
+    ) -> dict[str, Any]:
+        # ``load_device_read_projections`` relies on the declared read graph and
+        # does not load ``appium_node`` itself; single-device callers (CRUD, control
+        # routes, discovery) may hand us a row with it unloaded, so ensure it before
+        # the projection reads it via the node-viability / public-summary helpers.
+        await _ensure_appium_node_loaded(db, device)
+        projection = (await load_device_read_projections(db, [device], now=now_utc()))[device.id]
+        # A caller supplying its own already-resolved label wins; otherwise the
+        # projection's batch-resolved label carries.
+        if platform_label is not None:
+            projection = replace(projection, platform_label=platform_label)
+        return self.serialize_projected_device(device, projection)
+
     async def serialize_device_detail(
         self,
         db: AsyncSession,
         device: Device,
         *,
-        reservation_context: tuple[Any | None, DeviceReservation | None] | None = None,
-        health_summary: dict[str, Any] | None = None,
         platform_label: str | None = None,
         include_orchestration: bool = False,
     ) -> dict[str, Any]:
         ladder = await remediation_log.load_ladder(db, device.id)
         policy_view = remediation_log.build_policy_view(ladder, device.lifecycle_policy_state)
-        payload = await self.serialize_device(
-            db,
-            device,
-            reservation_context=reservation_context,
-            health_summary=health_summary,
-            platform_label=platform_label,
-        )
+        payload = await self.serialize_device(db, device, platform_label=platform_label)
         payload["appium_node"] = _serialize_appium_node_for_detail(device, policy_view=policy_view)
         if include_orchestration:
             payload["orchestration"] = await _serialize_orchestration(db, device)

@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import pytest_asyncio
-from app.devices.services.read_projection import load_device_read_projections
-from sqlalchemy import event
+from sqlalchemy import event, select
+from sqlalchemy.orm import raiseload, selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
@@ -27,6 +27,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration, verification_intent_source
 from app.devices.services.presenter import DevicePresenterService
+from app.devices.services.read_projection import load_device_read_projections
 from app.devices.services.service import DeviceCrudService
 from app.lifecycle.services import remediation_log
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
@@ -279,6 +280,14 @@ async def test_list_devices_pack_lookups_do_not_scale_with_device_count(
     assert scaled == baseline, f"pack-catalog queries scaled with device count: {baseline} -> {scaled}"
 
 
+async def _load_with_declared_graph(db_session: AsyncSession, device_ids: list[uuid.UUID]) -> list[Device]:
+    """Reload devices through the same graph the list/group callers declare
+    (``selectinload(appium_node)`` + ``raiseload("*")``) so the projection loader
+    is exercised exactly as production callers feed it."""
+    stmt = select(Device).where(Device.id.in_(device_ids)).options(selectinload(Device.appium_node), raiseload("*"))
+    return list((await db_session.execute(stmt)).scalars().all())
+
+
 @pytest.mark.db
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("seeded_driver_packs")
@@ -304,7 +313,14 @@ async def test_batch_serialization_matches_per_device(db_session: AsyncSession, 
         pack_id="ghost-pack",
         platform_id="android_mobile",
     )
-    devices = [d_ok, d_bad_platform, d_no_pack]
+    ordered_ids = [d_ok.id, d_bad_platform.id, d_no_pack.id]
+    # Reload through the same graph the list/group callers declare
+    # (selectinload(appium_node) + raiseload("*")) so the projection loader is
+    # exercised exactly as production feeds it, not against fresh ORM rows whose
+    # relationships are still unloaded.
+    loaded = await _load_with_declared_graph(db_session, ordered_ids)
+    by_id = {device.id: device for device in loaded}
+    devices = [by_id[device_id] for device_id in ordered_ids]
 
     projections = await load_device_read_projections(db_session, devices, now=now_utc())
     payloads: dict[uuid.UUID, dict[str, object]] = {}

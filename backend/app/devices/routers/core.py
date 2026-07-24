@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.core.dependencies import DbDep
 from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.http_errors import found_or_404
+from app.core.timeutil import now_utc
 from app.devices.dependencies import DeviceServicesDep
 
 # build_device_query_filters is a FastAPI dependency (not a route handler, so it is not
@@ -31,17 +32,13 @@ from app.devices.schemas.filters import (
     HealthVerdictFilter,
 )
 from app.devices.services import (
-    health as device_health,
-)
-from app.devices.services import (
     identity_conflicts,
 )
 from app.devices.services import (
     platform_label as platform_label_service,
 )
+from app.devices.services.read_projection import load_device_read_projections
 from app.devices.services.service import UnknownGroupKeysError
-from app.lifecycle.services import remediation_log
-from app.runs import service as run_service
 from app.sessions.dependencies import SessionServicesDep
 
 DeviceIdentityConflictError = identity_conflicts.DeviceIdentityConflictError
@@ -116,32 +113,11 @@ async def list_devices(
     except UnknownGroupKeysError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    reservation_map = await run_service.get_device_reservation_map(db, [device.id for device in devices])
-    ladders = await remediation_log.load_ladders(db, [device.id for device in devices])
-    health_summary_map = {
-        str(device.id): device_health.build_public_summary(
-            device,
-            policy_view=remediation_log.build_policy_view(ladders[device.id], device.lifecycle_policy_state),
-        )
-        for device in devices
-    }
-    label_map = await platform_label_service.load_platform_label_map(
-        db,
-        ((device.pack_id, device.platform_id) for device in devices),
-    )
-    serialization_contexts = await device_services.presenter.build_serialization_contexts(db, devices)
-    serialized: list[dict[str, Any]] = []
-    for device in devices:
-        reservation_context = run_service.get_reservation_context_for_device(reservation_map.get(device.id), device.id)
-        payload = await device_services.presenter.serialize_device(
-            db,
-            device,
-            reservation_context=reservation_context,
-            health_summary=health_summary_map.get(str(device.id)),
-            platform_label=label_map.get((device.pack_id, device.platform_id)),
-            precomputed=serialization_contexts[device.id],
-        )
-        serialized.append(payload)
+    now = now_utc()
+    projections = await load_device_read_projections(db, devices, now=now)
+    serialized = [
+        device_services.presenter.serialize_projected_device(device, projections[device.id]) for device in devices
+    ]
 
     if total is not None:
         return {
@@ -161,7 +137,6 @@ async def get_device(
     include: Annotated[str | None, Query()] = None,
 ) -> dict[str, Any]:
     device = await get_device_or_404(device_id, db, device_services.crud)
-    ladder = await remediation_log.load_ladder(db, device.id)
     platform_label = await platform_label_service.load_platform_label(
         db,
         pack_id=device.pack_id,
@@ -170,10 +145,6 @@ async def get_device(
     return await device_services.presenter.serialize_device_detail(
         db,
         device,
-        health_summary=device_health.build_public_summary(
-            device,
-            policy_view=remediation_log.build_policy_view(ladder, device.lifecycle_policy_state),
-        ),
         platform_label=platform_label,
         include_orchestration=include is not None and "orchestration" in include.split(","),
     )
