@@ -115,6 +115,9 @@ async def test_group_detail_reads_are_constant_with_member_count(
 def test_projected_device_builder_is_synchronous_and_database_free() -> None:
     source = inspect.getsource(DevicePresenterService.serialize_projected_device)
     tree = ast.parse(textwrap.dedent(source))
+    # ast.AsyncFunctionDef is not a subclass of ast.FunctionDef, so this rejects a
+    # no-op ``async def`` that would pass the (vacuously true) no-Await check below.
+    assert isinstance(tree.body[0], ast.FunctionDef), "serialize_projected_device must be a sync def"
     assert not [node for node in ast.walk(tree) if isinstance(node, ast.Await)]
     assert "AsyncSession" not in source
     assert list(inspect.signature(DevicePresenterService.serialize_projected_device).parameters) == [
