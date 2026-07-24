@@ -14,6 +14,70 @@ All notable changes to the GridFleet backend (FastAPI manager, control plane) ar
 - Bracket-wrap IPv6 addresses in agent terminal URLs so `ws://[::1]:5100/...` is valid.
 - Close drain-transition race by committing draining state before `try_complete_drain`, preventing concurrent `assert_runnable` from starting new work during a drain.
 
+## [0.7.0](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.6.0...gridfleet-backend-v0.7.0) (2026-07-24)
+
+
+### Features
+
+* **backend:** add a transaction-scoped group-mutation advisory lock ([f58739c](https://github.com/quidow/gridfleet/commit/f58739c6a452ed669b1c66d0fa82fa422aac28c3))
+* **backend:** add incremental ladder derivation ([00a0e28](https://github.com/quidow/gridfleet/commit/00a0e28e36c2dedb947ad412801e82da55946e57))
+* **backend:** prepare generation-fenced recovery jobs ([d646244](https://github.com/quidow/gridfleet/commit/d6462447a65f7cc270acb01eaa94aabf3ec1469f))
+
+
+### Bug Fixes
+
+* **backend:** address code review on group-mutation lock ([1d40f87](https://github.com/quidow/gridfleet/commit/1d40f870e49ce3b28394b43588743045279a6e05))
+* **backend:** address group mutation review findings ([97e235d](https://github.com/quidow/gridfleet/commit/97e235d97a58458d231951b765d392530cedabb4))
+* **backend:** close five Phase 4 review follow-ups ([d30013a](https://github.com/quidow/gridfleet/commit/d30013aea4ded4c8f7fe9782a95c731353c91508))
+* **backend:** close membership-staging race in commit_import ([3efe784](https://github.com/quidow/gridfleet/commit/3efe784b90c1c5f81846db828449317457548d39))
+* **backend:** close the member_of dangling-reference race ([b034fd1](https://github.com/quidow/gridfleet/commit/b034fd180df9ae1b8e110b82bb597c65e303d4b7))
+* **backend:** commit imported group definitions in one locked transaction ([88d27b4](https://github.com/quidow/gridfleet/commit/88d27b420f5b9c2eb3c9dba511550eddbb19bcaa))
+* **backend:** commit verification device and lease atomically ([ed4bb36](https://github.com/quidow/gridfleet/commit/ed4bb36d3e28a936755cbf1ceb6cf16178dd4d59))
+* **backend:** correct dynamic group counts and the non-object filters crash ([983d371](https://github.com/quidow/gridfleet/commit/983d371cf8fc3ac5c475f30ef8b17416fbdd855e))
+* **backend:** dedupe imported static groups and contain the staging commit ([b434b91](https://github.com/quidow/gridfleet/commit/b434b91ec48bb0c3a75cdcd47bc89da3371a5eb3))
+* **backend:** detach node-health fold pack catalog before settlement ([fdc4136](https://github.com/quidow/gridfleet/commit/fdc41366b39c18f03009650646574df657b0b846))
+* **backend:** guard the membership write, not just its commit ([6952ca7](https://github.com/quidow/gridfleet/commit/6952ca7cb726ae330d998a774b950b344c54743d))
+* **backend:** harden group mutation concurrency ([fa2cb35](https://github.com/quidow/gridfleet/commit/fa2cb35238b57ec897671ab7d7c8270176a3bad2))
+* **backend:** make intent snapshot protocol read only ([833aa68](https://github.com/quidow/gridfleet/commit/833aa68b8b16aa42edc808799553824c19ac9478))
+* **backend:** make the deadlock test reach the DELETE flush and survive the refresh race ([5a3f875](https://github.com/quidow/gridfleet/commit/5a3f875df2a654a24df45ce975ee9a337592a9b2))
+* **backend:** narrow delete-group referrer scan to raw member_of ([51c2b75](https://github.com/quidow/gridfleet/commit/51c2b75828cad2ccf2b87254c16a4c94dc845ff6))
+* **backend:** persist host_id on verification update ([ae029b5](https://github.com/quidow/gridfleet/commit/ae029b5f50d3b91cdc1db22ff964d3610951bc4a))
+* **backend:** release group lock before dynamic counts ([7fc3551](https://github.com/quidow/gridfleet/commit/7fc355157700d996a012c03a448d27ad980b0ae6))
+* **backend:** release membership row locks and scope the create lock to dynamic groups ([7e614d2](https://github.com/quidow/gridfleet/commit/7e614d257f09156f79cffdaf8b518c888ef92733))
+* **backend:** release the group lock on rejected deletes and index the referrer scan ([d5405d0](https://github.com/quidow/gridfleet/commit/d5405d0dc9c9778b0478632c1c5e981dc5eec3ab))
+* **backend:** release the group lock on rejected writes and tighten the writer contract ([c209cad](https://github.com/quidow/gridfleet/commit/c209cad172ba16794b33591d52c109bd8100aa58))
+* **backend:** resolve final group mutation review findings ([fda14d5](https://github.com/quidow/gridfleet/commit/fda14d5c0f0f57c39875d1443a5c79b2936dcfd0))
+* **backend:** reuse the add_members conflict idiom in import membership staging ([472fc9e](https://github.com/quidow/gridfleet/commit/472fc9eff83ea3c1a4d6cee06bb0c6c8688248bc))
+* **backend:** scope group-mutation lock to actual group work in imports ([1a7b18c](https://github.com/quidow/gridfleet/commit/1a7b18cf0be9de71c98abe0d010d69fd5740bb31))
+* **backend:** serialise group definition writes behind an advisory lock ([5250d57](https://github.com/quidow/gridfleet/commit/5250d57e6f509646a2d18acdc30637156156a0ca))
+* **backend:** serialise only creates that resolve member_of, and scan the writer contract by AST ([4c7325a](https://github.com/quidow/gridfleet/commit/4c7325a7d24efeca2d837dba46752f472c2fa459))
+* **backend:** skip stale group ids in import membership staging ([a9fce88](https://github.com/quidow/gridfleet/commit/a9fce88e9be6d37a59eaba957cef21ea5498baaf))
+* **backend:** stop leaking agent host and transport errors in device health ([3b6964e](https://github.com/quidow/gridfleet/commit/3b6964e66fa64201020a6eaf7fdb0ad2bb3a728e))
+* **backend:** tighten group mutation safeguards ([3af3195](https://github.com/quidow/gridfleet/commit/3af31951d942fe2acff0c0372a2c5e9f2853f36e))
+
+
+### Performance Improvements
+
+* **backend:** device decision snapshot — bounded reconcile reads ([f8ecd34](https://github.com/quidow/gridfleet/commit/f8ecd34fcc80a3448e0940132c2f46cf40920a54))
+* **backend:** load locked device decisions in bounded reads ([7088863](https://github.com/quidow/gridfleet/commit/7088863564b3edd7dbb52399472ca6dfb10f15a6))
+* **backend:** reconcile devices from one locked snapshot ([5cf6e4d](https://github.com/quidow/gridfleet/commit/5cf6e4d726cf8c8f0014e769741bc6191edb79b5))
+
+
+### Dependencies
+
+* **deps:** bump sse-starlette ([#872](https://github.com/quidow/gridfleet/issues/872)) ([0e3e329](https://github.com/quidow/gridfleet/commit/0e3e329cbacd6a5f0772fac70bae315abcb1125e))
+* **deps:** bump the python-dependencies group ([#884](https://github.com/quidow/gridfleet/issues/884)) ([3a4d24b](https://github.com/quidow/gridfleet/commit/3a4d24bc994074c2ded9fea54c10ad1355ad4343))
+
+
+### Reverts
+
+* **backend:** restore the validating referrer scan and close the unlocked-path leak ([34a9561](https://github.com/quidow/gridfleet/commit/34a9561418597b8d490b144396e6c6d8d589e816))
+
+
+### Documentation
+
+* **backend:** point the group-writer contract at in-repo references ([d655b48](https://github.com/quidow/gridfleet/commit/d655b487b81ffa7a2862ee97880f5be82b8be715))
+
 ## [0.6.0](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.5.0...gridfleet-backend-v0.6.0) (2026-07-21)
 
 
