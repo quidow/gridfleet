@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import pytest_asyncio
+from app.devices.services.read_projection import load_device_read_projections
 from sqlalchemy import event
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.core.timeutil import now_utc
 from app.devices.models import (
     ConnectionType,
     Device,
@@ -304,13 +306,13 @@ async def test_batch_serialization_matches_per_device(db_session: AsyncSession, 
     )
     devices = [d_ok, d_bad_platform, d_no_pack]
 
-    contexts = await presenter.build_serialization_contexts(db_session, devices)
+    projections = await load_device_read_projections(db_session, devices, now=now_utc())
     payloads: dict[uuid.UUID, dict[str, object]] = {}
     for device in devices:
-        batched = await presenter.serialize_device(db_session, device, precomputed=contexts[device.id])
+        projected = presenter.serialize_projected_device(device, projections[device.id])
         per_device = await presenter.serialize_device(db_session, device)
-        assert batched == per_device
-        payloads[device.id] = batched
+        assert projected == per_device
+        payloads[device.id] = projected
 
     assert payloads[d_ok.id]["blocked_reason"] is None
     assert payloads[d_bad_platform.id]["blocked_reason"] == "platform_removed"
