@@ -182,6 +182,36 @@ async def test_close_running_session_is_idempotent_under_concurrent_close(
     assert ended_emits == 1
 
 
+async def test_close_running_session_terminalizes_when_no_device(
+    db_session: AsyncSession,
+) -> None:
+    """``close_running_session`` must terminalize a device-less session inline.
+
+    Behavior pin for the ``session.device_id is None`` branch, ahead of
+    extracting it into a shared helper with the ``NoResultFound`` branch.
+    """
+    from app.sessions.service import close_running_session
+
+    session = Session(session_id="no-device-sess", device_id=None, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
+
+    publisher = Mock()
+    await close_running_session(db_session, session, attached_run=None, publisher=publisher)
+
+    assert session.ended_at is not None
+    ended_at_first = session.ended_at
+    ended_emits = sum(1 for c in publisher.queue_for_session.call_args_list if "session.ended" in c.args)
+    assert ended_emits == 1
+
+    # Idempotent: a second close on the already-terminal row is a no-op.
+    await close_running_session(db_session, session, attached_run=None, publisher=publisher)
+
+    assert session.ended_at == ended_at_first
+    ended_emits = sum(1 for c in publisher.queue_for_session.call_args_list if "session.ended" in c.args)
+    assert ended_emits == 1
+
+
 async def test_locked_close_reuses_the_callers_device_proof(
     db_session: AsyncSession,
     default_host_id: str,

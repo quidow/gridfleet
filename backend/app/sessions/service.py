@@ -175,6 +175,29 @@ async def _committed_run_outcome(
     return committed.state, committed.error
 
 
+async def _terminalize_session_without_device(
+    db: AsyncSession,
+    session: Session,
+    *,
+    publisher: EventPublisher,
+) -> None:
+    """Terminalize a session inline when no device row can be locked.
+
+    Shared by the ``device_id is None`` and vanished-device (`NoResultFound`)
+    branches of ``close_running_session``: stamp the terminal status and stage
+    the ended event, skipping the device reconcile.
+    """
+    if await db.scalar(select(Session.ended_at).where(Session.id == session.id)) is not None:
+        return
+    suppress_event = session.status == SessionStatus.pending or session.test_name == PROBE_TEST_NAME
+    run_state, run_error = await _committed_run_outcome(db, session.run_id)
+    session.ended_at = now_utc()
+    _apply_session_terminal_status(session, run_state=run_state, run_error=run_error)
+    if not suppress_event:
+        queue_session_ended_event(db, session, device=session.device, publisher=publisher)
+    await db.flush()
+
+
 async def close_running_session_locked(
     db: AsyncSession,
     locked: LockedDevice,
@@ -238,29 +261,13 @@ async def close_running_session(
     if session.device_id is None:
         # No device to lock: stamp inline without device reconcile. Rare path
         # (sessions are device-bound in practice); preserved for completeness.
-        if await db.scalar(select(Session.ended_at).where(Session.id == session.id)) is not None:
-            return
-        suppress_event = session.status == SessionStatus.pending or session.test_name == PROBE_TEST_NAME
-        run_state, run_error = await _committed_run_outcome(db, session.run_id)
-        session.ended_at = now_utc()
-        _apply_session_terminal_status(session, run_state=run_state, run_error=run_error)
-        if not suppress_event:
-            queue_session_ended_event(db, session, device=session.device, publisher=publisher)
-        await db.flush()
+        await _terminalize_session_without_device(db, session, publisher=publisher)
         return
     try:
         locked = await device_locking.lock_device_handle(db, session.device_id)
     except NoResultFound:
         # Device row vanished: nothing to lock, terminalize the session inline.
-        if await db.scalar(select(Session.ended_at).where(Session.id == session.id)) is not None:
-            return
-        suppress_event = session.status == SessionStatus.pending or session.test_name == PROBE_TEST_NAME
-        run_state, run_error = await _committed_run_outcome(db, session.run_id)
-        session.ended_at = now_utc()
-        _apply_session_terminal_status(session, run_state=run_state, run_error=run_error)
-        if not suppress_event:
-            queue_session_ended_event(db, session, device=session.device, publisher=publisher)
-        await db.flush()
+        await _terminalize_session_without_device(db, session, publisher=publisher)
         return
     # Re-check under the lock: a concurrent closer may have terminalized
     # this row between the caller's SELECT and our lock acquisition. The
