@@ -40,7 +40,6 @@ from app.verification.services.execution import (
     NodeEffectSnapshot,
     VerificationExecutionService,
     _health_failure_detail,
-    _register_verification_node_intent,
 )
 from app.verification.services.job_state import new_job, reset_snapshot_for_retry
 from app.verification.services.preparation import (
@@ -54,6 +53,7 @@ from tests.fakes import build_review_service
 from tests.helpers import create_device_record, delete_jobs_by_kind
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
+from tests.verification._lease_helpers import register_verification_node_intent
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -2273,7 +2273,7 @@ async def test_old_finalizer_after_new_verification_is_superseded(
     async with session_factory.begin() as db:
         locked = await db.get(Device, device.id)
         assert locked is not None
-        await _register_verification_node_intent(
+        await register_verification_node_intent(
             db, locked, settings=settings_service, publisher=event_bus, operation_id=op_b
         )
 
@@ -2325,7 +2325,7 @@ async def test_session_start_between_prepare_and_finalize_blocks_stale_save(
     async with session_factory.begin() as db:
         locked = await db.get(Device, device.id)
         assert locked is not None
-        await _register_verification_node_intent(
+        await register_verification_node_intent(
             db, locked, settings=settings_service, publisher=event_bus, operation_id=operation_id
         )
         db.add(Session(session_id="race-live-sess", device_id=device.id, status=SessionStatus.running))

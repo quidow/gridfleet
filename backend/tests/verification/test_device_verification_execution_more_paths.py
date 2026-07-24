@@ -19,12 +19,12 @@ from app.verification.services import execution
 from app.verification.services.execution import (
     AgentCallContext,
     VerificationExecutionService,
-    _register_verification_node_intent,
 )
 from app.verification.services.preparation import PreparedVerificationEffect
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+from tests.verification._lease_helpers import register_verification_node_intent
 
 if TYPE_CHECKING:
     from app.hosts.models import Host
@@ -158,7 +158,7 @@ async def test_finalize_failure_create_deletes_device_update_restores_fields(
     # Create-mode failure deletes only the token-matching Device.
     device_c = await create_device(db_session, host_id=db_host.id, name="fail-create")
     op_c = uuid.uuid4()
-    await _register_verification_node_intent(
+    await register_verification_node_intent(
         db_session, device_c, settings=FakeSettingsReader({}), publisher=event_bus, operation_id=op_c
     )
     await db_session.commit()
@@ -177,7 +177,7 @@ async def test_finalize_failure_create_deletes_device_update_restores_fields(
     # Update-mode failure restores the copied original fields and shelves for review.
     device_u = await create_device(db_session, host_id=db_host.id, name="renamed-during-verify")
     op_u = uuid.uuid4()
-    await _register_verification_node_intent(
+    await register_verification_node_intent(
         db_session, device_u, settings=FakeSettingsReader({}), publisher=event_bus, operation_id=op_u
     )
     await db_session.commit()
@@ -210,7 +210,7 @@ async def test_finalize_success_verifies_and_revokes_lease(
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     device = await create_device(db_session, host_id=db_host.id, name="verify-ok", verified_at=None)
     op = uuid.uuid4()
-    await _register_verification_node_intent(
+    await register_verification_node_intent(
         db_session, device, settings=FakeSettingsReader({}), publisher=event_bus, operation_id=op
     )
     await db_session.commit()

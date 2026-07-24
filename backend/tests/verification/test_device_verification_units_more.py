@@ -41,6 +41,7 @@ from app.verification.services.service import VerificationService
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
+from tests.verification._lease_helpers import register_verification_node_intent
 
 if TYPE_CHECKING:
     from app.hosts.models import Host
@@ -140,9 +141,7 @@ async def test_register_verification_node_intent_suppresses_stop_directive(
         reason="stale stop",
     )
 
-    await execution._register_verification_node_intent(
-        db_session, device, settings=FakeSettingsReader({}), publisher=event_bus
-    )
+    await register_verification_node_intent(db_session, device, settings=FakeSettingsReader({}), publisher=event_bus)
 
     sources = set(
         (await db_session.scalars(select(DeviceIntent.source).where(DeviceIntent.device_id == device.id))).all()

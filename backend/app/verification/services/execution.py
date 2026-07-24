@@ -5,7 +5,6 @@ import logging
 import time
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
@@ -29,8 +28,6 @@ from app.devices.services.intent_types import (
     VERIFICATION_OUTCOME_FAILED,
     VERIFICATION_OUTCOME_KEY,
     VERIFICATION_OUTCOME_PASSED,
-    CommandKind,
-    IntentRegistration,
     verification_intent_source,
 )
 from app.grid.allocation import node_target
@@ -516,41 +513,6 @@ async def _stop_managed_node_for_verification(db: AsyncSession, device: Device) 
     node.active_connection_target = None
     await db.flush()
     return node
-
-
-async def _register_verification_node_intent(
-    db: AsyncSession,
-    device: Device,
-    *,
-    settings: SettingsReader,
-    publisher: EventPublisher,
-    operation_id: uuid.UUID | None = None,
-) -> None:
-    """Register a standing ``node_process`` start intent for the verification window.
-
-    Mirrors the ``operator_node_lifecycle.request_*`` contract: this helper does
-    not commit; the caller owns transaction boundaries.
-    """
-    startup_timeout = settings.get_int("appium.startup_timeout_sec")
-    viability_timeout = settings.get_int("general.session_viability_timeout_sec")
-    deadline = now_utc() + timedelta(seconds=startup_timeout + viability_timeout + 60)
-    payload: dict[str, Any] = {"action": "start"}
-    if operation_id is not None:
-        payload[VERIFICATION_OPERATION_ID_KEY] = str(operation_id)
-    intent_service = IntentService(db)
-    await device_locking.lock_device(db, device.id)
-    await intent_service.register_intents_and_reconcile(
-        device_id=device.id,
-        intents=[
-            IntentRegistration(
-                source=verification_intent_source(device.id),
-                kind=CommandKind.verification_start,
-                payload=payload,
-                expires_at=deadline,
-            )
-        ],
-        publisher=publisher,
-    )
 
 
 async def _revoke_verification_node_intent(db: AsyncSession, device: Device, *, publisher: EventPublisher) -> None:

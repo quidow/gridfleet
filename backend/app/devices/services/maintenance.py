@@ -91,7 +91,7 @@ class MaintenanceService:
 
         # §14.4a: register a verification intent so the device starts re-verifying
         # immediately rather than waiting for the next device_connectivity_loop tick.
-        # expires_at mirrors _register_verification_node_intent in verification_execution.py:
+        # expires_at mirrors the verification lease deadline in preparation.py:
         # startup_timeout_sec + session_viability_timeout_sec + 60 s safety margin.
         startup_timeout = self._settings.get_int("appium.startup_timeout_sec")
         viability_timeout = self._settings.get_int("general.session_viability_timeout_sec")
