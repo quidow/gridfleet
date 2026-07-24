@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any, Literal
 from prometheus_client import Counter
 from sqlalchemy.exc import IntegrityError, NoResultFound
 
+from app.appium_nodes.services import locking as appium_node_locking
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.grid import appium_direct
 from app.grid.allocation import AllocationNotPendingError, AllocationResult, AllocationService
 
@@ -73,9 +76,15 @@ async def mark_target_node_down(
             locked = await device_locking.lock_device_handle(db, device_id)
         except NoResultFound:
             return
-        await health.apply_node_state_transition(
+        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        locked_node = await appium_node_locking.lock_appium_node_for_device(db, locked.device.id)
+        if locked_node is None:
+            return
+        await health.apply_locked_node_state_transition(
             db,
-            locked.device,
+            locked,
+            locked_node,
+            snapshot,
             health_running=False,
             health_state="error",
             mark_offline=True,
