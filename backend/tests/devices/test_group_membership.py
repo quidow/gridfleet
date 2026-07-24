@@ -743,7 +743,21 @@ async def test_group_detail_dynamic_membership_projection_matches_reserved_and_m
         os_version="14",
         verified=True,
     )
+    east_unreserved = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value=f"east-unreserved-{uuid.uuid4().hex[:8]}",
+        connection_target="east-unreserved",
+        name="east-unreserved",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+        verified=True,
+    )
     db_session.add(DeviceGroupMembership(group_id=east.id, device_id=reserved_member.id))
+    db_session.add(DeviceGroupMembership(group_id=east.id, device_id=east_unreserved.id))
     await db_session.commit()
     await create_reserved_run(db_session, name="east-run", devices=[reserved_member])
 
@@ -760,6 +774,10 @@ async def test_group_detail_dynamic_membership_projection_matches_reserved_and_m
     member_ids = {item["id"] for item in detail["devices"]}
     assert member_ids == {str(reserved_member.id)}
     assert str(other.id) not in member_ids
+    # ``east_unreserved`` passes the member_of axis (it is in ``east``) but is not
+    # reserved — proving the injected ``reserved_by_device_id`` axis excludes it
+    # independently of member_of.
+    assert str(east_unreserved.id) not in member_ids
 
 
 @pytest.mark.db

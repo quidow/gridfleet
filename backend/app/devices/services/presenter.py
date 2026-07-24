@@ -26,7 +26,6 @@ from app.devices.services.lifecycle_policy_summary import (
 )
 from app.devices.services.read_projection import load_device_read_projections
 from app.lifecycle.services import remediation_log
-from app.runs import service as run_service
 
 DEFAULT_RESTART_WINDOW_SEC = 120
 
@@ -36,20 +35,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.devices.models import Device, DeviceReservation
+    from app.devices.models import Device
     from app.devices.services.serialization_types import DeviceReadProjection, ReservationReadFacts
-    from app.runs.models import TestRun
-
-
-def _cooldown_remaining_sec(reservation_entry: DeviceReservation | None) -> int | None:
-    if (
-        reservation_entry is None
-        or reservation_entry.exclusion_kind != ExclusionKind.cooldown
-        or reservation_entry.excluded_until is None
-    ):
-        return None
-    remaining = int((reservation_entry.excluded_until - now_utc()).total_seconds())
-    return max(0, remaining)
 
 
 class DevicePresenterService:
@@ -175,24 +162,6 @@ def _reservation_read_dto(
         cooldown_remaining_sec=cooldown_remaining_sec,
         cooldown_count=cooldown_count,
         cooldown_escalated=bool(exclusion_reason and exclusion_reason.startswith("Exceeded cooldown threshold ")),
-    )
-
-
-def build_reservation_read(
-    reservation: TestRun | None,
-    reservation_entry: DeviceReservation | None = None,
-) -> DeviceReservationRead | None:
-    if reservation is None:
-        return None
-    return _reservation_read_dto(
-        run_id=reservation.id,
-        run_name=reservation.name,
-        run_state=reservation.state.value,
-        excluded=run_service.reservation_entry_is_excluded(reservation_entry),
-        exclusion_reason=reservation_entry.exclusion_reason if reservation_entry else None,
-        excluded_until=reservation_entry.excluded_until if reservation_entry else None,
-        cooldown_count=reservation_entry.cooldown_count if reservation_entry else 0,
-        cooldown_remaining_sec=_cooldown_remaining_sec(reservation_entry),
     )
 
 

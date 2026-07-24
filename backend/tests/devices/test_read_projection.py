@@ -14,6 +14,7 @@ from sqlalchemy.orm import raiseload, selectinload
 
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, DeviceOperationalState, GroupType
+from app.devices.services import presenter as presenter_module
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.devices.services.presenter import DevicePresenterService
@@ -259,3 +260,32 @@ async def test_load_device_read_projections_bounded_and_immutable(
         f"projection reads grew with fleet size: {len(one_read)} -> {len(many_reads)}"
     )
     assert not any("devices.id = " in statement.lower() for statement in many_reads)
+
+
+@pytest.mark.db
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_batch_projection_matches_async_serializer_for_multi_axis_device(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Byte-for-byte parity between the batch-constructed DecisionFacts path and the
+    async per-device serializer for a device carrying every fact axis at once
+    (reservation, operator recovery-deny intent, live session, remediation entry) —
+    the case ``test_batch_serialization_matches_per_device`` does not cover, since
+    its fixtures carry no reservation/intent/session. Freezes ``now_utc`` in the
+    presenter module so the async path's internal recompute cannot drift from the
+    ``now`` threaded into the batch projection at a second boundary."""
+    fixed_now = now_utc()
+    monkeypatch.setattr(presenter_module, "now_utc", lambda: fixed_now)
+
+    device, _run = await _seed_projected_device(db_session, host_id=db_host.id, prefix="parity")
+    [loaded_device] = await _load_with_declared_graph(db_session, [device.id])
+
+    projections = await load_device_read_projections(db_session, [loaded_device], now=fixed_now)
+    presenter = DevicePresenterService()
+
+    projected = presenter.serialize_projected_device(loaded_device, projections[device.id])
+    per_device = await presenter.serialize_device(db_session, loaded_device)
+
+    assert projected == per_device

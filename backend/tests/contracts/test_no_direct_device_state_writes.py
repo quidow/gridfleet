@@ -155,7 +155,8 @@ def test_read_projection_is_not_a_mutation_api() -> None:
     assert "write_desired_state" not in source
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
+            args = [*node.args.args, *node.args.kwonlyargs]
             assert all(
-                not (isinstance(arg.annotation, ast.Name) and arg.annotation.id == "LockedDevice")
-                for arg in [*node.args.args, *node.args.kwonlyargs]
+                not (isinstance(arg.annotation, ast.Name) and arg.annotation.id == "LockedDevice") for arg in args
             )
+            assert all(arg.arg != "for_update" for arg in args)
