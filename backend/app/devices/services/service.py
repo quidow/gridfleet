@@ -93,12 +93,17 @@ class DeviceCrudService:
         *,
         mark_verified: bool = False,
         initial_operational_state: DeviceOperationalState = DeviceOperationalState.offline,
+        commit: bool = True,
     ) -> Device:
         payload = await self.prepare_device_create_payload(db, data)
         if mark_verified:
             payload["verified_at"] = now_utc()
         payload["operational_state_last_emitted"] = initial_operational_state
         await self._identity.ensure_device_payload_identity_available(db, payload)
+        if not commit:
+            device = device_write.stage_device_record(db, payload)
+            await db.flush()  # apply the uuid4 PK default and surface IntegrityError inside the caller's txn
+            return device
         try:
             return await device_write.create_device_record(db, payload)
         except IntegrityError:
