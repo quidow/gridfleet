@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import Select, asc, case, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError, NoResultFound
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import raiseload, selectinload
 
 from app.core.leader import state_store as control_plane_state_store
 from app.core.timeutil import now_utc
@@ -451,7 +451,7 @@ def _build_device_list_stmt(
     stmt = (
         select(Device)
         .outerjoin(Host, Host.id == Device.host_id)
-        .options(selectinload(Device.appium_node))
+        .options(selectinload(Device.appium_node), raiseload("*"))
         .execution_options(populate_existing=True)
     )
     stmt = cast("DeviceListStatement", _apply_device_filters(stmt, filters))

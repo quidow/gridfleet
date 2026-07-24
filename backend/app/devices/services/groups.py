@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import raiseload, selectinload
 
 from app.core.locks import group_mutation_lock
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
@@ -348,7 +348,7 @@ async def _load_static_members(db: AsyncSession, group: DeviceGroup) -> list[Dev
         select(Device)
         .join(DeviceGroupMembership, DeviceGroupMembership.device_id == Device.id)
         .where(DeviceGroupMembership.group_id == group.id)
-        .options(selectinload(Device.appium_node))
+        .options(selectinload(Device.appium_node), raiseload("*"))
         .order_by(Device.created_at, Device.id)
     )
     return list((await db.execute(stmt)).scalars().all())
@@ -380,7 +380,7 @@ async def _load_devices_in_scope(db: AsyncSession, dynamic_groups: list[DeviceGr
             scopes.append(and_(*conditions))
         else:
             unbounded.append(group.key)
-    stmt = select(Device).options(selectinload(Device.appium_node))
+    stmt = select(Device).options(selectinload(Device.appium_node), raiseload("*"))
     if unbounded:
         logger.warning(
             "device_group_scope_unbounded groups=%s co_listed_narrow_groups=%d "
