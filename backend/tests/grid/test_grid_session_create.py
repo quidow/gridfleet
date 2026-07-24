@@ -11,16 +11,21 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.appium_nodes.models import AppiumNode
+from app.devices.services.health import DeviceHealthService
 from app.grid import session_create
 from app.grid.allocation import AllocationService
 from app.grid.models import GridSessionQueueTicket
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import seed_host_and_running_node
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Collection
 
+    from app.devices.locking import LockedDevice
     from app.devices.models import Device
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.grid.allocation import AllocationResult
 
 
@@ -175,6 +180,52 @@ def _raw_result(
 
 def _attempt_metric_value(outcome: str) -> float:
     return session_create.GRID_CREATE_ATTEMPT_TOTAL.labels(outcome=outcome)._value.get()  # type: ignore[attr-defined]
+
+
+@pytest.mark.db
+async def test_mark_target_node_down_uses_the_locked_writer(
+    db_session: AsyncSession,
+    db_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, device, node = await seed_host_and_running_node(
+        db_session,
+        identity=f"grid-node-down-{uuid.uuid4().hex[:8]}",
+    )
+    device_id = device.id
+    node_id = node.id
+    await db_session.commit()
+
+    health = DeviceHealthService(publisher=event_bus)
+    called = {"locked": 0, "relock": 0}
+    real_locked = DeviceHealthService.apply_locked_node_state_transition
+
+    async def spy_locked(
+        self: DeviceHealthService,
+        db: AsyncSession,
+        locked: LockedDevice,
+        locked_node: AppiumNode,
+        snapshot: DeviceDecisionSnapshot,
+        **kw: bool | str | None,
+    ) -> DeviceDecisionSnapshot:
+        called["locked"] += 1
+        return await real_locked(self, db, locked, locked_node, snapshot, **kw)
+
+    async def spy_relock(self: DeviceHealthService, db: AsyncSession, device: Device, **kw: bool | str | None) -> None:
+        called["relock"] += 1
+        raise AssertionError("mark_target_node_down must use the locked writer")
+
+    monkeypatch.setattr(DeviceHealthService, "apply_locked_node_state_transition", spy_locked)
+    monkeypatch.setattr(DeviceHealthService, "apply_node_state_transition", spy_relock)
+
+    await session_create.mark_target_node_down(db_factory, health, device_id=device_id)
+
+    assert called == {"locked": 1, "relock": 0}
+    async with db_factory() as db:
+        refreshed = await db.get(AppiumNode, node_id)
+    assert refreshed is not None
+    assert refreshed.health_state == "error"
+    assert refreshed.health_running is False
 
 
 @pytest.mark.db

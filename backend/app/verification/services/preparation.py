@@ -7,6 +7,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import normalize_pack_device, pack_device_lifecycle_action
@@ -162,29 +163,35 @@ class VerificationPreparationService:
         if normalize_error is not None:
             return await _validation_failed(job, normalize_error)
 
-        # ``create_device`` owns its own commit (ledger seed + identity gate), so
-        # the create runs in a plain session; the tokenized lease and the
-        # atomic device-id stamp follow in their own committed transaction so a
-        # crashed retry resumes from ``Job.payload`` instead of duplicating.
-        # This window is deliberately non-atomic: a crash between the two
-        # commits below orphans an unverified ``verifying`` device (the
-        # device_id/lease commit never lands, so ``Job.payload`` has no
-        # ``device_id`` to resume from), and the retry re-runs
-        # ``create_device`` fresh — the identity gate rejects it as a
-        # duplicate rather than resuming the original row.
-        async with self._session_factory() as db:
-            try:
+        # create_device (commit=False), the device-id stamp, and the tokenized
+        # lease all commit together: a crash before commit leaves nothing, and a
+        # committed device always carries its device_id in Job.payload for resume.
+        try:
+            async with self._session_factory.begin() as db:
                 saved = await self._crud.create_device(
                     db,
                     DeviceVerificationCreate.model_validate(normalized),
                     initial_operational_state=DeviceOperationalState.verifying,
+                    commit=False,
                 )
-            except DeviceIdentityConflictError as exc:
-                return await _validation_failed(job, str(exc))
-            device_id = saved.id
-        async with self._session_factory.begin() as db:
-            await _store_created_device_id(db, operation_id, device_id)
-            await self._write_verification_lease(db, device_id, operation_id)
+                device_id = saved.id
+                await _store_created_device_id(db, operation_id, device_id)
+                await self._write_verification_lease(db, device_id, operation_id)
+        except DeviceIdentityConflictError as exc:
+            return await _validation_failed(job, str(exc))
+        except IntegrityError:
+            # A concurrent create claimed this identity between the pre-insert
+            # gate and our flush. Re-check on a fresh session to surface the
+            # friendly conflict; re-raise if the clashing row is already gone.
+            async with self._session_factory() as db:
+                payload = await device_write.prepare_device_create_payload_async(
+                    db, DeviceVerificationCreate.model_validate(normalized)
+                )
+                try:
+                    await self._identity.ensure_device_payload_identity_available(db, payload)
+                except DeviceIdentityConflictError as exc:
+                    return await _validation_failed(job, str(exc))
+            raise
 
         await set_stage(job, "validation", "passed", detail="Device input normalized successfully")
         return (

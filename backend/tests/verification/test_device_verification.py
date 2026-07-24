@@ -6,9 +6,11 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx2 as httpx
+import pytest
 import pytest_asyncio
 from httpx2 import AsyncClient
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.exceptions import NodeManagerError
@@ -38,23 +40,26 @@ from app.verification.services.execution import (
     NodeEffectSnapshot,
     VerificationExecutionService,
     _health_failure_detail,
-    _register_verification_node_intent,
 )
 from app.verification.services.job_state import new_job, reset_snapshot_for_retry
-from app.verification.services.preparation import PreparedVerificationEffect, VerificationPreparationService
+from app.verification.services.preparation import (
+    PreparedVerificationEffect,
+    VerificationPreparationService,
+    _PackCoords,
+)
 from app.verification.services.runner import VerificationRunnerService
 from tests.conftest import settings_service
 from tests.fakes import build_review_service
 from tests.helpers import create_device_record, delete_jobs_by_kind
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
+from tests.verification._lease_helpers import register_verification_node_intent
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
     from contextlib import AbstractContextManager
 
-    import pytest
-
+    from app.agent_comm.client import AgentClientFactory
     from app.hosts.models import Host
 
 
@@ -2102,6 +2107,149 @@ async def test_crash_after_health_or_probe_reuses_same_operation_id(
     assert len(rows) == 1, "resume reused the operation's device instead of creating a duplicate"
 
 
+async def test_prepare_create_commits_device_and_lease_atomically(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    operation_id = uuid.uuid4()
+    identity = f"atomic-{operation_id}"
+    async with session_factory.begin() as db:
+        db.add(
+            Job(
+                id=operation_id,
+                kind=JOB_KIND_DEVICE_VERIFICATION,
+                status="running",
+                payload={"operation_id": str(operation_id), "mode": "create", "data": {}},
+                snapshot=new_job(str(operation_id)),
+                scheduled_at=datetime.now(UTC),
+            )
+        )
+
+    prep = VerificationPreparationService(
+        settings=settings_service,
+        circuit_breaker=_noop_circuit_breaker(),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
+        identity=DeviceIdentityConflictService(),
+        publisher=event_bus,
+        session_factory=session_factory,
+    )
+    data = DeviceVerificationCreate(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=identity,
+        connection_target=identity,
+        name="Atomic",
+        os_version="14",
+        host_id=uuid.UUID(default_host_id),
+    )
+
+    # Normalize is a remote agent call; stub it to pass the input payload straight through.
+    async def _passthrough_normalize(
+        payload: dict[str, Any],
+        coords: _PackCoords,
+        *,
+        host_ip: str,
+        host_agent_port: int,
+        http_client_factory: AgentClientFactory,
+    ) -> tuple[dict[str, Any], None]:
+        return payload, None
+
+    monkeypatch.setattr(prep, "normalize_effect", _passthrough_normalize)
+    monkeypatch.setattr(prep, "_write_verification_lease", AsyncMock(side_effect=RuntimeError("boom")))
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await prep.prepare_create(new_job(str(operation_id)), operation_id, data, http_client_factory=httpx.AsyncClient)
+
+    async with session_factory() as db:
+        rows = (await db.execute(select(Device).where(Device.identity_value == identity))).scalars().all()
+        job_row = await db.get(Job, operation_id)
+    assert rows == [], "device insert must roll back with the failed lease write (atomic)"
+    assert job_row is not None and "device_id" not in job_row.payload, "device_id must not be stamped on rollback"
+
+
+async def test_prepare_create_translates_concurrent_identity_integrity_error(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    operation_id = uuid.uuid4()
+    # A transport-shaped (IP-literal) identity skips preparation.py's pre-insert
+    # gate (only non-transport identities are checked there), so this exercises
+    # the post-insert IntegrityError re-check instead of the earlier gate.
+    identity = ":".join(operation_id.hex[i : i + 4] for i in range(0, 32, 4))
+    # A peer already owns this identity — the re-check must find it.
+    await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value=identity,
+        connection_target=identity,
+        name="Peer",
+        os_version="14",
+    )
+    async with session_factory.begin() as db:
+        db.add(
+            Job(
+                id=operation_id,
+                kind=JOB_KIND_DEVICE_VERIFICATION,
+                status="running",
+                payload={"operation_id": str(operation_id), "mode": "create", "data": {}},
+                snapshot=new_job(str(operation_id)),
+                scheduled_at=datetime.now(UTC),
+            )
+        )
+
+    prep = VerificationPreparationService(
+        settings=settings_service,
+        circuit_breaker=_noop_circuit_breaker(),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
+        identity=DeviceIdentityConflictService(),
+        publisher=event_bus,
+        session_factory=session_factory,
+    )
+    data = DeviceVerificationCreate(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=identity,
+        connection_target=identity,
+        name="Racer",
+        os_version="14",
+        host_id=uuid.UUID(default_host_id),
+    )
+
+    async def _passthrough_normalize(
+        payload: dict[str, Any],
+        coords: _PackCoords,
+        *,
+        host_ip: str,
+        host_agent_port: int,
+        http_client_factory: AgentClientFactory,
+    ) -> tuple[dict[str, Any], None]:
+        return payload, None
+
+    monkeypatch.setattr(prep, "normalize_effect", _passthrough_normalize)
+    # Simulate the DB rejecting the duplicate at flush (past the pre-insert gate).
+    monkeypatch.setattr(
+        prep._crud, "create_device", AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("dup")))
+    )
+
+    effect, error = await prep.prepare_create(
+        new_job(str(operation_id)), operation_id, data, http_client_factory=httpx.AsyncClient
+    )
+    assert effect is None
+    assert error is not None and "already" in error.lower(), f"expected a friendly conflict, got {error!r}"
+
+
 async def test_old_finalizer_after_new_verification_is_superseded(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -2125,7 +2273,7 @@ async def test_old_finalizer_after_new_verification_is_superseded(
     async with session_factory.begin() as db:
         locked = await db.get(Device, device.id)
         assert locked is not None
-        await _register_verification_node_intent(
+        await register_verification_node_intent(
             db, locked, settings=settings_service, publisher=event_bus, operation_id=op_b
         )
 
@@ -2177,7 +2325,7 @@ async def test_session_start_between_prepare_and_finalize_blocks_stale_save(
     async with session_factory.begin() as db:
         locked = await db.get(Device, device.id)
         assert locked is not None
-        await _register_verification_node_intent(
+        await register_verification_node_intent(
             db, locked, settings=settings_service, publisher=event_bus, operation_id=operation_id
         )
         db.add(Session(session_id="race-live-sess", device_id=device.id, status=SessionStatus.running))

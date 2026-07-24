@@ -72,6 +72,7 @@ class DeviceCrudProtocol(Protocol):
         *,
         mark_verified: bool = ...,
         initial_operational_state: DeviceOperationalState = ...,
+        commit: bool = ...,
     ) -> Device: ...
     async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]: ...
     async def list_devices_paginated(

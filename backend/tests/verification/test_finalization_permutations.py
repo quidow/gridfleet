@@ -30,7 +30,6 @@ from app.lifecycle.services.operator_node import operator_start_source, operator
 from app.verification.services.execution import (
     AgentCallContext,
     VerificationExecutionService,
-    _register_verification_node_intent,
     _stamp_verification_outcome,
 )
 from app.verification.services.job_state import new_job
@@ -38,6 +37,7 @@ from app.verification.services.preparation import PreparedVerificationEffect
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
+from tests.verification._lease_helpers import register_verification_node_intent
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -123,7 +123,7 @@ async def test_failure_finalization_statements_permute(db_session: AsyncSession,
     for index, perm in enumerate(itertools.permutations(step_names)):
         device = await create_device(db_session, host_id=db_host.id, name=f"ws153-perm-{index}")
         node = await _seed_node(db_session, device.id, running=True)
-        await _register_verification_node_intent(
+        await register_verification_node_intent(
             db_session, device, settings=FakeSettingsReader({}), publisher=event_bus
         )
         await IntentService(db_session).register_intents(
@@ -211,7 +211,7 @@ async def test_finalize_success_single_edge_no_flap(
         reason="episode in flight",
     )
     operation_id = uuid.uuid4()
-    await _register_verification_node_intent(
+    await register_verification_node_intent(
         db_session, device, settings=FakeSettingsReader({}), publisher=event_bus, operation_id=operation_id
     )
     await db_session.commit()
@@ -248,7 +248,7 @@ async def test_finalize_failure_single_edge_no_flap(
     device = await create_device(db_session, host_id=db_host.id, name="ws153-failure")
     node = await _seed_node(db_session, device.id, running=True)
     operation_id = uuid.uuid4()
-    await _register_verification_node_intent(
+    await register_verification_node_intent(
         db_session, device, settings=FakeSettingsReader({}), publisher=event_bus, operation_id=operation_id
     )
     await IntentService(db_session).register_intents(

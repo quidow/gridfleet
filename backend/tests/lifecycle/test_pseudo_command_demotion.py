@@ -32,13 +32,13 @@ from app.lifecycle.services.policy import LifecyclePolicyService
 from app.lifecycle.services.remediation_log import DIRECTIVE_STOP
 from app.runs.service_reservation import RunReservationService
 from app.verification.services.execution import (
-    _register_verification_node_intent,
     _revoke_verification_node_intent,
     _stamp_verification_outcome,
 )
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
+from tests.verification._lease_helpers import register_verification_node_intent
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,7 +98,7 @@ async def test_verification_lease_outranks_derived_stop_without_revoke(
     assert node.desired_state == AppiumDesiredState.stopped
 
     # Register the verification lease (a start command) and reconcile. No revoke.
-    await _register_verification_node_intent(db_session, device, settings=FakeSettingsReader({}), publisher=event_bus)
+    await register_verification_node_intent(db_session, device, settings=FakeSettingsReader({}), publisher=event_bus)
     await db_session.commit()
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.running
