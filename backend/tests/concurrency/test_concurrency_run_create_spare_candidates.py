@@ -26,12 +26,6 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-_allocator_svc = RunAllocatorService(
-    publisher=event_bus,
-    settings=FakeSettingsReader({}),
-    circuit_breaker=test_circuit_breaker,
-)
-
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
@@ -59,6 +53,13 @@ async def test_create_run_falls_back_to_spare_when_first_pick_is_locked(
     locked_id = devices[0].id
     pack_id, platform_id = devices[0].pack_id, devices[0].platform_id
 
+    allocator_svc = RunAllocatorService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=test_circuit_breaker,
+        session_factory=db_session_maker,
+    )
+
     lock_acquired = asyncio.Event()
     create_done = asyncio.Event()
 
@@ -72,15 +73,13 @@ async def test_create_run_falls_back_to_spare_when_first_pick_is_locked(
     async def do_create() -> list[str]:
         await asyncio.wait_for(lock_acquired.wait(), timeout=5.0)
         try:
-            async with db_session_maker() as session:
-                _, device_infos = await _allocator_svc.create_run(
-                    session,
-                    RunCreate(
-                        name="spare-fallback-run",
-                        requirements=[{"pack_id": pack_id, "platform_id": platform_id, "count": 2}],
-                    ),
-                )
-                return [info.device_id for info in device_infos]
+            result = await allocator_svc.create_run(
+                RunCreate(
+                    name="spare-fallback-run",
+                    requirements=[{"pack_id": pack_id, "platform_id": platform_id, "count": 2}],
+                ),
+            )
+            return [info.device_id for info in result.response.devices]
         finally:
             create_done.set()
 

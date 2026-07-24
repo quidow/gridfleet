@@ -65,6 +65,7 @@ async def test_appium_sweep_loop_one_successful_iteration(monkeypatch: pytest.Mo
     viability_mock.check_due_devices = AsyncMock()
     services = SessionServices(
         crud=Mock(),
+        kill=Mock(),
         sync=mock_sync,
         viability=viability_mock,
         settings=FakeSettingsReader({}),

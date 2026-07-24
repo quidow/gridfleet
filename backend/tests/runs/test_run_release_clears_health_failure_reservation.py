@@ -19,17 +19,28 @@ _release_svc = RunReleaseService(
     settings=_settings,
     deferred_stop=AsyncMock(),
 )
-_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, release=_release_svc)
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
 
+def _make_lifecycle_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunLifecycleService:
+    return RunLifecycleService(
+        publisher=event_bus, settings=_settings, release=_release_svc, session_factory=session_factory
+    )
+
+
 async def _fetch_reservation(db_session: AsyncSession, *, device_id: object) -> DeviceReservation:
+    # The lifecycle command now commits via its own session (session_factory-owned
+    # transaction), so this fetch must bypass db_session's identity-map cache to see it.
     return (
-        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device_id))
+        await db_session.execute(
+            select(DeviceReservation)
+            .where(DeviceReservation.device_id == device_id)
+            .execution_options(populate_existing=True)
+        )
     ).scalar_one()
 
 
@@ -54,14 +65,16 @@ async def _seed_health_failure_exclusion(
     await db_session.commit()
 
 
-async def test_cancel_run_clears_health_failure_exclusion(db_session: AsyncSession, db_host: Host) -> None:
+async def test_cancel_run_clears_health_failure_exclusion(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
+) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="cancel-release")
     run = await create_reserved_run(db_session, name="cancel-release-run", devices=[device])
     await _seed_health_failure_exclusion(db_session, device_id=device.id)
     seeded = await _fetch_reservation(db_session, device_id=device.id)
     assert seeded.excluded is True
 
-    await _lifecycle_svc.cancel_run(db_session, run.id)
+    await _make_lifecycle_svc(db_session_maker).cancel_run(run.id)
 
     entry = await _fetch_reservation(db_session, device_id=device.id)
     # Run end releases the reservation; a released row no longer gates the device
@@ -71,12 +84,14 @@ async def test_cancel_run_clears_health_failure_exclusion(db_session: AsyncSessi
     assert entry.excluded is False  # released rows are cleared of exclusion (invariant)
 
 
-async def test_complete_run_clears_health_failure_exclusion(db_session: AsyncSession, db_host: Host) -> None:
+async def test_complete_run_clears_health_failure_exclusion(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
+) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="complete-release")
     run = await create_reserved_run(db_session, name="complete-release-run", devices=[device])
     await _seed_health_failure_exclusion(db_session, device_id=device.id)
 
-    await _lifecycle_svc.complete_run(db_session, run.id)
+    await _make_lifecycle_svc(db_session_maker).complete_run(run.id)
 
     entry = await _fetch_reservation(db_session, device_id=device.id)
     # Run end releases the reservation; a released row no longer gates the device
@@ -86,12 +101,14 @@ async def test_complete_run_clears_health_failure_exclusion(db_session: AsyncSes
     assert entry.excluded is False  # released rows are cleared of exclusion (invariant)
 
 
-async def test_expire_run_clears_health_failure_exclusion(db_session: AsyncSession, db_host: Host) -> None:
+async def test_expire_run_clears_health_failure_exclusion(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
+) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="expire-release")
     run = await create_reserved_run(db_session, name="expire-release-run", devices=[device])
     await _seed_health_failure_exclusion(db_session, device_id=device.id)
 
-    await _lifecycle_svc.expire_run(db_session, run, "Heartbeat timeout")
+    await _make_lifecycle_svc(db_session_maker).expire_run(run.id, "Heartbeat timeout")
 
     entry = await _fetch_reservation(db_session, device_id=device.id)
     # Run end releases the reservation; a released row no longer gates the device

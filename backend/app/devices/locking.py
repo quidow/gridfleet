@@ -170,3 +170,28 @@ async def lock_devices(db: AsyncSession, device_ids: list[uuid.UUID]) -> list[De
         .execution_options(populate_existing=True)
     )
     return list((await db.execute(stmt)).scalars().all())
+
+
+async def lock_device_handles(
+    db: AsyncSession,
+    device_ids: Sequence[uuid.UUID],
+    *,
+    load_sessions: bool = False,
+) -> list[LockedDevice]:
+    ordered = sorted(set(device_ids))
+    if not ordered:
+        return []
+    options: list[Any] = [selectinload(Device.appium_node), selectinload(Device.host)]
+    if load_sessions:
+        options.append(selectinload(Device.sessions))
+    rows = (
+        await db.execute(
+            select(Device)
+            .where(Device.id.in_(ordered))
+            .options(*options)
+            .order_by(Device.id)
+            .with_for_update(of=Device)
+            .execution_options(populate_existing=True)
+        )
+    ).scalars()
+    return [LockedDevice._from_lock(db, device) for device in rows]

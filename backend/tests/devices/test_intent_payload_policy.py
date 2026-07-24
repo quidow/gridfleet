@@ -28,7 +28,7 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -129,6 +129,7 @@ async def test_auto_stop_commission_action_shape(
 @pytest.mark.db
 async def test_cooldown_intent_payload_shape(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     from app.agent_comm.circuit_breaker import AgentCircuitBreaker
@@ -181,25 +182,31 @@ async def test_cooldown_intent_payload_shape(
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
         incidents=AsyncMock(),
+        session_factory=db_session_maker,
     )
     cooldown_reason = "flaky connection detected"
-    _excluded_until, count, escalated, _, _entered_maintenance = await _failure_svc.cooldown_device(
-        db_session,
+    result = await _failure_svc.cooldown_device(
         run.id,
         device.id,
         reason=cooldown_reason,
         ttl_seconds=120,
     )
-    assert not escalated  # non-escalation path records the cooldown we want
+    assert not result.escalated  # non-escalation path records the cooldown we want
 
     # Cooldown is now a fact read from the reservation row, not a synthesized intent.
     # The grid-routing lever (accepting_new_sessions=False under cooldown) is proven by
     # tests/devices/test_decision.py::test_grid_cooldown_keeps_run_but_blocks_sessions.
     # --- cooldown_count + exclusion_reason live on the DeviceReservation row ---
+    # cooldown_device commits via its own session (session_factory-owned transaction),
+    # so this fetch must bypass db_session's identity-map cache.
     reservation = (
-        await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device.id))
+        await db_session.execute(
+            select(DeviceReservation)
+            .where(DeviceReservation.device_id == device.id)
+            .execution_options(populate_existing=True)
+        )
     ).scalar_one()
-    assert reservation.cooldown_count == count
+    assert reservation.cooldown_count == result.cooldown_count
     assert reservation.exclusion_reason == cooldown_reason
 
 

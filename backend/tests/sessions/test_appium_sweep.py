@@ -26,11 +26,12 @@ def _make_loop(calls: list[str], *, sync_error: Exception | None = None) -> Appi
         if sync_error is not None:
             raise sync_error
 
-    async def check_due_devices(_db: object) -> None:
+    async def check_due_devices() -> None:
         calls.append("viability")
 
     services = SessionServices(
         crud=Mock(),
+        kill=Mock(),
         sync=Mock(sync=AsyncMock(side_effect=sync), wait_for_wake=AsyncMock()),
         viability=Mock(check_due_devices=AsyncMock(side_effect=check_due_devices)),
         settings=FakeSettingsReader({}),

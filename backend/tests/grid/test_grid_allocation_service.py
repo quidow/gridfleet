@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services.intent import IntentService
-from app.grid.allocation import AllocationNotPendingError, AllocationService, RunNotActiveError
+from app.grid.allocation import AllocationService, RunNotActiveError
 from app.grid.matching import CapabilityMergeError
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.runs.models import RunState, TestRun
@@ -601,8 +601,12 @@ async def test_confirm_conflicting_running_row_raises_not_pending_not_500(
 ) -> None:
     """C5: a running(X) row already carrying the Appium session id (e.g. inserted by
     the legacy register API while the alloc row still held its placeholder) must make
-    confirm() raise AllocationNotPendingError (router -> 409 rollback), NOT an
-    unhandled IntegrityError 500 that wedges the allocation."""
+    confirm() raise (router -> promotion_failed rollback), NOT an unhandled 500 that
+    wedges the allocation. ``promote_to_running`` lets the unique-violation
+    ``IntegrityError`` propagate; ``create_and_promote`` translates it (together with
+    ``AllocationNotPendingError``) to the promotion-failed outcome outside the txn."""
+    from sqlalchemy.exc import IntegrityError
+
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)
     await db_session.flush()
@@ -621,14 +625,14 @@ async def test_confirm_conflicting_running_row_raises_not_pending_not_500(
     )
     await db_session.flush()
 
-    with pytest.raises(AllocationNotPendingError):
+    with pytest.raises(IntegrityError):
         await allocation_service.promote_to_running(
             db_session, allocation_id=result.allocation_id, appium_session_id="conflict-ssn"
         )
 
 
 @pytest.mark.db
-async def test_resume_interrupted_fails_orphaned_pending(
+async def test_prepare_interrupted_session_fails_orphaned_pending(
     db_session: AsyncSession, seeded_available_device: Device, allocation_service: AllocationService
 ) -> None:
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
@@ -638,18 +642,18 @@ async def test_resume_interrupted_fails_orphaned_pending(
     result = await allocation_service.try_allocate(db_session, ticket=ticket)
     assert result is not None
 
-    await allocation_service.resume_interrupted(db_session, ticket_id=ticket_id)
+    effect = await allocation_service.prepare_interrupted_session(db_session, ticket_id=ticket_id)
+    assert effect is None
     row = await db_session.get(Session, result.allocation_id)
     assert row is not None
     assert row.status == SessionStatus.error
 
 
 @pytest.mark.db
-async def test_resume_interrupted_terminates_lost_running(
+async def test_prepare_interrupted_session_returns_running_effect(
     db_session: AsyncSession,
     seeded_available_device: Device,
     allocation_service: AllocationService,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)
@@ -660,27 +664,21 @@ async def test_resume_interrupted_terminates_lost_running(
     await allocation_service.promote_to_running(
         db_session, allocation_id=result.allocation_id, appium_session_id="lost-ssn"
     )
-    killed: list[tuple[str, str]] = []
+    await db_session.commit()
 
-    async def fake_kill(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
-        killed.append((target, session_id))
-        return True
-
-    from app.grid import allocation as allocation_module
-
-    monkeypatch.setattr(allocation_module.appium_direct, "terminate_session", fake_kill)
-    await allocation_service.resume_interrupted(db_session, ticket_id=ticket_id)
-    row = await db_session.get(Session, result.allocation_id)
-    assert row is not None
-    assert killed and killed[0][1] == "lost-ssn"
-    assert row.ended_at is not None
+    effect = await allocation_service.prepare_interrupted_session(db_session, ticket_id=ticket_id)
+    assert effect is not None
+    assert effect.appium_session_id == "lost-ssn"
+    assert effect.session_pk == result.allocation_id
+    assert effect.target.startswith("http://")
 
 
 @pytest.mark.db
-async def test_resume_interrupted_no_live_row_is_noop(
+async def test_prepare_interrupted_session_no_live_row_is_none(
     db_session: AsyncSession, allocation_service: AllocationService
 ) -> None:
-    await allocation_service.resume_interrupted(db_session, ticket_id=uuid.uuid4())
+    effect = await allocation_service.prepare_interrupted_session(db_session, ticket_id=uuid.uuid4())
+    assert effect is None
 
 
 @pytest.mark.db

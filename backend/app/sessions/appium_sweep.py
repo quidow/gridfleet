@@ -62,8 +62,12 @@ class AppiumSweepLoop(BackgroundLoop):
                 return
         self._last_viability_pass = now
 
+        # ``check_due_devices`` opens its own short read session to build the due
+        # device UUID tuple, closes it, then runs each probe via fresh-session
+        # phases. The sweep's passed ``db`` is not used for viability, so no outer
+        # read transaction is held across the remote Appium effects.
         try:
-            await self._services.viability.check_due_devices(db)
+            await self._services.viability.check_due_devices()
         except Exception:
             logger.exception("appium_sweep_viability_failed")
 

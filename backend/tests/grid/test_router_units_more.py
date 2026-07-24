@@ -69,10 +69,14 @@ from app.runs.models import RunState
 from app.runs.schemas import (
     RunCooldownRequest,
     RunCreate,
+    RunCreateResponse,
     RunPreparationFailureReport,
     RunRead,
     SessionCounts,
 )
+from app.runs.service_allocator import RunCreateResult
+from app.runs.service_lifecycle import RunCommandResult
+from app.runs.service_lifecycle_failures import CooldownResult
 from app.sessions import router as sessions
 from app.settings import router as settings_router
 from app.settings.schemas import SettingsBulkUpdate, SettingUpdate
@@ -320,9 +324,6 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         os_version="14",
     )
     run = _run_obj()
-    db = DummySession(
-        execute_result=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [SimpleNamespace(id=device_id)]))
-    )
     mock_svc = Mock()
     mock_svc.get = Mock(return_value="http://grid:4444")
     mock_rs_create = SimpleNamespace(
@@ -331,13 +332,21 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         failure=AsyncMock(),
         query=AsyncMock(),
     )
-    mock_rs_create.allocator.create_run = AsyncMock(return_value=(run, [info]))
+    response = RunCreateResponse(
+        id=run.id,
+        name=run.name,
+        state=run.state,
+        devices=[info],
+        ttl_minutes=run.ttl_minutes,
+        heartbeat_timeout_sec=run.heartbeat_timeout_sec,
+        created_at=run.created_at,
+    )
+    mock_rs_create.allocator.create_run = AsyncMock(return_value=RunCreateResult(response=response))
     created = await runs.create_run(
         RunCreate(name="ci", requirements=[{"pack_id": "pack", "platform_id": "android"}]),
-        db=db,
         run_services=mock_rs_create,
     )
-    assert created["id"] == run.id
+    assert created.id == run.id
 
     pack_id = "appium-demo"
     pack = SimpleNamespace(id=pack_id)
@@ -579,7 +588,6 @@ async def test_runs_router_get_run_404_and_cooldown_branches() -> None:
             uuid.uuid4(),
             uuid.uuid4(),
             RunCooldownRequest(reason="bad", ttl_seconds=1),
-            db=object(),
             run_services=mock_rs,
         )
     assert caught.value.status_code == 404
@@ -590,7 +598,6 @@ async def test_runs_router_get_run_404_and_cooldown_branches() -> None:
             uuid.uuid4(),
             uuid.uuid4(),
             RunCooldownRequest(reason="bad", ttl_seconds=1),
-            db=object(),
             run_services=mock_rs,
         )
     assert caught.value.status_code == 422
@@ -815,7 +822,7 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
         await sessions.update_session_status(
             "s1",
             status_payload,
-            db=object(),
+            db=DummySession(),
             session_services=SimpleNamespace(crud=crud_upd_ok),  # type: ignore[arg-type]
         )
         is session_obj
@@ -1169,21 +1176,23 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
 
     _viability_raises = AsyncMock(side_effect=ValueError("busy"))
     _session_svc_raises = SimpleNamespace(viability=SimpleNamespace(run_session_viability_probe=_viability_raises))
-    with patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)):
+    with patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)):
         with pytest.raises(HTTPException) as exc:
             await devices_control.device_session_test(
                 device_id,
                 db=object(),
+                device_services=_mock_ds_ctrl,
                 session_services=_session_svc_raises,
             )
     assert exc.value.status_code == 409
 
     _viability_ok = AsyncMock(return_value={"status": "passed"})
     _session_svc_ok = SimpleNamespace(viability=SimpleNamespace(run_session_viability_probe=_viability_ok))
-    with patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)):
+    with patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)):
         assert await devices_control.device_session_test(
             device_id,
             db=object(),
+            device_services=_mock_ds_ctrl,
             session_services=_session_svc_ok,
         ) == {"status": "passed"}
 
@@ -2122,7 +2131,6 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
         with pytest.raises(HTTPException) as exc:
             await runs.create_run(
                 payload,
-                db=object(),
                 run_services=mock_rs,
             )
         assert exc.value.status_code == status_code
@@ -2135,13 +2143,21 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
         platform_id="android",
         os_version="14",
     )
-    mock_rs.allocator.create_run = AsyncMock(return_value=(run, [device_info]))
+    response = RunCreateResponse(
+        id=run.id,
+        name=run.name,
+        state=run.state,
+        devices=[device_info],
+        ttl_minutes=run.ttl_minutes,
+        heartbeat_timeout_sec=run.heartbeat_timeout_sec,
+        created_at=run.created_at,
+    )
+    mock_rs.allocator.create_run = AsyncMock(return_value=RunCreateResult(response=response))
     created = await runs.create_run(
         payload,
-        db=object(),
         run_services=mock_rs,
     )
-    assert created["id"] == run.id
+    assert created.id == run.id
 
     request = SimpleNamespace(query_params={})
     mock_rs_list = SimpleNamespace(
@@ -2191,6 +2207,14 @@ async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
     assert exc.value.status_code == 422
 
 
+class _FakeReadSession:
+    async def __aenter__(self) -> object:
+        return object()
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+
 async def test_runs_router_state_transition_endpoints() -> None:
     run = _run_obj()
     read = _run_read(run)
@@ -2203,6 +2227,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
             lifecycle=AsyncMock(),
             failure=AsyncMock(),
             query=AsyncMock(),
+            session_factory=Mock(return_value=_FakeReadSession()),
         )
         rs.query.fetch_session_counts = AsyncMock(return_value={run.id: read.session_counts})
         return rs
@@ -2213,7 +2238,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
         setattr(mock_rs.lifecycle, lifecycle_method, AsyncMock(side_effect=ValueError("bad state")))
         fn = getattr(runs, lifecycle_method)
         with pytest.raises(HTTPException) as exc:
-            await fn(run_id, db=object(), run_services=mock_rs)
+            await fn(run_id, run_services=mock_rs)
         assert exc.value.status_code in {404, 409}
 
     # complete / cancel / force_release conflict paths
@@ -2222,7 +2247,7 @@ async def test_runs_router_state_transition_endpoints() -> None:
         setattr(mock_rs.lifecycle, lifecycle_method, AsyncMock(side_effect=ValueError("bad state")))
         fn = getattr(runs, lifecycle_method)
         with pytest.raises(HTTPException) as exc:
-            await fn(run_id, db=object(), run_services=mock_rs)
+            await fn(run_id, run_services=mock_rs)
         assert exc.value.status_code in {404, 409}
 
     # report_preparation_failed conflict
@@ -2233,7 +2258,6 @@ async def test_runs_router_state_transition_endpoints() -> None:
             run_id,
             device_id,
             RunPreparationFailureReport(message="failed"),
-            db=object(),
             run_services=mock_rs,
         )
     assert exc.value.status_code == 409
@@ -2246,7 +2270,6 @@ async def test_runs_router_state_transition_endpoints() -> None:
             run_id,
             device_id,
             RunCooldownRequest(reason="flaky", ttl_seconds=30),
-            db=object(),
             run_services=mock_rs,
         )
     assert exc.value.status_code == 404
@@ -2254,34 +2277,46 @@ async def test_runs_router_state_transition_endpoints() -> None:
     # cooldown_device success
     mock_rs = _mock_rs()
     mock_rs.failure.cooldown_device = AsyncMock(
-        return_value=(datetime.now(UTC) + timedelta(seconds=30), 1, False, 3, False)
+        return_value=CooldownResult(
+            excluded_until=datetime.now(UTC) + timedelta(seconds=30),
+            cooldown_count=1,
+            escalated=False,
+            threshold=3,
+            entered_maintenance=False,
+        )
     )
     cooldown = await runs.cooldown_device_endpoint(
         run_id,
         device_id,
         RunCooldownRequest(reason="flaky", ttl_seconds=30),
-        db=object(),
         run_services=mock_rs,
     )
     assert cooldown.status == "cooldown_set"
 
     # heartbeat
     mock_rs = _mock_rs()
-    mock_rs.lifecycle.heartbeat = AsyncMock(return_value=run)
-    heartbeat = await runs.heartbeat(run_id, db=object(), run_services=mock_rs)
+    mock_rs.lifecycle.heartbeat = AsyncMock(return_value=RunCommandResult(run_id=run_id))
+    with patch("app.runs.router.run_service.get_run", new=AsyncMock(return_value=run)):
+        heartbeat = await runs.heartbeat(run_id, run_services=mock_rs)
     assert heartbeat["state"] == run.state
 
     # signal_ready success path
     mock_rs = _mock_rs()
-    mock_rs.lifecycle.signal_ready = AsyncMock(return_value=run)
-    with patch("app.runs.router.run_service.build_run_read", new=Mock(return_value=read)):
-        assert (await runs.signal_ready(run_id, db=object(), run_services=mock_rs)).id == run_id
+    mock_rs.lifecycle.signal_ready = AsyncMock(return_value=RunCommandResult(run_id=run_id))
+    with (
+        patch("app.runs.router.run_service.get_run", new=AsyncMock(return_value=run)),
+        patch("app.runs.router.run_service.build_run_read", new=Mock(return_value=read)),
+    ):
+        assert (await runs.signal_ready(run_id, run_services=mock_rs)).id == run_id
 
     # complete_run success path
     mock_rs = _mock_rs()
-    mock_rs.lifecycle.complete_run = AsyncMock(return_value=run)
-    with patch("app.runs.router.run_service.build_run_read", new=Mock(return_value=read)):
-        assert (await runs.complete_run(run_id, db=object(), run_services=mock_rs)).id == run_id
+    mock_rs.lifecycle.complete_run = AsyncMock(return_value=RunCommandResult(run_id=run_id))
+    with (
+        patch("app.runs.router.run_service.get_run", new=AsyncMock(return_value=run)),
+        patch("app.runs.router.run_service.build_run_read", new=Mock(return_value=read)),
+    ):
+        assert (await runs.complete_run(run_id, run_services=mock_rs)).id == run_id
 
 
 async def test_devices_core_router_branches() -> None:
@@ -2653,7 +2688,6 @@ async def test_runs_router_cursor_detail_and_cooldown_error_branches() -> None:
                 run_id,
                 uuid.uuid4(),
                 RunCooldownRequest(reason="bad", ttl_seconds=10),
-                db=object(),
                 run_services=mock_rs,
             )
         assert exc.value.status_code == status_code

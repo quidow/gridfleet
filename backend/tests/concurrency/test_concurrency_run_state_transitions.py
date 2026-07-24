@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
@@ -7,7 +9,7 @@ from sqlalchemy import select
 
 from app.devices.models import DeviceReservation
 from app.runs import service as run_service
-from app.runs.models import RunState, TestRun
+from app.runs.models import RunState
 from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
 from tests.fakes import FakeSettingsReader
@@ -18,12 +20,13 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 _settings = FakeSettingsReader({})
-_release_svc = RunReleaseService(
-    publisher=event_bus,
-    settings=_settings,
-    deferred_stop=AsyncMock(),
-)
-_lifecycle_svc = RunLifecycleService(publisher=event_bus, settings=_settings, release=_release_svc)
+
+
+def _make_lifecycle(session_factory: async_sessionmaker[AsyncSession]) -> RunLifecycleService:
+    release = RunReleaseService(publisher=event_bus, settings=_settings, deferred_stop=AsyncMock())
+    return RunLifecycleService(
+        publisher=event_bus, settings=_settings, release=release, session_factory=session_factory
+    )
 
 
 @pytest.mark.asyncio
@@ -31,6 +34,10 @@ async def test_signal_active_serializes_with_concurrent_cancel(
     db_session_maker: async_sessionmaker[AsyncSession],
     default_host_id: str,
 ) -> None:
+    """signal_active and cancel_run each own their own transaction and lock the
+    run FOR UPDATE, so a concurrent pair serialises at the DB. Whichever wins,
+    the run ends ``cancelled`` and every reservation is released — never a torn
+    or half-active state."""
     async with db_session_maker() as setup:
         device = await create_device_record(
             setup,
@@ -41,27 +48,21 @@ async def test_signal_active_serializes_with_concurrent_cancel(
         run = await create_reserved_run(setup, name="run-transition-race", devices=[device], state=RunState.preparing)
         run_id = run.id
 
+    lifecycle = _make_lifecycle(db_session_maker)
+
     async def activate() -> str:
-        async with db_session_maker() as active_db:
-            try:
-                await _lifecycle_svc.signal_active(active_db, run_id)
-            except ValueError as exc:
-                return str(exc)
-            return "activated"
+        try:
+            await lifecycle.signal_active(run_id)
+        except ValueError as exc:
+            return str(exc)
+        return "activated"
 
-    async with db_session_maker() as cancel_db:
-        locked_run_result = await cancel_db.execute(select(TestRun).where(TestRun.id == run_id).with_for_update())
-        locked_run = locked_run_result.scalar_one()
-        assert locked_run.state == RunState.preparing
+    async def cancel() -> None:
+        await lifecycle.cancel_run(run_id)
 
-        active_task = asyncio.create_task(activate())
-        await asyncio.sleep(0.15)
-        assert not active_task.done()
+    active_result, _ = await asyncio.gather(activate(), cancel())
 
-        await _lifecycle_svc.cancel_run(cancel_db, run_id)
-        active_result = await asyncio.wait_for(active_task, timeout=5.0)
-
-    assert "Cannot signal active from state 'cancelled'" in active_result
+    assert active_result == "activated" or "Cannot signal active" in active_result
 
     async with db_session_maker() as verify_db:
         final_run = await run_service.get_run(verify_db, run_id)

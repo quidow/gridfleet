@@ -17,7 +17,17 @@ from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate, Grou
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.runs import router as runs
 from app.runs.models import RunState
-from app.runs.schemas import ReservedDeviceInfo, RunCooldownRequest, RunCreate, RunRead, SessionCounts
+from app.runs.schemas import (
+    ReservedDeviceInfo,
+    RunCooldownRequest,
+    RunCreate,
+    RunCreateResponse,
+    RunRead,
+    SessionCounts,
+)
+from app.runs.service_allocator import RunCreateResult
+from app.runs.service_lifecycle import RunCommandResult
+from app.runs.service_lifecycle_failures import CooldownResult, PreparationFailureResult
 from app.verification import router as devices_verification
 
 
@@ -69,7 +79,7 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
 
     mock_rs.allocator.create_run = AsyncMock(side_effect=PackUnavailableError("pack"))
     with pytest.raises(HTTPException) as pack_error:
-        await runs.create_run(RunCreate(name="r", requirements=[]), db=db, run_services=mock_rs)
+        await runs.create_run(RunCreate(name="r", requirements=[]), run_services=mock_rs)
     assert pack_error.value.status_code == 422
 
     run = _run()
@@ -150,7 +160,6 @@ async def test_runs_router_error_and_list_paths(monkeypatch: pytest.MonkeyPatch)
 
 
 async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    db = MagicMock()
     run = _run()
 
     def _mk_rs() -> SimpleNamespace:
@@ -169,74 +178,81 @@ async def test_runs_router_lifecycle_and_cooldown_errors(monkeypatch: pytest.Mon
     mock_rs = _mk_rs()
     mock_rs.lifecycle.signal_ready = AsyncMock(side_effect=ValueError("bad state"))
     with pytest.raises(HTTPException) as ready_error:
-        await runs.signal_ready(run.id, db=db, run_services=mock_rs)
+        await runs.signal_ready(run.id, run_services=mock_rs)
     assert ready_error.value.status_code == 409
 
     # signal_active error
     mock_rs.lifecycle.signal_active = AsyncMock(side_effect=ValueError("bad state"))
     with pytest.raises(HTTPException):
-        await runs.signal_active(run.id, db=db, run_services=mock_rs)
+        await runs.signal_active(run.id, run_services=mock_rs)
 
     # report_preparation_failed error
     mock_rs.failure.report_preparation_failure = AsyncMock(side_effect=ValueError("bad state"))
     with pytest.raises(HTTPException):
         await runs.report_preparation_failed(
-            run.id, uuid.uuid4(), runs.RunPreparationFailureReport(message="bad"), db=db, run_services=mock_rs
+            run.id, uuid.uuid4(), runs.RunPreparationFailureReport(message="bad"), run_services=mock_rs
         )
 
     # complete_run error
     mock_rs.lifecycle.complete_run = AsyncMock(side_effect=ValueError("bad state"))
     with pytest.raises(HTTPException):
-        await runs.complete_run(run.id, db=db, run_services=mock_rs)
+        await runs.complete_run(run.id, run_services=mock_rs)
 
     # cancel_run error
     mock_rs.lifecycle.cancel_run = AsyncMock(side_effect=ValueError("bad state"))
     with pytest.raises(HTTPException):
-        await runs.cancel_run(run.id, db=db, run_services=mock_rs)
+        await runs.cancel_run(run.id, run_services=mock_rs)
 
     # force_release error
     mock_rs.lifecycle.force_release = AsyncMock(side_effect=ValueError("missing"))
     with pytest.raises(HTTPException) as force_error:
-        await runs.force_release(run.id, db=db, run_services=mock_rs)
+        await runs.force_release(run.id, run_services=mock_rs)
     assert force_error.value.status_code == 404
 
     # heartbeat error
     mock_rs.lifecycle.heartbeat = AsyncMock(side_effect=ValueError("missing"))
     with pytest.raises(HTTPException) as heartbeat_error:
-        await runs.heartbeat(run.id, db=db, run_services=mock_rs)
+        await runs.heartbeat(run.id, run_services=mock_rs)
     assert heartbeat_error.value.status_code == 404
 
     # cooldown errors
     mock_rs.failure.cooldown_device = AsyncMock(side_effect=ValueError("run not found"))
     with pytest.raises(HTTPException) as not_found:
         await runs.cooldown_device_endpoint(
-            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db, run_services=mock_rs
+            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), run_services=mock_rs
         )
     assert not_found.value.status_code == 404
 
     mock_rs.failure.cooldown_device = AsyncMock(side_effect=ValueError("ttl_seconds must be <= 30"))
     with pytest.raises(HTTPException) as invalid_ttl:
         await runs.cooldown_device_endpoint(
-            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db, run_services=mock_rs
+            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), run_services=mock_rs
         )
     assert invalid_ttl.value.status_code == 422
 
-    mock_rs.failure.cooldown_device = AsyncMock(return_value=(None, 2, True, 2, True))
+    mock_rs.failure.cooldown_device = AsyncMock(
+        return_value=CooldownResult(
+            excluded_until=None, cooldown_count=2, escalated=True, threshold=2, entered_maintenance=True
+        )
+    )
     escalated = await runs.cooldown_device_endpoint(
-        run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db, run_services=mock_rs
+        run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), run_services=mock_rs
     )
     assert escalated.status == "maintenance_escalated"
 
-    mock_rs.failure.cooldown_device = AsyncMock(return_value=(None, 1, False, 2, False))
+    mock_rs.failure.cooldown_device = AsyncMock(
+        return_value=CooldownResult(
+            excluded_until=None, cooldown_count=1, escalated=False, threshold=2, entered_maintenance=False
+        )
+    )
     with pytest.raises(HTTPException) as no_expiry:
         await runs.cooldown_device_endpoint(
-            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), db=db, run_services=mock_rs
+            run.id, uuid.uuid4(), RunCooldownRequest(reason="bad", ttl_seconds=1), run_services=mock_rs
         )
     assert no_expiry.value.status_code == 500
 
 
 async def test_runs_router_create_and_success_lifecycle_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    db = MagicMock()
     run = _run(RunState.preparing)
     info = ReservedDeviceInfo(
         device_id=str(uuid.uuid4()),
@@ -254,39 +270,57 @@ async def test_runs_router_create_and_success_lifecycle_paths(monkeypatch: pytes
         failure=AsyncMock(),
         query=AsyncMock(),
     )
-    mock_rs.allocator.create_run = AsyncMock(return_value=(run, [info]))
-    created = await runs.create_run(RunCreate(name="r", requirements=[]), db=db, run_services=mock_rs)
-    assert created["devices"][0].device_id == info.device_id
+    response = RunCreateResponse(
+        id=run.id,
+        name=run.name,
+        state=run.state,
+        devices=[info],
+        ttl_minutes=run.ttl_minutes,
+        heartbeat_timeout_sec=run.heartbeat_timeout_sec,
+        created_at=run.created_at,
+    )
+    mock_rs.allocator.create_run = AsyncMock(return_value=RunCreateResult(response=response))
+    created = await runs.create_run(RunCreate(name="r", requirements=[]), run_services=mock_rs)
+    assert created.devices[0].device_id == info.device_id
 
     active = _run(RunState.active)
     mock_rs.query.fetch_session_counts = AsyncMock(return_value={active.id: SessionCounts(total=1)})
     monkeypatch.setattr(runs.run_service, "build_run_read", _run_read)
+    monkeypatch.setattr(runs.run_service, "get_run", AsyncMock(return_value=active))
 
-    mock_rs.lifecycle.signal_ready = AsyncMock(return_value=active)
-    assert (await runs.signal_ready(active.id, db=db, run_services=mock_rs)).session_counts.total == 1
+    class _FakeReadSession:
+        async def __aenter__(self) -> object:
+            return object()
 
-    mock_rs.lifecycle.signal_active = AsyncMock(return_value=active)
-    assert (await runs.signal_active(active.id, db=db, run_services=mock_rs)).state == RunState.active
+        async def __aexit__(self, *exc: object) -> bool:
+            return False
 
-    mock_rs.failure.report_preparation_failure = AsyncMock(return_value=active)
+    mock_rs.session_factory = MagicMock(return_value=_FakeReadSession())
+
+    mock_rs.lifecycle.signal_ready = AsyncMock(return_value=RunCommandResult(run_id=active.id))
+    assert (await runs.signal_ready(active.id, run_services=mock_rs)).session_counts.total == 1
+
+    mock_rs.lifecycle.signal_active = AsyncMock(return_value=RunCommandResult(run_id=active.id))
+    assert (await runs.signal_active(active.id, run_services=mock_rs)).state == RunState.active
+
+    mock_rs.failure.report_preparation_failure = AsyncMock(return_value=PreparationFailureResult(run_id=active.id))
     assert (
         await runs.report_preparation_failed(
             active.id,
             uuid.uuid4(),
             runs.RunPreparationFailureReport(message="bad"),
-            db=db,
             run_services=mock_rs,
         )
     ).state == RunState.active
 
-    mock_rs.lifecycle.complete_run = AsyncMock(return_value=active)
-    assert (await runs.complete_run(active.id, db=db, run_services=mock_rs)).state == RunState.active
+    mock_rs.lifecycle.complete_run = AsyncMock(return_value=RunCommandResult(run_id=active.id))
+    assert (await runs.complete_run(active.id, run_services=mock_rs)).state == RunState.active
 
-    mock_rs.lifecycle.cancel_run = AsyncMock(return_value=active)
-    assert (await runs.cancel_run(active.id, db=db, run_services=mock_rs)).state == RunState.active
+    mock_rs.lifecycle.cancel_run = AsyncMock(return_value=RunCommandResult(run_id=active.id))
+    assert (await runs.cancel_run(active.id, run_services=mock_rs)).state == RunState.active
 
-    mock_rs.lifecycle.force_release = AsyncMock(return_value=active)
-    assert (await runs.force_release(active.id, db=db, run_services=mock_rs)).state == RunState.active
+    mock_rs.lifecycle.force_release = AsyncMock(return_value=RunCommandResult(run_id=active.id))
+    assert (await runs.force_release(active.id, run_services=mock_rs)).state == RunState.active
 
 
 async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> None:

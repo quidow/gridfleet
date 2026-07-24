@@ -153,7 +153,7 @@ async def test_attempt_auto_recovery_probes_verifying_device(
 
     probe_called: list[bool] = []
 
-    async def _capture_probe(db: object, dev: object, *, checked_by: object) -> dict[str, Any]:
+    async def _capture_probe(device_id: object, *, checked_by: object) -> dict[str, Any]:
         probe_called.append(True)
         return {"status": "passed"}
 

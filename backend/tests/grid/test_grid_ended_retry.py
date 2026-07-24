@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError
 
 from app.sessions.models import Session, SessionStatus
@@ -57,9 +58,15 @@ async def test_grid_ended_retries_transient_deadlock_and_returns_204(
 
     real = alloc.AllocationService.mark_ended
     calls = {"n": 0}
+    session_ids: list[int] = []
+    rereads: list[int] = []
 
     async def flaky(self: alloc.AllocationService, db: AsyncSession, *, appium_session_id: str) -> None:
         calls["n"] += 1
+        session_ids.append(id(db))
+        # Each attempt must reread the Session row from its own fresh snapshot.
+        row = (await db.execute(select(Session).where(Session.session_id == appium_session_id))).scalars().first()
+        rereads.append(0 if row is None else 1)
         if calls["n"] == 1:
             raise _deadlock_error()
         await real(self, db, appium_session_id=appium_session_id)
@@ -70,3 +77,7 @@ async def test_grid_ended_retries_transient_deadlock_and_returns_204(
 
     assert resp.status_code == 204
     assert calls["n"] == 2
+    # The retry helper opens a fresh session per attempt; the two attempts must
+    # not reuse a single AsyncSession (the old (db, zero_arg_cb) shape did).
+    assert len(set(session_ids)) == 2, f"retry must use distinct sessions, got {session_ids}"
+    assert rereads == [1, 1], f"each attempt must reread the row, got {rereads}"

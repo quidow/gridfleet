@@ -1,29 +1,31 @@
 """Backend-owned Appium session creation for the grid router flow (WS-14.1)."""
 
 import json
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any, Literal
 
 from prometheus_client import Counter
-from sqlalchemy.ext.asyncio import AsyncSession as DbSession
+from sqlalchemy.exc import IntegrityError, NoResultFound
 
-from app.devices.models import Device
+from app.devices import locking as device_locking
 from app.grid import appium_direct
 from app.grid.allocation import AllocationNotPendingError, AllocationResult, AllocationService
 
 if TYPE_CHECKING:
     import uuid
 
+    from app.core.type_defs import SessionFactory
     from app.devices.services.health import DeviceHealthService
 
 CREATE_TIMEOUT_CAP_SEC = 240
 CREATE_TIMEOUT_MARGIN_SEC = 5
 _PROTOCOL_ERROR_MESSAGE_LIMIT = 512
 
-DbFactory = Callable[[], AbstractAsyncContextManager[DbSession]]
+# Backwards-compatible alias for the injected factory; the runtime factory is the
+# ``async_sessionmaker`` and supports ``.begin()`` (Phase 4).
+type DbFactory = SessionFactory
+
 CreateOutcomeKind = Literal[
     "created",
     "w3c_rejected",
@@ -54,31 +56,30 @@ class CreateOutcome:
 
 
 async def _fail(
-    db_factory: DbFactory, allocation_service: AllocationService, allocation_id: uuid.UUID, message: str
+    db_factory: SessionFactory, allocation_service: AllocationService, allocation_id: uuid.UUID, message: str
 ) -> None:
-    async with db_factory() as db:
+    async with db_factory.begin() as db:
         await allocation_service.fail(db, allocation_id=allocation_id, message=message)
-        await db.commit()
 
 
 async def mark_target_node_down(
-    db_factory: DbFactory,
+    db_factory: SessionFactory,
     health: DeviceHealthService,
     *,
     device_id: uuid.UUID,
 ) -> None:
-    async with db_factory() as db:
-        device = await db.get(Device, device_id)
-        if device is None:
+    async with db_factory.begin() as db:
+        try:
+            locked = await device_locking.lock_device_handle(db, device_id)
+        except NoResultFound:
             return
         await health.apply_node_state_transition(
             db,
-            device,
+            locked.device,
             health_running=False,
             health_state="error",
             mark_offline=True,
         )
-        await db.commit()
 
 
 async def _sweep_target(target: str) -> None:
@@ -110,7 +111,7 @@ def _record(outcome: CreateOutcome) -> CreateOutcome:
 
 
 async def create_and_promote(
-    db_factory: DbFactory,
+    db_factory: SessionFactory,
     allocation_service: AllocationService,
     *,
     allocation: AllocationResult,
@@ -168,15 +169,18 @@ async def create_and_promote(
     value = parsed.get("value") if parsed is not None else None
     actual_caps = value.get("capabilities") if isinstance(value, dict) else None
     try:
-        async with db_factory() as db:
+        async with db_factory.begin() as db:
             await allocation_service.promote_to_running(
                 db,
                 allocation_id=allocation.allocation_id,
                 appium_session_id=session_id,
                 appium_capabilities=actual_caps if isinstance(actual_caps, dict) else None,
             )
-            await db.commit()
-    except AllocationNotPendingError:
+    except AllocationNotPendingError, IntegrityError:
+        # The pending row was promoted/reaped out from under us, or a concurrent
+        # register API inserted the same Appium session id (unique violation). The
+        # ``begin()`` context already rolled back; delete the just-created remote
+        # Appium session with no DB context.
         await appium_direct.terminate_session(allocation.target, session_id)
         return _record(
             CreateOutcome(

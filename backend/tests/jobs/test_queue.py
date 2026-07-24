@@ -44,6 +44,8 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
         settings=FakeSettingsReader({}),
         circuit_breaker=AsyncMock(),
         remediation_runner=AsyncMock(),
+        run_teardown_runner=AsyncMock(),
+        session_kill_runner=AsyncMock(),
         verification_runner=VerificationRunnerService(
             session_factory=sf,
             publisher=AsyncMock(),
@@ -54,6 +56,7 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
                 circuit_breaker=AsyncMock(),
                 crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 identity=DeviceIdentityConflictService(),
+                publisher=event_bus,
             ),
             execution=VerificationExecutionService(
                 review=build_review_service(),
@@ -187,6 +190,8 @@ async def test_run_pending_jobs_once_dispatches_supported_kinds(db_session: Asyn
         verification_runner=mock_verification_runner,
         recovery_runner=mock_recovery_runner,
         remediation_runner=AsyncMock(),
+        run_teardown_runner=AsyncMock(),
+        session_kill_runner=AsyncMock(),
     )
     assert await service.run_pending_once(kind=job_queue.JOB_KIND_DEVICE_VERIFICATION) is True
     mock_verification_runner.run_persisted_verification_job.assert_awaited_once()
@@ -217,6 +222,8 @@ async def test_run_pending_jobs_once_dispatches_remediation_kind(db_session: Asy
         verification_runner=AsyncMock(),
         recovery_runner=AsyncMock(),
         remediation_runner=remediation_runner,
+        run_teardown_runner=AsyncMock(),
+        session_kill_runner=AsyncMock(),
     )
 
     assert await service.run_pending_once(kind=JOB_KIND_DEVICE_HEALTH_REMEDIATION) is True
@@ -259,7 +266,7 @@ async def test_durable_job_worker_loop_wait_and_error_semantics() -> None:
     loop = job_queue.DurableJobWorkerLoop(service=mock_service, session_factory=_fake_session_factory())
 
     await loop._on_start()
-    assert mock_service.reset_stale_running_jobs.await_count == 3
+    assert mock_service.reset_stale_running_jobs.await_count == 5
     mock_service.reset_stale_running_jobs.assert_any_await(kind=JOB_KIND_DEVICE_HEALTH_REMEDIATION)
 
     # worked=True → no sleep between cycles

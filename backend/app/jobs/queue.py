@@ -17,6 +17,8 @@ from app.jobs.kinds import (
     JOB_KIND_DEVICE_HEALTH_REMEDIATION,
     JOB_KIND_DEVICE_RECOVERY,
     JOB_KIND_DEVICE_VERIFICATION,
+    JOB_KIND_RUN_SESSION_TEARDOWN,
+    JOB_KIND_SESSION_KILL,
 )
 from app.jobs.models import Job
 from app.jobs.statuses import JOB_STATUS_FAILED, JOB_STATUS_PENDING, JOB_STATUS_RUNNING
@@ -29,7 +31,13 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
-    from app.jobs.protocols import RecoveryJobRunner, RemediationJobRunner, VerificationJobRunner
+    from app.jobs.protocols import (
+        RecoveryJobRunner,
+        RemediationJobRunner,
+        RunTeardownJobRunner,
+        SessionKillJobRunner,
+        VerificationJobRunner,
+    )
 
 logger = get_logger(__name__)
 JOB_POLL_INTERVAL_SEC = 1
@@ -77,7 +85,7 @@ async def create_job(
 
 
 class DurableJobService:
-    def __init__(
+    def __init__(  # noqa: PLR0913 - one collaborator per dispatchable job kind
         self,
         *,
         session_factory: async_sessionmaker[AsyncSession],
@@ -87,6 +95,8 @@ class DurableJobService:
         verification_runner: VerificationJobRunner,
         recovery_runner: RecoveryJobRunner,
         remediation_runner: RemediationJobRunner,
+        run_teardown_runner: RunTeardownJobRunner,
+        session_kill_runner: SessionKillJobRunner,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
@@ -95,6 +105,8 @@ class DurableJobService:
         self._verification_runner = verification_runner
         self._recovery_runner = recovery_runner
         self._remediation_runner = remediation_runner
+        self._run_teardown_runner = run_teardown_runner
+        self._session_kill_runner = session_kill_runner
 
     async def reset_stale_running_jobs(
         self,
@@ -158,7 +170,7 @@ class DurableJobService:
             await db.refresh(row)
             return row
 
-    async def run_pending_once(self, *, kind: str | None = None) -> bool:
+    async def run_pending_once(self, *, kind: str | None = None) -> bool:  # noqa: PLR0911 - one dispatch per job kind
         row = await self.claim_next_job(kind=kind)
         if row is None:
             return False
@@ -173,6 +185,14 @@ class DurableJobService:
 
         if row.kind == JOB_KIND_DEVICE_HEALTH_REMEDIATION:
             await self._remediation_runner.run_device_health_remediation_job(str(row.id), row.payload)
+            return True
+
+        if row.kind == JOB_KIND_RUN_SESSION_TEARDOWN:
+            await self._run_teardown_runner.run_run_session_teardown_job(str(row.id), row.payload)
+            return True
+
+        if row.kind == JOB_KIND_SESSION_KILL:
+            await self._session_kill_runner.run_session_kill_job(str(row.id), row.payload)
             return True
 
         async with self._session_factory() as db:
@@ -218,6 +238,8 @@ class DurableJobWorkerLoop(BackgroundLoop):
             await self._service.reset_stale_running_jobs()
             await self._service.reset_stale_running_jobs(kind=JOB_KIND_DEVICE_RECOVERY)
             await self._service.reset_stale_running_jobs(kind=JOB_KIND_DEVICE_HEALTH_REMEDIATION)
+            await self._service.reset_stale_running_jobs(kind=JOB_KIND_RUN_SESSION_TEARDOWN)
+            await self._service.reset_stale_running_jobs(kind=JOB_KIND_SESSION_KILL)
 
     async def _run_cycle(self, db: AsyncSession) -> None:
         del db  # DurableJobService opens its own session per claim/run

@@ -32,13 +32,14 @@ from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_recovery_probe_admits_offline_reserved_device(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     client: AsyncClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -67,7 +68,7 @@ async def test_recovery_probe_admits_offline_reserved_device(
     svc = SessionViabilityService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        session_factory=AsyncMock(),
+        session_factory=db_session_maker,
         capability=DeviceCapabilityService(),
         health=AsyncMock(),
     )
@@ -76,8 +77,7 @@ async def test_recovery_probe_admits_offline_reserved_device(
     # node it falls through to the node-not-running terminal — proving it was admitted
     # past the reservation gate instead of raising the gate ``ValueError``.
     state = await svc.run_session_viability_probe(
-        db_session,
-        device,
+        device.id,
         checked_by=SessionViabilityCheckedBy.recovery,
     )
     assert state["status"] == "failed"
@@ -88,6 +88,7 @@ async def test_recovery_probe_admits_offline_reserved_device(
 @pytest.mark.asyncio
 async def test_recovery_probe_on_non_recoverable_state_raises_not_permitted(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     client: AsyncClient,
 ) -> None:
     """A recovery probe against a device that is NOT ``offline``/``verifying`` (here
@@ -110,13 +111,12 @@ async def test_recovery_probe_on_non_recoverable_state_raises_not_permitted(
     svc = SessionViabilityService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        session_factory=AsyncMock(),
+        session_factory=db_session_maker,
         capability=DeviceCapabilityService(),
         health=AsyncMock(),
     )
     with pytest.raises(SessionViabilityProbeNotPermittedError):
         await svc.run_session_viability_probe(
-            db_session,
-            device,
+            device.id,
             checked_by=SessionViabilityCheckedBy.recovery,
         )

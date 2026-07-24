@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import uuid
+from copy import deepcopy
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import select
-from sqlalchemy.orm.attributes import set_committed_value
+from sqlalchemy.orm import selectinload
 
 from app.agent_comm.operations import normalize_pack_device, pack_device_lifecycle_action
+from app.core.database import async_session
 from app.core.errors import AgentCallError
+from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import DeviceVerificationCreate
 from app.devices.services import readiness as device_readiness
@@ -19,7 +25,15 @@ from app.devices.services.identity import (
 from app.devices.services.identity_conflicts import (
     DeviceIdentityConflictError,
 )
+from app.devices.services.intent import IntentService
+from app.devices.services.intent_types import (
+    VERIFICATION_OPERATION_ID_KEY,
+    CommandKind,
+    IntentRegistration,
+    verification_intent_source,
+)
 from app.hosts.models import Host
+from app.jobs.models import Job
 from app.lifecycle.services.operator_node import operator_stop_active
 from app.packs.services import platform_resolver as pack_platform_resolver
 from app.sessions.service import device_has_running_session
@@ -28,27 +42,50 @@ from app.verification.services.job_state import set_stage
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
 
 if TYPE_CHECKING:
-    import uuid
-
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.client import AgentClientFactory
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.devices.protocols import DeviceCrudProtocol
     from app.devices.schemas.device import DeviceVerificationUpdate
     from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+    from app.events.protocols import EventPublisher
 
 
-@dataclass
-class PreparedVerificationContext:
+@dataclass(frozen=True, slots=True)
+class PreparedVerificationEffect:
+    """Immutable values that bridge the no-transaction verification effect.
+
+    Preparation copies every scalar the remote phases need (agent
+    normalization, health, node-start, probe, finalization) out of the ORM so
+    no ``Session``/``Device`` is retained across a transaction exit. ``payload``
+    is the normalized, save-ready device payload; ``original_fields`` is the
+    update-mode rollback snapshot.
+    """
+
+    operation_id: uuid.UUID
     mode: Literal["create", "update"]
-    transient_device: Device
-    save_payload: dict[str, Any]
-    existing_device: Device | None = None
-    save_device_id: uuid.UUID | None = None
-    host: Host | None = None
+    device_id: uuid.UUID | None
+    payload: dict[str, Any]
+    original_fields: dict[str, Any] | None
+    host_id: uuid.UUID
+    host_ip: str
+    host_agent_port: int
+    pack_id: str
+    pack_release: str
+    platform_id: str
+    resolution_action: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _PackCoords:
+    pack_id: str
+    pack_release: str
+    platform_id: str
+    resolution_action: str | None
 
 
 class VerificationPreparationService:
@@ -59,162 +96,244 @@ class VerificationPreparationService:
         circuit_breaker: CircuitBreakerProtocol,
         crud: DeviceCrudProtocol,
         identity: DeviceIdentityConflictService,
+        publisher: EventPublisher,
+        session_factory: SessionFactory = async_session,
         pool: AgentHttpPool | None = None,
     ) -> None:
         self._settings = settings
         self._circuit_breaker = circuit_breaker
         self._crud = crud
         self._identity = identity
+        self._publisher = publisher
+        self._session_factory = session_factory
         self._pool = pool
 
-    async def validate_create_request(
+    async def prepare_create(  # noqa: PLR0911 — sequential validation gates each return their own error
         self,
         job: dict[str, Any],
-        db: AsyncSession,
+        operation_id: uuid.UUID,
         data: DeviceVerificationCreate,
         *,
         http_client_factory: AgentClientFactory,
-    ) -> tuple[PreparedVerificationContext | None, str | None]:
+    ) -> tuple[PreparedVerificationEffect | None, str | None]:
         await set_stage(job, "validation", "running")
-        try:
-            payload = await device_write.prepare_device_create_payload_async(db, data)
-        except ValueError as exc:
-            return await _validation_failed(job, str(exc))
+        # A crashed retry may have already created the Device in txn2; resume
+        # from Job.payload rather than duplicating the create.
+        async with self._session_factory() as db:
+            resumed = await self._resume_created_device(db, operation_id)
+            if resumed is not None:
+                await set_stage(job, "validation", "passed", detail="Device input normalized successfully")
+                return resumed, None
 
-        host = await _load_host(db, payload.get("host_id"))
-        if payload.get("host_id") and host is None:
-            return await _validation_failed(job, "Assigned host was not found")
-
-        if not _is_transport_identity(
-            payload.get("identity_value"),
-            payload.get("connection_target"),
-            payload.get("ip_address"),
-        ):
             try:
-                await self._identity.ensure_device_payload_identity_available(db, payload)
-            except DeviceIdentityConflictError as exc:
+                payload = await device_write.prepare_device_create_payload_async(db, data)
+            except ValueError as exc:
                 return await _validation_failed(job, str(exc))
 
-        resolution_error = await self.resolve_host_derived_payload(
+            host = await _load_host(db, payload.get("host_id"))
+            if host is None:
+                return await _validation_failed(job, "Assigned host is required")
+
+            if not _is_transport_identity(
+                payload.get("identity_value"),
+                payload.get("connection_target"),
+                payload.get("ip_address"),
+            ):
+                try:
+                    await self._identity.ensure_device_payload_identity_available(db, payload)
+                except DeviceIdentityConflictError as exc:
+                    return await _validation_failed(job, str(exc))
+
+            coords, coords_error = await self._resolve_pack_coords(db, payload)
+            if coords_error is not None:
+                return await _validation_failed(job, coords_error)
+            assert coords is not None
+            host_id = host.id
+            host_ip = host.ip
+            host_agent_port = host.agent_port
+
+        normalized, normalize_error = await self.normalize_effect(
             payload,
-            host,
+            coords,
+            host_ip=host_ip,
+            host_agent_port=host_agent_port,
             http_client_factory=http_client_factory,
-            db=db,
         )
-        if resolution_error:
-            return await _validation_failed(job, resolution_error)
-        try:
-            await self._identity.ensure_device_payload_identity_available(db, payload)
-        except DeviceIdentityConflictError as exc:
-            return await _validation_failed(job, str(exc))
+        if normalize_error is not None:
+            return await _validation_failed(job, normalize_error)
 
-        saved_device = await self._crud.create_device(
-            db,
-            DeviceVerificationCreate.model_validate(payload),
-            initial_operational_state=DeviceOperationalState.verifying,
-        )
-        await db.commit()
-        await db.refresh(saved_device)
-        if host is not None:
-            set_committed_value(saved_device, "host", host)
+        # ``create_device`` owns its own commit (ledger seed + identity gate), so
+        # the create runs in a plain session; the tokenized lease and the
+        # atomic device-id stamp follow in their own committed transaction so a
+        # crashed retry resumes from ``Job.payload`` instead of duplicating.
+        # This window is deliberately non-atomic: a crash between the two
+        # commits below orphans an unverified ``verifying`` device (the
+        # device_id/lease commit never lands, so ``Job.payload`` has no
+        # ``device_id`` to resume from), and the retry re-runs
+        # ``create_device`` fresh — the identity gate rejects it as a
+        # duplicate rather than resuming the original row.
+        async with self._session_factory() as db:
+            try:
+                saved = await self._crud.create_device(
+                    db,
+                    DeviceVerificationCreate.model_validate(normalized),
+                    initial_operational_state=DeviceOperationalState.verifying,
+                )
+            except DeviceIdentityConflictError as exc:
+                return await _validation_failed(job, str(exc))
+            device_id = saved.id
+        async with self._session_factory.begin() as db:
+            await _store_created_device_id(db, operation_id, device_id)
+            await self._write_verification_lease(db, device_id, operation_id)
 
-        await set_stage(
-            job,
-            "validation",
-            "passed",
-            detail="Device input normalized successfully",
-        )
+        await set_stage(job, "validation", "passed", detail="Device input normalized successfully")
         return (
-            PreparedVerificationContext(
+            PreparedVerificationEffect(
+                operation_id=operation_id,
                 mode="create",
-                transient_device=saved_device,
-                save_payload=payload,
-                save_device_id=saved_device.id,
-                host=host,
+                device_id=device_id,
+                payload=dict(normalized),
+                original_fields=None,
+                host_id=host_id,
+                host_ip=host_ip,
+                host_agent_port=host_agent_port,
+                pack_id=coords.pack_id,
+                pack_release=coords.pack_release,
+                platform_id=coords.platform_id,
+                resolution_action=coords.resolution_action,
             ),
             None,
         )
 
-    async def validate_update_request(
+    async def prepare_update(  # noqa: PLR0911 — sequential validation gates each return their own error
         self,
         job: dict[str, Any],
-        db: AsyncSession,
+        operation_id: uuid.UUID,
         device_id: uuid.UUID,
         data: DeviceVerificationUpdate,
         *,
         http_client_factory: AgentClientFactory,
-    ) -> tuple[PreparedVerificationContext | None, str | None]:
+    ) -> tuple[PreparedVerificationEffect | None, str | None]:
         await set_stage(job, "validation", "running")
-        existing, precondition_error = await self._check_update_preconditions(db, device_id)
-        if existing is None:
-            return await _validation_failed(job, precondition_error or "Device was not found")
+        async with self._session_factory() as db:
+            existing, precondition_error = await self._check_update_preconditions(db, device_id)
+            if existing is None:
+                return await _validation_failed(job, precondition_error or "Device was not found")
 
-        try:
-            payload = await device_write.prepare_device_update_payload_async(
-                db,
-                existing,
-                data,
-            )
-        except ValueError as exc:
-            return await _validation_failed(job, str(exc))
+            try:
+                payload = await device_write.prepare_device_update_payload_async(db, existing, data)
+            except ValueError as exc:
+                return await _validation_failed(job, str(exc))
 
-        host_id = payload.get("host_id", existing.host_id)
-        host = await _load_host(db, host_id)
-        if host_id and host is None:
-            return await _validation_failed(job, "Assigned host was not found")
+            host_id = payload.get("host_id", existing.host_id)
+            host = await _load_host(db, host_id)
+            if host is None:
+                return await _validation_failed(job, "Assigned host is required")
 
-        verification_payload = {
-            "pack_id": payload.get("pack_id", existing.pack_id),
-            "identity_scheme": payload.get("identity_scheme", existing.identity_scheme),
-            "identity_scope": payload.get("identity_scope", existing.identity_scope),
-            "identity_value": payload.get("identity_value", existing.identity_value),
-            "connection_target": payload.get("connection_target", existing.connection_target),
-            "name": payload.get("name", existing.name),
-            "platform_id": payload.get("platform_id", existing.platform_id),
-            "os_version": payload.get("os_version", existing.os_version),
-            "os_version_display": payload.get("os_version_display", existing.os_version_display),
-            "host_id": host_id,
-            "manufacturer": payload.get("manufacturer", existing.manufacturer),
-            "model": payload.get("model", existing.model),
-            "model_number": payload.get("model_number", existing.model_number),
-            "software_versions": payload.get("software_versions", existing.software_versions),
-            "device_type": payload.get("device_type", existing.device_type),
-            "connection_type": payload.get("connection_type", existing.connection_type),
-            "ip_address": payload.get("ip_address", existing.ip_address),
-            "device_config": payload.get("device_config", existing.device_config),
-            "replace_device_config": data.replace_device_config,
-        }
+            verification_payload = _build_update_payload(payload, existing, host_id, data)
+            coords, coords_error = await self._resolve_pack_coords(db, verification_payload)
+            if coords_error is not None:
+                return await _validation_failed(job, coords_error)
+            assert coords is not None
+            host_ip = host.ip
+            host_agent_port = host.agent_port
+            original_fields = {
+                key: deepcopy(getattr(existing, key)) for key in verification_payload if key != "replace_device_config"
+            }
 
-        resolve_error = await self._resolve_and_check_identity(
-            db,
+        normalized, normalize_error = await self.normalize_effect(
             verification_payload,
-            host,
-            existing.id,
+            coords,
+            host_ip=host_ip,
+            host_agent_port=host_agent_port,
             http_client_factory=http_client_factory,
         )
-        if resolve_error is not None:
-            return await _validation_failed(job, resolve_error)
+        if normalize_error is not None:
+            return await _validation_failed(job, normalize_error)
 
-        readiness_error = await _check_probe_readiness(db, verification_payload)
-        if readiness_error is not None:
-            return await _validation_failed(job, readiness_error)
+        async with self._session_factory.begin() as db:
+            try:
+                await self._identity.ensure_device_payload_identity_available(
+                    db, normalized, exclude_device_id=device_id
+                )
+            except DeviceIdentityConflictError as exc:
+                return await _validation_failed(job, str(exc))
+            readiness_error = await _check_probe_readiness(db, normalized)
+            if readiness_error is not None:
+                return await _validation_failed(job, readiness_error)
+            await device_locking.lock_device(db, device_id)
+            await self._write_verification_lease(db, device_id, operation_id)
 
-        await set_stage(
-            job,
-            "validation",
-            "passed",
-            detail="Setup payload normalized successfully",
-        )
+        await set_stage(job, "validation", "passed", detail="Setup payload normalized successfully")
         return (
-            PreparedVerificationContext(
+            PreparedVerificationEffect(
+                operation_id=operation_id,
                 mode="update",
-                transient_device=build_transient_device(verification_payload, host),
-                save_payload=verification_payload,
-                existing_device=existing,
-                save_device_id=existing.id,
-                host=host,
+                device_id=device_id,
+                payload=dict(normalized),
+                original_fields=original_fields,
+                host_id=host_id,
+                host_ip=host_ip,
+                host_agent_port=host_agent_port,
+                pack_id=coords.pack_id,
+                pack_release=coords.pack_release,
+                platform_id=coords.platform_id,
+                resolution_action=coords.resolution_action,
             ),
             None,
+        )
+
+    async def _resume_created_device(
+        self, db: AsyncSession, operation_id: uuid.UUID
+    ) -> PreparedVerificationEffect | None:
+        job_row = await db.get(Job, operation_id)
+        if job_row is None:
+            return None
+        stored = job_row.payload.get("device_id")
+        if not stored:
+            return None
+        device = (
+            await db.execute(
+                select(Device).where(Device.id == uuid.UUID(str(stored))).options(selectinload(Device.host))
+            )
+        ).scalar_one_or_none()
+        if device is None or device.host_id is None or device.host is None:
+            return None
+        host = device.host
+        coords, coords_error = await self._resolve_pack_coords(db, _device_payload(device))
+        if coords_error is not None or coords is None:
+            return None
+        return PreparedVerificationEffect(
+            operation_id=operation_id,
+            mode="create",
+            device_id=device.id,
+            payload=_device_payload(device),
+            original_fields=None,
+            host_id=device.host_id,
+            host_ip=host.ip,
+            host_agent_port=host.agent_port,
+            pack_id=coords.pack_id,
+            pack_release=coords.pack_release,
+            platform_id=coords.platform_id,
+            resolution_action=coords.resolution_action,
+        )
+
+    async def _write_verification_lease(self, db: AsyncSession, device_id: uuid.UUID, operation_id: uuid.UUID) -> None:
+        startup_timeout = self._settings.get_int("appium.startup_timeout_sec")
+        viability_timeout = self._settings.get_int("general.session_viability_timeout_sec")
+        deadline = now_utc() + timedelta(seconds=startup_timeout + viability_timeout + 60)
+        await device_locking.lock_device(db, device_id)
+        await IntentService(db).register_intents_and_reconcile(
+            device_id=device_id,
+            intents=[
+                IntentRegistration(
+                    source=verification_intent_source(device_id),
+                    kind=CommandKind.verification_start,
+                    payload={"action": "start", VERIFICATION_OPERATION_ID_KEY: str(operation_id)},
+                    expires_at=deadline,
+                )
+            ],
+            publisher=self._publisher,
         )
 
     async def _check_update_preconditions(
@@ -227,107 +346,103 @@ class VerificationPreparationService:
             return None, "Device was not found"
 
         # Spec §14.1: verification tears down the client-serving node, so it must
-        # never run on a device with a live session. The router rejects this with a
-        # 409; this guard closes the enqueue→run TOCTOU window (a session that starts
-        # after the request was accepted) by failing the job instead.
+        # never run on a device with a live session. Closes the enqueue→run
+        # TOCTOU window by failing the job instead.
         if await device_has_running_session(db, existing.id):
             return None, "Device has a live session; verification cannot run during a session"
 
-        # Spec/N13b: the verification node-start path revokes the sticky operator:stop. The
-        # router rejects this with a 409; this guard closes the enqueue→run TOCTOU window (an
-        # operator stop registered after the request was accepted) so a verify never silently
-        # revives an operator-stopped device.
+        # Spec/N13b: the verification node-start path revokes the sticky
+        # operator:stop. Fail rather than silently revive an operator-stopped device.
         if await operator_stop_active(db, existing.id):
             return None, "Device is operator-stopped; start the node before verifying"
 
         return existing, None
 
-    async def _resolve_and_check_identity(
-        self,
-        db: AsyncSession,
-        verification_payload: dict[str, Any],
-        host: Host | None,
-        existing_device_id: uuid.UUID,
-        *,
-        http_client_factory: AgentClientFactory,
-    ) -> str | None:
-        resolution_error = await self.resolve_host_derived_payload(
-            verification_payload,
-            host,
-            http_client_factory=http_client_factory,
-            db=db,
-        )
-        if resolution_error:
-            return resolution_error
+    async def _resolve_pack_coords(
+        self, db: AsyncSession, payload: dict[str, Any]
+    ) -> tuple[_PackCoords | None, str | None]:
+        pack_id = payload.get("pack_id")
+        platform_id = payload.get("platform_id")
+        if not pack_id or not platform_id:
+            return None, "Assigned pack and platform are required"
+        device_type = payload.get("device_type")
+        resolved_device_type = getattr(device_type, "value", None) or (str(device_type) if device_type else None)
         try:
-            await self._identity.ensure_device_payload_identity_available(
-                db, verification_payload, exclude_device_id=existing_device_id
+            resolved = await resolve_pack_platform(
+                db,
+                pack_id=str(pack_id),
+                platform_id=str(platform_id),
+                device_type=resolved_device_type,
             )
-        except DeviceIdentityConflictError as exc:
-            return str(exc)
-        return None
+        except LookupError:
+            return None, "Assigned pack does not support the requested platform"
+        action = resolved.connection_behavior.get("host_resolution_action")
+        return (
+            _PackCoords(
+                pack_id=resolved.pack_id,
+                pack_release=resolved.release,
+                platform_id=resolved.platform_id,
+                resolution_action=str(action) if action else None,
+            ),
+            None,
+        )
 
-    async def resolve_host_derived_payload(
+    async def normalize_effect(
         self,
         payload: dict[str, Any],
-        host: Host | None,
+        coords: _PackCoords,
         *,
+        host_ip: str,
+        host_agent_port: int,
         http_client_factory: AgentClientFactory,
-        db: AsyncSession | None = None,
-    ) -> str | None:
-        if host is None:
-            return "Assigned host is required"
+    ) -> tuple[dict[str, Any], str | None]:
+        """Agent-side normalization + host resolution from copied values.
 
-        if db is not None and payload.get("pack_id") and payload.get("platform_id"):
-            normalization_error = await self._apply_pack_normalization(
-                payload,
-                host,
-                http_client_factory=http_client_factory,
-                db=db,
-            )
-            if normalization_error is not None:
-                return normalization_error
+        Accepts no ``AsyncSession``: every value it needs was copied out of the
+        prepare transaction. Mutates and returns *payload*.
+        """
+        normalization_error = await self._apply_pack_normalization(
+            payload, coords, host_ip=host_ip, host_agent_port=host_agent_port, http_client_factory=http_client_factory
+        )
+        if normalization_error is not None:
+            return payload, normalization_error
 
-        # Determine whether the payload needs host-side resolution from manifest metadata.
-        needs_resolution = False
-        action: str | None = None
-        if db is not None:
-            needs_resolution, action = await _payload_needs_host_resolution(db, payload)
-
-        if needs_resolution and action:
+        needs_resolution = coords.resolution_action is not None and _is_transport_identity(
+            payload.get("identity_value"),
+            payload.get("connection_target"),
+            payload.get("ip_address"),
+        )
+        if needs_resolution and coords.resolution_action is not None:
             resolution_error = await self._apply_host_resolution(
                 payload,
-                host,
-                action,
+                coords,
+                coords.resolution_action,
+                host_ip=host_ip,
+                host_agent_port=host_agent_port,
                 http_client_factory=http_client_factory,
             )
             if resolution_error is not None:
-                return resolution_error
+                return payload, resolution_error
 
         _coerce_payload_enums_in_place(payload)
-        return None
+        return payload, None
 
     async def _apply_pack_normalization(
         self,
         payload: dict[str, Any],
-        host: Host,
+        coords: _PackCoords,
         *,
+        host_ip: str,
+        host_agent_port: int,
         http_client_factory: AgentClientFactory,
-        db: AsyncSession,
     ) -> str | None:
         try:
-            resolved_platform = await resolve_pack_platform(
-                db,
-                pack_id=str(payload["pack_id"]),
-                platform_id=str(payload["platform_id"]),
-                device_type=str(payload["device_type"]) if payload.get("device_type") else None,
-            )
             normalized = await normalize_pack_device(
-                host.ip,
-                host.agent_port,
-                pack_id=resolved_platform.pack_id,
-                pack_release=resolved_platform.release,
-                platform_id=resolved_platform.platform_id,
+                host_ip,
+                host_agent_port,
+                pack_id=coords.pack_id,
+                pack_release=coords.pack_release,
+                platform_id=coords.platform_id,
                 raw_input={
                     key: value.value if hasattr(value, "value") else str(value) if key == "host_id" else value
                     for key, value in payload.items()
@@ -354,18 +469,20 @@ class VerificationPreparationService:
     async def _apply_host_resolution(
         self,
         payload: dict[str, Any],
-        host: Host,
+        coords: _PackCoords,
         action: str,
         *,
+        host_ip: str,
+        host_agent_port: int,
         http_client_factory: AgentClientFactory,
     ) -> str | None:
         try:
             resolved = await pack_device_lifecycle_action(
-                host.ip,
-                host.agent_port,
+                host_ip,
+                host_agent_port,
                 payload["connection_target"],
-                pack_id=payload.get("pack_id", ""),
-                platform_id=payload.get("platform_id", ""),
+                pack_id=coords.pack_id,
+                platform_id=coords.platform_id,
                 action=action,
                 args={
                     "device_type": getattr(payload.get("device_type"), "value", None)
@@ -389,6 +506,65 @@ class VerificationPreparationService:
             return f"Device must resolve to a stable identity before save (action: {action})"
         _apply_resolved_fields(payload, resolved, resolved_identity)
         return None
+
+
+def _device_payload(device: Device) -> dict[str, Any]:
+    return {
+        "pack_id": device.pack_id,
+        "platform_id": device.platform_id,
+        "identity_scheme": device.identity_scheme,
+        "identity_scope": device.identity_scope,
+        "identity_value": device.identity_value,
+        "connection_target": device.connection_target,
+        "name": device.name,
+        "os_version": device.os_version,
+        "os_version_display": device.os_version_display,
+        "host_id": device.host_id,
+        "manufacturer": device.manufacturer,
+        "model": device.model,
+        "model_number": device.model_number,
+        "software_versions": device.software_versions,
+        "device_type": device.device_type,
+        "connection_type": device.connection_type,
+        "ip_address": device.ip_address,
+        "device_config": device.device_config,
+    }
+
+
+def _build_update_payload(
+    payload: dict[str, Any],
+    existing: Device,
+    host_id: uuid.UUID | None,
+    data: DeviceVerificationUpdate,
+) -> dict[str, Any]:
+    return {
+        "pack_id": payload.get("pack_id", existing.pack_id),
+        "identity_scheme": payload.get("identity_scheme", existing.identity_scheme),
+        "identity_scope": payload.get("identity_scope", existing.identity_scope),
+        "identity_value": payload.get("identity_value", existing.identity_value),
+        "connection_target": payload.get("connection_target", existing.connection_target),
+        "name": payload.get("name", existing.name),
+        "platform_id": payload.get("platform_id", existing.platform_id),
+        "os_version": payload.get("os_version", existing.os_version),
+        "os_version_display": payload.get("os_version_display", existing.os_version_display),
+        "host_id": host_id,
+        "manufacturer": payload.get("manufacturer", existing.manufacturer),
+        "model": payload.get("model", existing.model),
+        "model_number": payload.get("model_number", existing.model_number),
+        "software_versions": payload.get("software_versions", existing.software_versions),
+        "device_type": payload.get("device_type", existing.device_type),
+        "connection_type": payload.get("connection_type", existing.connection_type),
+        "ip_address": payload.get("ip_address", existing.ip_address),
+        "device_config": payload.get("device_config", existing.device_config),
+        "replace_device_config": data.replace_device_config,
+    }
+
+
+async def _store_created_device_id(db: AsyncSession, operation_id: uuid.UUID, device_id: uuid.UUID) -> None:
+    job_row = await db.get(Job, operation_id)
+    if job_row is None:
+        return
+    job_row.payload = {**job_row.payload, "device_id": str(device_id)}
 
 
 def _apply_normalized_fields(payload: dict[str, Any], normalized: dict[str, Any]) -> str | None:
@@ -463,16 +639,6 @@ def _coerce_payload_enums_in_place(payload: dict[str, Any]) -> None:
         payload["connection_type"] = ConnectionType(connection_type)
 
 
-def build_transient_device(payload: dict[str, Any], host: Host | None) -> Device:
-    transient_payload = {key: value for key, value in payload.items() if key != "replace_device_config"}
-    _coerce_payload_enums_in_place(transient_payload)
-    device = Device(**transient_payload)
-    if host is not None:
-        device.host_id = host.id
-        set_committed_value(device, "host", host)
-    return device
-
-
 async def _load_host(db: AsyncSession, host_id: uuid.UUID | None) -> Host | None:
     if host_id is None:
         return None
@@ -503,40 +669,6 @@ def _payload_requests_virtual_lane(payload: dict[str, Any]) -> bool:
     return device_type_value in {DeviceType.emulator.value, DeviceType.simulator.value} or (
         connection_type_value == ConnectionType.virtual.value
     )
-
-
-async def _payload_needs_host_resolution(
-    db: AsyncSession,
-    payload: dict[str, Any],
-) -> tuple[bool, str | None]:
-    """Check if the payload requires host-side resolution via a lifecycle action.
-
-    Returns ``(needs_resolution, action_name)`` where *action_name* is the
-    lifecycle action to call on the agent (e.g. ``"resolve"``).
-    """
-    pack_id = payload.get("pack_id")
-    platform_id = payload.get("platform_id")
-    if not pack_id or not platform_id:
-        return False, None
-    try:
-        device_type = payload.get("device_type")
-        resolved_device_type = getattr(device_type, "value", None) or (str(device_type) if device_type else None)
-        resolved = await resolve_pack_platform(
-            db,
-            pack_id=pack_id,
-            platform_id=platform_id,
-            device_type=resolved_device_type,
-        )
-    except LookupError:
-        return False, None
-    action = resolved.connection_behavior.get("host_resolution_action")
-    if not action:
-        return False, None
-    return _is_transport_identity(
-        payload.get("identity_value"),
-        payload.get("connection_target"),
-        payload.get("ip_address"),
-    ), str(action)
 
 
 async def _check_probe_readiness(db: AsyncSession, verification_payload: dict[str, Any]) -> str | None:

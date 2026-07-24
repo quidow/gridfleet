@@ -30,20 +30,26 @@ from tests.helpers import test_event_bus as event_bus
 
 _settings = FakeSettingsReader({})
 _circuit_breaker = AgentCircuitBreaker(publisher=event_bus)
-_failure_svc = RunFailureService(
-    publisher=event_bus,
-    settings=_settings,
-    circuit_breaker=_circuit_breaker,
-    maintenance=MaintenanceService(review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus),
-    lifecycle_actions=AsyncMock(),
-    reservation=RunReservationService(review=build_review_service()),
-    incidents=LifecycleIncidentService(),
-)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
+
+
+def _make_failure_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunFailureService:
+    return RunFailureService(
+        publisher=event_bus,
+        settings=_settings,
+        circuit_breaker=_circuit_breaker,
+        maintenance=MaintenanceService(
+            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+        ),
+        lifecycle_actions=AsyncMock(),
+        reservation=RunReservationService(review=build_review_service()),
+        incidents=LifecycleIncidentService(),
+        session_factory=session_factory,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -69,7 +75,13 @@ async def _seed_node(db_session: AsyncSession, device_id: object) -> AppiumNode:
 
 
 async def _reservation_for(db_session: AsyncSession, device_id: object) -> DeviceReservation:
-    result = await db_session.execute(select(DeviceReservation).where(DeviceReservation.device_id == device_id))
+    # cooldown_device now commits via its own session (session_factory-owned
+    # transaction), so this fetch must bypass db_session's identity-map cache.
+    result = await db_session.execute(
+        select(DeviceReservation)
+        .where(DeviceReservation.device_id == device_id)
+        .execution_options(populate_existing=True)
+    )
     return result.scalar_one()
 
 
@@ -84,18 +96,19 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(
     device = await create_device(db_session, host_id=db_host.id, name="counter-persists")
     await _seed_node(db_session, device.id)
     run = await create_reserved_run(db_session, name="counter-persists-run", devices=[device])
+    failure_svc = _make_failure_svc(db_session_maker)
 
     # First cooldown.
-    excluded_until_1, count_1, escalated_1, threshold, _entered_maintenance_1 = await _failure_svc.cooldown_device(
-        db_session,
+    result_1 = await failure_svc.cooldown_device(
         run.id,
         device.id,
         reason="probe timeout",
         ttl_seconds=60,
     )
-    assert count_1 == 1
-    assert not escalated_1
-    assert excluded_until_1 is not None
+    assert result_1.cooldown_count == 1
+    assert not result_1.escalated
+    assert result_1.excluded_until is not None
+    threshold = result_1.threshold
     reservation = await _reservation_for(db_session, device.id)
     assert reservation.cooldown_count == 1
     assert reservation.excluded is True
@@ -124,15 +137,14 @@ async def test_cooldown_counter_survives_intent_ttl_expiry(
     assert reservation.cooldown_count == 1, "counter must persist across exclusion clear"
 
     # Second cooldown lands after the first TTL elapsed. Counter accumulates.
-    _, count_2, escalated_2, _, _entered_maintenance_2 = await _failure_svc.cooldown_device(
-        db_session,
+    result_2 = await failure_svc.cooldown_device(
         run.id,
         device.id,
         reason="probe timeout again",
         ttl_seconds=60,
     )
-    assert count_2 == 2, "second cooldown after TTL expiry must yield count=2"
-    assert not escalated_2 or threshold == 2
+    assert result_2.cooldown_count == 2, "second cooldown after TTL expiry must yield count=2"
+    assert not result_2.escalated or threshold == 2
 
     await db_session.refresh(reservation)
     assert reservation.cooldown_count == 2

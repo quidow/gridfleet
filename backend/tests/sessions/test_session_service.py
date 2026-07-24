@@ -304,6 +304,9 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
 
     crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
     updated = await crud.update_session_status(db_session, "flap-sess", SessionStatus.passed)
+    # ``update_session_status`` is transaction-local (no commit); mirror the
+    # router's ``await db.commit()`` so after_commit tasks fire in-unit-test.
+    await db_session.commit()
     await settle_after_commit_tasks()
 
     assert updated is not None
@@ -386,6 +389,9 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
 
     crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
     updated = await crud.update_session_status(db_session, "stop-inflight-sess", SessionStatus.passed)
+    # ``update_session_status`` is transaction-local (no commit); mirror the
+    # router's ``await db.commit()`` so after_commit tasks fire in-unit-test.
+    await db_session.commit()
     await settle_after_commit_tasks()
 
     assert updated is not None
@@ -482,3 +488,92 @@ def test_session_ended_severity_maps_outcome_to_severity(
     status: SessionStatus, error_type: str | None, expected: str
 ) -> None:
     assert _session_ended_severity(str(status), error_type) == expected
+
+
+async def test_update_session_status_preserves_pre_stamped_error_type_when_run_terminal(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Regression: a caller-pre-stamped ``error_type``/``error_message`` must
+    survive ``update_session_status`` delegating to ``close_running_session_locked``
+    even when the owning run is in a non-completed terminal state.
+
+    Pre-Task-3, ``update_session_status`` stamped ``session.status`` directly and
+    never touched ``error_type``, so ``operator_kill`` attribution (pre-stamped by
+    ``service_kill.kill_session``) survived unconditionally. After the Task-3
+    delegation, ``_apply_session_terminal_status`` runs first inside the locked
+    helper and would overwrite the pre-stamped value with a run-derived
+    ``run_released`` error_type whenever the owning run is terminal-but-not-
+    completed. The fix forwards the identity-map instance's existing
+    ``error_type``/``error_message`` into the locked helper, which re-applies
+    them after ``_apply_session_terminal_status``.
+
+    The existing kill test does not catch this because its session has
+    ``run_id=None`` → ``_committed_run_outcome`` returns ``(None, None)`` → the
+    overwrite branch is not taken.
+    """
+    from app.runs.models import RunState, TestRun
+
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="pre-stamped-err-run",
+        connection_target="pre-stamped-err-run",
+        name="Pre-stamped error run device",
+        os_version="14",
+        operational_state="busy",
+    )
+    device.verified_at = datetime.now(UTC)
+    node = AppiumNode(
+        device_id=device.id,
+        port=4740,
+        pid=34567,
+        active_connection_target=device.connection_target,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4740,
+        health_running=True,
+        health_state="ok",
+    )
+    db_session.add(node)
+    # Owning run in a non-completed terminal state: ``_committed_run_outcome``
+    # returns (cancelled, None) so ``_apply_session_terminal_status`` takes the
+    # run-released branch and would otherwise stamp error_type="run_released".
+    run = TestRun(
+        name="cancelled-owner-run",
+        state=RunState.cancelled,
+        requirements=[{"platform_id": "android_mobile", "count": 1}],
+        ttl_minutes=60,
+        heartbeat_timeout_sec=120,
+    )
+    db_session.add(run)
+    await db_session.flush()
+    session = Session(
+        session_id="pre-stamped-sess",
+        device_id=device.id,
+        run_id=run.id,
+        status=SessionStatus.running,
+    )
+    db_session.add(session)
+    await db_session.commit()
+
+    # Mirror service_kill.py: pre-stamp the kill provenance on the identity-map
+    # instance, then call update_session_status (transaction-local, no commit).
+    session.error_type = "operator_kill"
+    session.error_message = "killed by operator"
+    crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
+    updated = await crud.update_session_status(db_session, "pre-stamped-sess", SessionStatus.error)
+    await db_session.commit()
+    await settle_after_commit_tasks()
+
+    assert updated is not None
+    assert updated.status == SessionStatus.error
+
+    reloaded = (
+        await db_session.execute(
+            select(Session).where(Session.session_id == "pre-stamped-sess").order_by(Session.started_at.desc())
+        )
+    ).scalar_one()
+    assert reloaded.error_type == "operator_kill", (
+        f"pre-stamped operator_kill attribution was overwritten with {reloaded.error_type!r}"
+    )
+    assert reloaded.error_message == "killed by operator"

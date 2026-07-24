@@ -25,19 +25,23 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
-_allocator_svc = RunAllocatorService(
-    publisher=event_bus,
-    settings=FakeSettingsReader({}),
-    circuit_breaker=test_circuit_breaker,
-)
+
+def _make_allocator_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunAllocatorService:
+    return RunAllocatorService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        circuit_breaker=test_circuit_breaker,
+        session_factory=session_factory,
+    )
 
 
 async def test_shortfall_409_names_blocking_reservation_and_run(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     default_host_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -52,13 +56,12 @@ async def test_shortfall_409_names_blocking_reservation_and_run(
     await db_session.commit()
     requirement = {"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}
 
-    first_run, _ = await _allocator_svc.create_run(db_session, RunCreate(name="holder-run", requirements=[requirement]))
-    # The starved create_run below rolls back between match retries, expiring
-    # this instance — snapshot the id while it is still live.
-    first_run_id = str(first_run.id)
+    allocator_svc = _make_allocator_svc(db_session_maker)
+    first_result = await allocator_svc.create_run(RunCreate(name="holder-run", requirements=[requirement]))
+    first_run_id = str(first_result.response.id)
 
     with pytest.raises(ValueError, match="Not enough devices") as excinfo:
-        await _allocator_svc.create_run(db_session, RunCreate(name="starved-run", requirements=[requirement]))
+        await allocator_svc.create_run(RunCreate(name="starved-run", requirements=[requirement]))
 
     message = str(excinfo.value)
     assert "held by active reservation" in message
@@ -67,6 +70,7 @@ async def test_shortfall_409_names_blocking_reservation_and_run(
 
 async def test_shortfall_409_reports_operational_state_breakdown(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     default_host_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -84,8 +88,7 @@ async def test_shortfall_409_reports_operational_state_breakdown(
     await db_session.commit()
 
     with pytest.raises(ValueError, match="Not enough devices") as excinfo:
-        await _allocator_svc.create_run(
-            db_session,
+        await _make_allocator_svc(db_session_maker).create_run(
             RunCreate(
                 name="starved-run",
                 requirements=[{"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}],
@@ -97,6 +100,7 @@ async def test_shortfall_409_reports_operational_state_breakdown(
 
 async def test_shortfall_409_reports_no_candidates_at_all(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(service_allocator, "_MATCH_RETRY_BACKOFF_SEC", 0.0)
@@ -105,8 +109,7 @@ async def test_shortfall_409_reports_no_candidates_at_all(
     await db_session.commit()
 
     with pytest.raises(ValueError, match="Not enough devices") as excinfo:
-        await _allocator_svc.create_run(
-            db_session,
+        await _make_allocator_svc(db_session_maker).create_run(
             RunCreate(
                 name="starved-run",
                 requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],

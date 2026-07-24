@@ -72,6 +72,25 @@ def _install_first_lock_probe(
     monkeypatch.setattr(device_locking, "lock_device", recording_lock_device)
 
 
+def _install_first_lock_handle_probe(
+    monkeypatch: pytest.MonkeyPatch, probe: Callable[[AsyncSession], bool], recorded: list[bool]
+) -> None:
+    """Record ``probe(db)`` at the FIRST ``lock_device_handle`` call.
+
+    The locked close path acquires the device proof via ``lock_device_handle``;
+    once it is held, later session-row writes in the same transaction are
+    ordered correctly. Only the first call matters.
+    """
+    real_lock = device_locking.lock_device_handle
+
+    async def recording_lock(db: AsyncSession, device_id: uuid.UUID) -> object:
+        if not recorded:
+            recorded.append(probe(db))
+        return await real_lock(db, device_id)
+
+    monkeypatch.setattr(device_locking, "lock_device_handle", recording_lock)
+
+
 async def test_update_session_status_locks_device_before_dirtying_session_row(
     db_session: AsyncSession,
     default_host_id: str,
@@ -119,12 +138,11 @@ async def test_close_running_session_locks_device_before_dirtying_session_row(
     ).scalar_one()
 
     recorded: list[bool] = []
-    # close_running_session stamps ended_at (service.py:210), and the
-    # select(TestRun ...) read flushes that write before the first lock_device
-    # in the UNFIXED code — so the session is no longer "dirty" at the lock.
-    # Probe ended_at directly (as the mark_session_finished test does): at the
-    # first device lock the close must not have stamped the row yet.
-    _install_first_lock_probe(monkeypatch, lambda db: session.ended_at is not None, recorded)
+    # close_running_session acquires the device proof via ``lock_device_handle``
+    # before delegating to the locked helper that stamps ended_at. Probe
+    # ended_at directly: at the first device lock the close must not have
+    # stamped the row yet.
+    _install_first_lock_handle_probe(monkeypatch, lambda db: session.ended_at is not None, recorded)
 
     await close_running_session(db_session, session, attached_run=None, publisher=Mock())
 
@@ -162,3 +180,44 @@ async def test_close_running_session_is_idempotent_under_concurrent_close(
     assert session.ended_at == ended_at_first
     ended_emits = sum(1 for c in publisher.queue_for_session.call_args_list if "session.ended" in c.args)
     assert ended_emits == 1
+
+
+async def test_locked_close_reuses_the_callers_device_proof(
+    db_session: AsyncSession,
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``close_running_session_locked`` reuses the caller's device-row proof.
+
+    The caller acquires ``lock_device_handle`` and passes the ``LockedDevice`` in;
+    the helper must NOT re-lock the device (that would deadlock or duplicate the
+    lock). Patches ``app.sessions.service.device_locking.lock_device_handle`` after
+    the real lock is held and asserts it is never called from inside the helper.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
+    from app.sessions.service import close_running_session_locked
+
+    device, seeded = await _seed_running_session(
+        db_session, default_host_id, identity="locked-close-proof", session_id="locked-close-proof-sess"
+    )
+    row = (
+        await db_session.execute(select(Session).options(selectinload(Session.device)).where(Session.id == seeded.id))
+    ).scalar_one()
+    publisher = Mock()
+
+    # Acquire the real device proof in the caller's transaction.
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+
+    # Patch the module-level ``lock_device_handle`` as seen by ``service.py`` so
+    # any re-lock attempt inside the helper hits the mock. The real lock is
+    # already held; the mock must not be invoked.
+    second_lock = AsyncMock()
+    monkeypatch.setattr("app.sessions.service.device_locking.lock_device_handle", second_lock)
+
+    closed = await close_running_session_locked(db_session, locked, session_pk=row.id, publisher=publisher)
+
+    assert closed is True
+    second_lock.assert_not_called()
+    assert row.ended_at is not None

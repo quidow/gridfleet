@@ -155,11 +155,14 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 settings=settings_service,
                 deferred_stop=AsyncMock(),
             )
-            run_lifecycle = RunLifecycleService(publisher=event_bus, settings=settings_service, release=run_release)
+            run_lifecycle = RunLifecycleService(
+                publisher=event_bus, settings=settings_service, release=run_release, session_factory=db_session_maker
+            )
             run_allocator = RunAllocatorService(
                 publisher=event_bus,
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
+                session_factory=db_session_maker,
             )
             run_failure = RunFailureService(
                 publisher=event_bus,
@@ -171,6 +174,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 lifecycle_actions=AsyncMock(),
                 reservation=RunReservationService(review=build_review_service()),
                 incidents=LifecycleIncidentService(),
+                session_factory=db_session_maker,
             )
             run_query = RunQueryService()
             return RunServices(

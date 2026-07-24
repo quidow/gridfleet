@@ -101,7 +101,8 @@ async def test_reaper_cycle_fails_expired_pending(
     claim_expired_before = GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="claim_expired")._value.get()
     expired_before = GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="expired")._value.get()
 
-    await reaper.run_cycle(db_session)
+    await db_session.commit()
+    await reaper.run_cycle()
 
     await db_session.refresh(expired_pending_session)
     assert expired_pending_session.status == SessionStatus.error
@@ -128,7 +129,8 @@ async def test_reaper_wakes_session_sync_after_failing_pending(
         lambda: woke.append(True),
     )
 
-    await reaper.run_cycle(db_session)
+    await db_session.commit()
+    await reaper.run_cycle()
 
     await db_session.refresh(expired_pending_session)
     assert expired_pending_session.status == SessionStatus.error
@@ -142,7 +144,8 @@ async def test_reaper_keeps_young_pending_session(
     expired_pending_session.started_at = datetime.now(UTC) - timedelta(seconds=10)
     await db_session.flush()
 
-    await reaper.run_cycle(db_session)
+    await db_session.commit()
+    await reaper.run_cycle()
 
     await db_session.refresh(expired_pending_session)
     assert expired_pending_session.status == SessionStatus.pending
@@ -169,7 +172,8 @@ async def test_reaper_does_not_wake_session_sync_when_no_pending_freed(
         lambda: woke.append(True),
     )
 
-    await reaper.run_cycle(db_session)
+    await db_session.commit()
+    await reaper.run_cycle()
 
     await db_session.refresh(stale)
     assert stale.status == GridQueueStatus.expired
@@ -190,7 +194,8 @@ async def test_reaper_expires_stale_polled_ticket_before_queue_timeout(
     db_session.add(stale)
     await db_session.flush()
 
-    await reaper.run_cycle(db_session)
+    await db_session.commit()
+    await reaper.run_cycle()
 
     await db_session.refresh(stale)
     assert stale.status == GridQueueStatus.expired

@@ -68,7 +68,7 @@ async def test_viability_probe_runs_on_maintenance_held_device(
     device = await device_locking.lock_device(db_session, device.id)
     await db_session.commit()
 
-    original_lock = device_locking.lock_device
+    original_lock = device_locking.lock_device_handle
 
     async def _reserve_then_lock(db: object, did: uuid.UUID, **kwargs: object) -> Device:
         # Race: a concurrent allocation commits an active reservation after the
@@ -84,7 +84,7 @@ async def test_viability_probe_runs_on_maintenance_held_device(
     svc = SessionViabilityService(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
-        session_factory=AsyncMock(),
+        session_factory=db_session_maker,
         capability=DeviceCapabilityService(),
         health=AsyncMock(),
     )
@@ -92,13 +92,12 @@ async def test_viability_probe_runs_on_maintenance_held_device(
     # After Task 10: the probe no longer fires SESSION_STARTED via _MACHINE.
     # It only re-checks reservation state under the lock and raises ValueError if changed.
     with (
-        patch.object(device_locking, "lock_device", side_effect=_reserve_then_lock),
+        patch.object(device_locking, "lock_device_handle", side_effect=_reserve_then_lock),
         patch.object(svc, "probe_session_direct", probe_mock),
         pytest.raises(ValueError, match="state changed concurrently"),
     ):
         await svc.run_session_viability_probe(
-            db_session,
-            device,
+            device.id,
             checked_by=SessionViabilityCheckedBy.manual,
         )
     # Fixed behavior: the probe re-checks reservation state under the lock and

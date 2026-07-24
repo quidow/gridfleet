@@ -18,3 +18,11 @@ class RecoveryJobRunner(Protocol):
 
 class RemediationJobRunner(Protocol):
     async def run_device_health_remediation_job(self, job_id: str, payload: dict[str, Any]) -> None: ...
+
+
+class RunTeardownJobRunner(Protocol):
+    async def run_run_session_teardown_job(self, job_id: str, payload: dict[str, Any]) -> None: ...
+
+
+class SessionKillJobRunner(Protocol):
+    async def run_session_kill_job(self, job_id: str, payload: dict[str, Any]) -> None: ...

@@ -32,11 +32,15 @@ if TYPE_CHECKING:
 
 _settings = FakeSettingsReader({})
 _query_svc = RunQueryService()
-_allocator_svc = RunAllocatorService(
-    publisher=event_bus,
-    settings=_settings,
-    circuit_breaker=test_circuit_breaker,
-)
+
+
+def _make_allocator_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunAllocatorService:
+    return RunAllocatorService(
+        publisher=event_bus,
+        settings=_settings,
+        circuit_breaker=test_circuit_breaker,
+        session_factory=session_factory,
+    )
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -617,7 +621,7 @@ async def test_cancel_run_deletes_active_grid_session_before_releasing_device(
         deleted.append(session_id)
         return True
 
-    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
+    monkeypatch.setattr("app.runs.service_teardown.appium_direct.terminate_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
 
@@ -662,7 +666,7 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
     async def fake_terminate(target: str, _session_id: str, *, timeout: float = 10.0) -> bool:
         return False
 
-    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
+    monkeypatch.setattr("app.runs.service_teardown.appium_direct.terminate_session", fake_terminate)
 
     resp = await client.post(f"/api/runs/{run_obj.id}/cancel")
 
@@ -675,10 +679,12 @@ async def test_cancel_run_keeps_device_busy_when_grid_session_delete_fails(
 
     reservation = (
         await db_session.execute(
-            select(DeviceReservation).where(
+            select(DeviceReservation)
+            .where(
                 DeviceReservation.run_id == run_obj.id,
                 DeviceReservation.device_id == device.id,
             )
+            .execution_options(populate_existing=True)
         )
     ).scalar_one()
     assert reservation.released_at is not None
@@ -779,9 +785,9 @@ async def test_force_release_restores_busy_run_devices(
     async def fake_terminate(target: str, _session_id: str, *, timeout: float = 10.0) -> bool:
         return True
 
-    monkeypatch.setattr("app.runs.service_lifecycle_release.appium_direct.terminate_session", fake_terminate)
+    monkeypatch.setattr("app.runs.service_teardown.appium_direct.terminate_session", fake_terminate)
     monkeypatch.setattr(
-        "app.runs.service_lifecycle_release.appium_direct.session_alive",
+        "app.runs.service_teardown.appium_direct.session_alive",
         AsyncMock(return_value=True),
     )
 
@@ -899,19 +905,19 @@ async def test_concurrent_create_run_reserves_device_once(
     await _create_available_device(db_session, default_host_id, "run-concurrent-1", "Concurrent Device")
 
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
+    allocator_svc = _make_allocator_svc(session_factory)
     payload = RunCreate(
         name="Concurrent Run",
         requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
     )
 
     async def _attempt(name: str) -> tuple[str, str]:
-        async with session_factory() as session:
-            run_payload = payload.model_copy(update={"name": name})
-            try:
-                run, _devices = await _allocator_svc.create_run(session, run_payload)
-                return "success", str(run.id)
-            except ValueError as exc:
-                return "error", str(exc)
+        run_payload = payload.model_copy(update={"name": name})
+        try:
+            result = await allocator_svc.create_run(run_payload)
+            return "success", str(result.response.id)
+        except ValueError as exc:
+            return "error", str(exc)
 
     outcomes = await asyncio.gather(_attempt("Concurrent Run A"), _attempt("Concurrent Run B"))
     assert [status for status, _detail in outcomes].count("success") == 1
@@ -945,6 +951,7 @@ async def test_run_read_includes_session_counts_default_zero(
 
 async def test_fetch_session_counts_groups_by_status(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     default_host_id: str,
 ) -> None:
     device = await create_device_record(
@@ -954,14 +961,13 @@ async def test_fetch_session_counts_groups_by_status(
         name="Device FSC1",
         operational_state="available",
     )
-    run_obj, _ = await _allocator_svc.create_run(
-        db_session,
+    result = await _make_allocator_svc(db_session_maker).create_run(
         RunCreate(
             name="counts-run",
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
     )
-    run_id = run_obj.id
+    run_id = result.response.id
 
     db_session.add_all(
         [
@@ -985,6 +991,7 @@ async def test_fetch_session_counts_handles_empty_input(db_session: AsyncSession
 async def test_list_runs_returns_session_counts_per_run(
     client: AsyncClient,
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     default_host_id: str,
 ) -> None:
     device = await create_device_record(
@@ -994,14 +1001,13 @@ async def test_list_runs_returns_session_counts_per_run(
         name="Device LSC1",
         operational_state="available",
     )
-    run_obj, _ = await _allocator_svc.create_run(
-        db_session,
+    result = await _make_allocator_svc(db_session_maker).create_run(
         RunCreate(
             name="list-counts",
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
     )
-    run_id = run_obj.id
+    run_id = result.response.id
 
     db_session.add_all(
         [
@@ -1023,6 +1029,7 @@ async def test_list_runs_returns_session_counts_per_run(
 async def test_get_run_detail_returns_session_counts(
     client: AsyncClient,
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     default_host_id: str,
 ) -> None:
     device = await create_device_record(
@@ -1032,14 +1039,13 @@ async def test_get_run_detail_returns_session_counts(
         name="Device DSC1",
         operational_state="available",
     )
-    run_obj, _ = await _allocator_svc.create_run(
-        db_session,
+    result = await _make_allocator_svc(db_session_maker).create_run(
         RunCreate(
             name="detail-counts",
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
         ),
     )
-    run_id = run_obj.id
+    run_id = result.response.id
 
     db_session.add_all(
         [
@@ -1226,6 +1232,7 @@ async def test_create_run_excludes_device_mid_appium_restart(
 
 async def test_allocator_does_not_write_hold(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     default_host_id: str,
 ) -> None:
     """Allocator never writes hold; reserved state lives on the DeviceReservation row.
@@ -1245,8 +1252,7 @@ async def test_allocator_does_not_write_hold(
         operational_state="available",
     )
 
-    _run, _infos = await _allocator_svc.create_run(
-        db_session,
+    await _make_allocator_svc(db_session_maker).create_run(
         RunCreate(
             name="hold-derivation-run",
             requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],

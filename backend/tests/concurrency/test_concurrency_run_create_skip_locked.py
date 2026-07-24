@@ -19,11 +19,6 @@ if TYPE_CHECKING:
 
 
 _settings = FakeSettingsReader({})
-_allocator_svc = RunAllocatorService(
-    publisher=event_bus,
-    settings=_settings,
-    circuit_breaker=test_circuit_breaker,
-)
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -83,6 +78,13 @@ async def test_create_run_retries_when_candidate_row_transiently_locked(
 
     monkeypatch.setattr(service_allocator, "_batch_select_devices", counting_batch_select)
 
+    allocator_svc = RunAllocatorService(
+        publisher=event_bus,
+        settings=_settings,
+        circuit_breaker=test_circuit_breaker,
+        session_factory=db_session_maker,
+    )
+
     async def hold_then_release() -> None:
         async with db_session_maker() as session:
             await device_locking.lock_device(session, device_id)  # SELECT ... FOR UPDATE
@@ -93,15 +95,13 @@ async def test_create_run_retries_when_candidate_row_transiently_locked(
 
     async def do_create() -> list[str]:
         await asyncio.wait_for(lock_acquired.wait(), timeout=5.0)
-        async with db_session_maker() as session:
-            _, device_infos = await _allocator_svc.create_run(
-                session,
-                RunCreate(
-                    name="skip-locked-run",
-                    requirements=[{"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}],
-                ),
-            )
-            return [info.device_id for info in device_infos]
+        result = await allocator_svc.create_run(
+            RunCreate(
+                name="skip-locked-run",
+                requirements=[{"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}],
+            ),
+        )
+        return [info.device_id for info in result.response.devices]
 
     reserved_ids, _ = await asyncio.gather(do_create(), hold_then_release())
 
@@ -154,14 +154,18 @@ async def test_create_run_exhausts_widened_retry_budget(
     monkeypatch.setattr(service_allocator, "_batch_select_devices", always_empty)
     monkeypatch.setattr(service_allocator, "_MATCH_RETRY_BACKOFF_SEC", 0.0)  # keep the test fast
 
-    async with db_session_maker() as session:
-        with pytest.raises(ValueError, match="Not enough devices"):
-            await _allocator_svc.create_run(
-                session,
-                RunCreate(
-                    name="retry-budget-run",
-                    requirements=[{"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}],
-                ),
-            )
+    allocator_svc = RunAllocatorService(
+        publisher=event_bus,
+        settings=_settings,
+        circuit_breaker=test_circuit_breaker,
+        session_factory=db_session_maker,
+    )
+    with pytest.raises(ValueError, match="Not enough devices"):
+        await allocator_svc.create_run(
+            RunCreate(
+                name="retry-budget-run",
+                requirements=[{"pack_id": device.pack_id, "platform_id": device.platform_id, "count": 1}],
+            ),
+        )
 
     assert calls == 5

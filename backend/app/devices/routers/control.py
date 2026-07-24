@@ -203,13 +203,17 @@ async def device_health(
 async def device_session_test(
     device_id: uuid.UUID,
     db: DbDep,
+    device_services: DeviceServicesDep,
     session_services: SessionServicesDep,
 ) -> dict[str, Any]:
-    device = await get_device_for_update_or_404(device_id, db)
+    # Validate existence (404) without holding a device row lock: the viability
+    # probe opens its own fresh sessions and locks the device there, so a request
+    # scoped FOR UPDATE here would block the probe's lock until the request
+    # session closed.
+    await get_device_or_404(device_id, db, device_services.crud)
     try:
         return await session_services.viability.run_session_viability_probe(
-            db,
-            device,
+            device_id,
             checked_by=SessionViabilityCheckedBy.manual,
         )
     except ValueError as exc:

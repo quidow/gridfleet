@@ -72,6 +72,9 @@ async def test_update_session_status_does_not_overwrite_concurrent_maintenance(
     async with db_session_maker() as session:
         crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
         await crud.update_session_status(session, "finish-race-session", SessionStatus.passed)
+        # update_session_status is transaction-local now (the caller owns the
+        # commit); without this the close + reconcile ledger advance rolls back.
+        await session.commit()
 
     async with db_session_maker() as verify:
         final = (

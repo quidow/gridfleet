@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import itertools
+import uuid
 from datetime import timedelta
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
@@ -33,14 +34,13 @@ from app.verification.services.execution import (
     _stamp_verification_outcome,
 )
 from app.verification.services.job_state import new_job
+from app.verification.services.preparation import PreparedVerificationEffect
 from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import create_device, settle_after_commit_tasks
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
-
-    from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
     from app.hosts.models import Host
@@ -73,7 +73,7 @@ class _ViabilityStub:
         return {"status": status}
 
 
-def _build_execution_service() -> VerificationExecutionService:
+def _build_execution_service(session_factory: object) -> VerificationExecutionService:
     return VerificationExecutionService(
         review=build_review_service(),
         publisher=event_bus,
@@ -83,6 +83,26 @@ def _build_execution_service() -> VerificationExecutionService:
         capability=AsyncMock(),
         reconciler=AsyncMock(),
         node_manager=AsyncMock(),
+        session_factory=session_factory,  # type: ignore[arg-type]
+    )
+
+
+def _effect(
+    device: Device, operation_id: uuid.UUID, *, mode: str, payload: dict[str, Any]
+) -> PreparedVerificationEffect:
+    return PreparedVerificationEffect(
+        operation_id=operation_id,
+        mode=mode,  # type: ignore[arg-type]
+        device_id=device.id,
+        payload=payload,
+        original_fields={"name": device.name},
+        host_id=device.host_id,
+        host_ip="10.0.0.20",
+        host_agent_port=5100,
+        pack_id=device.pack_id,
+        pack_release="1.0.0",
+        platform_id=device.platform_id,
+        resolution_action=None,
     )
 
 
@@ -178,6 +198,7 @@ async def test_finalize_success_single_edge_no_flap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """WS-15.3: production success finalization emits one verifying→available edge."""
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     device = await create_device(db_session, host_id=db_host.id, name="ws153-success")
     node = await _seed_node(db_session, device.id, running=True)
     device.verified_at = None
@@ -189,16 +210,21 @@ async def test_finalize_success_single_edge_no_flap(
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="episode in flight",
     )
-    await _register_verification_node_intent(db_session, device, settings=FakeSettingsReader({}), publisher=event_bus)
+    operation_id = uuid.uuid4()
+    await _register_verification_node_intent(
+        db_session, device, settings=FakeSettingsReader({}), publisher=event_bus, operation_id=operation_id
+    )
     await db_session.commit()
     event_bus_capture.clear()
 
     monkeypatch.setattr("app.verification.services.execution.set_stage", AsyncMock())
-    svc = _build_execution_service()
-    context = SimpleNamespace(mode="create", save_device_id=device.id, transient_device=device, save_payload={})
-    outcome = await svc._finalize_success(db_session, context, job=_job(), node=node)
+    svc = _build_execution_service(session_factory)
+    effect = _effect(device, operation_id, mode="create", payload={})
+    outcome = await svc._finalize_success(effect, job=_job(), node_id=node.id)
     assert outcome.status == "completed"
+    assert outcome.superseded is False
     await settle_after_commit_tasks()
+    await db_session.refresh(device)
 
     edges = [
         (payload["old_operational_state"], payload["new_operational_state"])
@@ -218,9 +244,13 @@ async def test_finalize_failure_single_edge_no_flap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """WS-15.3: production failure finalization emits one verifying→offline edge."""
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     device = await create_device(db_session, host_id=db_host.id, name="ws153-failure")
     node = await _seed_node(db_session, device.id, running=True)
-    await _register_verification_node_intent(db_session, device, settings=FakeSettingsReader({}), publisher=event_bus)
+    operation_id = uuid.uuid4()
+    await _register_verification_node_intent(
+        db_session, device, settings=FakeSettingsReader({}), publisher=event_bus, operation_id=operation_id
+    )
     await IntentService(db_session).register_intents(
         device_id=device.id,
         intents=[
@@ -236,18 +266,18 @@ async def test_finalize_failure_single_edge_no_flap(
     event_bus_capture.clear()
 
     monkeypatch.setattr("app.verification.services.execution.set_stage", AsyncMock())
-    svc = _build_execution_service()
-    context = SimpleNamespace(mode="update", save_device_id=device.id, transient_device=device, save_payload={})
+    svc = _build_execution_service(session_factory)
+    effect = _effect(device, operation_id, mode="update", payload={})
     outcome = await svc._finalize_failure(
-        db_session,
-        context,
+        effect,
         error="probe failed",
         job=_job(),
-        node=node,
-        original_fields={"name": device.name},
+        node_id=node.id,
     )
     assert outcome.status == "failed"
+    assert outcome.superseded is False
     await settle_after_commit_tasks()
+    await db_session.refresh(device)
 
     edges = [
         (payload["old_operational_state"], payload["new_operational_state"])

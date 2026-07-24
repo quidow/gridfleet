@@ -93,38 +93,34 @@ async def claim_probe_session(
     return row
 
 
-async def confirm_probe_session(db: AsyncSession, row: Session, *, appium_session_id: str) -> bool:
+async def confirm_probe_session(db: AsyncSession, probe_id: uuid.UUID, *, appium_session_id: str) -> bool:
     """Promote the birth row to ``running`` with the real Appium session id.
 
     Guarded on ``status='pending'``: returns False when the claim was lost (the
     allocation reaper failed the row past ``grid.claim_window_sec``). The caller
     proceeds and terminates its own Appium session normally; a session it fails
-    to terminate is an unknown id the orphan sweep kills.
+    to terminate is an unknown id the orphan sweep kills. ID-based so callers
+    never carry an ORM ``Session`` between transactions.
     """
     outcome = await db.execute(
         update(Session)
-        .where(Session.id == row.id, Session.status == SessionStatus.pending, Session.ended_at.is_(None))
+        .where(Session.id == probe_id, Session.status == SessionStatus.pending, Session.ended_at.is_(None))
         .values(session_id=appium_session_id, status=SessionStatus.running)
     )
-    confirmed = int(getattr(outcome, "rowcount", 0) or 0) > 0
-    if confirmed:
-        await db.refresh(row)
-    return confirmed
+    return int(getattr(outcome, "rowcount", 0) or 0) > 0
 
 
-async def finalize_probe_session(db: AsyncSession, row: Session, *, result: ProbeResult) -> bool:
+async def finalize_probe_session(db: AsyncSession, probe_id: uuid.UUID, *, result: ProbeResult) -> bool:
     """Stamp the probe row terminal — the release of the probe's claim.
 
     Guarded on a still-live row: returns False when another closer (the reaper,
-    the liveness sweep) already terminalized it; their verdict stands.
+    the liveness sweep) already terminalized it; their verdict stands. ID-based
+    so callers never carry an ORM ``Session`` between transactions.
     """
     status, error_type = map_probe_result_to_status(result)
     outcome = await db.execute(
         update(Session)
-        .where(Session.id == row.id, Session.ended_at.is_(None))
+        .where(Session.id == probe_id, Session.ended_at.is_(None))
         .values(status=status, error_type=error_type, error_message=result.detail, ended_at=now_utc())
     )
-    finalized = int(getattr(outcome, "rowcount", 0) or 0) > 0
-    if finalized:
-        await db.refresh(row)
-    return finalized
+    return int(getattr(outcome, "rowcount", 0) or 0) > 0

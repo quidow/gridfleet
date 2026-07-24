@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.events.protocols import EventPublisher
     from app.sessions.service import SessionCrudService
+    from app.sessions.service_kill import SessionKillService
     from app.sessions.service_sync import SessionSyncService
     from app.sessions.service_viability import SessionViabilityService
 
@@ -18,6 +19,7 @@ if TYPE_CHECKING:
 @dataclass(frozen=True, slots=True)
 class SessionServices:
     crud: SessionCrudService
+    kill: SessionKillService
     sync: SessionSyncService
     viability: SessionViabilityService
     settings: SettingsReader

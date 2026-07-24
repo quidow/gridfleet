@@ -1,3 +1,5 @@
 JOB_KIND_DEVICE_VERIFICATION = "device_verification"
 JOB_KIND_DEVICE_RECOVERY = "device_recovery"
 JOB_KIND_DEVICE_HEALTH_REMEDIATION = "device_health_remediation"
+JOB_KIND_RUN_SESSION_TEARDOWN = "run_session_teardown"
+JOB_KIND_SESSION_KILL = "session_kill"

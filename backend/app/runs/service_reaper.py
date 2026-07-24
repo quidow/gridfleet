@@ -77,7 +77,7 @@ async def reap_stale_runs(db: AsyncSession, *, lifecycle: RunLifecycleService) -
                 locked.last_heartbeat,
                 locked.heartbeat_timeout_sec,
             )
-            await lifecycle.expire_run(db, locked, "Heartbeat timeout")
+            reason = "Heartbeat timeout"
         else:
             logger.warning(
                 "Expiring run %s (%s): TTL exceeded (%d minutes)",
@@ -85,11 +85,15 @@ async def reap_stale_runs(db: AsyncSession, *, lifecycle: RunLifecycleService) -
                 locked.name,
                 locked.ttl_minutes,
             )
-            await lifecycle.expire_run(
-                db,
-                locked,
-                f"TTL exceeded ({locked.ttl_minutes} minutes)",
-            )
+            reason = f"TTL exceeded ({locked.ttl_minutes} minutes)"
+
+        # Release the run-row lock before expire_run: it now runs the durable
+        # teardown flow (prepare -> effect -> finalize) in its own fresh
+        # sessions, and prepare re-locks the same run row. Holding the lock here
+        # would deadlock prepare against this session.
+        run_id = locked.id
+        await db.commit()
+        await lifecycle.expire_run(run_id, reason)
 
 
 def _heartbeat_stale(run: TestRun, now: datetime) -> bool:

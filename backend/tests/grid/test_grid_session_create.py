@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -21,6 +22,53 @@ if TYPE_CHECKING:
 
     from app.devices.models import Device
     from app.grid.allocation import AllocationResult
+
+
+class _TxTracker:
+    """Counts open DB context managers (``factory()`` and ``factory.begin()``).
+
+    A patched Appium call asserts ``active == 0`` to prove no transaction is
+    pinned across the remote I/O boundary.
+    """
+
+    def __init__(self) -> None:
+        self.active = 0
+
+    def _enter(self) -> None:
+        self.active += 1
+
+    def _exit(self) -> None:
+        self.active -= 1
+
+
+class _TrackingCtx(AbstractAsyncContextManager[AsyncSession]):
+    def __init__(self, inner: AbstractAsyncContextManager[AsyncSession], tracker: _TxTracker) -> None:
+        self._inner = inner
+        self._tracker = tracker
+
+    async def __aenter__(self) -> AsyncSession:
+        db = await self._inner.__aenter__()
+        self._tracker._enter()
+        return db
+
+    async def __aexit__(self, *exc: object) -> bool | None:
+        try:
+            return await self._inner.__aexit__(*exc)
+        finally:
+            self._tracker._exit()
+
+
+class _TrackingFactory:
+    def __init__(self, inner: async_sessionmaker[AsyncSession], tracker: _TxTracker) -> None:
+        self._inner = inner
+        self._tracker = tracker
+
+    def __call__(self) -> _TrackingCtx:
+        return _TrackingCtx(self._inner(), self._tracker)
+
+    def begin(self) -> _TrackingCtx:
+        return _TrackingCtx(self._inner.begin(), self._tracker)
+
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -60,6 +108,35 @@ async def claimed_allocation(db_session: AsyncSession) -> AllocationResult:
 @pytest.fixture
 def db_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+
+
+@pytest.fixture
+def tracker() -> _TxTracker:
+    return _TxTracker()
+
+
+def _tracking_factory(db_factory: async_sessionmaker[AsyncSession], tracker: _TxTracker) -> _TrackingFactory:
+    return _TrackingFactory(db_factory, tracker)
+
+
+def _asserting_create_raw(
+    inner: Callable[..., Awaitable[tuple[int, bytes, str | None]]], tracker: _TxTracker
+) -> Callable[..., Awaitable[tuple[int, bytes, str | None]]]:
+    async def fake(target: str, raw: bytes, *, timeout: float) -> tuple[int, bytes, str | None]:
+        assert tracker.active == 0, "Appium create issued with an open transaction"
+        return await inner(target, raw, timeout=timeout)
+
+    return fake
+
+
+def _asserting_terminate(
+    tracker: _TxTracker,
+) -> Callable[..., Awaitable[bool]]:
+    async def fake(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        assert tracker.active == 0, "Appium terminate issued with an open transaction"
+        return True
+
+    return fake
 
 
 @pytest.fixture
@@ -107,10 +184,12 @@ async def test_created_promotes_row_to_running(
     allocation_service: AllocationService,
     claimed_allocation: AllocationResult,
     monkeypatch: pytest.MonkeyPatch,
+    tracker: _TxTracker,
 ) -> None:
-    monkeypatch.setattr(session_create.appium_direct, "create_session_raw", _ok_raw())
+    factory = _tracking_factory(db_factory, tracker)
+    monkeypatch.setattr(session_create.appium_direct, "create_session_raw", _asserting_create_raw(_ok_raw(), tracker))
     outcome = await session_create.create_and_promote(
-        db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
+        factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
     )
     assert outcome.kind == "created" and outcome.session_id == "app-1"
     assert outcome.appium_status == 200 and outcome.appium_body == W3C_OK
@@ -289,11 +368,14 @@ async def test_allocation_not_pending_rolls_back_created_session_as_promotion_fa
     allocation_service: AllocationService,
     claimed_allocation: AllocationResult,
     monkeypatch: pytest.MonkeyPatch,
+    tracker: _TxTracker,
 ) -> None:
-    monkeypatch.setattr(session_create.appium_direct, "create_session_raw", _ok_raw())
+    factory = _tracking_factory(db_factory, tracker)
+    monkeypatch.setattr(session_create.appium_direct, "create_session_raw", _asserting_create_raw(_ok_raw(), tracker))
     killed: list[str] = []
 
     async def fake_kill(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        assert tracker.active == 0, "Appium terminate issued with an open transaction"
         killed.append(session_id)
         return True
 
@@ -310,7 +392,7 @@ async def test_allocation_not_pending_rolls_back_created_session_as_promotion_fa
     monkeypatch.setattr(allocation_service, "promote_to_running", fail_promote)
     before = _attempt_metric_value("promotion_failed")
     outcome = await session_create.create_and_promote(
-        db_factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
+        factory, allocation_service, allocation=claimed_allocation, raw_body=b"{}", claim_window_sec=120
     )
     assert outcome.kind == "promotion_failed"
     assert killed == ["app-1"]

@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import Counter
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
-from app.agent_comm.node_poke import poke_node_refresh
+from app.agent_comm.node_poke import NodeRefreshTarget, poke_node_refresh_target
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.node_viability import device_node_is_viable, node_viable_predicate
 from app.core.errors import (
@@ -47,8 +48,8 @@ from app.runs.schemas import (
     DeviceRequirement,
     ReservedDeviceInfo,
     RunCreate,
+    RunCreateResponse,
 )
-from app.runs.service_reservation import get_run
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -58,7 +59,14 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
+
+
+@dataclass(frozen=True, slots=True)
+class RunCreateResult:
+    response: RunCreateResponse
+    wake_targets: tuple[NodeRefreshTarget, ...] = ()
 
 
 # A run-create match can come up short purely because Stage-3's
@@ -575,52 +583,47 @@ class RunAllocatorService:
         publisher: EventPublisher,
         settings: SettingsReader,
         circuit_breaker: CircuitBreakerProtocol,
+        session_factory: SessionFactory,
         pool: AgentHttpPool | None = None,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._circuit_breaker = circuit_breaker
+        self._session_factory = session_factory
         self._pool = pool
 
     def _restart_window_sec(self) -> int:
         value = self._settings.get("appium_reconciler.restart_window_sec")
         return int(value) if value is not None else _RESTART_WINDOW_FALLBACK_SEC
 
-    async def create_run(self, db: AsyncSession, data: RunCreate) -> tuple[TestRun, list[ReservedDeviceInfo]]:
-        """Create a test run reservation. Returns (run, reserved_device_infos)."""
+    async def create_run(self, data: RunCreate) -> RunCreateResult:
+        """Create a test run reservation, retrying the whole matching transaction
+        from a fresh session on a transient shortfall, then wake the reserved
+        devices' agents from immutable targets after commit."""
 
         ttl_minutes, heartbeat_timeout_sec = self._resolve_run_options(data)
 
         attempt = 0
         while True:
             try:
-                run, device_infos = await self._attempt_create_run(
-                    db,
-                    data,
-                    ttl_minutes=ttl_minutes,
-                    heartbeat_timeout_sec=heartbeat_timeout_sec,
-                )
-                self._publisher.queue_for_session(
-                    db,
-                    "run.created",
-                    {
-                        "run_id": str(run.id),
-                        "name": run.name,
-                        "device_count": len(device_infos),
-                        "created_by": run.created_by,
-                    },
-                )
-                await db.commit()
+                async with self._session_factory.begin() as db:
+                    result = await self._attempt_create_run(
+                        db,
+                        data,
+                        ttl_minutes=ttl_minutes,
+                        heartbeat_timeout_sec=heartbeat_timeout_sec,
+                    )
                 break
             except _UnmetRequirementError as exc:
                 # The shortfall may be a transient false negative: Stage-3's
                 # ``SELECT ... FOR UPDATE SKIP LOCKED`` drops a candidate whose
                 # row a background reconcile loop holds for its (sub-second)
-                # commit window. Roll back and re-match before surfacing.
-                await db.rollback()
+                # commit window. The begin() context rolled the attempt back;
+                # sleep with no session open and re-match before surfacing.
                 attempt += 1
                 if attempt >= _MATCH_RETRY_ATTEMPTS:
-                    shortfall = await _describe_requirement_shortfall(db, exc.requirement)
+                    async with self._session_factory() as read_db:
+                        shortfall = await _describe_requirement_shortfall(read_db, exc.requirement)
                     raise ValueError(
                         "Not enough devices for requirement: "
                         f"pack_id={exc.requirement.pack_id}, "
@@ -631,33 +634,14 @@ class RunAllocatorService:
                         "Check /api/availability for current platform capacity or retry later."
                     ) from exc
                 await asyncio.sleep(_MATCH_RETRY_BACKOFF_SEC)
-            except Exception:
-                await db.rollback()
-                raise
 
-        await self._deliver_routing_reconfigures(db, device_infos)
-
-        refreshed_run = await get_run(db, run.id)
-        assert refreshed_run is not None
-        return refreshed_run, device_infos
-
-    async def _deliver_routing_reconfigures(self, db: AsyncSession, device_infos: list[ReservedDeviceInfo]) -> None:
-        """Wake each reserved device's agent inline so it re-pulls its desired
-        state (carrying the new run id) without waiting for the next poll.
-        """
-        # ponytail: sequential, not gathered — each poke queries the shared
-        # AsyncSession, which is not safe for concurrent use. A down host costs
-        # N * NODE_POKE_TIMEOUT_SEC here; dedup by host (or per-task sessions)
-        # only if that edge case ever matters.
-        for info in device_infos:
-            await poke_node_refresh(
-                db,
-                uuid.UUID(info.device_id),
-                settings=self._settings,
+        for target in result.wake_targets:
+            await poke_node_refresh_target(
+                target,
                 circuit_breaker=self._circuit_breaker,
                 pool=self._pool,
-                publisher=self._publisher,
             )
+        return result
 
     def _resolve_run_options(self, data: RunCreate) -> tuple[int, int]:
         ttl_minutes = data.ttl_minutes
@@ -681,7 +665,7 @@ class RunAllocatorService:
         *,
         ttl_minutes: int,
         heartbeat_timeout_sec: int,
-    ) -> tuple[TestRun, list[ReservedDeviceInfo]]:
+    ) -> RunCreateResult:
         now = now_utc()
         selection = await _batch_select_devices(
             db,
@@ -719,6 +703,8 @@ class RunAllocatorService:
         )
         db.add(run)
         await db.flush()
+        # created_at is server_default=now(); load it for the response before commit.
+        await db.refresh(run, attribute_names=["created_at"])
 
         reservations = [
             DeviceReservation(
@@ -747,4 +733,33 @@ class RunAllocatorService:
         for device in all_matched:
             await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
 
-        return run, device_infos
+        self._publisher.queue_for_session(
+            db,
+            "run.created",
+            {
+                "run_id": str(run.id),
+                "name": run.name,
+                "device_count": len(device_infos),
+                "created_by": run.created_by,
+            },
+        )
+
+        response = RunCreateResponse(
+            id=run.id,
+            name=run.name,
+            state=run.state,
+            devices=device_infos,
+            ttl_minutes=run.ttl_minutes,
+            heartbeat_timeout_sec=run.heartbeat_timeout_sec,
+            created_at=run.created_at,
+        )
+        # Copy immutable wake targets from the loaded hosts so the post-commit poke
+        # touches no session. Dedup by (ip, agent_port) — one poke per host agent.
+        wake_targets = tuple(
+            {
+                NodeRefreshTarget(ip=device.host.ip, agent_port=device.host.agent_port)
+                for device in all_matched
+                if device.host is not None
+            }
+        )
+        return RunCreateResult(response=response, wake_targets=wake_targets)

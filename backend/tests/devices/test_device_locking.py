@@ -1,12 +1,13 @@
 import asyncio
 import uuid
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
 
-from app.devices.locking import lock_device, lock_devices
-from app.devices.models import DeviceOperationalState
+from app.devices.locking import lock_device, lock_device_handles, lock_devices
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.routers.helpers import get_device_for_update_or_404
 from tests.helpers import create_device
 
@@ -16,6 +17,16 @@ if TYPE_CHECKING:
     from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
+
+
+async def make_device(db_session: AsyncSession, db_host: Host, *, device_id: UUID) -> Device:
+    """Create a device with a fixed id for deterministic lock-order assertions."""
+    return await create_device(
+        db_session,
+        host_id=db_host.id,
+        name=f"device-{device_id}",
+        id=device_id,
+    )
 
 
 async def test_lock_device_returns_row_with_for_update(
@@ -111,3 +122,20 @@ async def test_get_device_for_update_or_404_raises_404_for_missing(
         await get_device_for_update_or_404(missing_id, db_session)
 
     assert exc.value.status_code == 404
+
+
+async def test_lock_device_handles_sorts_deduplicates_and_returns_active_proofs(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    high = await make_device(db_session, db_host, device_id=UUID("ffffffff-ffff-ffff-ffff-ffffffffffff"))
+    low = await make_device(db_session, db_host, device_id=UUID("00000000-0000-0000-0000-000000000001"))
+    await db_session.commit()
+
+    async with db_session.begin():
+        locked = await lock_device_handles(db_session, [high.id, low.id, high.id])
+        assert [item.device.id for item in locked] == [low.id, high.id]
+        for item in locked:
+            item.assert_active(db_session)
+
+    with pytest.raises(RuntimeError, match="not owned"):
+        locked[0].assert_active(db_session)

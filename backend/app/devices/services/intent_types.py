@@ -28,6 +28,13 @@ VERIFICATION_OUTCOME_KEY = "outcome"
 VERIFICATION_OUTCOME_PASSED = "passed"
 VERIFICATION_OUTCOME_FAILED = "failed"
 
+# The immutable operation token (``str(Job.id)``) stamped on the verification
+# lease payload and carried in the Job payload/snapshot. A finalizer applies its
+# durable effects only while the lease still carries its own operation id; a
+# newer verification episode for the same device overwrites the token under the
+# device lock, superseding every stale finalizer.
+VERIFICATION_OPERATION_ID_KEY = "operation_id"
+
 
 class CommandKind(StrEnum):
     operator_stop = "operator:stop:node"

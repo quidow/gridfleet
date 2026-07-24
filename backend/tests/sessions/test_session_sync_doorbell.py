@@ -46,6 +46,7 @@ async def test_doorbell_set_wakes_loop_early() -> None:
 
     services = SessionServices(
         crud=Mock(),
+        kill=Mock(),
         sync=svc,
         viability=Mock(),
         settings=FakeSettingsReader({}),
@@ -92,6 +93,7 @@ async def test_running_loop_registers_module_wake_hook() -> None:
 
     services = SessionServices(
         crud=Mock(),
+        kill=Mock(),
         sync=svc,
         viability=Mock(),
         settings=FakeSettingsReader({}),
@@ -139,6 +141,7 @@ async def test_doorbell_burst_coalesces_into_single_sync() -> None:
 
     services = SessionServices(
         crud=Mock(),
+        kill=Mock(),
         sync=svc,
         viability=Mock(),
         settings=FakeSettingsReader({}),

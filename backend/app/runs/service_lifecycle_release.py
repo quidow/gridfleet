@@ -1,26 +1,23 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
-from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core import metrics_recorders
-from app.core.concurrency import per_key_semaphores
 
 if TYPE_CHECKING:
     import uuid
-    from collections import defaultdict
-    from datetime import datetime
+    from collections.abc import Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.devices.locking import LockedDevice
     from app.events.protocols import EventPublisher
     from app.runs.models import TestRun
     from app.runs.protocols import DeviceDeferredStop
@@ -30,12 +27,12 @@ from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.claims import device_is_reserved
 from app.devices.services.intent import IntentService
+from app.devices.services.intent_reconciler import reconcile_locked_device
 from app.devices.services.intent_types import (
     CommandKind,
     IntentRegistration,
 )
 from app.devices.services.lifecycle_policy_state import in_maintenance
-from app.grid import appium_direct
 from app.grid.allocation import resolve_router_target
 from app.packs.services import lifecycle as pack_lifecycle
 from app.sessions import service as session_service
@@ -78,47 +75,61 @@ class RunReleaseService:
         self._settings = settings
         self._deferred_stop = deferred_stop
 
+    async def lock_run_devices(self, db: AsyncSession, run: TestRun) -> dict[uuid.UUID, LockedDevice]:
+        """Acquire every reserved device's row lock in ascending-id order.
+
+        Ordinary run transitions (complete/cancel/expire) lock the run row first,
+        then all reserved Device rows in sorted order here, then the reservation
+        children — the root -> sorted-device -> child order the deadlock-avoidance
+        contract requires. The returned proofs are reused by
+        ``clear_desired_grid_run_id_for_run`` and ``release_devices`` so neither
+        re-locks a Device.
+        """
+        device_ids = sorted({reservation.device_id for reservation in run.device_reservations})
+        handles = await device_locking.lock_device_handles(db, device_ids, load_sessions=True)
+        return {item.device.id: item for item in handles}
+
     async def release_devices(
         self,
         db: AsyncSession,
         run: TestRun,
         *,
-        commit: bool = True,
-        terminate_grid_sessions: bool = False,
+        locked_by_id: Mapping[uuid.UUID, LockedDevice],
+        close_session_ids: frozenset[uuid.UUID] | None = None,
     ) -> list[uuid.UUID]:
         """Release all active reservations for this run and restore device statuses.
+
+        Ordinary completion is a database release only — the caller has already
+        acquired every reserved Device lock (``locked_by_id``); this closes the
+        run's live session rows and releases the reservation children under those
+        held proofs.
+
+        ``close_session_ids`` selects which live rows to terminalize. ``None``
+        (the ordinary complete path) closes every live session. A set (the
+        durable cancel/expire/force finalize path, whose Appium teardown already
+        ran in the effect phase) closes pending rows plus only the running rows
+        the effect actually terminated; failed ordinary DELETE rows are left live
+        for session-sync.
 
         Returns the device IDs that need a follow-up
         ``complete_deferred_stop_if_session_ended`` pass. The caller MUST run
         ``complete_deferred_stops_post_commit`` after the encompassing run-state
-        commit; the lifecycle helper commits internally (via
-        ``handle_node_crash``) and must not be invoked while the run-state
-        transaction is still open, otherwise a partial commit can land on disk if
-        a later step in the same call raises.
+        commit.
         """
         active_reservations = [
             reservation for reservation in run.device_reservations if reservation.released_at is None
         ]
         released_at = now_utc()
-        await self._mark_running_sessions_released(
-            db,
-            run,
-            released_at,
-            terminate_grid_sessions=terminate_grid_sessions,
-        )
+        await self._close_run_sessions_locked(db, run, locked_by_id, close_session_ids)
 
         if not active_reservations:
-            if commit:
-                await db.commit()
             return []
 
-        device_ids = sorted({reservation.device_id for reservation in active_reservations})
-        locked_devices = {device.id: device for device in await device_locking.lock_devices(db, device_ids)}
         devices_pending_lifecycle_cleanup: list[uuid.UUID] = []
 
         for reservation in active_reservations:
-            device = locked_devices.get(reservation.device_id)
-            if device is None:
+            locked = locked_by_id.get(reservation.device_id)
+            if locked is None:
                 reservation.released_at = released_at
                 reservation.excluded = False
                 reservation.exclusion_kind = None
@@ -130,12 +141,12 @@ class RunReleaseService:
                     reservation.device_id,
                 )
                 continue
+            device = locked.device
             # Snapshot reservation status before marking this row released so that
             # device_is_reserved queries (which auto-flush) see the pre-release state.
             was_reserved = await device_is_reserved(db, device.id)
             reservation.released_at = released_at
             # Released rows must not stay excluded (invariant: not (released_at and excluded)).
-            # The reconciler used to clear this via the reservation axis; it no longer does.
             reservation.excluded = False
             reservation.exclusion_kind = None
             reservation.excluded_at = None
@@ -147,16 +158,58 @@ class RunReleaseService:
             if has_live_session or not was_reserved:
                 devices_pending_lifecycle_cleanup.append(device.id)
                 continue
-            await IntentService(db).reconcile_now(
-                device.id,
-                publisher=self._publisher,
-            )
+            await reconcile_locked_device(db, locked, publisher=self._publisher)
             devices_pending_lifecycle_cleanup.append(device.id)
-        for pack_id in sorted({device.pack_id for device in locked_devices.values() if device.pack_id is not None}):
+        for pack_id in sorted(
+            {locked.device.pack_id for locked in locked_by_id.values() if locked.device.pack_id is not None}
+        ):
             await pack_lifecycle.complete_drain_if_draining(db, pack_id)
-        if commit:
-            await db.commit()
         return devices_pending_lifecycle_cleanup
+
+    async def _close_run_sessions_locked(
+        self,
+        db: AsyncSession,
+        run: TestRun,
+        locked_by_id: Mapping[uuid.UUID, LockedDevice],
+        close_session_ids: frozenset[uuid.UUID] | None,
+    ) -> None:
+        """Terminalize the run's live session rows under the held device proofs.
+
+        DB-only close (no Appium DELETE — remote teardown ran in the effect phase
+        for the durable finalize path, or is not applicable for complete). Routed
+        through ``close_running_session_locked`` so the run-terminal close emits
+        ``session.ended`` and reconciles the device under the caller's lock,
+        instead of the wrapper re-acquiring its own lock (breaking the ordering).
+
+        When ``close_session_ids`` is a set, running rows are closed only if the
+        effect terminated them; pending rows are always closed.
+        """
+        stmt = (
+            select(Session)
+            .options(selectinload(Session.device), selectinload(Session.run))
+            .where(Session.run_id == run.id, live_session_predicate())
+        )
+        sessions = (await db.execute(stmt)).scalars().all()
+        for session in sessions:
+            if session.device_id is None:
+                continue
+            locked = locked_by_id.get(session.device_id)
+            if locked is None:
+                continue
+            if (
+                close_session_ids is not None
+                and session.status == SessionStatus.running
+                and session.id not in close_session_ids
+            ):
+                logger.warning(
+                    "Leaving session %s running because its Appium teardown did not confirm during run %s release",
+                    session.session_id,
+                    run.id,
+                )
+                continue
+            await session_service.close_running_session_locked(
+                db, locked, session_pk=session.id, publisher=self._publisher
+            )
 
     async def clear_desired_grid_run_id_for_run(
         self,
@@ -164,6 +217,7 @@ class RunReleaseService:
         *,
         run: TestRun,
         caller: str,
+        locked_by_id: Mapping[uuid.UUID, LockedDevice],
         actor: str | None = None,
         reason: str | None = None,
         stop_device_ids: set[uuid.UUID] | None = None,
@@ -172,10 +226,10 @@ class RunReleaseService:
         for reservation in run.device_reservations:
             if reservation.released_at is not None:
                 continue
-            try:
-                device = await device_locking.lock_device(db, reservation.device_id, load_sessions=False)
-            except NoResultFound:
+            locked = locked_by_id.get(reservation.device_id)
+            if locked is None:
                 continue
+            device = locked.device
             # Verify-then-stop (design P3): only hard-stop a device whose session
             # genuinely survived the W3C DELETE (or stayed indeterminate). A
             # cleanly-gone session leaves the node warm — no cold restart. When no
@@ -190,9 +244,6 @@ class RunReleaseService:
                             kind=CommandKind.forced_release,
                             run_id=run.id,
                             payload={"action": "stop"},
-                            # TTL replaces the run_active precondition (semantic delta #2): a hard
-                            # stop within the short restart window; the run going terminal no longer
-                            # reaps it, but it self-expires.
                             expires_at=now_utc()
                             + timedelta(seconds=self._settings.get_int("appium_reconciler.restart_window_sec")),
                         )
@@ -202,7 +253,7 @@ class RunReleaseService:
                 metrics_recorders.FORCED_RELEASE_NODE_STOP_TOTAL.inc()
             # run: routing / cooldown denies derive from the reservation row; reconcile
             # to tear them down as the run releases (no stored release intents now).
-            await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
+            await reconcile_locked_device(db, locked, publisher=self._publisher)
 
     async def complete_deferred_stops_post_commit(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> None:
         """Run ``complete_deferred_stop_if_session_ended`` for each device after
@@ -213,185 +264,3 @@ class RunReleaseService:
             if device is None:
                 continue
             await self._deferred_stop.complete_deferred_stop_if_session_ended(db, device)
-
-    async def _mark_running_sessions_released(
-        self,
-        db: AsyncSession,
-        run: TestRun,
-        released_at: datetime,
-        *,
-        terminate_grid_sessions: bool,
-        probe_survivors: bool = False,
-        close_rows: bool = True,
-    ) -> set[uuid.UUID]:
-        del released_at  # close_running_session stamps ended_at itself
-        if not terminate_grid_sessions:
-            # complete_run path: session lifecycle is owned by the testkit/operator.
-            # Leaving running rows untouched keeps device_has_running_session honest
-            # so devices with live Grid sessions are not freed under the run.
-            return set()
-
-        # ``pending`` is the grid allocate->confirm window. A run cancelled while a
-        # session is pending must terminalize that row too (#3): otherwise the pending
-        # row lingers, the device is freed by release_devices, and the router's later
-        # confirm double-allocates it. Closing the pending row makes the confirm's
-        # status='pending'-guarded UPDATE miss (rowcount 0) and 409, so the router rolls
-        # back the freshly-created Appium session.
-        stmt = (
-            select(Session)
-            .options(selectinload(Session.device), selectinload(Session.run))
-            .where(
-                Session.run_id == run.id,
-                live_session_predicate(),
-            )
-        )
-        result = await db.execute(stmt)
-        sessions = result.scalars().all()
-        if not sessions:
-            return set()
-
-        # Three phases (wave-5 #8): the callers hold the run FOR UPDATE for the
-        # whole call, so awaiting each Appium DELETE serially cost up to Nx10s of
-        # wall time under lock. Resolve targets serially (DB reads), gather the
-        # DELETEs concurrently bounded per host (no DB access inside the gather —
-        # the AsyncSession is not task-safe), then do the DB writes serially.
-        # Read-only target resolution: the caller awaits 10s Appium DELETEs next, so
-        # row locks here would serialize the reconciler and every state writer on
-        # these devices against Appium latency. One batched load (was one query per
-        # session) with the eager-loaded appium_node/host that resolve_router_target
-        # needs. Resolution falls back to the router_target stored at allocation for
-        # a node whose port was transiently stale-cleared (recovery backoff) (#9).
-        running_device_ids = {
-            session.device_id
-            for session in sessions
-            if session.status == SessionStatus.running and session.device_id is not None
-        }
-        devices_by_id: dict[uuid.UUID, Device] = {}
-        if running_device_ids:
-            device_stmt = (
-                select(Device)
-                .options(selectinload(Device.appium_node), selectinload(Device.host))
-                .where(Device.id.in_(running_device_ids))
-            )
-            devices_by_id = {device.id: device for device in (await db.execute(device_stmt)).scalars()}
-
-        targets: dict[uuid.UUID, str | None] = {}
-        for session in sessions:
-            if session.status == SessionStatus.running:
-                # A live Appium session: best-effort DELETE on the node before closing
-                # the DB row. With no reachable target or a failed delete, leave the row
-                # running so it is not falsely marked ended (the idle reaper backstops).
-                targets[session.id] = _resolve_session_target(session, devices_by_id)
-
-        host_semaphores: defaultdict[uuid.UUID | None, asyncio.Semaphore] = per_key_semaphores(
-            TERMINATE_CONCURRENCY_PER_HOST
-        )
-
-        async def _terminate(session: Session, target: str) -> bool:
-            host_id = session.device.host_id if session.device is not None else None
-            async with host_semaphores[host_id]:
-                return await appium_direct.terminate_session(target, session.session_id)
-
-        running_with_target = [
-            (session, target)
-            for session in sessions
-            if session.status == SessionStatus.running and (target := targets.get(session.id)) is not None
-        ]
-        results = await asyncio.gather(*[_terminate(session, target) for session, target in running_with_target])
-        terminated_ok = {session.id: ok for (session, _), ok in zip(running_with_target, results, strict=True)}
-
-        survivors: set[uuid.UUID] = set()
-        if probe_survivors:
-            survivors = await self._probe_session_survivors(running_with_target, host_semaphores)
-            # Fail-safe: a running session with no resolvable Appium target can be
-            # neither DELETEd nor probed, so we cannot confirm it is gone — treat it as a
-            # survivor and hard-stop its node (the same way an indeterminate probe is kept
-            # a survivor). Otherwise a live session on a stale-port/unaddressable node
-            # would leak past force-release.
-            survivors |= {
-                session.device_id
-                for session in sessions
-                if session.status == SessionStatus.running
-                and targets.get(session.id) is None
-                and session.device_id is not None
-            }
-
-        if not close_rows:
-            return survivors
-        for session in sessions:
-            if session.status == SessionStatus.running:
-                if targets.get(session.id) is None:
-                    logger.warning(
-                        "Leaving session %s running because no Appium node target was resolvable during run %s release",
-                        session.session_id,
-                        run.id,
-                    )
-                    continue
-                if not terminated_ok[session.id]:
-                    logger.warning(
-                        "Leaving session %s running because Appium deletion failed during run %s release",
-                        session.session_id,
-                        run.id,
-                    )
-                    continue
-            # pending rows carry a placeholder session_id (no real Appium session yet),
-            # so they skip the DELETE and are closed directly.
-            #
-            # Route through close_running_session so the run-terminal close emits
-            # session.ended + reconciles the device (#12) instead of stamping status
-            # inline. The run reached a non-completed terminal state here, so
-            # close_running_session stamps error/run_released and expires the
-            # allocation ticket — unifying with the session_sync + router close paths.
-            await session_service.close_running_session(
-                db, session, attached_run=session.run, publisher=self._publisher
-            )
-        return survivors
-
-    async def _probe_session_survivors(
-        self,
-        running_with_target: list[tuple[Session, str]],
-        host_semaphores: defaultdict[uuid.UUID | None, asyncio.Semaphore],
-    ) -> set[uuid.UUID]:
-        """After the W3C DELETE, probe each session's liveness (design P3).
-
-        A device is a *survivor* (its node warrants a force-release hard-stop) when
-        its session is still alive, or stays indeterminate after one brief retry.
-        A 404/gone result (``session_alive`` -> ``False``) means the DELETE took:
-        not a survivor, the node stays warm. Probes are bounded per host by the
-        same semaphore the DELETE gather uses.
-        """
-
-        async def _alive(session: Session, target: str) -> bool:
-            host_id = session.device.host_id if session.device is not None else None
-            async with host_semaphores[host_id]:
-                verdict = await appium_direct.session_alive(target, session.session_id)
-                if verdict is None:
-                    await asyncio.sleep(SURVIVAL_PROBE_RETRY_DELAY_SEC)
-                    verdict = await appium_direct.session_alive(target, session.session_id)
-            return verdict is not False  # True (alive) or None (indeterminate) -> survivor
-
-        results = await asyncio.gather(*[_alive(session, target) for session, target in running_with_target])
-        return {
-            session.device_id
-            for (session, _), alive in zip(running_with_target, results, strict=True)
-            if alive and session.device_id is not None
-        }
-
-    async def terminate_run_sessions_and_probe_survivors(self, db: AsyncSession, run: TestRun) -> set[uuid.UUID]:
-        """Force-release pre-step (design P3): W3C DELETE every live session for the
-        run, then probe which genuinely survived. Returns the device IDs whose
-        session is still alive (or indeterminate) — the only devices the force
-        release should hard-stop; a confirmed-gone session leaves the node warm.
-
-        Does NOT close the session rows. ``release_devices`` closes them AFTER
-        ``run.state = cancelled`` so they stamp ``error`` (not ``passed``) — avoiding
-        the TR12 outcome-masking lost-update that occurs when rows are closed while
-        the run is still ``active``. The pre-step's DELETE means ``release_devices``'
-        re-DELETE of an already-gone session is a 404 no-op.
-
-        Touches no ``DeviceReservation`` rows, so it is safe to run before
-        ``clear_desired_grid_run_id_for_run`` (which needs reservations still active).
-        """
-        return await self._mark_running_sessions_released(
-            db, run, now_utc(), terminate_grid_sessions=True, probe_survivors=True, close_rows=False
-        )
