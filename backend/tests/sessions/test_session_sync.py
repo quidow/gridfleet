@@ -179,6 +179,45 @@ async def test_dead_session_closed_and_device_freed(
     assert len(ended_calls) >= 1
 
 
+async def test_sync_never_queries_the_injected_session(
+    db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Task 7: ``sync``'s injected ``db`` is used only to derive a fresh session
+    factory bound to the same engine — every read (the sweep-target load) and every
+    write (session close, device restore) runs through its own short-lived
+    session/transaction. If ``db`` itself were ever queried again, its connection
+    would be holding a transaction open across the Appium liveness/orphan effects,
+    exactly the leak this task closes. A dead session (closed + device freed) and an
+    orphan (enumerated + terminated) both fire so every phase runs at least once."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="no-injected-query", operational_state=DeviceOperationalState.busy
+    )
+    session = Session(session_id="sess-no-injected-query", device_id=device.id, status=SessionStatus.running)
+    db_session.add(session)
+    await db_session.commit()
+
+    _stub_appium_direct["alive"]["sess-no-injected-query"] = False
+    orphan_target = f"http://{db_host.ip}:4723"
+    _stub_appium_direct["list"][orphan_target] = ["sess-no-injected-query", "sess-orphan-no-injected-query"]
+
+    original_execute = db_session.execute
+    execute_calls: list[object] = []
+
+    async def counting_execute(*args: object, **kwargs: object) -> object:
+        execute_calls.append(args)
+        return await original_execute(*args, **kwargs)
+
+    monkeypatch.setattr(db_session, "execute", counting_execute)
+
+    await _make_sync_service().sync(db_session)
+
+    assert execute_calls == []
+    assert (orphan_target, "sess-orphan-no-injected-query") in _stub_appium_direct["terminated"]
+
+    await db_session.refresh(session)
+    assert session.ended_at is not None
+
+
 async def test_indeterminate_session_left_alone(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:

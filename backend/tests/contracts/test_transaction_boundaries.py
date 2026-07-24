@@ -16,6 +16,17 @@ MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/runs/service_lifecycle_release.py",
     "app/verification/services/preparation.py",
     "app/verification/services/execution.py",
+    "app/core/db_retry.py",
+    "app/grid/router_internal.py",
+    "app/grid/session_create.py",
+    "app/sessions/service_kill.py",
+    "app/sessions/service_viability.py",
+    "app/sessions/service_sync.py",
+    "app/runs/service_allocator.py",
+    "app/runs/service_lifecycle.py",
+    "app/runs/service_lifecycle_failures.py",
+    "app/runs/service_teardown.py",
+    "app/verification/services/runner.py",
 )
 
 # Phase-3 mixed modules: each carries a sanctioned commit boundary AND below-boundary

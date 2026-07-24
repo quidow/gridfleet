@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import uuid
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,19 +20,30 @@ def _make_service(lifecycle: object | None = None) -> SessionSyncService:
     )
 
 
-async def test_sync_commits_without_deferred_stop_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
-    db = MagicMock()
-    db.commit = AsyncMock()
+class _FakeSessionFactory:
+    """Single-session stand-in for ``async_sessionmaker``: both ``factory()`` and
+    ``factory.begin()`` hand back the same fake ``db`` as an async context manager,
+    matching how ``_restore_device_after_session_end`` opens a plain session for the
+    lifecycle check and (only past the early-return branches these tests exercise) a
+    ``begin()`` transaction for the locked recheck."""
 
-    svc = _make_service()
-    monkeypatch.setattr(svc, "_check_liveness", AsyncMock())
-    monkeypatch.setattr(svc, "_kill_orphans", AsyncMock())
-    await svc.sync(db)
+    def __init__(self, db: object) -> None:
+        self._db = db
 
-    db.commit.assert_awaited_once()
+    def __call__(self) -> _FakeSessionFactory:
+        return self
+
+    def begin(self) -> _FakeSessionFactory:
+        return self
+
+    async def __aenter__(self) -> object:
+        return self._db
+
+    async def __aexit__(self, *exc_info: object) -> bool:
+        return False
 
 
-async def test_restore_skips_when_session_still_running(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_restore_skips_when_session_still_running() -> None:
     """A device with a still-running session is left alone (no lifecycle call)."""
     db = MagicMock()
     db.execute = AsyncMock(
@@ -38,7 +52,7 @@ async def test_restore_skips_when_session_still_running(monkeypatch: pytest.Monk
     mock_lifecycle = AsyncMock()
 
     svc = _make_service(lifecycle=mock_lifecycle)
-    await svc._restore_device_after_session_end(db, uuid.uuid4())
+    await svc._restore_device_after_session_end(_FakeSessionFactory(db), uuid.uuid4())
 
     mock_lifecycle.handle_session_finished.assert_not_awaited()
 
@@ -61,7 +75,7 @@ async def test_restore_returns_when_device_missing() -> None:
     mock_lifecycle = AsyncMock()
 
     svc = _make_service(lifecycle=mock_lifecycle)
-    await svc._restore_device_after_session_end(db, uuid.uuid4())
+    await svc._restore_device_after_session_end(_FakeSessionFactory(db), uuid.uuid4())
 
     mock_lifecycle.handle_session_finished.assert_not_awaited()
 
@@ -72,7 +86,7 @@ async def test_restore_returns_on_terminal_lifecycle_outcome(outcome_name: str) 
     from app.lifecycle.services import policy as lifecycle_policy
 
     device = SimpleNamespace(id=uuid.uuid4())
-    db = MagicMock()
+    db: Any = MagicMock()
     db.execute = _no_running_then_device(device)
     db.get = AsyncMock()
     mock_lifecycle = AsyncMock()
@@ -81,7 +95,7 @@ async def test_restore_returns_on_terminal_lifecycle_outcome(outcome_name: str) 
     )
 
     svc = _make_service(lifecycle=mock_lifecycle)
-    await svc._restore_device_after_session_end(db, device.id)
+    await svc._restore_device_after_session_end(_FakeSessionFactory(db), device.id)
 
     mock_lifecycle.handle_session_finished.assert_awaited_once()
     # No lock taken (no locked recheck path) on the terminal outcomes.
