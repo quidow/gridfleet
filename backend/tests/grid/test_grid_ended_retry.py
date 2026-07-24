@@ -58,13 +58,12 @@ async def test_grid_ended_retries_transient_deadlock_and_returns_204(
 
     real = alloc.AllocationService.mark_ended
     calls = {"n": 0}
-    session_ids: list[int] = []
+    attempt_sessions: list[AsyncSession] = []
     rereads: list[int] = []
 
     async def flaky(self: alloc.AllocationService, db: AsyncSession, *, appium_session_id: str) -> None:
         calls["n"] += 1
-        session_ids.append(id(db))
-        # Each attempt must reread the Session row from its own fresh snapshot.
+        attempt_sessions.append(db)  # keep a reference so no address can be reused
         row = (await db.execute(select(Session).where(Session.session_id == appium_session_id))).scalars().first()
         rereads.append(0 if row is None else 1)
         if calls["n"] == 1:
@@ -77,7 +76,6 @@ async def test_grid_ended_retries_transient_deadlock_and_returns_204(
 
     assert resp.status_code == 204
     assert calls["n"] == 2
-    # The retry helper opens a fresh session per attempt; the two attempts must
-    # not reuse a single AsyncSession (the old (db, zero_arg_cb) shape did).
-    assert len(set(session_ids)) == 2, f"retry must use distinct sessions, got {session_ids}"
+    assert len(attempt_sessions) == 2
+    assert attempt_sessions[0] is not attempt_sessions[1], "retry must open a fresh AsyncSession per attempt"
     assert rereads == [1, 1], f"each attempt must reread the row, got {rereads}"
