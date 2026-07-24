@@ -102,6 +102,31 @@ async def test_device_list_reads_are_constant_with_fleet_size(
 
 @pytest.mark.db
 @pytest.mark.usefixtures("seeded_driver_packs")
+async def test_paginated_device_list_reads_are_constant_with_page_size(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A fixed ``limit`` must not turn per-member reads back on: fetching a full
+    page of 10 must read exactly as much as fetching a page of 1, aside from the
+    pagination ``COUNT`` statement itself."""
+    await seed_devices(db_session, host_id=default_host_id, count=1, prefix="page-one")
+    with capture_read_statements(db_session) as one:
+        response_one = await client.get("/api/devices?limit=10&offset=0")
+        assert response_one.status_code == 200
+    assert len(response_one.json()["items"]) == 1
+
+    await seed_devices(db_session, host_id=default_host_id, count=9, prefix="page-many")
+    with capture_read_statements(db_session) as many:
+        response_many = await client.get("/api/devices?limit=10&offset=0")
+        assert response_many.status_code == 200
+    assert len(response_many.json()["items"]) == 10
+
+    assert len(many) == len(one), f"paginated device-list reads grew: {len(one)} -> {len(many)}"
+
+
+@pytest.mark.db
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_group_detail_reads_are_constant_with_member_count(
     client: AsyncClient,
     db_session: AsyncSession,

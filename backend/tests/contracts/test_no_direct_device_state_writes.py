@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import ast
+import inspect
 import re
 from pathlib import Path
 
 import pytest
+
+from app.devices.services import read_projection
 
 BACKEND_APP = Path(__file__).resolve().parents[2] / "app"
 
@@ -141,3 +145,17 @@ def test_operational_state_transition_called_only_by_edge_detector() -> None:
         "and intent reconciler:\n"
         f"{formatted}"
     )
+
+
+def test_read_projection_is_not_a_mutation_api() -> None:
+    source = inspect.getsource(read_projection)
+    tree = ast.parse(source)
+    assert "app.devices.locking" not in source
+    assert "with_for_update" not in source
+    assert "write_desired_state" not in source
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and not node.name.startswith("_"):
+            assert all(
+                not (isinstance(arg.annotation, ast.Name) and arg.annotation.id == "LockedDevice")
+                for arg in [*node.args.args, *node.args.kwonlyargs]
+            )
