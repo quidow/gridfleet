@@ -4,18 +4,32 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.services.lifecycle_policy_state import (
     MAINTENANCE_HOLD_SUPPRESSION_REASON,
     clear_maintenance_reason,
     set_maintenance_reason,
 )
-from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy, build_lifecycle_policy_summary
-from tests.helpers import create_device
+from app.devices.services.lifecycle_policy_summary import (
+    build_lifecycle_policy,
+    build_lifecycle_policy_from_facts,
+    build_lifecycle_policy_summary,
+    freeze_reservation_context,
+)
+from app.devices.services.readiness import is_ready_for_use_async
+from app.devices.services.recovery_projection import recovery_availability
+from app.devices.services.state import derive_operational_state
+from app.lifecycle.services import remediation_log
+from app.runs import service_reservation as run_reservation_service
+from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.devices.models import Device
     from app.hosts.models import Host
 
 
@@ -101,3 +115,71 @@ async def test_not_ready_device_is_not_suppressed(db_session: AsyncSession, db_h
     device = await create_device(db_session, host_id=db_host.id, name="proj-unverified", verified=False)
     policy = await build_lifecycle_policy(db_session, device)
     assert policy["recovery_state"] != "suppressed"
+
+
+async def _seed_excluded_reservation(db_session: AsyncSession, device: Device) -> None:
+    await create_reserved_run(
+        db_session,
+        name="parity-run",
+        devices=[device],
+        excluded_device_ids={str(device.id)},
+        exclusion_reason="excluded by test",
+    )
+
+
+async def _seed_maintenance_hold(db_session: AsyncSession, device: Device) -> None:
+    locked = await device_locking.lock_device(db_session, device.id)
+    set_maintenance_reason(locked, "operator hold")
+
+
+async def _seed_deferred_stop(db_session: AsyncSession, device: Device) -> None:
+    await remediation_log.append_action(
+        db_session,
+        device.id,
+        source="device_checks",
+        action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
+        reason="probe failed",
+    )
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
+@pytest.mark.parametrize(
+    "seed",
+    [
+        pytest.param(_seed_excluded_reservation, id="excluded-reservation"),
+        pytest.param(_seed_maintenance_hold, id="maintenance-hold"),
+        pytest.param(_seed_deferred_stop, id="deferred-stop"),
+    ],
+)
+async def test_build_lifecycle_policy_from_facts_matches_async(
+    db_session: AsyncSession,
+    db_host: Host,
+    seed: Callable[[AsyncSession, Device], Awaitable[None]],
+) -> None:
+    """The pure policy builder must return the same dict as the async wrapper."""
+    device = await create_device(db_session, host_id=db_host.id, name="policy-parity")
+    await seed(db_session, device)
+    await db_session.commit()
+
+    now = now_utc()
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    reservation_context = await run_reservation_service.get_device_reservation_with_entry(db_session, device.id)
+    ready = await is_ready_for_use_async(db_session, device)
+    availability = await recovery_availability(db_session, device, ready=ready, now=now)
+    operational_state = await derive_operational_state(db_session, device, now=now)
+
+    assert build_lifecycle_policy_from_facts(
+        device,
+        ladder=ladder,
+        reservation=freeze_reservation_context(*reservation_context, device_id=device.id),
+        availability=availability,
+        operational_state=operational_state,
+        now=now,
+    ) == await build_lifecycle_policy(
+        db_session,
+        device,
+        reservation_context=reservation_context,
+        ready=ready,
+        operational_state=operational_state,
+        now=now,
+    )

@@ -8,6 +8,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceOperationalState, DeviceType, ExclusionKind
 from app.devices.services import presenter as device_presenter
 from app.devices.services.presenter import DevicePresenterService
+from app.devices.services.serialization_types import ReservationReadFacts
 
 if TYPE_CHECKING:
     import pytest
@@ -115,6 +116,45 @@ def test_build_reservation_read_marks_escalated_cooldown() -> None:
     assert payload is not None
     assert payload.cooldown_escalated is True
     assert payload.cooldown_remaining_sec is not None
+
+
+def test_build_reservation_read_from_facts_matches_orm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The facts builder must return the same DTO as the ORM builder for an
+    excluded + escalated-cooldown reservation. Time is pinned so the ORM path's
+    internal ``now_utc`` and the facts path's threaded ``now`` agree exactly."""
+    # Anchor to real wall-clock: the ORM path's exclusion check uses the (un-patched)
+    # service-layer now_utc, so excluded_until must sit genuinely in the future for
+    # ``excluded`` to stay True. The cooldown math on both paths keys off ``fixed_now``.
+    fixed_now = datetime.now(UTC)
+    monkeypatch.setattr(device_presenter, "now_utc", lambda: fixed_now)
+
+    run_id = uuid.uuid4()
+    excluded_until = fixed_now + timedelta(hours=1)
+    run = SimpleNamespace(id=run_id, name="run", state=SimpleNamespace(value="active"))
+    entry = SimpleNamespace(
+        excluded=True,
+        exclusion_kind=ExclusionKind.cooldown,
+        exclusion_reason="Exceeded cooldown threshold 3",
+        excluded_until=excluded_until,
+        cooldown_count=4,
+    )
+    facts = ReservationReadFacts(
+        run_id=run_id,
+        run_name="run",
+        run_state="active",
+        run_terminal=False,
+        excluded=True,
+        exclusion_kind="cooldown",
+        exclusion_reason="Exceeded cooldown threshold 3",
+        excluded_at=None,
+        excluded_until=excluded_until,
+        cooldown_count=4,
+        blocks_allocation=False,
+    )
+
+    assert device_presenter.build_reservation_read_from_facts(
+        facts, now=fixed_now
+    ) == device_presenter.build_reservation_read(run, entry)
 
 
 async def test_serialize_orchestration_includes_intent_kinds() -> None:

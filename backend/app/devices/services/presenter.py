@@ -33,10 +33,12 @@ DEFAULT_RESTART_WINDOW_SEC = 120
 
 if TYPE_CHECKING:
     import uuid
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device, DeviceReservation
+    from app.devices.services.serialization_types import ReservationReadFacts
     from app.runs.models import TestRun
 
 
@@ -205,26 +207,67 @@ class DevicePresenterService:
         return payload
 
 
+def _reservation_read_dto(
+    *,
+    run_id: uuid.UUID,
+    run_name: str,
+    run_state: str,
+    excluded: bool,
+    exclusion_reason: str | None,
+    excluded_until: datetime | None,
+    cooldown_count: int,
+    cooldown_remaining_sec: int | None,
+) -> DeviceReservationRead:
+    return DeviceReservationRead(
+        run_id=run_id,
+        run_name=run_name,
+        run_state=run_state,
+        excluded=excluded,
+        exclusion_reason=exclusion_reason,
+        excluded_until=excluded_until,
+        cooldown_remaining_sec=cooldown_remaining_sec,
+        cooldown_count=cooldown_count,
+        cooldown_escalated=bool(exclusion_reason and exclusion_reason.startswith("Exceeded cooldown threshold ")),
+    )
+
+
 def build_reservation_read(
     reservation: TestRun | None,
     reservation_entry: DeviceReservation | None = None,
 ) -> DeviceReservationRead | None:
     if reservation is None:
         return None
-    return DeviceReservationRead(
+    return _reservation_read_dto(
         run_id=reservation.id,
         run_name=reservation.name,
         run_state=reservation.state.value,
         excluded=run_service.reservation_entry_is_excluded(reservation_entry),
         exclusion_reason=reservation_entry.exclusion_reason if reservation_entry else None,
         excluded_until=reservation_entry.excluded_until if reservation_entry else None,
-        cooldown_remaining_sec=_cooldown_remaining_sec(reservation_entry),
         cooldown_count=reservation_entry.cooldown_count if reservation_entry else 0,
-        cooldown_escalated=bool(
-            reservation_entry
-            and reservation_entry.exclusion_reason
-            and reservation_entry.exclusion_reason.startswith("Exceeded cooldown threshold ")
-        ),
+        cooldown_remaining_sec=_cooldown_remaining_sec(reservation_entry),
+    )
+
+
+def build_reservation_read_from_facts(
+    reservation: ReservationReadFacts | None,
+    *,
+    now: datetime,
+) -> DeviceReservationRead | None:
+    if reservation is None:
+        return None
+    cooldown_remaining_sec: int | None = None
+    if reservation.exclusion_kind == ExclusionKind.cooldown and reservation.excluded_until is not None:
+        cooldown_remaining_sec = max(0, int((reservation.excluded_until - now).total_seconds()))
+    return _reservation_read_dto(
+        run_id=reservation.run_id,
+        run_name=reservation.run_name,
+        run_state=reservation.run_state,
+        excluded=reservation.excluded,
+        exclusion_reason=reservation.exclusion_reason,
+        excluded_until=reservation.excluded_until,
+        cooldown_count=reservation.cooldown_count,
+        cooldown_remaining_sec=cooldown_remaining_sec,
     )
 
 
