@@ -402,7 +402,7 @@ class AllocationService:
         ``last_activity_at`` is intentionally NOT stamped at promotion: a ``running``
         row with NULL activity means "the client never issued a command". The
         router's server-stamped ``/internal/grid/activity`` flush is the only
-        writer, and ``SessionSyncService._check_liveness`` reaps a never-commanded
+        writer, and ``SessionSyncService``'s liveness sweep reaps a never-commanded
         session after ``grid.session_first_command_grace_sec`` (measured from the
         claim-time ``started_at``).
         """

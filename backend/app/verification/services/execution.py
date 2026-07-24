@@ -378,9 +378,7 @@ class VerificationExecutionService:
         async with self._session_factory.begin() as db:
             lock = await lock_verification_operation(db, device_id=effect.device_id, operation_id=effect.operation_id)
             if lock is None:
-                return VerificationExecutionOutcome(
-                    status="completed", device_id=str(effect.device_id), superseded=True
-                )
+                return VerificationExecutionOutcome(status="failed", device_id=str(effect.device_id), superseded=True)
             locked, _lease = lock
             device = locked.device
             if effect.mode == "update" and await device_has_live_session(db, effect.device_id):
