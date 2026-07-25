@@ -699,13 +699,12 @@ async def test_poll_failure_logging_backs_off_during_an_outage(caplog: pytest.Lo
 
     reports = [record for record in caplog.records if "poller failed" in record.getMessage()]
     assert len(reports) == 1, f"expected one report for a burst of 5 failures, got {len(reports)}"
-    # Not a count-specific check: this project's structlog config never formats
-    # %-style positional args into the text ``caplog`` captures (no
-    # ``PositionalArgumentsFormatter`` in the processor chain -- the real value
-    # lands under a separate ``positional_args`` key, verified by inspection).
-    # The onset report's own count is architecturally 0 regardless -- real wall
-    # time barely advances across this synchronous burst, so only the
-    # first-ever failure reports at all; nothing later reopens a second report
-    # to reveal a suppressed count. Same weak assertion as the analogous
-    # real-time listener burst test above.
-    assert "suppressed" in reports[0].getMessage()
+    # This project's structlog config never formats %-style positional args into
+    # the text ``caplog`` captures (no ``PositionalArgumentsFormatter`` in the
+    # processor chain) -- ``record.msg`` is the raw structlog event dict, and the
+    # real count lands under its ``positional_args`` key rather than interpolated
+    # into the message text. ``0`` is the only correct value here, not a stand-in
+    # for the brief's ``4``: the onset report fires on the very first failure,
+    # before anything has been suppressed, so a future reader must not "fix"
+    # this to 4.
+    assert reports[0].msg["positional_args"] == (0,)
