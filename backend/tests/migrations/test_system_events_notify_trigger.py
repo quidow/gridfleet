@@ -186,7 +186,14 @@ async def test_downgrade_removes_only_trigger_and_function(system_events_trigger
         assert "system_events" in tables
 
         trigger_count = (
-            await conn.execute(text("SELECT count(*) FROM pg_trigger WHERE tgname = 'system_events_notify_insert'"))
+            await conn.execute(
+                text(
+                    "SELECT count(*) FROM pg_trigger t "
+                    "JOIN pg_class c ON c.oid = t.tgrelid "
+                    "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                    "WHERE t.tgname = 'system_events_notify_insert' AND n.nspname = current_schema()"
+                )
+            )
         ).scalar_one()
         assert trigger_count == 0
 
