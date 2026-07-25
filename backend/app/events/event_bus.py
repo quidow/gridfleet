@@ -553,11 +553,13 @@ class EventBus:
         if retired:
             record_outbox_gaps_retired(len(retired))
             logger.warning(
-                "Retiring %d unresolved system_events gap id(s) after %.0fs (sample: %s); their "
-                "transactions rolled back, or they outlived the idle-in-transaction bound "
-                "GAP_RETIREMENT_SEC is derived from. If this fires in normal operation, the bound or "
-                "the derivation is wrong; a single bulk retirement just after a poller outage is the "
-                "benign case, because the recovery poll enumerates the whole interval it missed.",
+                "Retiring %d unresolved system_events gap id(s) after %.0fs (sample: %s). The routine "
+                "cause is a staged event whose transaction rolled back -- an autoflushed INSERT that "
+                "never committed permanently strands its sequence value, and that is expected, not a "
+                "sign of a problem. A single bulk retirement right after a poller outage is also benign, "
+                "since the recovery poll enumerates the whole interval it missed. A sustained rate or a "
+                "step change in outbox_gaps_retired_total, not any one firing, is what would suggest the "
+                "idle-in-transaction bound or GAP_RETIREMENT_SEC's derivation from it is wrong.",
                 len(retired),
                 GAP_RETIREMENT_SEC,
                 retired[:RETIREMENT_LOG_SAMPLE_SIZE],
