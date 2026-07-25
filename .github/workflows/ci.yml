@@ -158,9 +158,19 @@ jobs:
         run: uv sync --extra dev --locked
 
       - name: Bound idle transactions (parity with the compose stacks)
+        # ALTER DATABASE only writes pg_db_role_setting for the named database.
+        # It is not inherited by CREATE DATABASE and there is no template that
+        # would copy it, so it never reached gridfleet_test / gridfleet_test_gwN
+        # -- the databases the suite actually creates and connects to. ALTER
+        # SYSTEM + reload changes the cluster-wide default instead, which every
+        # new connection picks up regardless of which database it targets --
+        # the same effect the compose stacks get from a server-level `-c` flag.
+        # backend/tests/contracts/test_idle_transaction_bound_live.py verifies
+        # this against a connection the suite actually uses.
         run: |
           PGPASSWORD=gridfleet psql -h 127.0.0.1 -U gridfleet -d gridfleet \
-            -c "ALTER DATABASE gridfleet SET idle_in_transaction_session_timeout = '60s';"
+            -c "ALTER SYSTEM SET idle_in_transaction_session_timeout = '60s';" \
+            -c "SELECT pg_reload_conf();"
 
       - name: Test
         working-directory: backend
