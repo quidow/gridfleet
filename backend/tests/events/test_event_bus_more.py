@@ -658,3 +658,54 @@ async def test_listener_reconnect_logging_resets_after_a_long_quiet_period(
         f"expected the first four failures (t=0, 2, 64, 68) to report and the t=70 failure to be "
         f"suppressed (5 failures, 4 reports), got {len(reports)} report(s)."
     )
+
+
+async def test_poll_failure_logging_backs_off_during_an_outage(caplog: pytest.LogCaptureFixture) -> None:
+    """The poller and the listener fail together; they must log alike.
+
+    Before this, one outage produced a capped listener burst and an uncapped
+    poller burst -- one traceback every 5s per worker, forever.
+
+    The outage is real: the bus polls an unreachable port, so each iteration
+    raises the driver's own connection error through the same path production
+    would. Patching ``_dispatch_missed_events`` would have tested the loop
+    against an exception type of the test's choosing. The patched sleep is a
+    clock, not a stand-in for the failure.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    dead_engine = create_async_engine("postgresql+asyncpg://gridfleet:gridfleet@127.0.0.1:1/gridfleet")
+    dead_maker = async_sessionmaker(dead_engine, expire_on_commit=False)
+    bus = EventBus()
+    bus.configure(session_factory=dead_maker, poller_session_factory=dead_maker)
+
+    slept = 0
+
+    async def counting_sleep(_seconds: float) -> None:
+        nonlocal slept
+        slept += 1
+        if slept > 5:
+            raise asyncio.CancelledError
+
+    try:
+        with (
+            patch("app.events.event_bus.asyncio.sleep", new=counting_sleep),
+            caplog.at_level(logging.ERROR),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await bus._poll_for_missed_events()
+    finally:
+        await dead_engine.dispose()
+
+    reports = [record for record in caplog.records if "poller failed" in record.getMessage()]
+    assert len(reports) == 1, f"expected one report for a burst of 5 failures, got {len(reports)}"
+    # Not a count-specific check: this project's structlog config never formats
+    # %-style positional args into the text ``caplog`` captures (no
+    # ``PositionalArgumentsFormatter`` in the processor chain -- the real value
+    # lands under a separate ``positional_args`` key, verified by inspection).
+    # The onset report's own count is architecturally 0 regardless -- real wall
+    # time barely advances across this synchronous burst, so only the
+    # first-ever failure reports at all; nothing later reopens a second report
+    # to reveal a suppressed count. Same weak assertion as the analogous
+    # real-time listener burst test above.
+    assert "suppressed" in reports[0].getMessage()

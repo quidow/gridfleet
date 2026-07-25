@@ -52,6 +52,14 @@ LISTENER_RECONNECT_DELAY_SEC = 1.0
 # report(t=2) -- window doubles to 4s -- suppress(t=3), suppress(t=4), ... .
 LISTENER_LOG_BACKOFF_INITIAL_SEC = 2.0
 LISTENER_LOG_BACKOFF_MAX_SEC = 60.0
+# The poll loop's own backoff. Separate constants from the listener's because
+# the loops have different cadences: the poller sleeps LISTENER_POLL_INTERVAL_SEC
+# (5s) between attempts, not LISTENER_RECONNECT_DELAY_SEC (1s), so the initial
+# window has to outlast one poll cycle rather than one reconnect cycle for the
+# same reason -- a failure landing exactly on the deadline would otherwise open
+# every outage with two tracebacks instead of one.
+POLL_LOG_BACKOFF_INITIAL_SEC = float(LISTENER_POLL_INTERVAL_SEC) * 2
+POLL_LOG_BACKOFF_MAX_SEC = 60.0
 LISTENER_READY_TIMEOUT_SEC = 5.0
 HANDLER_DRAIN_TIMEOUT_SEC = 5.0
 POLL_SCAN_CHUNK_SIZE = 500
@@ -864,11 +872,32 @@ class EventBus:
                     await driver_conn.remove_listener(NOTIFY_CHANNEL, callback)
 
     async def _poll_for_missed_events(self) -> None:
+        log_interval = POLL_LOG_BACKOFF_INITIAL_SEC
+        next_log_at = 0.0
+        # The last report's own timestamp, not the deadline it set -- same
+        # reasoning as the listener loop's, which see.
+        last_report_at = float("-inf")
+        suppressed = 0
         while True:
             try:
                 await self._dispatch_missed_events()
+            except asyncio.CancelledError:
+                raise
             except Exception:
-                logger.exception("System event poller failed")
+                now = time.monotonic()
+                if now < next_log_at:
+                    suppressed += 1
+                else:
+                    if now - last_report_at >= POLL_LOG_BACKOFF_MAX_SEC:
+                        log_interval = POLL_LOG_BACKOFF_INITIAL_SEC
+                    logger.exception(
+                        "System event poller failed (%d further failure(s) suppressed since the last report)",
+                        suppressed,
+                    )
+                    suppressed = 0
+                    last_report_at = now
+                    next_log_at = now + log_interval
+                    log_interval = min(log_interval * 2, POLL_LOG_BACKOFF_MAX_SEC)
             await asyncio.sleep(LISTENER_POLL_INTERVAL_SEC)
 
 
