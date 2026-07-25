@@ -29,9 +29,15 @@ async def test_start_and_shutdown_manage_listener_tasks(db_session: AsyncSession
     async def wait_forever() -> None:
         await asyncio.Event().wait()
 
+    async def ready_then_wait_forever() -> None:
+        # ``start`` waits for the listener to register before seeding the
+        # watermark; a stand-in that never signals would stall it.
+        bus._listener_ready.set()
+        await wait_forever()
+
     with (
         patch.object(bus, "_read_latest_row_id", new=AsyncMock(return_value=7)),
-        patch.object(bus, "_listen_for_notifications", new=wait_forever),
+        patch.object(bus, "_listen_for_notifications", new=ready_then_wait_forever),
         patch.object(bus, "_poll_for_missed_events", new=wait_forever),
     ):
         await bus.start()
@@ -135,7 +141,9 @@ async def test_dispatch_missed_events_loads_new_rows_and_skips_duplicates(db_ses
     await bus._dispatch_missed_events()
 
     assert [event["id"] for event in recent_events(bus, limit=10)] == ["evt-a", "evt-b"]
-    assert bus._last_seen_system_event_id >= int(row_b.id)
+    # The watermark itself lags behind a snapshot horizon that other sessions
+    # can hold open, so the deterministic assertion is on the candidate.
+    assert bus._watermark_candidate_id >= int(row_b.id)
 
 
 async def test_shutdown_handler_tasks_cancels_pending_tasks() -> None:
@@ -276,7 +284,8 @@ async def test_listen_for_notifications_returns_when_driver_connection_missing()
             return FakeConnection()
 
     bus._engine = cast("object", FakeEngine())
-    await bus._listen_for_notifications()
+    # ``_listen_once`` directly: the reconnect wrapper would retry this forever.
+    await bus._listen_once()
 
 
 async def test_listen_for_notifications_returns_when_engine_missing() -> None:
@@ -351,3 +360,62 @@ async def test_poller_recovers_committed_row_when_notify_wake_up_is_lost(
         assert [event.data["device_id"] for event in received] == ["poller"]
     finally:
         await bus.shutdown()
+
+
+@pytest.mark.db
+async def test_poller_delivers_row_committed_after_a_higher_id(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """A long transaction's lower id must survive a shorter transaction committing first."""
+    bus = EventBus()
+    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
+    received: list[Event] = []
+    bus.register_handler(received.append)
+
+    async with db_session_maker() as slow, db_session_maker() as fast:
+        bus.queue_for_session(slow, "device.updated", {"device_id": "slow"})
+        await slow.flush()  # id assigned by the sequence, still invisible
+        bus.queue_for_session(fast, "device.updated", {"device_id": "fast"})
+        await fast.commit()  # higher id, commits first
+
+        await bus._dispatch_missed_events()
+        await drain_handlers(bus)
+        assert [event.data["device_id"] for event in received] == ["fast"]
+
+        await slow.commit()
+        await bus._dispatch_missed_events()
+        await drain_handlers(bus)
+
+    assert sorted(event.data["device_id"] for event in received) == ["fast", "slow"]
+
+
+@pytest.mark.db
+async def test_listener_reconnects_after_connection_loss(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    bus = EventBus()
+    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
+    attempts = 0
+    original = bus._listen_once
+
+    async def flaky() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            bus._listener_ready.set()
+            raise ConnectionResetError("simulated server restart")
+        await original()
+
+    with (
+        patch.object(bus, "_listen_once", new=flaky),
+        patch("app.events.event_bus.LISTENER_RECONNECT_DELAY_SEC", 0.01),
+    ):
+        await bus.start()
+        try:
+            for _ in range(200):
+                if attempts >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert attempts >= 2, "listener did not reconnect after a dropped connection"
+        finally:
+            await bus.shutdown()

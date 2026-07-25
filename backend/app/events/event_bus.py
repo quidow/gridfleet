@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event as sa_event
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.metrics import register_gauge_refresher
@@ -32,7 +32,16 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 LISTENER_POLL_INTERVAL_SEC = 5
+LISTENER_RECONNECT_DELAY_SEC = 1.0
+LISTENER_READY_TIMEOUT_SEC = 5.0
 HANDLER_DRAIN_TIMEOUT_SEC = 5.0
+
+_SNAPSHOT_HORIZON_SQL = text(
+    "SELECT CAST(pg_snapshot_xmax(pg_current_snapshot()) AS text) AS xmax, "
+    "CASE WHEN CAST(:candidate AS text) IS NULL THEN false "
+    "ELSE pg_snapshot_xmin(pg_current_snapshot()) >= CAST(CAST(:candidate AS text) AS xid8) "
+    "END AS settled"
+)
 
 
 @dataclass
@@ -115,7 +124,10 @@ class EventBus:
         self._listener_task: asyncio.Task[None] | None = None
         self._poller_task: asyncio.Task[None] | None = None
         self._handler_tasks: set[asyncio.Task[None]] = set()
+        self._listener_ready = asyncio.Event()
         self._last_seen_system_event_id = 0
+        self._watermark_candidate_id = 0
+        self._watermark_candidate_xmax: str | None = None
         self._started = False
 
     def configure(
@@ -128,10 +140,23 @@ class EventBus:
         self._engine = engine
 
     async def start(self) -> None:
+        """Register LISTEN before seeding the watermark, then start the poller.
+
+        The order closes the boot gap without extra bookkeeping: a row visible
+        at seed time is below the seed, and a row still in flight at seed time
+        commits after the listener registered, so its notification is caught. A
+        listener that cannot register within ``LISTENER_READY_TIMEOUT_SEC``
+        degrades to poller-only rather than blocking application startup — the
+        reconnect loop keeps retrying behind it.
+        """
         if self._started or self._session_factory is None or self._engine is None:
             return
-        self._last_seen_system_event_id = await self._read_latest_row_id()
+        self._listener_ready = asyncio.Event()
         self._listener_task = asyncio.create_task(self._listen_for_notifications())
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._listener_ready.wait(), timeout=LISTENER_READY_TIMEOUT_SEC)
+        self._last_seen_system_event_id = await self._read_latest_row_id()
+        self._watermark_candidate_id = self._last_seen_system_event_id
         self._poller_task = asyncio.create_task(self._poll_for_missed_events())
         self._started = True
 
@@ -353,6 +378,13 @@ class EventBus:
         self._handler_tasks.clear()
 
     async def _load_and_dispatch_system_event(self, row_id: int) -> None:
+        """Dispatch one notified row without touching the watermark.
+
+        Ids are handed out by the sequence at flush time but become visible at
+        commit time, so a notification for a higher id says nothing about lower
+        ids still in flight. Advancing the watermark here would strand them;
+        the gated promotion in ``_dispatch_missed_events`` is the only writer.
+        """
         if self._session_factory is None:
             return
         async with self._session_factory() as db:
@@ -361,31 +393,70 @@ class EventBus:
                 return
             event = Event.from_system_event(row)
         if any(existing.id == event.id for existing in self._log):
-            self._last_seen_system_event_id = max(self._last_seen_system_event_id, row_id)
             return
-        self._last_seen_system_event_id = max(self._last_seen_system_event_id, row_id)
         self._remember_and_dispatch(event)
 
     async def _dispatch_missed_events(self) -> None:
+        """Dispatch committed rows above the watermark, then promote it if safe.
+
+        The watermark may only pass an id once every transaction that could
+        still be holding an unpublished lower id has ended, so promotion runs a
+        poll behind: a candidate id is paired with a snapshot horizon and
+        promoted only when a later snapshot proves that horizon cleared. Until
+        then the same rows are re-selected each poll and the ``_log`` dedupe
+        suppresses the re-dispatch.
+        """
         if self._session_factory is None:
             return
         async with self._session_factory() as db:
+            # Test the standing candidate's gate BEFORE the row select. A
+            # cleared gate means the transactions it was waiting on ended
+            # before this snapshot, so the later snapshot the select runs under
+            # is guaranteed to see the rows they committed.
+            settled = bool(
+                (await db.execute(_SNAPSHOT_HORIZON_SQL, {"candidate": self._watermark_candidate_xmax})).one().settled
+            )
             stmt = (
                 select(SystemEvent)
                 .where(SystemEvent.id > self._last_seen_system_event_id)
                 .order_by(SystemEvent.id.asc())
             )
-            result = await db.execute(stmt)
-            rows = result.scalars().all()
+            rows = (await db.execute(stmt)).scalars().all()
+            # Capture the new candidate's horizon AFTER the row select: every
+            # transaction in flight during the select was assigned an xid below
+            # this xmax, so the gate cannot clear until all of them have ended.
+            # Capturing it earlier would be unsound — a transaction that began
+            # in between could take a lower sequence value and still be
+            # invisible. Both halves are xid8, so there is no wraparound.
+            horizon_xmax = str((await db.execute(_SNAPSHOT_HORIZON_SQL, {"candidate": None})).one().xmax)
         for row in rows:
             event = Event.from_system_event(row)
             if any(existing.id == event.id for existing in self._log):
-                self._last_seen_system_event_id = max(self._last_seen_system_event_id, int(row.id))
                 continue
-            self._last_seen_system_event_id = max(self._last_seen_system_event_id, int(row.id))
             self._remember_and_dispatch(event)
+        if settled:
+            self._last_seen_system_event_id = max(self._last_seen_system_event_id, self._watermark_candidate_id)
+        self._watermark_candidate_id = max(
+            self._watermark_candidate_id,
+            max((int(row.id) for row in rows), default=self._last_seen_system_event_id),
+        )
+        self._watermark_candidate_xmax = horizon_xmax
 
     async def _listen_for_notifications(self) -> None:
+        # The unconfigured-bus return stays outside the loop: inside it, a bus
+        # with no engine would spin through the reconnect sleep forever.
+        if self._engine is None:
+            return
+        while True:
+            try:
+                await self._listen_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("System event listener connection failed; reconnecting")
+            await asyncio.sleep(LISTENER_RECONNECT_DELAY_SEC)
+
+    async def _listen_once(self) -> None:
         if self._engine is None:
             return
         queue: asyncio.Queue[int] = asyncio.Queue()
@@ -409,6 +480,7 @@ class EventBus:
                 queue.put_nowait(row_id)
 
             await driver_conn.add_listener(NOTIFY_CHANNEL, callback)
+            self._listener_ready.set()
             try:
                 while True:
                     row_id = await queue.get()

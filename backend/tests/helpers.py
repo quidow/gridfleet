@@ -434,6 +434,11 @@ def reset_event_bus(bus: EventBus) -> None:
     bus._session_factory = None
     bus._engine = None
     bus._last_seen_system_event_id = 0
+    # Clear the gated-promotion state too: a candidate left over from the
+    # previous test would promote the rewound watermark past the next test's
+    # rows on the first poll.
+    bus._watermark_candidate_id = 0
+    bus._watermark_candidate_xmax = None
 
 
 # ---------------------------------------------------------------------------
