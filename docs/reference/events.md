@@ -58,7 +58,7 @@ The manager publishes one shared event object shape:
 ### Notification polling shape
 
 - `/api/notifications` returns an array of the same event envelopes
-- The event log returned by `/api/notifications` comes from the durable `system_events` table (persisted `SystemEvent` rows, ordered newest-first); these rows are not pruned by retention cleanup. An in-memory recent-only buffer is used only as a fallback when persistence is not configured
+- The event log returned by `/api/notifications` comes from the durable `system_events` table (persisted `SystemEvent` rows, ordered newest-first); these rows are pruned by retention cleanup like the other tables the cleanup loop sweeps — rows older than the `retention.system_events_days` setting (by `created_at`; default 30 days) are deleted, or never deleted if that setting is `0`. An in-memory recent-only buffer is used only as a fallback when persistence is not configured
 
 ## Emitted Event Names
 
@@ -127,7 +127,7 @@ Dispatched after the writer transaction commits. Dropped on rollback.
 | `device_group.members_changed` | `group_key`, `added`, `removed` | `neutral` | `neutral`, `info` | static group membership writes |
 | `bulk.operation_completed` | `operation`, `total`, `succeeded`, `failed` | `success` | `success`, `warning`, `critical` | device and group bulk actions |
 | `settings.changed` | `key` plus `value` or `reset`, `keys`, or `reset_all` | `neutral` | `neutral`, `info` | settings writes |
-| `system.cleanup_completed` | `sessions_deleted`, `audit_entries_deleted`, `device_events_deleted`, `host_resource_samples_deleted`, `duration_seconds` | `neutral` | `neutral`, `warning` | retention cleanup loop |
+| `system.cleanup_completed` | `sessions_deleted`, `probe_sessions_deleted`, `audit_entries_deleted`, `test_data_audit_entries_deleted`, `device_events_deleted`, `remediation_log_entries_deleted`, `host_resource_samples_deleted`, `capacity_snapshots_deleted`, `grid_queue_tickets_deleted`, `system_events_deleted`, `test_runs_deleted`, `jobs_deleted`, `duration_seconds` | `neutral` | `neutral`, `warning` | retention cleanup loop |
 
 Both `device_group.*` events identify the group by its public `group_key`, never by the internal group UUID. `action` on `device_group.updated` is `created`, `updated`, or `deleted`. `device_group.members_changed` carries `added` **or** `removed` — whichever count the write produced — and is not emitted when a membership write changes nothing (for example re-adding a device that is already a member). Because the key is immutable, a subscriber can use it as a stable correlation id for a group's whole lifetime; a `deleted` action is the only end to that identity.
 
