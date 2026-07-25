@@ -1205,19 +1205,29 @@ async def test_bench_event_fold_commit_and_notify_budget(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An event-bearing fold does one source commit and never issues its own pg_notify.
+    """An event-bearing fold does one source commit; the event row rides that transaction.
 
     Phase 6 stages the event row (``publisher.queue_for_session``) on the same source
     transaction as the device mutation that caused it, and a database trigger
     (``notify_system_event_insert``) does the ``pg_notify`` at commit time -- there is
-    no second, event-only commit and no application-side notify statement. Before this
-    phase, the source transaction committed and then ``EventBus._persist_system_event``
-    opened a *second* transaction to insert the ``system_events`` row and issued an
-    application-side ``SELECT pg_notify(...)`` before committing again. Both symbols
-    were deleted in Task 2, so the pre-phase baseline this test locks in is recorded
-    here rather than re-derived: for exactly this one-device first-unhealthy fold, the
-    old ``CommitTap.deferred_count`` -- the second, event-only commit this test now
-    forbids -- was asserted ``> 0`` at the now-deleted ``tests/test_bench_folds.py:1115``.
+    no second, event-only commit. Before this phase, the source transaction committed
+    and then the now-deleted ``EventBus._persist_system_event`` opened a *second*
+    transaction to insert the ``system_events`` row and issued an application-side
+    ``SELECT pg_notify(...)``. Both symbols were deleted in Task 2. The pre-phase
+    baseline for the second-commit half is recorded here rather than re-derived --
+    the same underlying invariant (a reintroduced event-only commit) was guarded by
+    the old ``CommitTap.deferred_count > 0`` assertion at the now-deleted
+    ``tests/test_bench_folds.py:1115``, though that assertion lived inside
+    ``test_bench_device_health_loop_fold``'s env-parameterized multi-scenario sweep
+    (gated on ``effective_unhealthy``/``reseed_per_iteration``), not this fixture.
+    The application-side-notify half is guarded separately and statically, not here:
+    see ``tests/events/test_event_bus_publish_allowlist.py::test_no_unexpected_pg_notify_sites``.
+    A tap-based ``pg_notify`` assertion was tried here first and removed --
+    ``statement_signature()`` collapses any statement to verb+table, so
+    ``SELECT pg_notify('system_events', '999')`` collapses to ``'SELECT ?'`` under
+    bind-param, positional-param, and literal forms alike, indistinguishable from any
+    other argument-less SELECT. The assertion could never fail against this tap and was
+    vacuous.
 
     This one-device first-unhealthy transition genuinely stages three events, not one:
     ``device.operational_state_changed`` (available -> offline), ``device.health_changed``
@@ -1231,10 +1241,22 @@ async def test_bench_event_fold_commit_and_notify_budget(
     That split is an artifact of *when* an unrelated autoflush fires mid-fold, not a
     property of the outbox itself, so the statement count is deliberately not asserted --
     pinning it would couple this test to autoflush timing having nothing to do with
-    events. Both attributed callsites are themselves inside the fold's own call graph
-    (i.e. source work), which is exactly what the callsite-attribution assertion below
-    checks and why it passes for both; don't "fix" it later by pinning either callsite's
-    name.
+    events.
+
+    The two assertions below cover different halves of the outbox invariant and are NOT
+    interchangeable:
+
+    - ``commits.count == 1`` is what actually catches a reintroduced separate event
+      transaction. ``CommitTap`` hooks the engine-level ``"commit"`` event, so it fires
+      no matter which session API issued the commit. Do not weaken or remove it on the
+      theory that the attribution check below already covers separate-transaction
+      regressions -- it does not (see next bullet).
+    - the callsite-attribution check only covers an INSERT reached through the
+      instrumented ``AsyncSession`` methods (``install_async_session_callsite_profiler``).
+      It is blind to ``EventBus.publish()``'s standalone
+      ``async with self._session_factory.begin() as db`` path: an INSERT reaching the
+      database through that path attributes to ``"unattributed"``, which trivially
+      satisfies ``not callsite.startswith("app.events.")`` and would NOT be caught here.
     """
     install_async_session_callsite_profiler(monkeypatch)
     device_count = 1
@@ -1272,7 +1294,6 @@ async def test_bench_event_fold_commit_and_notify_budget(
         f"outbox INSERT ran outside the source transaction: {inserts}"
     )
     assert commits.count == 1
-    assert not any("pg_notify" in signature.lower() for signature in tap.counter)
     event_row_count = await db_session.scalar(select(func.count()).select_from(SystemEvent))
     assert event_row_count is not None
     assert event_row_count >= 1

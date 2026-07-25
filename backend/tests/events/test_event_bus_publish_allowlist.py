@@ -147,3 +147,46 @@ def test_no_unexpected_system_event_constructor_sites() -> None:
         + "\n  ".join(stale)
         + "\n\nRemove them from ALLOWED_SYSTEM_EVENT_CONSTRUCTOR_SITES."
     )
+
+
+ALLOWED_PG_NOTIFY_SITES: dict[str, str] = {
+    "app/events/outbox_schema.py:12": "the sanctioned DB-trigger DDL -- PERFORM pg_notify runs inside "
+    "the database trigger function at commit time, never from application code",
+}
+
+
+def _scan_pg_notify_sites() -> set[str]:
+    """Line-level text scan, not AST: this bans a literal token, not a structural pattern.
+
+    A benchmark tap (``tests/test_bench_folds.py``) cannot see this: ``statement_signature()``
+    collapses any statement to verb+table, so ``SELECT pg_notify(...)`` is indistinguishable
+    from any other argument-less SELECT. This static scan is the only guard for an
+    application-side ``pg_notify`` call.
+    """
+    sites: set[str] = set()
+    for path in APP_ROOT.rglob("*.py"):
+        rel = path.relative_to(APP_ROOT.parent).as_posix()
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+            if "pg_notify" in line:
+                sites.add(f"{rel}:{lineno}")
+    return sites
+
+
+def test_no_unexpected_pg_notify_sites() -> None:
+    actual = _scan_pg_notify_sites()
+    expected = set(ALLOWED_PG_NOTIFY_SITES.keys())
+
+    new_sites = sorted(actual - expected)
+    assert not new_sites, (
+        "New `pg_notify` reference detected outside the sanctioned DB-trigger DDL:\n  "
+        + "\n  ".join(new_sites)
+        + "\n\nThe database trigger (app/events/outbox_schema.py) is the only sanctioned notifier; "
+        "application code must never call pg_notify directly."
+    )
+
+    stale = sorted(expected - actual)
+    assert not stale, (
+        "Allowlist contains stale entries no longer present in the source:\n  "
+        + "\n  ".join(stale)
+        + "\n\nRemove them from ALLOWED_PG_NOTIFY_SITES."
+    )
