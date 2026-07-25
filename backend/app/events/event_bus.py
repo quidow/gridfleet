@@ -64,11 +64,12 @@ POLL_SCAN_CHUNK_SIZE = 500
 # one that builds the backlog.
 #
 # Measured max over 30 samples against a 4-page table on the dev stack: 0.0154s.
-# The multiple biases high: timing out early costs one retried poll and nothing
-# else -- the dedupe map blocks re-delivery, ``_pending_gaps`` is untouched, and
-# the frontier has not moved -- while timing out late leaves a wedge open
-# longer. Unlike a per-iteration value, "high" here is anchored to a finite
-# measurable quantity.
+# Set to roughly 100x that measurement (1.5s / 0.0154s ~= 97x). The multiple
+# biases high: timing out early costs one retried poll and nothing else -- the
+# dedupe map blocks re-delivery, ``_pending_gaps`` is untouched, and the
+# frontier has not moved -- while timing out late leaves a wedge open longer.
+# Unlike a per-iteration value, "high" here is anchored to a finite measurable
+# quantity.
 POLL_STATEMENT_TIMEOUT_SEC = 1.5
 
 # The ``idle_in_transaction_session_timeout`` both compose files set on the
