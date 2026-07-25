@@ -77,4 +77,6 @@ async def test_emit_operational_state_transition_no_op_when_state_matches(
     await db_session.commit()
     await dispatch_committed_events()
 
-    publisher.publish.assert_not_called()
+    # ``queue_for_session``, not ``publish``: the emit path stages on the source
+    # transaction, so asserting on ``publish`` could never fail here.
+    publisher.queue_for_session.assert_not_called()
