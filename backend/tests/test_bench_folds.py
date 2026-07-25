@@ -94,6 +94,7 @@ from app.devices.services.intent_types import CommandKind, verification_intent_s
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.review import ReviewService
 from app.devices.services.state import derive_operational_state
+from app.events.models import SystemEvent
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY, HostStatusPushService, ObservationFold
@@ -1198,3 +1199,80 @@ async def test_bench_healthy_fold_statement_budget(
         "legacy_reservation_load": 0,
     }
     assert budget == expected, f"healthy-fold statement budget drift: {budget} != {expected}"
+
+
+async def test_bench_event_fold_commit_and_notify_budget(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An event-bearing fold does one source commit and never issues its own pg_notify.
+
+    Phase 6 stages the event row (``publisher.queue_for_session``) on the same source
+    transaction as the device mutation that caused it, and a database trigger
+    (``notify_system_event_insert``) does the ``pg_notify`` at commit time -- there is
+    no second, event-only commit and no application-side notify statement. Before this
+    phase, the source transaction committed and then ``EventBus._persist_system_event``
+    opened a *second* transaction to insert the ``system_events`` row and issued an
+    application-side ``SELECT pg_notify(...)`` before committing again. Both symbols
+    were deleted in Task 2, so the pre-phase baseline this test locks in is recorded
+    here rather than re-derived: for exactly this one-device first-unhealthy fold, the
+    old ``CommitTap.deferred_count`` -- the second, event-only commit this test now
+    forbids -- was asserted ``> 0`` at the now-deleted ``tests/test_bench_folds.py:1115``.
+
+    This one-device first-unhealthy transition genuinely stages three events, not one:
+    ``device.operational_state_changed`` (available -> offline), ``device.health_changed``
+    (overall: failed), and ``device.lifecycle_incident`` (lifecycle_auto_stopped) -- the
+    real lifecycle stack's full escalation for a device's first observed failure. Those
+    three rows land in two ``INSERT INTO system_events`` statements, not one: an unrelated
+    write elsewhere in the same fold (``app.core.leader.state_store.set_value``) triggers
+    an autoflush that happens to catch the first two events batched together, and the
+    commit-time flush (attributed to
+    ``app.devices.services.connectivity.fold_host_devices``) picks up the third alone.
+    That split is an artifact of *when* an unrelated autoflush fires mid-fold, not a
+    property of the outbox itself, so the statement count is deliberately not asserted --
+    pinning it would couple this test to autoflush timing having nothing to do with
+    events. Both attributed callsites are themselves inside the fold's own call graph
+    (i.e. source work), which is exactly what the callsite-attribution assertion below
+    checks and why it passes for both; don't "fix" it later by pinning either callsite's
+    name.
+    """
+    install_async_session_callsite_profiler(monkeypatch)
+    device_count = 1
+    service = _build_real_lifecycle_connectivity_service()
+    tap = QueryTap()
+    commits = CommitTap()
+    engine = db_session.bind.sync_engine
+    event.listen(engine, "before_cursor_execute", tap)
+    event.listen(engine, "commit", commits)
+    tap.armed = False
+    commits.armed = False
+    try:
+        host, devices = await _seed_fleet(db_session, FLEET, device_count, generation=0)
+        revision = await next_observation_revision(db_session)
+        section = _device_health_loop_section(
+            devices,
+            unhealthy_count=1,
+            revision=revision,
+            section_sequence=1,
+        )
+        tap.armed = True
+        commits.armed = True
+        settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
+        tap.armed = False
+        commits.armed = False
+        await dispatch_committed_events()
+        assert settled is True
+    finally:
+        event.remove(engine, "before_cursor_execute", tap)
+        event.remove(engine, "commit", commits)
+
+    inserts = [callsite for (callsite, signature) in tap.callsite_counter if signature == "INSERT system_events"]
+    assert inserts, "fold emitted no outbox row"
+    assert not any(callsite.startswith("app.events.") for callsite in inserts), (
+        f"outbox INSERT ran outside the source transaction: {inserts}"
+    )
+    assert commits.count == 1
+    assert not any("pg_notify" in signature.lower() for signature in tap.counter)
+    event_row_count = await db_session.scalar(select(func.count()).select_from(SystemEvent))
+    assert event_row_count is not None
+    assert event_row_count >= 1
