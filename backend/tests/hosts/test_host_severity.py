@@ -61,7 +61,8 @@ def test_host_status_none_old_to_offline_emits_info() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Integration tests: approve_host passes severity to event_bus.publish
+# Integration tests: approve_host stages the severity on its source transaction
+# (queue_for_session); the capture handler sees it after dispatch_committed_events.
 # ---------------------------------------------------------------------------
 
 pytestmark_db = pytest.mark.db
