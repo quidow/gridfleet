@@ -9,6 +9,7 @@ iteration".
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
@@ -121,3 +122,41 @@ async def test_a_backlog_of_several_pages_drains_in_one_poll(
     assert bus._last_seen_system_event_id == row_ids[-1], (
         "the frontier must clear the whole backlog in one poll, not one page"
     )
+
+
+async def test_the_poll_age_gauge_resets_on_a_successful_poll(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """A poller that fails rather than hangs is invisible without this.
+
+    The statement bound stops a wedge; it says nothing about a poll that raises
+    every iteration, logs, and delivers nothing.
+    """
+    from app.core.metrics_recorders import OUTBOX_POLL_AGE_SECONDS
+    from app.events.event_bus import refresh_outbox_gauges
+
+    bus = EventBus()
+    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
+
+    assert bus._last_successful_poll_at is None
+    await bus._dispatch_missed_events()
+    assert bus._last_successful_poll_at is not None
+
+    refresh_outbox_gauges(bus)
+    assert OUTBOX_POLL_AGE_SECONDS._value.get() < 5.0
+
+
+async def test_the_gap_gauge_reports_the_pending_set_size(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """Both documented steady-state-only bounds become observable, or neither is."""
+    from app.core.metrics_recorders import OUTBOX_PENDING_GAPS
+    from app.events.event_bus import refresh_outbox_gauges
+
+    bus = EventBus()
+    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
+    bus._pending_gaps = {10_001: time.monotonic(), 10_002: time.monotonic()}
+
+    refresh_outbox_gauges(bus)
+
+    assert OUTBOX_PENDING_GAPS._value.get() == 2

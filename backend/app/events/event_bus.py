@@ -16,7 +16,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.metrics import register_gauge_refresher
-from app.core.metrics_recorders import ACTIVE_SSE_CONNECTIONS, record_event_published, record_outbox_gaps_retired
+from app.core.metrics_recorders import (
+    ACTIVE_SSE_CONNECTIONS,
+    OUTBOX_PENDING_GAPS,
+    OUTBOX_POLL_AGE_SECONDS,
+    record_event_published,
+    record_outbox_gaps_retired,
+)
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.events.catalog import (
@@ -219,6 +225,11 @@ class EventBus:
         # silently lose dedupe. Bounded by ``DEDUPE_GRACE_SEC`` instead.
         self._dispatched_row_ids: dict[int, float] = {}
         self._dispatch_lock = asyncio.Lock()
+        # Monotonic time of the last poll that completed without raising. None
+        # until the first one. Exported as ``outbox_poll_age_seconds``: the
+        # statement bound stops a wedge, but a poller that fails every iteration
+        # is only visible here.
+        self._last_successful_poll_at: float | None = None
         self._started = False
 
     def configure(
@@ -760,6 +771,7 @@ class EventBus:
         self._record_new_gaps(observed, frontier)
         self._last_seen_system_event_id = frontier
         self._prune_dispatched_row_ids()
+        self._last_successful_poll_at = time.monotonic()
 
     async def _listen_for_notifications(self) -> None:
         # The unconfigured-bus return stays outside the loop: inside it, a bus
@@ -850,16 +862,31 @@ class EventBus:
             await asyncio.sleep(LISTENER_POLL_INTERVAL_SEC)
 
 
+def refresh_outbox_gauges(bus: EventBus) -> None:
+    """Set the poller gauges from ``bus``. Separate so tests can call it directly."""
+    OUTBOX_PENDING_GAPS.set(len(bus._pending_gaps))
+    last_poll = bus._last_successful_poll_at
+    OUTBOX_POLL_AGE_SECONDS.set(0.0 if last_poll is None else time.monotonic() - last_poll)
+
+
 def register_events_gauge_refresher(bus: EventBus) -> None:
-    """Register a gauge refresher that reads subscriber_count from the given bus.
+    """Register a gauge refresher that reads live counters from the given bus.
 
     Called once at startup — the closure captures the bus instance, avoiding
     module-level mutable state.
+
+    Every gauge set here is per-process, on a single-process prometheus
+    registry. ``/metrics`` is port-mapped only on the ``backend`` service, so
+    the ``backend-scheduler`` process's poller is scraped at
+    ``backend-scheduler:8000/metrics`` on the internal network; and with
+    ``GRIDFLEET_UVICORN_WORKERS`` above 1 an API scrape samples one arbitrary
+    worker. See docs/runbooks/slow-system.md.
     """
 
     async def _refresh(db: object) -> None:
         del db
         ACTIVE_SSE_CONNECTIONS.set(bus.subscriber_count)
+        refresh_outbox_gauges(bus)
 
     register_gauge_refresher(_refresh)
 

@@ -136,6 +136,16 @@ OUTBOX_GAPS_RETIRED_TOTAL = Counter(
     "back (the sequence value is permanently unused) or it outlived the idle-in-transaction bound the "
     "retirement constant is derived from.",
 )
+OUTBOX_POLL_AGE_SECONDS = Gauge(
+    "outbox_poll_age_seconds",
+    "Seconds since this process's outbox poller last completed a poll. "
+    "Per-process: the value is whichever process answered the scrape.",
+)
+OUTBOX_PENDING_GAPS = Gauge(
+    "outbox_pending_gaps",
+    "Outbox row ids this process has observed as missing and not yet resolved or retired. "
+    "Bounded in steady state only; a recovery poll after an outage scales it with the backlog.",
+)
 ACTIVE_SSE_CONNECTIONS = Gauge(
     "active_sse_connections",
     "Number of active SSE subscribers.",
