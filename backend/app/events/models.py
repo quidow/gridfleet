@@ -3,11 +3,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, Index, String, func, text
+from sqlalchemy import DDL, BigInteger, DateTime, Index, String, func, text
+from sqlalchemy import event as sa_event
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+from app.events.outbox_schema import (
+    CREATE_SYSTEM_EVENTS_NOTIFY_FUNCTION_SQL,
+    CREATE_SYSTEM_EVENTS_NOTIFY_TRIGGER_SQL,
+)
 
 
 class SystemEvent(Base):
@@ -29,3 +34,15 @@ class SystemEvent(Base):
     severity: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
     data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+sa_event.listen(
+    SystemEvent.__table__,
+    "after_create",
+    DDL(CREATE_SYSTEM_EVENTS_NOTIFY_FUNCTION_SQL).execute_if(dialect="postgresql"),  # type: ignore[no-untyped-call]
+)
+sa_event.listen(
+    SystemEvent.__table__,
+    "after_create",
+    DDL(CREATE_SYSTEM_EVENTS_NOTIFY_TRIGGER_SQL).execute_if(dialect="postgresql"),  # type: ignore[no-untyped-call]
+)
