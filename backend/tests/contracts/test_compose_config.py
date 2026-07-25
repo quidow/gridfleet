@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -31,17 +32,38 @@ def test_host_docker_internal_is_resolvable_by_manager_and_router() -> None:
 _IDLE_TIMEOUT_FLAG = "idle_in_transaction_session_timeout"
 
 
-def _postgres_command_flags(compose_file: str) -> dict[str, str]:
-    """Parse the postgres service's ``-c key=value`` flags into a dict."""
-    repo_root = Path(__file__).resolve().parents[3]
-    compose = yaml.safe_load((repo_root / "docker" / compose_file).read_text())
-    command = compose["services"]["postgres"].get("command") or []
+def test_the_command_parser_rejects_a_string_command_loudly() -> None:
+    """Compose permits ``command:`` as a single string as well as a list.
+
+    A string silently yields an empty flag dict, and the caller then fails on a
+    missing-flag message that sends the reader hunting for a deleted setting
+    instead of a changed YAML shape. Fail on the shape.
+    """
+    with pytest.raises(TypeError, match="list"):
+        _flags_from_command("postgres -c idle_in_transaction_session_timeout=60s")
+
+
+def _flags_from_command(command: object) -> dict[str, str]:
+    """Parse ``-c key=value`` tokens out of a compose ``command:`` list."""
+    if not isinstance(command, list):
+        raise TypeError(
+            f"postgres `command:` must be a YAML list for these flags to be readable, got {type(command).__name__}. "
+            "Compose also accepts a single string; if it was changed to one, this parser needs updating -- the "
+            "settings below have not necessarily been removed."
+        )
     flags: dict[str, str] = {}
     for index, token in enumerate(command):
         if token == "-c" and index + 1 < len(command) and "=" in command[index + 1]:
             key, _, value = command[index + 1].partition("=")
             flags[key] = value
     return flags
+
+
+def _postgres_command_flags(compose_file: str) -> dict[str, str]:
+    """Parse the postgres service's ``-c key=value`` flags into a dict."""
+    repo_root = Path(__file__).resolve().parents[3]
+    compose = yaml.safe_load((repo_root / "docker" / compose_file).read_text())
+    return _flags_from_command(compose["services"]["postgres"].get("command") or [])
 
 
 def _seconds(raw: str) -> float:
