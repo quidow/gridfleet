@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import BigInteger, bindparam, func, select
 from sqlalchemy import event as sa_event
-from sqlalchemy import func, select, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.metrics import register_gauge_refresher
-from app.core.metrics_recorders import ACTIVE_SSE_CONNECTIONS, record_event_published
+from app.core.metrics_recorders import ACTIVE_SSE_CONNECTIONS, record_event_published, record_outbox_gap_retired
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.events.catalog import (
@@ -38,12 +40,36 @@ LISTENER_READY_TIMEOUT_SEC = 5.0
 HANDLER_DRAIN_TIMEOUT_SEC = 5.0
 POLL_SCAN_CHUNK_SIZE = 500
 
-_SNAPSHOT_SETTLED_SQL = text(
-    "SELECT CASE WHEN CAST(:candidate AS text) IS NULL THEN false "
-    "ELSE pg_snapshot_xmin(pg_current_snapshot()) >= CAST(CAST(:candidate AS text) AS xid8) "
-    "END AS settled"
+# The ``idle_in_transaction_session_timeout`` both compose files set on the
+# postgres service. Mirrored here, not read from the database, so the derivation
+# below is visible at the constant;
+# backend/tests/contracts/test_compose_config.py pins the two together.
+IDLE_IN_TRANSACTION_BOUND_SEC = 60.0
+# A gap id is retired unresolved at this age. The bound that matters is how long
+# a transaction can hold a ``system_events`` sequence value without committing,
+# which is what the Postgres setting above caps; doubling it is headroom for a
+# transaction that is slow rather than idle (nothing caps that -- there is
+# deliberately no ``statement_timeout``). Retiring early strands a row; retiring
+# late costs one dict entry, so the multiple biases high. Retiring on a
+# transaction-id horizon instead would reproduce the hole this design closes:
+# the horizon can settle while the row is still uncommitted.
+GAP_RETIREMENT_SAFETY_MULTIPLE = 2.0
+GAP_RETIREMENT_SEC = IDLE_IN_TRANSACTION_BOUND_SEC * GAP_RETIREMENT_SAFETY_MULTIPLE
+# How long a dispatched row id stays in the dedupe map after the frontier passes
+# it. Covers a ``NOTIFY`` that reaches the listener well after the poller
+# already delivered the row -- the listener reloads by id and has no frontier to
+# check, so the map is the only thing that can suppress the second dispatch. The
+# map is bounded by event rate over this window (ints in a dict), not by
+# promotion lag.
+DEDUPE_GRACE_SEC = 300.0
+
+# One statement, one plan, regardless of how many gaps are outstanding: an
+# expanding ``IN`` recompiles per arity, ``= ANY(:gap_ids)`` does not.
+_GAP_LOOKUP_SQL = (
+    select(SystemEvent)
+    .where(SystemEvent.id == func.any(bindparam("gap_ids", type_=ARRAY(BigInteger))))
+    .order_by(SystemEvent.id.asc())
 )
-_XACT_HORIZON_SQL = text("SELECT CAST(pg_current_xact_id() AS text)")
 
 
 @dataclass
@@ -109,21 +135,13 @@ def build_event(
 def stage_system_event(db: AsyncSession | Session, event: Event) -> SystemEvent:
     """Add the outbox row to the caller's transaction; never flush or commit here.
 
-    Known residual, and why the common path escapes it: a transaction takes its
-    ``system_events`` sequence value at flush time but is only assigned a
-    transaction id by its first *write*. If the outbox INSERT is genuinely that
-    first write, the row id is handed out before any xid exists, so the
-    poller's ``pg_current_xact_id`` horizon cannot cover it and the promotion
-    gate can clear while the id is still unpublished. "The source transaction
-    already wrote" is not on its own enough — SQLAlchemy's unit of work orders
-    inserts before updates, so a transaction that only *read* before staging
-    can still put this INSERT first.
-
-    What actually holds is the device row-lock contract (see
-    ``app.devices.locking``): a state-mutating path takes ``SELECT ... FOR
-    UPDATE`` before it stages anything, and a row lock stamps ``xmax``, which
-    assigns the xid. Dropping the row lock from such a path would silently
-    reopen this window, so keep the two together.
+    A transaction takes its ``system_events`` sequence value at flush time but
+    is assigned a transaction id only by its first *write*, so a row can hold id
+    ``j`` while its transaction has no xid at all. Nothing here has to care: the
+    poller records any id its forward scan passed over as a gap and resolves it
+    by direct lookup, so visibility is the only thing delivery consults. This
+    used to depend on the device row-lock contract stamping ``xmax`` before
+    anything was staged; it no longer does (see ``app.devices.locking``).
     """
     row = SystemEvent(event_id=event.id, type=event.type, data=event.data, severity=event.severity)
     db.add(row)
@@ -146,16 +164,18 @@ class EventBus:
         self._handler_tasks: set[asyncio.Task[None]] = set()
         self._listener_ready = asyncio.Event()
         self._last_seen_system_event_id = 0
-        self._watermark_candidate_id = 0
-        self._watermark_candidate_horizon: str | None = None
-        # Row ids already dispatched but not yet passed by the watermark. This
-        # is the delivery-dedupe window, deliberately separate from ``_log``:
-        # ``_log`` is a fixed-size display buffer for ``snapshot()`` and the
-        # in-memory fallback, so a burst larger than it (an offline cascade,
-        # say) would silently lose dedupe and re-dispatch every poll until
-        # promotion caught up. This set is bounded by the promotion window
-        # instead, and is pruned every time the watermark advances.
-        self._dispatched_row_ids: set[int] = set()
+        # Gap row id -> monotonic time first observed. These are the ids a
+        # forward scan passed over: their transactions had taken a sequence
+        # value but had not committed, including one whose first write is the
+        # outbox INSERT and therefore holds no transaction id at all. Recording
+        # them is what makes unconditional promotion safe.
+        self._pending_gaps: dict[int, float] = {}
+        # Dispatched row id -> monotonic time dispatched. This is the delivery
+        # dedupe window, deliberately separate from ``_log``: ``_log`` is a
+        # fixed-size display buffer for ``snapshot()`` and the in-memory
+        # fallback, so a burst larger than it (an offline cascade, say) would
+        # silently lose dedupe. Bounded by ``DEDUPE_GRACE_SEC`` instead.
+        self._dispatched_row_ids: dict[int, float] = {}
         self._dispatch_lock = asyncio.Lock()
         self._started = False
 
@@ -202,7 +222,6 @@ class EventBus:
             await asyncio.gather(listener_task, return_exceptions=True)
             self._listener_task = None
             raise
-        self._watermark_candidate_id = self._last_seen_system_event_id
         self._poller_task = asyncio.create_task(self._poll_for_missed_events())
         self._started = True
 
@@ -424,23 +443,98 @@ class EventBus:
         self._handler_tasks.clear()
 
     def _prune_dispatched_row_ids(self) -> None:
-        """Forget dedupe entries the watermark has passed.
+        """Forget dedupe entries older than the grace period.
 
-        Once the watermark is above a row id, no poll re-selects it and its
-        single NOTIFY has long been consumed, so the entry can only grow the
-        set. Pruning on every watermark write is what bounds it to the
-        promotion window.
+        Dropping an entry the moment the frontier passed it is what let a late
+        ``NOTIFY`` re-dispatch an already-delivered row.
         """
-        watermark = self._last_seen_system_event_id
-        self._dispatched_row_ids = {row_id for row_id in self._dispatched_row_ids if row_id > watermark}
+        cutoff = time.monotonic() - DEDUPE_GRACE_SEC
+        self._dispatched_row_ids = {
+            row_id: dispatched_at
+            for row_id, dispatched_at in self._dispatched_row_ids.items()
+            if dispatched_at > cutoff
+        }
+
+    def _dispatch_new_rows(self, rows: list[SystemEvent]) -> None:
+        """Dispatch every row this process has not delivered yet.
+
+        Membership is checked, recorded, and acted on with no ``await`` in
+        between, so a listener delivery that landed during the scan is visible
+        here and cannot produce a second dispatch.
+        """
+        now = time.monotonic()
+        for row in rows:
+            row_id = int(row.id)
+            if row_id in self._dispatched_row_ids:
+                continue
+            self._dispatched_row_ids[row_id] = now
+            self._pending_gaps.pop(row_id, None)
+            self._remember_and_dispatch(Event.from_system_event(row))
+
+    def _record_new_gaps(self, observed: set[int], frontier: int) -> None:
+        """Remember every id in the scanned interval the scan did not return.
+
+        Those are exactly the stranding candidates: a transaction had taken the
+        sequence value and had not committed when the scan ran. Visibility is the
+        only thing consulted -- no transaction id is involved, so the case that
+        defeats every xid horizon (a transaction whose first write is this
+        INSERT, which holds a sequence value before it holds an xid) is covered
+        by construction.
+
+        A rolled-back transaction's value is recorded too and never resolves;
+        ``_resolve_pending_gaps`` retires it on the time bound. Rows the
+        data-cleanup job deletes are far below the frontier -- retention is days
+        and the poller is seconds behind -- so cleanup does not manufacture gaps.
+        """
+        now = time.monotonic()
+        for row_id in range(self._last_seen_system_event_id + 1, frontier + 1):
+            if row_id in observed or row_id in self._dispatched_row_ids or row_id in self._pending_gaps:
+                continue
+            self._pending_gaps[row_id] = now
+
+    async def _resolve_pending_gaps(self, db: AsyncSession) -> list[SystemEvent]:
+        """Look up every remembered gap in one statement; retire the aged-out ones.
+
+        Runs before the forward scan so a large backlog of new rows cannot starve
+        it. The dict is mutated only after the query returns, so a failed query
+        cannot drop an entry.
+        """
+        if not self._pending_gaps:
+            return []
+        gap_ids = sorted(self._pending_gaps)
+        rows = list((await db.execute(_GAP_LOOKUP_SQL, {"gap_ids": gap_ids})).scalars().all())
+        resolved = {int(row.id) for row in rows}
+        now = time.monotonic()
+        for gap_id in gap_ids:
+            if gap_id in resolved:
+                continue
+            first_seen = self._pending_gaps.get(gap_id)
+            if first_seen is None or now - first_seen < GAP_RETIREMENT_SEC:
+                continue
+            self._pending_gaps.pop(gap_id, None)
+            record_outbox_gap_retired()
+            logger.warning(
+                "Retiring unresolved system_events gap id %s after %.0fs; its transaction rolled back, "
+                "or it outlived the idle-in-transaction bound GAP_RETIREMENT_SEC is derived from. "
+                "If this metric fires in normal operation, the bound or the derivation is wrong.",
+                gap_id,
+                GAP_RETIREMENT_SEC,
+            )
+        return rows
 
     async def _load_and_dispatch_system_event(self, row_id: int) -> None:
-        """Dispatch one notified row without touching the watermark.
+        """Dispatch one notified row without touching the frontier.
 
         Ids are handed out by the sequence at flush time but become visible at
         commit time, so a notification for a higher id says nothing about lower
-        ids still in flight. Advancing the watermark here would strand them;
-        the gated promotion in ``_dispatch_missed_events`` is the only writer.
+        ids still in flight. ``_dispatch_and_promote`` is the only writer of the
+        frontier.
+
+        This path deliberately does not take ``_dispatch_lock``: a poll holds it
+        across DB round trips, and a poll can itself reach this method (a
+        notification delivered mid-scan). The two mutations below are single-key
+        ``dict`` operations with no ``await`` between the membership check and
+        the write, which is what makes them safe on one event loop.
         """
         if self._session_factory is None:
             return
@@ -449,31 +543,33 @@ class EventBus:
             if row is None:
                 return
             event = Event.from_system_event(row)
-        # Checked here, with no await before the dispatch: a poll running
-        # concurrently must not be able to slip a second delivery in between.
         if row_id in self._dispatched_row_ids:
             return
-        self._dispatched_row_ids.add(row_id)
+        self._dispatched_row_ids[row_id] = time.monotonic()
+        # A gap the listener resolves needs no second lookup.
+        self._pending_gaps.pop(row_id, None)
         self._remember_and_dispatch(event)
 
-    async def _scan_window(self, db: AsyncSession) -> tuple[list[SystemEvent], int]:
-        """Collect undispatched rows above the watermark; return them and the top id.
+    async def _scan_window(self, db: AsyncSession) -> tuple[list[SystemEvent], set[int], int]:
+        """Page forward from the frontier; return undispatched rows, every id seen, and the top id.
 
-        The whole window is walked, in ``POLL_SCAN_CHUNK_SIZE`` keyset pages, so
-        no single statement materialises an unbounded result set and a stalled
-        promotion re-reads ids rather than re-transferring event payloads.
-        Bounding the *window* instead — a plain ``LIMIT`` on the watermark
-        predicate — would be unsafe: while promotion is stalled the watermark
-        does not move, so every poll would return the same truncated prefix and
-        rows past it would go undelivered for as long as the stall lasted.
+        Returning the observed ids is what lets the caller compute the gaps: an
+        id in the scanned interval that the scan did not return is a candidate.
 
-        The dedupe read here only avoids hydrating rows this process has already
+        The window is walked in ``POLL_SCAN_CHUNK_SIZE`` keyset pages so no
+        single statement materialises an unbounded result set. Chunking bounds
+        the statement, not the window: a plain ``LIMIT`` on the frontier
+        predicate would now be safe -- unconditional promotion means the next
+        poll continues past the page -- but it would drain a backlog one page per
+        poll instead of one poll, so the paging stays.
+
+        The dedupe read here only avoids hydrating rows this process already
         delivered; it is not the delivery guard. This method awaits, so the
-        authoritative check happens immediately before dispatch in
-        ``_dispatch_missed_events``.
+        authoritative check is in ``_dispatch_new_rows``.
         """
         cursor = self._last_seen_system_event_id
         pending: list[SystemEvent] = []
+        observed: set[int] = set()
         while True:
             page = (
                 await db.execute(
@@ -484,8 +580,10 @@ class EventBus:
                 )
             ).all()
             if not page:
-                return pending, cursor
-            undispatched = [int(row.id) for row in page if int(row.id) not in self._dispatched_row_ids]
+                return pending, observed, cursor
+            page_ids = [int(row.id) for row in page]
+            observed.update(page_ids)
+            undispatched = [row_id for row_id in page_ids if row_id not in self._dispatched_row_ids]
             if undispatched:
                 hydrated = (
                     await db.execute(
@@ -493,28 +591,28 @@ class EventBus:
                     )
                 ).scalars()
                 pending.extend(hydrated.all())
-            cursor = int(page[-1].id)
+            cursor = page_ids[-1]
             if len(page) < POLL_SCAN_CHUNK_SIZE:
-                return pending, cursor
+                return pending, observed, cursor
 
     async def _dispatch_missed_events(self) -> None:
-        """Dispatch committed rows above the watermark, then promote it if safe.
+        """Resolve gaps, scan forward, record new gaps, promote the frontier.
 
-        The watermark may only pass an id once every transaction that could
-        still be holding an unpublished lower id has ended, so promotion runs a
-        poll behind: a candidate id is paired with a transaction-id horizon and
-        promoted only when a later snapshot proves that horizon cleared. Until
-        then the same window is re-scanned each poll and the dispatched-row-id
-        dedupe suppresses the re-dispatch.
+        Promotion is unconditional. Advancing past an uncommitted id is safe
+        because the same poll recorded it as a gap, and gap resolution consults
+        visibility only -- nothing in this path reads a transaction id. Two
+        designs that did are gone: one gated on a snapshot's upper bound, which
+        is ``latestCompletedXid + 1`` and so can sit at or below a still-running
+        transaction; the other gated on the id assigned to the poll's own
+        transaction, which cannot cover a row whose transaction took the
+        sequence value before ``heap_insert`` gave it an xid at all.
+        ``tests/contracts/test_no_transaction_id_reasoning.py`` names both
+        withdrawn gates and is what keeps them from coming back -- including
+        back into this docstring, which is why they are not named here.
 
-        **Invariant: a candidate id is only ever paired with the horizon read
-        after the scan that produced it, and the pair is written together.**
-        Two concurrent runs could otherwise interleave a later scan's frontier
-        with an earlier scan's horizon, clearing the gate against the earlier
-        horizon while promoting to the later frontier — which strands exactly
-        the rows this gate exists to hold. Today only ``_poll_for_missed_events``
-        calls this, but a doorbell wake would make that reachable, so the whole
-        body is serialised.
+        The whole body is serialised: the frontier, the gap set, and the dedupe
+        map are read-modify-written across DB round trips, and a doorbell wake
+        would make concurrent polls reachable.
         """
         if self._session_factory is None:
             return
@@ -526,61 +624,22 @@ class EventBus:
         if self._session_factory is None:
             return
         async with self._session_factory() as db:
-            # Test the standing candidate's gate BEFORE the window scan. A
-            # cleared gate means the transactions it was waiting on ended
-            # before this snapshot, so the later snapshots the scan runs under
-            # are guaranteed to see the rows they committed.
-            settled = bool(
-                (await db.execute(_SNAPSHOT_SETTLED_SQL, {"candidate": self._watermark_candidate_horizon}))
-                .one()
-                .settled
-            )
-            rows, frontier = await self._scan_window(db)
-            # Capture the new candidate's horizon AFTER the scan.
-            # ``pg_current_xact_id`` assigns this poll's own transaction an id,
-            # so every id already handed out is strictly below it — including
-            # one held by a transaction that is still open and therefore
-            # invisible to any snapshot. ``pg_snapshot_xmax`` cannot be used
-            # here: it is ``latestCompletedXid + 1``, so a running transaction
-            # can sit at or above it (and is absent from ``xip_list`` too),
-            # letting the gate clear while that transaction still holds an
-            # unpublished lower row id. Capturing before the scan would be
-            # unsound for the opposite reason — a transaction starting in
-            # between could take a lower sequence value and still be invisible.
-            # The comparison stays in ``xid8``, so there is no wraparound.
             try:
-                horizon: str | None = str((await db.execute(_XACT_HORIZON_SQL)).scalar_one())
+                gap_rows = await self._resolve_pending_gaps(db)
             except SQLAlchemyError as exc:
-                # Scoped tightly around the horizon read so a failure here costs
-                # only the promotion, never the rows already scanned. On a
-                # standby ``pg_current_xact_id()`` raises for as long as
-                # recovery lasts; letting that escape would turn a poller that
-                # cannot promote into a poller that delivers nothing. Not
-                # promoting is always safe — the window is re-scanned next tick.
-                logger.warning(
-                    "Could not read the outbox promotion horizon (%s); dispatching without promoting the watermark",
-                    exc,
-                )
-                horizon = None
-        # Membership is checked, recorded, and acted on with no await in
-        # between, so a listener delivery landing during the scan above is
-        # visible here and cannot produce a second dispatch.
-        for row in rows:
-            row_id = int(row.id)
-            if row_id in self._dispatched_row_ids:
-                continue
-            self._dispatched_row_ids.add(row_id)
-            self._remember_and_dispatch(Event.from_system_event(row))
-        if settled:
-            self._last_seen_system_event_id = max(self._last_seen_system_event_id, self._watermark_candidate_id)
-            self._prune_dispatched_row_ids()
-        if horizon is None:
-            return
-        if frontier > self._watermark_candidate_id or self._watermark_candidate_horizon is None:
-            # Written as a pair, never independently: a frontier is only sound
-            # behind the horizon captured after the scan that produced it.
-            self._watermark_candidate_id = max(self._watermark_candidate_id, frontier)
-            self._watermark_candidate_horizon = horizon
+                # Give up the whole poll rather than scan forward on a database
+                # that just failed a read. The gap set is untouched, so the next
+                # poll retries exactly the same ids.
+                logger.warning("Could not resolve outbox gaps (%s); retrying on the next poll", exc)
+                return
+            # Dispatched before the scan: if the scan then fails, these rows are
+            # already in the dedupe map and the retry will not duplicate them.
+            self._dispatch_new_rows(gap_rows)
+            rows, observed, frontier = await self._scan_window(db)
+        self._dispatch_new_rows(rows)
+        self._record_new_gaps(observed, frontier)
+        self._last_seen_system_event_id = frontier
+        self._prune_dispatched_row_ids()
 
     async def _listen_for_notifications(self) -> None:
         # The unconfigured-bus return stays outside the loop: inside it, a bus

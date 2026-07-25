@@ -434,14 +434,10 @@ def reset_event_bus(bus: EventBus) -> None:
     bus._session_factory = None
     bus._engine = None
     bus._last_seen_system_event_id = 0
-    # Clear the gated-promotion state too: a candidate left over from the
-    # previous test would promote the rewound watermark past the next test's
-    # rows on the first poll.
-    bus._watermark_candidate_id = 0
-    bus._watermark_candidate_horizon = None
-    # Every test schema restarts the ``system_events`` id sequence at 1, so a
-    # dispatched-id left over from the previous test would suppress a
-    # legitimate dispatch in the next one.
+    # Every test schema restarts the ``system_events`` id sequence at 1, so
+    # delivery state left over from the previous test would suppress a
+    # legitimate dispatch (dedupe) or resolve against a foreign id (gaps).
+    bus._pending_gaps.clear()
     bus._dispatched_row_ids.clear()
     # A fresh lock per test: ``asyncio.Lock`` binds to the loop it first blocks
     # on, and each test runs on its own loop.
