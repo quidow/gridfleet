@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import pytest
+from sqlalchemy import event as sa_event
 
 from app.events.event_bus import EventBus
 from tests.helpers import drain_handlers
@@ -170,3 +171,43 @@ async def test_the_gap_gauge_reports_the_pending_set_size(
     refresh_outbox_gauges(bus)
 
     assert OUTBOX_PENDING_GAPS._value.get() == 2
+
+
+async def test_a_poll_issues_only_reads(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """A read-only poll is what lets delivery work against a database in recovery.
+
+    The structural guard for this is a token ban, which cannot see a write that
+    arrives through a helper. This taps real statements instead, so a future
+    write sneaking onto the poll path fails here.
+    """
+    bus = EventBus()
+    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
+
+    async with db_session_maker() as db:
+        row = bus.queue_for_session(db, "device.updated", {"device_id": "dev-read-only"})
+        assert row is not None
+        await db.flush()
+        await db.commit()
+
+    bus._pending_gaps = {10_001: time.monotonic()}
+    statements: list[str] = []
+
+    def tap(_conn: object, _cursor: object, statement: str, *_args: object, **_kwargs: object) -> None:
+        statements.append(statement)
+
+    engine = db_session.bind.sync_engine
+    sa_event.listen(engine, "before_cursor_execute", tap)
+    try:
+        await bus._dispatch_missed_events()
+    finally:
+        sa_event.remove(engine, "before_cursor_execute", tap)
+
+    assert statements, "the tap caught nothing; the poll did not run"
+    writing = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE", "TRUNCATE", "CREATE", "ALTER", "DROP"))
+    ]
+    assert not writing, f"the poll path issued write statement(s): {writing}"
