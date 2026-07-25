@@ -25,6 +25,7 @@ from unittest.mock import patch
 
 import pytest
 from sqlalchemy import event as sa_event
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.metrics_recorders import OUTBOX_GAPS_RETIRED_TOTAL
@@ -211,6 +212,66 @@ async def test_aborted_transactions_sequence_value_retires_unresolved(
     assert any(str(doomed_id) in record.getMessage() for record in caplog.records)
 
 
+async def test_retiring_early_strands_a_row_from_a_still_open_transaction(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The accepted cost of a time-based bound: retire too early and the row is lost.
+
+    ``GAP_RETIREMENT_SEC`` is derived from ``idle_in_transaction_session_timeout``,
+    which caps only how long a transaction may sit *idle*. This repo deliberately
+    sets no ``statement_timeout``, so a transaction that stages an event and then
+    works continuously is bounded by nothing at all. If it outruns the retirement
+    bound, the poller drops the gap while the row is still on its way, the
+    transaction commits into an id the frontier has already passed, and no later
+    poll ever looks below the frontier. The row is gone.
+
+    This is a known cost, not a defect. The alternative -- retry a gap forever --
+    leaks an entry for every rolled-back staging, which is unbounded in the other
+    direction. ``OUTBOX_GAPS_RETIRED_TOTAL`` is the alarm that says the trade went
+    wrong: firing in steady state means a real transaction outran the bound, and
+    the fix is to raise ``GAP_RETIREMENT_SAFETY_MULTIPLE`` or to cap the work with
+    a ``statement_timeout``. One bulk retirement just after a poller outage is the
+    benign case and is why the warning is aggregated rather than per id.
+    """
+    bus, received = _build_bus(db_session, db_session_maker)
+
+    async with db_session_maker() as slow:
+        row = bus.queue_for_session(slow, "device.updated", {"device_id": "outran-the-bound"})
+        assert row is not None
+        await slow.flush()  # sequence value taken; this transaction keeps working
+        slow_id = int(row.id)
+
+        # A higher committed id, so the frontier passes slow_id and records it.
+        await _commit_row(bus, db_session_maker, "visible")
+        await bus._dispatch_missed_events()
+        await drain_handlers(bus)
+        assert set(bus._pending_gaps) == {slow_id}
+
+        before = _retirements()
+        with patch("app.events.event_bus.GAP_RETIREMENT_SEC", 0.0), caplog.at_level(logging.WARNING):
+            await bus._dispatch_missed_events()
+        await drain_handlers(bus)
+
+        assert bus._pending_gaps == {}, "the gap survived its retirement bound"
+        assert _retirements() == before + 1
+        assert any(str(slow_id) in record.getMessage() for record in caplog.records), (
+            "retirement must name the id it gave up on"
+        )
+
+        # The transaction finally commits -- too late.
+        await slow.commit()
+
+    await bus._dispatch_missed_events()
+    await drain_handlers(bus)
+
+    assert [event.data["device_id"] for event in received] == ["visible"], (
+        "the retired row was delivered after all; if this is now true, the strand this test "
+        "documents no longer exists and the retirement bound's cost needs restating"
+    )
+
+
 async def test_gap_resolution_costs_one_statement_regardless_of_gap_count(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
 ) -> None:
@@ -274,19 +335,39 @@ async def test_late_notification_for_a_promoted_row_is_not_redispatched(
     assert [event.data["device_id"] for event in received] == ["late"]
 
 
-async def test_failed_gap_resolution_keeps_the_gap_set_and_the_frontier(
+async def test_failed_gap_resolution_keeps_the_gap_set_and_the_poll_continues(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
 ) -> None:
-    """Gap entries are never dropped on error; the next poll retries the same set."""
-    bus, _ = _build_bus(db_session, db_session_maker)
+    """Gap entries are never dropped on error -- and only the gap dispatch is skipped.
+
+    An earlier version returned here, which made one statement a precondition for
+    all forward progress: a deterministically failing gap lookup froze the
+    frontier, so no new row was ever polled, and no gap retired either (retirement
+    runs after the query), so the condition sustained itself. The guarantee is the
+    gap set's integrity, not "the poll changes nothing".
+
+    The failure is injected as a real statement error on the poll's own session,
+    not a bare raise, because that also leaves the session's transaction aborted
+    -- which is what the forward scan has to survive.
+    """
+    bus, received = _build_bus(db_session, db_session_maker)
+
+    async def failing_lookup(db: AsyncSession) -> list[Event]:
+        await db.execute(text("SELECT 1 / 0"))
+        raise AssertionError("unreachable: the statement above must raise")
+
     bus._pending_gaps = {10_001: time.monotonic()}
-    frontier_before = bus._last_seen_system_event_id
+    row_id = await _commit_row(bus, db_session_maker, "scanned-anyway")
 
-    with patch.object(bus, "_resolve_pending_gaps", side_effect=SQLAlchemyError("gap lookup failed")):
+    with patch.object(bus, "_resolve_pending_gaps", new=failing_lookup):
         await bus._dispatch_missed_events()
+    await drain_handlers(bus)
 
-    assert set(bus._pending_gaps) == {10_001}
-    assert bus._last_seen_system_event_id == frontier_before
+    assert set(bus._pending_gaps) == {10_001}, "a failed lookup dropped a gap entry"
+    assert [event.data["device_id"] for event in received] == ["scanned-anyway"], (
+        "the failed gap lookup suppressed delivery of an unrelated committed row"
+    )
+    assert bus._last_seen_system_event_id == row_id, "the frontier stalled behind a failed gap lookup"
 
 
 async def test_the_lock_keeps_the_frontier_monotonic(
@@ -321,6 +402,14 @@ async def test_the_lock_keeps_the_frontier_monotonic(
     in the dedupe map: work amplification, not data loss. That is the lock's other
     benefit -- one forward scan and one gap-resolution round trip per tick instead
     of one per concurrent caller.
+
+    The two halves are not interchangeable. The guarded half is a **positive
+    control** -- ``guarded_writes == []`` while the waiter is blocked is
+    satisfied by the lock, but it would also be satisfied by the session
+    acquisition the second body has to await anyway, so bypassing the lock there
+    does not reliably fail. The unserialised half is what carries the
+    falsifiability: restore serialisation in it and it fails deterministically.
+    Do not prune it as "the weird half"; it is the only part that can fail.
 
     Recorded because two hypotheses died here: the test this replaced asserted
     that unserialised polls *strand* a row, which they do not, on the assumption
@@ -406,11 +495,8 @@ async def test_the_lock_keeps_the_frontier_monotonic(
         await asyncio.gather(holder, waiter)
     await drain_handlers(bus2)
 
-    assert guarded_writes == sorted(guarded_writes), (
-        f"the locked entry point let the frontier regress: {guarded_first} then {guarded_writes}"
-    )
     assert guarded_writes == [guarded_first, guarded_later[-1]], (
-        f"expected the parked body to write its own frontier, then the waiter to advance: {guarded_writes}"
+        f"the locked entry point did not write the parked body's own frontier and then advance: {guarded_writes}"
     )
     assert bus2._last_seen_system_event_id == guarded_later[-1]
     delivered2 = sorted(event.data["device_id"] for event in received2)
