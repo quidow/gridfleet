@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 from app.core.dependencies import DbDep
 from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.http_errors import found_or_404
+from app.core.timeutil import now_utc
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.group_keys import GroupKey
 from app.devices.models import GroupType
@@ -22,16 +23,12 @@ from app.devices.schemas.group import (
     DeviceGroupUpdate,
     GroupMembershipUpdate,
 )
-from app.devices.services import health as device_health
-from app.devices.services import platform_label as platform_label_service
 from app.devices.services.groups import (
     GroupKeyConflictError,
     GroupReferencedError,
     StaticGroupFiltersError,
     UnknownMemberOfError,
 )
-from app.lifecycle.services import remediation_log
-from app.runs import service as run_service
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -77,48 +74,17 @@ async def list_groups(db: DbDep, device_services: DeviceServicesDep) -> list[dic
 
 @router.get("/{group_key}", response_model=DeviceGroupDetail, response_model_exclude_none=True)
 async def get_group(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
-    group = found_or_404(await device_services.groups.get_group(db, group_key), "Group not found")
-
-    devices = list(group.get("devices", []))
-    payload = dict(group)
-    if not devices:
-        payload["devices"] = []
-        return payload
-
-    # Mirror the device-list batching: load reservation map, remediation
-    # ladders, platform labels, and presenter contexts once, then reuse them
-    # for every serialize_device call so per-member queries do not return.
-    device_ids = [device.id for device in devices]
-    # Eager-load appium_node for every device so build_public_summary and
-    # the presenter can read it synchronously without per-device IO.
-    serialization_contexts = await device_services.presenter.build_serialization_contexts(db, devices)
-    reservation_map = await run_service.get_device_reservation_map(db, device_ids)
-    ladders = await remediation_log.load_ladders(db, device_ids)
-    health_summary_map = {
-        str(device.id): device_health.build_public_summary(
-            device,
-            policy_view=remediation_log.build_policy_view(ladders[device.id], device.lifecycle_policy_state),
-        )
-        for device in devices
-    }
-    label_map = await platform_label_service.load_platform_label_map(
-        db,
-        ((device.pack_id, device.platform_id) for device in devices),
+    # One bounded projection batch selects the members (for a dynamic group) and
+    # feeds the synchronous DTO builder, so serialization adds no per-member query.
+    detail = found_or_404(
+        await device_services.groups.load_group_detail(db, group_key, now=now_utc()),
+        "Group not found",
     )
-    serialized: list[dict[str, Any]] = []
-    for device in devices:
-        reservation_context = run_service.get_reservation_context_for_device(reservation_map.get(device.id), device.id)
-        serialized.append(
-            await device_services.presenter.serialize_device(
-                db,
-                device,
-                reservation_context=reservation_context,
-                health_summary=health_summary_map.get(str(device.id)),
-                platform_label=label_map.get((device.pack_id, device.platform_id)),
-                precomputed=serialization_contexts[device.id],
-            )
-        )
-    payload["devices"] = serialized
+    payload = dict(detail.payload)
+    payload["devices"] = [
+        device_services.presenter.serialize_projected_device(device, detail.projections[device.id])
+        for device in detail.devices
+    ]
     return payload
 
 

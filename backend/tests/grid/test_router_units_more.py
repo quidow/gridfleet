@@ -2351,27 +2351,14 @@ async def test_devices_core_router_branches() -> None:
         lifecycle_policy_state=None,
     )
     serialized = {"id": str(device_id)}
-    with (
-        patch("app.devices.routers.core.run_service.get_device_reservation_map", new=AsyncMock(return_value={})),
-        patch(
-            "app.devices.routers.core.device_health.build_public_summary",
-            new=Mock(return_value={"healthy": True}),
-        ),
-        patch(
-            "app.devices.routers.core.remediation_log.load_ladders",
-            new=AsyncMock(return_value={device_id: devices_core.remediation_log.EMPTY_LADDER}),
-        ),
-        patch(
-            "app.devices.routers.core.platform_label_service.load_platform_label_map",
-            new=AsyncMock(return_value={("pack", "android"): "Android"}),
-        ),
-        patch("app.devices.routers.core.run_service.get_reservation_context_for_device", new=Mock(return_value=None)),
+    with patch(
+        "app.devices.routers.core.load_device_read_projections",
+        new=AsyncMock(return_value={device_id: None}),
     ):
         mock_ds_list = SimpleNamespace(
             crud=SimpleNamespace(list_devices_paginated=AsyncMock(return_value=([device], 1))),
             presenter=SimpleNamespace(
-                serialize_device=AsyncMock(return_value=serialized),
-                build_serialization_contexts=AsyncMock(return_value={device_id: None}),
+                serialize_projected_device=Mock(return_value=serialized),
             ),
         )
         listed = await devices_core.list_devices(

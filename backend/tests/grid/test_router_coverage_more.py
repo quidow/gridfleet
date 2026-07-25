@@ -347,15 +347,19 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     )
     ds_create.groups.get_group.assert_not_awaited()
     ds_create_with_presenter = SimpleNamespace(
-        groups=SimpleNamespace(get_group=AsyncMock(return_value={"key": group_key, "devices": []})),
-        presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={})),
+        groups=SimpleNamespace(
+            load_group_detail=AsyncMock(
+                return_value=SimpleNamespace(payload={"key": group_key}, devices=(), projections={})
+            )
+        ),
+        presenter=SimpleNamespace(serialize_projected_device=MagicMock(return_value={})),
     )
     assert await device_groups.get_group(group_key, db=db, device_services=ds_create_with_presenter) == {
         "key": group_key,
         "devices": [],
     }
 
-    ds_none = SimpleNamespace(groups=SimpleNamespace(get_group=AsyncMock(return_value=None)))
+    ds_none = SimpleNamespace(groups=SimpleNamespace(load_group_detail=AsyncMock(return_value=None)))
     with pytest.raises(HTTPException):
         await device_groups.get_group(group_key, db=db, device_services=ds_none)
 
@@ -450,27 +454,16 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
         crud=_mock_crud,
         capability=_mock_capability,
         presenter=SimpleNamespace(
-            serialize_device=AsyncMock(return_value={"id": str(device_id)}),
+            serialize_projected_device=MagicMock(return_value={"id": str(device_id)}),
             serialize_device_detail=AsyncMock(return_value={"detail": str(device_id)}),
-            build_serialization_contexts=AsyncMock(return_value={device_id: None}),
         ),
     )
-    monkeypatch.setattr(devices_core.run_service, "get_device_reservation_map", AsyncMock(return_value={}))
     monkeypatch.setattr(
-        devices_core.remediation_log,
-        "load_ladders",
-        AsyncMock(return_value={device_id: devices_core.remediation_log.EMPTY_LADDER}),
+        devices_core,
+        "load_device_read_projections",
+        AsyncMock(return_value={device_id: None}),
     )
-    monkeypatch.setattr(
-        devices_core.remediation_log,
-        "load_ladder",
-        AsyncMock(return_value=devices_core.remediation_log.EMPTY_LADDER),
-    )
-    monkeypatch.setattr(
-        devices_core.device_health,
-        "build_public_summary",
-        lambda device, *, policy_view: {"healthy": True},
-    )
+    # get_device still resolves its label through the singular helper.
     monkeypatch.setattr(
         devices_core.platform_label_service,
         "load_platform_label_map",

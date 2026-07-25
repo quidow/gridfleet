@@ -5,8 +5,10 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, select
+from sqlalchemy.orm import raiseload, selectinload
 
+from app.core.timeutil import now_utc
 from app.devices.group_keys import is_valid_group_key
 from app.devices.models import (
     Device,
@@ -20,8 +22,11 @@ from app.devices.services.group_membership import (
     DeviceGroupFacts,
     build_device_group_facts,
     evaluate_group_memberships,
+    load_group_membership_index,
 )
+from app.devices.services.read_projection import load_device_read_projections
 from app.devices.services.service import device_scope_conditions
+from tests.helpers import create_device_record, create_reserved_run
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -635,3 +640,217 @@ async def test_narrow_group_scopes_stay_bounded_and_unbounded_ones_are_reported(
     assert any(
         "device_group_scope_unbounded" in r.message and "unbounded-status" in str(r.args) for r in caplog.records
     )
+
+
+def _strip_none(value: object) -> object:
+    """Recursively drop ``None`` values so two DTOs can be compared regardless of
+    each route's ``response_model_exclude_none`` setting (the group-detail route
+    excludes ``None``; the device-list route does not). What remains is the shared
+    serializer's output, which must match device-for-device."""
+    if isinstance(value, dict):
+        return {key: _strip_none(inner) for key, inner in value.items() if inner is not None}
+    if isinstance(value, list):
+        return [_strip_none(inner) for inner in value]
+    return value
+
+
+async def _load_with_declared_graph(db_session: AsyncSession, device_ids: list[uuid.UUID]) -> list[Device]:
+    """Reload devices through the same graph the group-detail caller declares
+    (``selectinload(appium_node)`` + ``raiseload("*")``), so the projection loader
+    sees the relationships production feeds it."""
+    stmt = select(Device).where(Device.id.in_(device_ids)).options(selectinload(Device.appium_node), raiseload("*"))
+    return list((await db_session.execute(stmt)).scalars().all())
+
+
+@pytest.mark.db
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_group_detail_static_matches_device_list_projection(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Each static-group member DTO must be byte-identical to the same device's
+    entry in ``/api/devices`` — both build from the shared projection serializer."""
+    group = DeviceGroup(key=f"static-proj-{uuid.uuid4().hex[:8]}", name="static proj", group_type=GroupType.static)
+    db_session.add(group)
+    await db_session.flush()
+    members = [
+        await create_device_record(
+            db_session,
+            host_id=db_host.id,
+            identity_value=f"gproj-{i}-{uuid.uuid4().hex[:8]}",
+            connection_target=f"gproj-{i}",
+            name=f"gproj-{i}",
+            pack_id="appium-uiautomator2",
+            platform_id="android_mobile",
+            identity_scheme="android_serial",
+            identity_scope="host",
+            os_version="14",
+            verified=True,
+        )
+        for i in range(3)
+    ]
+    db_session.add_all(DeviceGroupMembership(group_id=group.id, device_id=device.id) for device in members)
+    await db_session.commit()
+
+    detail = (await client.get(f"/api/device-groups/{group.key}")).json()
+    listing = (await client.get("/api/devices")).json()
+    by_id = {item["id"]: item for item in listing}
+
+    detail_ids = {item["id"] for item in detail["devices"]}
+    assert detail_ids == {str(device.id) for device in members}
+    for member in detail["devices"]:
+        assert _strip_none(member) == _strip_none(by_id[member["id"]]), (
+            f"group-member DTO diverged from device-list DTO for {member['id']}"
+        )
+
+
+@pytest.mark.db
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_group_detail_dynamic_membership_projection_matches_reserved_and_member_of(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A dynamic group filtering on ``reserved``, ``needs_attention`` and ``member_of``
+    must select the same members through the projection path as the filter axes imply."""
+    east = DeviceGroup(key=f"east-{uuid.uuid4().hex[:8]}", name="east", group_type=GroupType.static)
+    db_session.add(east)
+    await db_session.flush()
+    reserved_member = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value=f"east-reserved-{uuid.uuid4().hex[:8]}",
+        connection_target="east-reserved",
+        name="east-reserved",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+        verified=True,
+    )
+    other = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value=f"not-east-{uuid.uuid4().hex[:8]}",
+        connection_target="not-east",
+        name="not-east",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+        verified=True,
+    )
+    east_unreserved = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value=f"east-unreserved-{uuid.uuid4().hex[:8]}",
+        connection_target="east-unreserved",
+        name="east-unreserved",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+        verified=True,
+    )
+    db_session.add(DeviceGroupMembership(group_id=east.id, device_id=reserved_member.id))
+    db_session.add(DeviceGroupMembership(group_id=east.id, device_id=east_unreserved.id))
+    await db_session.commit()
+    await create_reserved_run(db_session, name="east-run", devices=[reserved_member])
+
+    dynamic = DeviceGroup(
+        key=f"east-reserved-{uuid.uuid4().hex[:8]}",
+        name="east reserved",
+        group_type=GroupType.dynamic,
+        filters={"member_of": [east.key], "reserved": True, "needs_attention": False},
+    )
+    db_session.add(dynamic)
+    await db_session.commit()
+
+    detail = (await client.get(f"/api/device-groups/{dynamic.key}")).json()
+    member_ids = {item["id"] for item in detail["devices"]}
+    assert member_ids == {str(reserved_member.id)}
+    assert str(other.id) not in member_ids
+    # ``east_unreserved`` passes the member_of axis (it is in ``east``) but is not
+    # reserved — proving the injected ``reserved_by_device_id`` axis excludes it
+    # independently of member_of.
+    assert str(east_unreserved.id) not in member_ids
+
+
+@pytest.mark.db
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_load_group_membership_index_reuses_injected_projection_facts(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """When every fact mapping is injected, the loader must issue no pack,
+    reservation, static-membership, or operational-state query — it evaluates
+    purely off the supplied projection facts."""
+    east = DeviceGroup(key=f"east-inj-{uuid.uuid4().hex[:8]}", name="east inj", group_type=GroupType.static)
+    db_session.add(east)
+    await db_session.flush()
+    member = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value=f"inj-member-{uuid.uuid4().hex[:8]}",
+        connection_target="inj-member",
+        name="inj-member",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+        verified=True,
+    )
+    non_member = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value=f"inj-nonmember-{uuid.uuid4().hex[:8]}",
+        connection_target="inj-nonmember",
+        name="inj-nonmember",
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        os_version="14",
+        verified=True,
+    )
+    db_session.add(DeviceGroupMembership(group_id=east.id, device_id=member.id))
+    await db_session.commit()
+
+    dynamic_group = DeviceGroup(
+        key=f"east-real-{uuid.uuid4().hex[:8]}",
+        name="east real",
+        group_type=GroupType.dynamic,
+        filters={"member_of": [east.key], "device_type": "real_device"},
+    )
+    db_session.add(dynamic_group)
+    await db_session.commit()
+
+    devices = await _load_with_declared_graph(db_session, [member.id, non_member.id])
+    now = now_utc()
+    projections = await load_device_read_projections(db_session, devices, now=now)
+    pairs = [(device, projections[device.id]) for device in devices]
+
+    with _capture_statements(db_session) as statements:
+        index = await load_group_membership_index(
+            db_session,
+            groups=[dynamic_group],
+            devices=devices,
+            operational_states={device.id: projection.operational_state for device, projection in pairs},
+            static_group_keys_by_device_id={device.id: projection.static_group_keys for device, projection in pairs},
+            readiness_by_device_id={device.id: projection.readiness for device, projection in pairs},
+            reserved_by_device_id={
+                device.id: bool(projection.reservation and projection.reservation.blocks_allocation)
+                for device, projection in pairs
+            },
+        )
+
+    assert index.device_ids(dynamic_group.key) == frozenset({member.id})
+    assert _count_reads(statements) == 0, statements
+    lowered = "\n".join(statements).lower()
+    for table in ("driver_packs", "device_reservations", "device_group_memberships"):
+        assert table not in lowered, f"injected-facts path issued a {table} query: {statements}"

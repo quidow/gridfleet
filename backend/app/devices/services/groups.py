@@ -1,31 +1,48 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import raiseload, selectinload
 
 from app.core.locks import group_mutation_lock
+from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services.group_membership import load_group_membership_index
+from app.devices.services.read_projection import load_device_read_projections
 from app.devices.services.service import device_scope_conditions
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Collection, Mapping
+    from datetime import datetime
 
     from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.protocols import DeviceCrudProtocol
     from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
+    from app.devices.services.serialization_types import DeviceReadProjection
     from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceGroupDetailLoad:
+    """One group-detail read: the serialized group payload, its final member
+    devices, and the projection facts that selected them. Carries only frozen
+    projections (never ORM rows) into the read path so the synchronous
+    serializer can build member DTOs without re-touching the session."""
+
+    payload: dict[str, Any]
+    devices: tuple[Device, ...]
+    projections: Mapping[uuid.UUID, DeviceReadProjection]
 
 
 class GroupKeyConflictError(ValueError):
@@ -153,24 +170,54 @@ class DeviceGroupsService:
             for group in groups
         ]
 
-    async def get_group(self, db: AsyncSession, group_key: str) -> dict[str, Any] | None:
+    async def load_group_detail(
+        self, db: AsyncSession, group_key: str, *, now: datetime
+    ) -> DeviceGroupDetailLoad | None:
+        """Load a group and its members once, carrying the projection that
+        selected them so the read path builds member DTOs synchronously.
+
+        One ``load_device_read_projections`` batch serves both membership
+        selection (for a dynamic group) and DTO construction; for a dynamic group
+        the membership index reuses those projection facts, so it issues no extra
+        pack/reservation/static/operational-state query.
+        """
         group = await _get_group_row(db, group_key)
         if group is None:
             return None
 
         if _is_static(group):
-            # Membership rows are the answer for a static group; no device facts
-            # are needed, so the evaluator is not involved at all.
             members = await _load_static_members(db, group)
+            projections = await load_device_read_projections(db, members, now=now)
         else:
-            devices = await _load_devices_in_scope(db, [group])
-            index = await load_group_membership_index(db, groups=[group], devices=devices)
+            candidates = await _load_devices_in_scope(db, [group])
+            projections = await load_device_read_projections(db, candidates, now=now)
+            index = await load_group_membership_index(
+                db,
+                groups=[group],
+                devices=candidates,
+                operational_states={d.id: projections[d.id].operational_state for d in candidates},
+                static_group_keys_by_device_id={d.id: projections[d.id].static_group_keys for d in candidates},
+                readiness_by_device_id={d.id: projections[d.id].readiness for d in candidates},
+                reserved_by_device_id={d.id: _reservation_blocks_allocation(projections[d.id]) for d in candidates},
+            )
             member_ids = index.device_ids(group.key)
-            members = [device for device in devices if device.id in member_ids]
-        return {
-            **_serialize_group(group, device_count=len(members)),
-            "devices": members,
-        }
+            members = [device for device in candidates if device.id in member_ids]
+
+        return DeviceGroupDetailLoad(
+            payload=_serialize_group(group, device_count=len(members)),
+            devices=tuple(members),
+            projections={member.id: projections[member.id] for member in members},
+        )
+
+    async def get_group(self, db: AsyncSession, group_key: str) -> dict[str, Any] | None:
+        """Compatibility wrapper: the serialized payload plus member ORM rows.
+
+        Reuses :meth:`load_group_detail` so no second projection is built.
+        """
+        detail = await self.load_group_detail(db, group_key, now=now_utc())
+        if detail is None:
+            return None
+        return {**detail.payload, "devices": list(detail.devices)}
 
     async def get_group_type(self, db: AsyncSession, group_key: str) -> GroupType | None:
         """The group's type in one row read, or ``None`` when the key is unknown.
@@ -327,6 +374,13 @@ def _is_static(group: DeviceGroup) -> bool:
     return group.group_type == GroupType.static
 
 
+def _reservation_blocks_allocation(projection: DeviceReadProjection) -> bool:
+    """The ``reserved`` axis the dynamic-group evaluator consumes: a live,
+    allocation-blocking reservation. Bound to a local so the ``None`` case narrows."""
+    reservation = projection.reservation
+    return reservation is not None and reservation.blocks_allocation
+
+
 async def _static_member_counts(db: AsyncSession) -> dict[str, int]:
     """One aggregate for every static group's member count.
 
@@ -348,7 +402,7 @@ async def _load_static_members(db: AsyncSession, group: DeviceGroup) -> list[Dev
         select(Device)
         .join(DeviceGroupMembership, DeviceGroupMembership.device_id == Device.id)
         .where(DeviceGroupMembership.group_id == group.id)
-        .options(selectinload(Device.appium_node))
+        .options(selectinload(Device.appium_node), raiseload("*"))
         .order_by(Device.created_at, Device.id)
     )
     return list((await db.execute(stmt)).scalars().all())
@@ -380,7 +434,7 @@ async def _load_devices_in_scope(db: AsyncSession, dynamic_groups: list[DeviceGr
             scopes.append(and_(*conditions))
         else:
             unbounded.append(group.key)
-    stmt = select(Device).options(selectinload(Device.appium_node))
+    stmt = select(Device).options(selectinload(Device.appium_node), raiseload("*"))
     if unbounded:
         logger.warning(
             "device_group_scope_unbounded groups=%s co_listed_narrow_groups=%d "
