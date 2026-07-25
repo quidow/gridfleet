@@ -14,7 +14,7 @@ would still pass with the lock removed. The test that fails without the lock
 needs state the two bodies can corrupt -- the gap-tracking rewrite's
 unconditional frontier write and the interval its gap detection derives from the
 frontier, which a second unserialised poll can regress and skip a row out of.
-That test lands with that rewrite, in this file.
+That test lands with that rewrite.
 
 The pause is a passthrough wrapper that never names ``_scan_window``'s return
 shape, so the rewrite's change to that shape leaves this test untouched.
