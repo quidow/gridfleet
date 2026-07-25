@@ -3,19 +3,27 @@ services:
     image: postgres:18-bookworm
     command:
       - postgres
-      # Bounds how long a session may sit idle inside a transaction. Measured
-      # ceiling was 6.07s (one xdist worker during a full `pytest -n auto` run,
-      # a fixture holding a session open across awaits); the live stack's
-      # production database peaked at 0.04s over 45 minutes. This is ~10x the
-      # suite's worst case, floored at 60s. The outbox poller's
-      # GAP_RETIREMENT_SEC (backend/app/events/event_bus.py) is derived from this
-      # value: a system_events sequence value cannot stay unresolved longer than
-      # the transaction holding it, so this is what makes time-based gap
-      # retirement principled instead of arbitrary. Deliberately a literal, not
-      # an env override: backend/tests/contracts/test_compose_config.py pins both
-      # files to the same value and pins the constant to it. Note that the
-      # control-plane leader's advisory-lock session is `idle`, not `idle in
-      # transaction`, so this does not disturb it.
+      # Bounds how long a session may sit idle inside a transaction. Derived by
+      # rule, not by intuition:
+      #     timeout = max(60s, round_up_to_30s(4 x observed))
+      # where `observed` is the worst idle-in-transaction gap measured across the
+      # backend suite and a live stack. Measured: 6.07s (one xdist worker during a
+      # full `pytest -n auto` run -- a fixture holding a session open across
+      # awaits), while the live stack's production database peaked at 0.04s over
+      # 45 minutes. So 4 x 6.07 = 24.3s -> rounds to 30s -> the 60s floor wins.
+      # Re-measure and re-apply that formula before changing this value: the ~10x
+      # headroom this happens to leave over the suite is an outcome of the rule at
+      # one data point, not the rule itself.
+      #
+      # The outbox poller's GAP_RETIREMENT_SEC (backend/app/events/event_bus.py) is
+      # derived from this value: a system_events sequence value cannot stay
+      # unresolved longer than the transaction holding it, so this is what makes
+      # time-based gap retirement principled instead of arbitrary. Deliberately a
+      # literal, not an env override:
+      # backend/tests/contracts/test_compose_config.py pins both files to the same
+      # value and pins the constant to it. Note that the control-plane leader's
+      # advisory-lock session is `idle`, not `idle in transaction`, so this does
+      # not disturb it.
       - -c
       - idle_in_transaction_session_timeout=60s
     environment:
