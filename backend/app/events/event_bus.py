@@ -174,6 +174,10 @@ class EventBus:
         self._max_queue_size = max_queue_size
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._engine: AsyncEngine | None = None
+        # The poll path's own session source. Production points this at an
+        # engine whose connections carry ``command_timeout``; see
+        # ``POLL_STATEMENT_TIMEOUT_SEC``.
+        self._poller_session_factory: async_sessionmaker[AsyncSession] | None = None
         self._handlers: list[EventHandler] = []
         self._listener_task: asyncio.Task[None] | None = None
         self._poller_task: asyncio.Task[None] | None = None
@@ -200,9 +204,11 @@ class EventBus:
         *,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
         engine: AsyncEngine | None = None,
+        poller_session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._engine = engine
+        self._poller_session_factory = poller_session_factory
 
     async def start(self) -> None:
         """Register LISTEN before seeding the frontier, then start the poller.
@@ -651,6 +657,17 @@ class EventBus:
             if len(page) < POLL_SCAN_CHUNK_SIZE:
                 return pending, observed, cursor
 
+    @property
+    def _poll_session_factory(self) -> async_sessionmaker[AsyncSession] | None:
+        """The session source for the poll body only.
+
+        Falls back to the shared factory so a bus configured without a poller
+        engine keeps polling: every test that builds a bus directly does that,
+        and so does the in-memory fallback deployment. The listener path
+        deliberately does not use this -- Track A supervises the poller.
+        """
+        return self._poller_session_factory or self._session_factory
+
     async def _dispatch_missed_events(self) -> None:
         """Resolve gaps, scan forward, record new gaps, promote the frontier.
 
@@ -679,16 +696,17 @@ class EventBus:
         one scan per tick rather than one per caller. Pinned by
         ``tests/events/test_event_bus_gaps.py::test_the_lock_keeps_the_frontier_monotonic``.
         """
-        if self._session_factory is None:
+        if self._poll_session_factory is None:
             return
         async with self._dispatch_lock:
             await self._dispatch_and_promote()
 
     async def _dispatch_and_promote(self) -> None:
         """The serialised body of ``_dispatch_missed_events``; never call it directly."""
-        if self._session_factory is None:
+        poll_session_factory = self._poll_session_factory
+        if poll_session_factory is None:
             return
-        async with self._session_factory() as db:
+        async with poll_session_factory() as db:
             try:
                 gap_rows = await self._resolve_pending_gaps(db)
             except SQLAlchemyError as exc:
