@@ -1,4 +1,9 @@
-"""Regression guard for direct eager event_bus.publish callsites.
+"""Regression guard for standalone ``.publish(`` callsites on any receiver shape.
+
+Matching is call-form and receiver-shape agnostic: it does not require the
+receiver to be spelled ``event_bus``, so an aliased or attribute-held publisher
+is caught too. What it looks for is a ``.publish(`` call outside a source
+transaction, which must instead ride one via ``queue_for_session``.
 
 Issue #73: https://github.com/quidow/gridfleet/issues/73
 """

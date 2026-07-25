@@ -590,16 +590,22 @@ async def test_listener_reconnect_logging_resets_after_a_long_quiet_period(
 
     This isolates Finding 2 specifically: ``LISTENER_LOG_BACKOFF_INITIAL_SEC`` is
     held at its post-fix value (2.0) throughout, and only the reset formula
-    varies. It does **not** discriminate the two-bug pre-fix commit (``INITIAL =
-    1.0`` and the reset measured from ``next_log_at``) from the fully-fixed code
-    -- both give 4 reports for the first four points below, verified by
-    simulation: the narrower pre-fix window puts the t=2 report's deadline at
-    4.0 instead of 6.0, so the pre-fix formula's own comparison at t=64
+    varies. Over the first four points below, it does **not** discriminate the
+    two-bug pre-fix commit (``INITIAL = 1.0`` and the reset measured from
+    ``next_log_at``) from the fully-fixed code -- both give 4 reports
+    (simulation: ``first 4 points -> pre-fix=4 fixed=4``): the narrower
+    pre-fix window puts the t=2 report's deadline at 4.0 instead of 6.0, so
+    the pre-fix formula's own comparison at t=64
     (``64 - next_log_at(4.0) = 60.0 >= 60``) coincidentally also resets, for a
     reason unrelated to which formula is correct. The fixed formula's comparison
     at the same point is ``64 - last_report_at(2.0) = 62.0 >= 60`` -- also a
     reset, for the intended reason. Two changes, two different arithmetic paths,
-    same boundary crossed. ``test_listener_reconnect_logging_does_not_report_twice_at_onset``
+    same boundary crossed. The fifth point is where the two part ways
+    (simulation: ``first 5 points -> pre-fix=5 fixed=4``): the pre-fix formula
+    reports t=70 too, for 5/5, while the fixed formula suppresses it, for
+    4/5 -- so it is this trailing point, not the first four, that would let a
+    count-based assertion tell the two apart.
+    ``test_listener_reconnect_logging_does_not_report_twice_at_onset``
     is the test that discriminates the pre-fix commit; it isolates Finding 1
     instead, holding the reset formula fixed.
 
