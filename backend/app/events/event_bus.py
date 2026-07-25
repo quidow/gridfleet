@@ -36,7 +36,15 @@ logger = get_logger(__name__)
 
 LISTENER_POLL_INTERVAL_SEC = 5
 LISTENER_RECONNECT_DELAY_SEC = 1.0
-LISTENER_LOG_BACKOFF_INITIAL_SEC = 1.0
+# Strictly wider than LISTENER_RECONNECT_DELAY_SEC (1.0s). If the two were equal,
+# the failure that lands right at the first deadline would always report too --
+# a sleep never returns early, and the reconnect attempt itself costs a little
+# more on top -- so every real outage would open with two tracebacks instead of
+# one. With failures roughly LISTENER_RECONNECT_DELAY_SEC apart, this makes the
+# second failure land inside the (still open) first window and get suppressed:
+# for failures at t=0, 1, 2, 3, 4, ... the sequence is report(t=0), suppress(t=1),
+# report(t=2) -- window doubles to 4s -- suppress(t=3), suppress(t=4), ... .
+LISTENER_LOG_BACKOFF_INITIAL_SEC = 2.0
 LISTENER_LOG_BACKOFF_MAX_SEC = 60.0
 LISTENER_READY_TIMEOUT_SEC = 5.0
 HANDLER_DRAIN_TIMEOUT_SEC = 5.0
@@ -706,6 +714,13 @@ class EventBus:
             return
         log_interval = LISTENER_LOG_BACKOFF_INITIAL_SEC
         next_log_at = 0.0
+        # The last report's own timestamp, not the deadline it set. The deadline
+        # is inflated by whatever interval was in effect when it was set, so
+        # measuring the reset gap against it instead of against this understates
+        # nothing -- but it does the opposite of what's needed here: it makes an
+        # incident's tail-end deadline look like a fresh quiet period further out
+        # than the last report actually was. See the reset check below.
+        last_report_at = float("-inf")
         suppressed = 0
         while True:
             try:
@@ -720,9 +735,13 @@ class EventBus:
                     # traceback volume is backed off.
                     suppressed += 1
                 else:
-                    if now - next_log_at >= LISTENER_LOG_BACKOFF_MAX_SEC:
-                        # Quiet for longer than the cap: this is a new incident,
-                        # not the tail of the last one.
+                    if now - last_report_at >= LISTENER_LOG_BACKOFF_MAX_SEC:
+                        # Quiet for longer than the cap *since the last actual
+                        # report* -- not since the deadline it set, which is the
+                        # report time plus the interval then in effect and so
+                        # overstates how quiet things have been by up to that
+                        # interval. This is a new incident, not the tail of the
+                        # last one.
                         log_interval = LISTENER_LOG_BACKOFF_INITIAL_SEC
                     logger.exception(
                         "System event listener connection failed; reconnecting "
@@ -730,6 +749,7 @@ class EventBus:
                         suppressed,
                     )
                     suppressed = 0
+                    last_report_at = now
                     next_log_at = now + log_interval
                     log_interval = min(log_interval * 2, LISTENER_LOG_BACKOFF_MAX_SEC)
             await asyncio.sleep(LISTENER_RECONNECT_DELAY_SEC)

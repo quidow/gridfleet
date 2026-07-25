@@ -522,3 +522,65 @@ async def test_listener_reconnect_logging_backs_off_during_an_outage(caplog: pyt
     reports = [record for record in caplog.records if "listener connection failed" in record.getMessage()]
     assert len(reports) == 1, f"expected one report for a burst of 5 failures, got {len(reports)}"
     assert "suppressed" in reports[0].getMessage()
+
+
+async def test_listener_reconnect_logging_resets_after_a_long_quiet_period(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A quiet period long enough must reset the backoff to its initial cadence.
+
+    Drives a fake ``time.monotonic()`` clock (real time never passes -- ``asyncio.sleep``
+    stays mocked out, so this is deterministic regardless of test runtime) through
+    four failures at t=0, 2, 64, 68:
+
+    * t=0: first-ever failure, always reports. Sets a 2s window (``next_log_at=2``),
+      doubles the interval to 4 for next time.
+    * t=2: lands exactly on the deadline (not inside it), so it reports too, using
+      the 4s interval already queued up. Sets ``next_log_at=6``, doubles to 8.
+    * t=64: 58s past the deadline the t=2 report set (well past it, so it always
+      reports regardless of anything below) -- but the reset decision that fires
+      *inside* this report is what the two implementations disagree on. Correct:
+      compare the 64s gap against the *last report's own timestamp* (t=2), giving
+      64-2=62 >= 60 -- reset to the 2s initial interval, so this report's own
+      deadline is set at 64+2=66. Buggy: compare against the *deadline the last
+      report set* (6), giving 64-6=58 < 60 -- no reset, the un-reset 8s interval
+      carries over, deadline set at 64+8=72.
+    * t=68 (the probe): 68 is past the correct implementation's deadline (66) but
+      still inside the buggy implementation's inherited window (72). So a correct
+      reset reports this failure; a buggy one swallows it as a suppression nothing
+      ever reports (the loop ends right after via ``CancelledError``).
+
+    Net: 4 report records with the reset measured from the last report (correct);
+    3 if measured from the last deadline (the defect this test pins) -- verified
+    by hand against both formulas before writing this docstring, and confirmed by
+    running this exact test against the pre-fix code (see the task report for the
+    RED transcript).
+    """
+    bus = EventBus()
+    bus.configure(session_factory=None, engine=cast("AsyncEngine", object()))
+    attempts = 0
+
+    async def always_failing() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts > 4:
+            raise asyncio.CancelledError
+        raise ConnectionResetError("database is down")
+
+    fake_times = [0.0, 2.0, 64.0, 68.0]
+
+    with (
+        patch.object(bus, "_listen_once", new=always_failing),
+        patch("app.events.event_bus.asyncio.sleep", new=AsyncMock()),
+        patch("app.events.event_bus.time.monotonic", side_effect=fake_times),
+        caplog.at_level(logging.ERROR),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await bus._listen_for_notifications()
+
+    reports = [record for record in caplog.records if "listener connection failed" in record.getMessage()]
+    assert len(reports) == 4, (
+        f"expected all 4 failures to report (t=0, t=2, t=64, and the t=68 probe after a "
+        f"correct reset), got {len(reports)}. A count of 3 means the probe was swallowed: the "
+        "reset is comparing against the last deadline instead of the last report's own timestamp."
+    )
