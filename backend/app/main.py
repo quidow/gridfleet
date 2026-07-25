@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, FastAPI, Query, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.agent_comm.config import agent_settings
@@ -30,7 +31,7 @@ from app.core import gc_tuning
 from app.core.config import DOCS_ENABLED_ENVIRONMENTS
 from app.core.config import settings as process_settings
 from app.core.database import async_session as session_factory
-from app.core.database import engine
+from app.core.database import build_poller_engine, engine
 
 # FastAPI resolves these Annotated dependency aliases at runtime for the health/
 # metrics endpoints defined in this module, so they must stay at module scope.
@@ -64,7 +65,7 @@ from app.devices.services import (
     readiness,
 )
 from app.events import router as events
-from app.events.event_bus import EventBus, register_events_gauge_refresher
+from app.events.event_bus import POLL_STATEMENT_TIMEOUT_SEC, EventBus, register_events_gauge_refresher
 from app.grid import appium_direct
 from app.grid import router as grid
 from app.grid import router_internal as grid_router_internal
@@ -86,7 +87,7 @@ from app.verification import router as verification_router
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncEngine
 
     from app.composition import AppServices
 
@@ -120,7 +121,7 @@ async def _cancel_and_wait_for_tasks(tasks: list[asyncio.Task[None]], *, label: 
 
 async def _build_and_start_app_services(
     app: FastAPI,
-) -> tuple[EventBus, SettingsService, AgentHttpPool, AppServices]:
+) -> tuple[EventBus, SettingsService, AgentHttpPool, AppServices, AsyncEngine]:
     bus = EventBus()
     register_events_gauge_refresher(bus)
     svc = SettingsService()
@@ -136,7 +137,16 @@ async def _build_and_start_app_services(
     )
     app.state.services = app_services
 
-    bus.configure(session_factory=session_factory, engine=engine)
+    # The poller gets its own connection so ``command_timeout`` bounds its
+    # statements without bounding every query in the backend. One connection per
+    # process; see the pool arithmetic in docker-compose.prod.yml.
+    poller_engine = build_poller_engine(command_timeout=POLL_STATEMENT_TIMEOUT_SEC)
+    poller_session_factory = async_sessionmaker(poller_engine, class_=AsyncSession, expire_on_commit=False)
+    bus.configure(
+        session_factory=session_factory,
+        engine=engine,
+        poller_session_factory=poller_session_factory,
+    )
     svc.configure_store_refresh(session_factory)
 
     # Initialize settings cache from DB before starting background tasks
@@ -146,7 +156,7 @@ async def _build_and_start_app_services(
     await pool.reopen()
     bus.register_handler(svc.handle_system_event)
     await bus.start()
-    return bus, svc, pool, app_services
+    return bus, svc, pool, app_services, poller_engine
 
 
 def _build_janitor(app_services: AppServices) -> JanitorLoop:
@@ -256,7 +266,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     auth_service.validate_process_configuration()
     shutdown_coordinator.reset()
 
-    bus, svc, pool, app_services = await _build_and_start_app_services(app)
+    bus, svc, pool, app_services, poller_engine = await _build_and_start_app_services(app)
 
     tasks: list[asyncio.Task[None]] = []
     loop = asyncio.get_running_loop()
@@ -303,6 +313,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await appium_direct.aclose()
         await pool.close()
         await engine.dispose()
+        await poller_engine.dispose()
         pending_signal_tasks = list(signal_tasks)
         await _cancel_and_wait_for_tasks(pending_signal_tasks, label="signal")
         for signum in registered_signals:

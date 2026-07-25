@@ -111,8 +111,10 @@ services:
       # API-serving only; the backend-scheduler service runs the background loops.
       GRIDFLEET_RUN_BACKGROUND_LOOPS: "false"
       # Uvicorn worker processes add API-serving capacity only. Each worker opens
-      # its own DB pool, so keep WORKERS x (DB_POOL_SIZE + DB_MAX_OVERFLOW) under
-      # Postgres max_connections (default 100). e.g. 3 workers x (10+20) = 90.
+      # its own DB pool plus one dedicated outbox-poller connection, so keep
+      # WORKERS x (DB_POOL_SIZE + DB_MAX_OVERFLOW + 1) under Postgres
+      # max_connections (set above, default 200). e.g. 3 workers x (10+20+1) = 93.
+      # The backend-scheduler service adds one more set of the same.
       GRIDFLEET_UVICORN_WORKERS: ${GRIDFLEET_UVICORN_WORKERS:-1}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
