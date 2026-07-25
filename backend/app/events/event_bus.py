@@ -66,11 +66,13 @@ IDLE_IN_TRANSACTION_BOUND_SEC = 60.0
 GAP_RETIREMENT_SAFETY_MULTIPLE = 2.0
 GAP_RETIREMENT_SEC = IDLE_IN_TRANSACTION_BOUND_SEC * GAP_RETIREMENT_SAFETY_MULTIPLE
 # How long a dispatched row id stays in the dedupe map after the frontier passes
-# it. Covers a ``NOTIFY`` that reaches the listener well after the poller
-# already delivered the row -- the listener reloads by id and has no frontier to
-# check, so the map is the only thing that can suppress the second dispatch. The
-# map is bounded by event rate over this window (ints in a dict), not by
-# promotion lag.
+# it. The binding constraint is the frontier's own lag behind listener delivery:
+# an entry must survive until the frontier passes it, or the next successful
+# scan re-hydrates and re-dispatches a row the listener already delivered. That
+# lag is normally one poll interval, longer while polls are failing -- and
+# pruning runs only at the end of a successful poll, so during a run of failing
+# polls the map is bounded by event rate over the outage rather than over this
+# window.
 DEDUPE_GRACE_SEC = 300.0
 # How many retired gap ids the aggregated warning names. Enough to start an
 # investigation, few enough that a recovery poll retiring thousands still logs
@@ -203,7 +205,7 @@ class EventBus:
         self._engine = engine
 
     async def start(self) -> None:
-        """Register LISTEN before seeding the watermark, then start the poller.
+        """Register LISTEN before seeding the frontier, then start the poller.
 
         The order closes the boot gap without extra bookkeeping: a row visible
         at seed time is below the seed, and a row still in flight at seed time
@@ -222,7 +224,7 @@ class EventBus:
                 await asyncio.wait_for(self._listener_ready.wait(), timeout=LISTENER_READY_TIMEOUT_SEC)
             except TimeoutError:
                 logger.warning(
-                    "System event listener did not register within %ss; seeding the watermark without it. "
+                    "System event listener did not register within %ss; seeding the frontier without it. "
                     "Rows staged but uncommitted right now land below the seed with no listener to catch "
                     "their NOTIFY, so they can only arrive if the listener reconnects before they commit.",
                     LISTENER_READY_TIMEOUT_SEC,
@@ -611,6 +613,16 @@ class EventBus:
         delivered; it is not the delivery guard. This method awaits, so the
         authoritative check is in ``_dispatch_new_rows``.
         """
+        # ``pending`` and ``observed`` below, and the ``range(...)`` that
+        # ``_record_new_gaps`` walks over ``observed``, are each proportional to
+        # the scanned interval: bounded in steady state (one poll's worth of
+        # ids), but not after a long poller outage, where a recovery poll walks
+        # the whole missed interval in one shot. This is a known tradeoff, not an
+        # oversight -- capping it would reproduce the strand this design exists
+        # to close, for the reason ``_record_new_gaps``'s docstring gives.
+        # Computing gaps per page inside this scan, instead of once over the
+        # whole interval, is how to bound it if it ever matters; not worth doing
+        # at current event volumes.
         cursor = self._last_seen_system_event_id
         pending: list[SystemEvent] = []
         observed: set[int] = set()
