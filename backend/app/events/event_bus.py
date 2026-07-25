@@ -16,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.metrics import register_gauge_refresher
-from app.core.metrics_recorders import ACTIVE_SSE_CONNECTIONS, record_event_published, record_outbox_gap_retired
+from app.core.metrics_recorders import ACTIVE_SSE_CONNECTIONS, record_event_published, record_outbox_gaps_retired
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.events.catalog import (
@@ -62,6 +62,10 @@ GAP_RETIREMENT_SEC = IDLE_IN_TRANSACTION_BOUND_SEC * GAP_RETIREMENT_SAFETY_MULTI
 # map is bounded by event rate over this window (ints in a dict), not by
 # promotion lag.
 DEDUPE_GRACE_SEC = 300.0
+# How many retired gap ids the aggregated warning names. Enough to start an
+# investigation, few enough that a recovery poll retiring thousands still logs
+# one bounded line.
+RETIREMENT_LOG_SAMPLE_SIZE = 10
 
 # One statement, one plan, regardless of how many gaps are outstanding: an
 # expanding ``IN`` recompiles per arity, ``= ANY(:gap_ids)`` does not.
@@ -482,9 +486,25 @@ class EventBus:
         by construction.
 
         A rolled-back transaction's value is recorded too and never resolves;
-        ``_resolve_pending_gaps`` retires it on the time bound. Rows the
-        data-cleanup job deletes are far below the frontier -- retention is days
-        and the poller is seconds behind -- so cleanup does not manufacture gaps.
+        ``_resolve_pending_gaps`` retires it on the time bound.
+
+        How large this set gets is bounded by two different things depending on
+        the situation, and only the first is the steady state. **While the
+        frontier is current** the interval below spans one poll's worth of ids,
+        so the set is proportional to the number of writers holding an
+        uncommitted staging right now. **Once the poller has fallen behind** it
+        is proportional to the whole interval instead: a recovery poll
+        enumerates every id written during the outage, and every hole in it
+        becomes an entry that can only leave by retiring -- rolled-back
+        stagings, and rows the data-cleanup job deleted while the poller was
+        down.
+
+        That is deliberate, not an oversight. Capping the interval would skip
+        ids, and a skipped id belonging to a still-open transaction is exactly
+        the silent strand this whole design exists to eliminate. A bulk
+        retirement is the loud alternative, which is why
+        ``_resolve_pending_gaps`` aggregates its alarm into one warning and one
+        counter increment per poll.
         """
         now = time.monotonic()
         for row_id in range(self._last_seen_system_event_id + 1, frontier + 1):
@@ -498,6 +518,12 @@ class EventBus:
         Runs before the forward scan so a large backlog of new rows cannot starve
         it. The dict is mutated only after the query returns, so a failed query
         cannot drop an entry.
+
+        The alarm is aggregated: one warning and one counter increment per poll,
+        however many ids retired. Per-id emission looks equivalent until the
+        poller has been down for a while -- the recovery poll then retires every
+        hole in the interval it enumerated, and a benign outage would drown the
+        one signal that is supposed to mean "the retirement bound is wrong".
         """
         if not self._pending_gaps:
             return []
@@ -505,6 +531,7 @@ class EventBus:
         rows = list((await db.execute(_GAP_LOOKUP_SQL, {"gap_ids": gap_ids})).scalars().all())
         resolved = {int(row.id) for row in rows}
         now = time.monotonic()
+        retired: list[int] = []
         for gap_id in gap_ids:
             if gap_id in resolved:
                 continue
@@ -512,13 +539,18 @@ class EventBus:
             if first_seen is None or now - first_seen < GAP_RETIREMENT_SEC:
                 continue
             self._pending_gaps.pop(gap_id, None)
-            record_outbox_gap_retired()
+            retired.append(gap_id)
+        if retired:
+            record_outbox_gaps_retired(len(retired))
             logger.warning(
-                "Retiring unresolved system_events gap id %s after %.0fs; its transaction rolled back, "
-                "or it outlived the idle-in-transaction bound GAP_RETIREMENT_SEC is derived from. "
-                "If this metric fires in normal operation, the bound or the derivation is wrong.",
-                gap_id,
+                "Retiring %d unresolved system_events gap id(s) after %.0fs (sample: %s); their "
+                "transactions rolled back, or they outlived the idle-in-transaction bound "
+                "GAP_RETIREMENT_SEC is derived from. If this fires in normal operation, the bound or "
+                "the derivation is wrong; a single bulk retirement just after a poller outage is the "
+                "benign case, because the recovery poll enumerates the whole interval it missed.",
+                len(retired),
                 GAP_RETIREMENT_SEC,
+                retired[:RETIREMENT_LOG_SAMPLE_SIZE],
             )
         return rows
 
@@ -636,11 +668,26 @@ class EventBus:
             try:
                 gap_rows = await self._resolve_pending_gaps(db)
             except SQLAlchemyError as exc:
-                # Give up the whole poll rather than scan forward on a database
-                # that just failed a read. The gap set is untouched, so the next
-                # poll retries exactly the same ids.
-                logger.warning("Could not resolve outbox gaps (%s); retrying on the next poll", exc)
-                return
+                # Skip only the gap-row dispatch this tick, then carry on. This
+                # first shipped as ``return``, which quietly made one statement a
+                # precondition for all delivery: a deterministically failing
+                # ``_GAP_LOOKUP_SQL`` froze the frontier, so nothing new was ever
+                # polled, and no gap retired either -- retirement runs after that
+                # query -- so the condition sustained itself and the poller
+                # degraded to listener-only until a restart.
+                #
+                # The guarantee worth keeping is the gap set's *integrity*, and
+                # it is untouched: nothing on this path mutates
+                # ``_pending_gaps``, so the next poll retries exactly the same
+                # ids. What was traded away is the stronger "change nothing at
+                # all", which bought correctness for the gap set at the cost of
+                # every other row's delivery.
+                logger.warning("Could not resolve outbox gaps (%s); scanning forward without them", exc)
+                gap_rows = []
+                # The failed statement leaves this session's transaction
+                # aborted, so the scan below would fail too. Rolling back costs
+                # nothing here -- the poll only ever reads.
+                await db.rollback()
             # Dispatched before the scan: if the scan then fails, these rows are
             # already in the dedupe map and the retry will not duplicate them.
             self._dispatch_new_rows(gap_rows)

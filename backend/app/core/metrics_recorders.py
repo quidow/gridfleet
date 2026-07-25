@@ -225,8 +225,14 @@ def record_event_published(event_type: str) -> None:
     EVENTS_PUBLISHED_TOTAL.labels(event_type=event_type).inc()
 
 
-def record_outbox_gap_retired() -> None:
-    OUTBOX_GAPS_RETIRED_TOTAL.inc()
+def record_outbox_gaps_retired(count: int) -> None:
+    """Count a whole poll's retirements at once.
+
+    Incremented in bulk, not per id: a recovery poll after a poller outage can
+    retire every hole in the interval it enumerated, and one increment per hole
+    would make the alarm's rate meaningless exactly when it fires hardest.
+    """
+    OUTBOX_GAPS_RETIRED_TOTAL.inc(count)
 
 
 HEARTBEAT_PING_DURATION_SECONDS = Histogram(
