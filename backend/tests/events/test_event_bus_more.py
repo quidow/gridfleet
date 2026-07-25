@@ -603,11 +603,14 @@ async def test_listener_reconnect_logging_resets_after_a_long_quiet_period(
     same boundary crossed. The fifth point is where the two part ways
     (simulation: ``first 5 points -> pre-fix=5 fixed=4``): the pre-fix formula
     reports t=70 too, for 5/5, while the fixed formula suppresses it, for
-    4/5 -- so it is this trailing point, not the first four, that would let a
-    count-based assertion tell the two apart.
-    ``test_listener_reconnect_logging_does_not_report_twice_at_onset``
-    is the test that discriminates the pre-fix commit; it isolates Finding 1
-    instead, holding the reset formula fixed.
+    4/5 -- so it is this trailing point, not the first four, that lets this
+    test's own five-point assertion tell the two apart.
+    ``test_listener_reconnect_logging_does_not_report_twice_at_onset`` also
+    discriminates the two-bug pre-fix commit from the fixed code, but
+    isolates Finding 1 instead: over its own two time points the reset
+    formula makes no difference (simulation: ``INITIAL=1.0`` -> 2 reports
+    under either reset reference, ``INITIAL=2.0`` -> 1 report under either),
+    so it is varying ``INITIAL`` alone that tells the two apart there.
 
     A fake ``time.monotonic()`` clock (real time never passes -- ``asyncio.sleep``
     stays mocked out) drives five failures at t=0, 2, 64, 68, 70:
