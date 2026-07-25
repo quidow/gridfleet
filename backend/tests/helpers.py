@@ -438,7 +438,7 @@ def reset_event_bus(bus: EventBus) -> None:
     # previous test would promote the rewound watermark past the next test's
     # rows on the first poll.
     bus._watermark_candidate_id = 0
-    bus._watermark_candidate_xmax = None
+    bus._watermark_candidate_horizon = None
 
 
 # ---------------------------------------------------------------------------

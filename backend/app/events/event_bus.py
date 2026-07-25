@@ -35,13 +35,14 @@ LISTENER_POLL_INTERVAL_SEC = 5
 LISTENER_RECONNECT_DELAY_SEC = 1.0
 LISTENER_READY_TIMEOUT_SEC = 5.0
 HANDLER_DRAIN_TIMEOUT_SEC = 5.0
+POLL_SCAN_CHUNK_SIZE = 500
 
-_SNAPSHOT_HORIZON_SQL = text(
-    "SELECT CAST(pg_snapshot_xmax(pg_current_snapshot()) AS text) AS xmax, "
-    "CASE WHEN CAST(:candidate AS text) IS NULL THEN false "
+_SNAPSHOT_SETTLED_SQL = text(
+    "SELECT CASE WHEN CAST(:candidate AS text) IS NULL THEN false "
     "ELSE pg_snapshot_xmin(pg_current_snapshot()) >= CAST(CAST(:candidate AS text) AS xid8) "
     "END AS settled"
 )
+_XACT_HORIZON_SQL = text("SELECT CAST(pg_current_xact_id() AS text)")
 
 
 @dataclass
@@ -127,7 +128,7 @@ class EventBus:
         self._listener_ready = asyncio.Event()
         self._last_seen_system_event_id = 0
         self._watermark_candidate_id = 0
-        self._watermark_candidate_xmax: str | None = None
+        self._watermark_candidate_horizon: str | None = None
         self._started = False
 
     def configure(
@@ -152,10 +153,19 @@ class EventBus:
         if self._started or self._session_factory is None or self._engine is None:
             return
         self._listener_ready = asyncio.Event()
-        self._listener_task = asyncio.create_task(self._listen_for_notifications())
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._listener_ready.wait(), timeout=LISTENER_READY_TIMEOUT_SEC)
-        self._last_seen_system_event_id = await self._read_latest_row_id()
+        listener_task = asyncio.create_task(self._listen_for_notifications())
+        self._listener_task = listener_task
+        try:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._listener_ready.wait(), timeout=LISTENER_READY_TIMEOUT_SEC)
+            self._last_seen_system_event_id = await self._read_latest_row_id()
+        except BaseException:
+            # Never orphan the listener: ``_started`` stays False on this path,
+            # so ``shutdown`` would have nothing to cancel it with.
+            listener_task.cancel()
+            await asyncio.gather(listener_task, return_exceptions=True)
+            self._listener_task = None
+            raise
         self._watermark_candidate_id = self._last_seen_system_event_id
         self._poller_task = asyncio.create_task(self._poll_for_missed_events())
         self._started = True
@@ -396,51 +406,85 @@ class EventBus:
             return
         self._remember_and_dispatch(event)
 
+    async def _scan_window(self, db: AsyncSession) -> tuple[list[SystemEvent], int]:
+        """Collect undispatched rows above the watermark; return them and the top id.
+
+        The whole window is walked, in ``POLL_SCAN_CHUNK_SIZE`` keyset pages, so
+        no single statement materialises an unbounded result set and a stalled
+        promotion re-reads ids rather than re-transferring event payloads.
+        Bounding the *window* instead — a plain ``LIMIT`` on the watermark
+        predicate — would be unsafe: while promotion is stalled the watermark
+        does not move, so every poll would return the same truncated prefix and
+        rows past it would go undelivered for as long as the stall lasted.
+        """
+        known = {existing.id for existing in self._log}
+        cursor = self._last_seen_system_event_id
+        pending: list[SystemEvent] = []
+        while True:
+            page = (
+                await db.execute(
+                    select(SystemEvent.id, SystemEvent.event_id)
+                    .where(SystemEvent.id > cursor)
+                    .order_by(SystemEvent.id.asc())
+                    .limit(POLL_SCAN_CHUNK_SIZE)
+                )
+            ).all()
+            if not page:
+                return pending, cursor
+            undispatched = [int(row.id) for row in page if row.event_id not in known]
+            if undispatched:
+                hydrated = (
+                    await db.execute(
+                        select(SystemEvent).where(SystemEvent.id.in_(undispatched)).order_by(SystemEvent.id.asc())
+                    )
+                ).scalars()
+                pending.extend(hydrated.all())
+            cursor = int(page[-1].id)
+            if len(page) < POLL_SCAN_CHUNK_SIZE:
+                return pending, cursor
+
     async def _dispatch_missed_events(self) -> None:
         """Dispatch committed rows above the watermark, then promote it if safe.
 
         The watermark may only pass an id once every transaction that could
         still be holding an unpublished lower id has ended, so promotion runs a
-        poll behind: a candidate id is paired with a snapshot horizon and
+        poll behind: a candidate id is paired with a transaction-id horizon and
         promoted only when a later snapshot proves that horizon cleared. Until
-        then the same rows are re-selected each poll and the ``_log`` dedupe
+        then the same window is re-scanned each poll and the ``_log`` dedupe
         suppresses the re-dispatch.
         """
         if self._session_factory is None:
             return
         async with self._session_factory() as db:
-            # Test the standing candidate's gate BEFORE the row select. A
+            # Test the standing candidate's gate BEFORE the window scan. A
             # cleared gate means the transactions it was waiting on ended
-            # before this snapshot, so the later snapshot the select runs under
-            # is guaranteed to see the rows they committed.
+            # before this snapshot, so the later snapshots the scan runs under
+            # are guaranteed to see the rows they committed.
             settled = bool(
-                (await db.execute(_SNAPSHOT_HORIZON_SQL, {"candidate": self._watermark_candidate_xmax})).one().settled
+                (await db.execute(_SNAPSHOT_SETTLED_SQL, {"candidate": self._watermark_candidate_horizon}))
+                .one()
+                .settled
             )
-            stmt = (
-                select(SystemEvent)
-                .where(SystemEvent.id > self._last_seen_system_event_id)
-                .order_by(SystemEvent.id.asc())
-            )
-            rows = (await db.execute(stmt)).scalars().all()
-            # Capture the new candidate's horizon AFTER the row select: every
-            # transaction in flight during the select was assigned an xid below
-            # this xmax, so the gate cannot clear until all of them have ended.
-            # Capturing it earlier would be unsound — a transaction that began
-            # in between could take a lower sequence value and still be
-            # invisible. Both halves are xid8, so there is no wraparound.
-            horizon_xmax = str((await db.execute(_SNAPSHOT_HORIZON_SQL, {"candidate": None})).one().xmax)
+            rows, frontier = await self._scan_window(db)
+            # Capture the new candidate's horizon AFTER the scan.
+            # ``pg_current_xact_id`` assigns this poll's own transaction an id,
+            # so every id already handed out is strictly below it — including
+            # one held by a transaction that is still open and therefore
+            # invisible to any snapshot. ``pg_snapshot_xmax`` cannot be used
+            # here: it is ``latestCompletedXid + 1``, so a running transaction
+            # can sit at or above it (and is absent from ``xip_list`` too),
+            # letting the gate clear while that transaction still holds an
+            # unpublished lower row id. Capturing before the scan would be
+            # unsound for the opposite reason — a transaction starting in
+            # between could take a lower sequence value and still be invisible.
+            # The comparison stays in ``xid8``, so there is no wraparound.
+            horizon = str((await db.execute(_XACT_HORIZON_SQL)).scalar_one())
         for row in rows:
-            event = Event.from_system_event(row)
-            if any(existing.id == event.id for existing in self._log):
-                continue
-            self._remember_and_dispatch(event)
+            self._remember_and_dispatch(Event.from_system_event(row))
         if settled:
             self._last_seen_system_event_id = max(self._last_seen_system_event_id, self._watermark_candidate_id)
-        self._watermark_candidate_id = max(
-            self._watermark_candidate_id,
-            max((int(row.id) for row in rows), default=self._last_seen_system_event_id),
-        )
-        self._watermark_candidate_xmax = horizon_xmax
+        self._watermark_candidate_id = max(self._watermark_candidate_id, frontier)
+        self._watermark_candidate_horizon = horizon
 
     async def _listen_for_notifications(self) -> None:
         # The unconfigured-bus return stays outside the loop: inside it, a bus
