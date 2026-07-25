@@ -524,37 +524,34 @@ async def test_listener_reconnect_logging_backs_off_during_an_outage(caplog: pyt
     assert "suppressed" in reports[0].getMessage()
 
 
-async def test_listener_reconnect_logging_resets_after_a_long_quiet_period(
+async def test_listener_reconnect_logging_does_not_report_twice_at_onset(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A quiet period long enough must reset the backoff to its initial cadence.
+    """The initial backoff window must outlast one reconnect cycle.
 
-    Drives a fake ``time.monotonic()`` clock (real time never passes -- ``asyncio.sleep``
-    stays mocked out, so this is deterministic regardless of test runtime) through
-    four failures at t=0, 2, 64, 68:
+    This is the test that discriminates the real endpoints for Finding 1 -- the
+    pre-fix commit (``LISTENER_LOG_BACKOFF_INITIAL_SEC = 1.0``, equal to
+    ``LISTENER_RECONNECT_DELAY_SEC``) against the fix (``2.0``, strictly wider).
+    The reset formula (Finding 2) never enters into it: with only two failures,
+    neither is ever far enough past a deadline to trigger a reset either way, so
+    this test is insensitive to which reset reference point is in use -- verified
+    by simulating both formulas against this exact sequence before writing it.
 
-    * t=0: first-ever failure, always reports. Sets a 2s window (``next_log_at=2``),
-      doubles the interval to 4 for next time.
-    * t=2: lands exactly on the deadline (not inside it), so it reports too, using
-      the 4s interval already queued up. Sets ``next_log_at=6``, doubles to 8.
-    * t=64: 58s past the deadline the t=2 report set (well past it, so it always
-      reports regardless of anything below) -- but the reset decision that fires
-      *inside* this report is what the two implementations disagree on. Correct:
-      compare the 64s gap against the *last report's own timestamp* (t=2), giving
-      64-2=62 >= 60 -- reset to the 2s initial interval, so this report's own
-      deadline is set at 64+2=66. Buggy: compare against the *deadline the last
-      report set* (6), giving 64-6=58 < 60 -- no reset, the un-reset 8s interval
-      carries over, deadline set at 64+8=72.
-    * t=68 (the probe): 68 is past the correct implementation's deadline (66) but
-      still inside the buggy implementation's inherited window (72). So a correct
-      reset reports this failure; a buggy one swallows it as a suppression nothing
-      ever reports (the loop ends right after via ``CancelledError``).
+    Two failures exactly ``LISTENER_RECONNECT_DELAY_SEC`` (1.0s) apart -- the
+    closest two failures can land in practice, since the loop always sleeps that
+    long between attempts and a real connection attempt never returns early.
+    Traced by hand and confirmed by simulation before writing this:
 
-    Net: 4 report records with the reset measured from the last report (correct);
-    3 if measured from the last deadline (the defect this test pins) -- verified
-    by hand against both formulas before writing this docstring, and confirmed by
-    running this exact test against the pre-fix code (see the task report for the
-    RED transcript).
+    * Pre-fix (``INITIAL = 1.0``): the first failure at t=0 always reports and
+      opens a window that closes at t=1.0. The second failure lands at t=1.0 --
+      not *before* the deadline, so it reports too. Every real outage opens with
+      two tracebacks, which is Finding 1's defect exactly.
+    * Post-fix (``INITIAL = 2.0``): the same first failure opens a window that
+      closes at t=2.0. The second failure at t=1.0 is inside it and is
+      suppressed.
+
+    So: 1 report record with the constant fixed; 2 with it reverted to 1.0 (see
+    the task report for the RED transcript against the reverted constant).
     """
     bus = EventBus()
     bus.configure(session_factory=None, engine=cast("AsyncEngine", object()))
@@ -563,11 +560,11 @@ async def test_listener_reconnect_logging_resets_after_a_long_quiet_period(
     async def always_failing() -> None:
         nonlocal attempts
         attempts += 1
-        if attempts > 4:
+        if attempts > 2:
             raise asyncio.CancelledError
         raise ConnectionResetError("database is down")
 
-    fake_times = [0.0, 2.0, 64.0, 68.0]
+    fake_times = [0.0, 1.0]
 
     with (
         patch.object(bus, "_listen_once", new=always_failing),
@@ -579,8 +576,85 @@ async def test_listener_reconnect_logging_resets_after_a_long_quiet_period(
         await bus._listen_for_notifications()
 
     reports = [record for record in caplog.records if "listener connection failed" in record.getMessage()]
+    assert len(reports) == 1, (
+        f"expected the second failure (one reconnect delay after the first) to be suppressed, "
+        f"got {len(reports)} report(s). A count of 2 means the initial window is not strictly "
+        "wider than the reconnect delay, so every real outage logs twice at onset."
+    )
+
+
+async def test_listener_reconnect_logging_resets_after_a_long_quiet_period(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """With the initial window held at its fixed value, the reset reference point matters.
+
+    This isolates Finding 2 specifically: ``LISTENER_LOG_BACKOFF_INITIAL_SEC`` is
+    held at its post-fix value (2.0) throughout, and only the reset formula
+    varies. It does **not** discriminate the two-bug pre-fix commit (``INITIAL =
+    1.0`` and the reset measured from ``next_log_at``) from the fully-fixed code
+    -- both give 4 reports for the first four points below, verified by
+    simulation: the narrower pre-fix window puts the t=2 report's deadline at
+    4.0 instead of 6.0, so the pre-fix formula's own comparison at t=64
+    (``64 - next_log_at(4.0) = 60.0 >= 60``) coincidentally also resets, for a
+    reason unrelated to which formula is correct. The fixed formula's comparison
+    at the same point is ``64 - last_report_at(2.0) = 62.0 >= 60`` -- also a
+    reset, for the intended reason. Two changes, two different arithmetic paths,
+    same boundary crossed. ``test_listener_reconnect_logging_does_not_report_twice_at_onset``
+    is the test that discriminates the pre-fix commit; it isolates Finding 1
+    instead, holding the reset formula fixed.
+
+    A fake ``time.monotonic()`` clock (real time never passes -- ``asyncio.sleep``
+    stays mocked out) drives five failures at t=0, 2, 64, 68, 70:
+
+    * t=0 -- first ever failure, always reports. Opens a 2s window, queues a 4s
+      interval for next time.
+    * t=2 -- lands exactly on the deadline (report, not suppress). Uses the
+      queued 4s interval, sets ``next_log_at=6``, queues 8s for next time.
+    * t=64 -- 58s past the t=2 report's deadline (6), so it always reports.
+      ``64 - last_report_at(2) = 62 >= 60`` -- resets to the 2s initial interval,
+      so this report's own deadline is ``64+2=66``, and it queues 4s for next
+      time.
+    * t=68 -- past 66, so it reports. ``68 - last_report_at(64) = 4 < 60`` -- no
+      reset, uses the queued 4s interval, deadline becomes ``68+4=72``, queues 8s.
+    * t=70 -- inside the window the t=68 report just opened (deadline 72), so it
+      must be **suppressed**. This is the anchor to actual clock behaviour: with
+      the gating removed entirely (every failure always logs), this failure
+      would report too, giving 5 reports instead of 4 -- so the assertion below
+      cannot be satisfied by a version of the code that never suppresses at all,
+      which a bare induced-failure count (4 failures in, 4 reports out) cannot
+      rule out on its own.
+
+    Net: 4 report records from 5 induced failures -- verified by simulating both
+    formulas against this exact sequence before writing this docstring (base:
+    5/5 report; the ``INITIAL``-fixed-but-reset-still-buggy intermediate: 3/5
+    report, with both t=68 and t=70 suppressed; fixed: 4/5, only t=70
+    suppressed).
+    """
+    bus = EventBus()
+    bus.configure(session_factory=None, engine=cast("AsyncEngine", object()))
+    attempts = 0
+
+    async def always_failing() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts > 5:
+            raise asyncio.CancelledError
+        raise ConnectionResetError("database is down")
+
+    fake_times = [0.0, 2.0, 64.0, 68.0, 70.0]
+
+    with (
+        patch.object(bus, "_listen_once", new=always_failing),
+        patch("app.events.event_bus.asyncio.sleep", new=AsyncMock()),
+        patch("app.events.event_bus.time.monotonic", side_effect=fake_times),
+        caplog.at_level(logging.ERROR),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await bus._listen_for_notifications()
+
+    assert attempts == 6, "expected exactly five induced failures before cancellation"
+    reports = [record for record in caplog.records if "listener connection failed" in record.getMessage()]
     assert len(reports) == 4, (
-        f"expected all 4 failures to report (t=0, t=2, t=64, and the t=68 probe after a "
-        f"correct reset), got {len(reports)}. A count of 3 means the probe was swallowed: the "
-        "reset is comparing against the last deadline instead of the last report's own timestamp."
+        f"expected the first four failures (t=0, 2, 64, 68) to report and the t=70 failure to be "
+        f"suppressed (5 failures, 4 reports), got {len(reports)} report(s)."
     )
