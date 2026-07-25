@@ -117,6 +117,14 @@ def _scan_publish_sites() -> set[str]:
     return sites
 
 
+_MIN_REASON_LENGTH = 20
+
+
+def _unexplained_entries(registry: dict[str, str]) -> list[str]:
+    """Registry keys whose reason is too short to be a reason."""
+    return sorted(site for site, reason in registry.items() if len(reason.strip()) < _MIN_REASON_LENGTH)
+
+
 def test_standalone_publishers_are_declared_with_a_reason() -> None:
     """The scanned publish surface must equal the declared registry, both ways.
 
@@ -144,8 +152,15 @@ def test_standalone_publishers_are_declared_with_a_reason() -> None:
         "STANDALONE_PUBLISHERS declares callsite(s) that no longer exist:\n  " + "\n  ".join(stale) + "\n\nRemove them."
     )
 
-    unexplained = sorted(site for site, reason in STANDALONE_PUBLISHERS.items() if len(reason.strip()) < 20)
+    unexplained = _unexplained_entries(STANDALONE_PUBLISHERS)
     assert not unexplained, f"STANDALONE_PUBLISHERS entries without a real reason: {unexplained}"
+
+
+def test_the_reason_length_check_rejects_a_stub_reason() -> None:
+    """The guard has never fired against the real registry. Prove it can."""
+    assert _unexplained_entries({"app/x.py:f": "a real, specific reason about source effects"}) == []
+    assert _unexplained_entries({"app/x.py:f": "standalone"}) == ["app/x.py:f"]
+    assert _unexplained_entries({"app/x.py:f": "   " + "x" * 19}) == ["app/x.py:f"], "must strip before measuring"
 
 
 ALLOWED_SYSTEM_EVENT_CONSTRUCTOR_SITES: dict[str, str] = {

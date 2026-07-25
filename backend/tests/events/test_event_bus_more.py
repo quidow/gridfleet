@@ -521,7 +521,13 @@ async def test_listener_reconnect_logging_backs_off_during_an_outage(caplog: pyt
 
     reports = [record for record in caplog.records if "listener connection failed" in record.getMessage()]
     assert len(reports) == 1, f"expected one report for a burst of 5 failures, got {len(reports)}"
-    assert "suppressed" in reports[0].getMessage()
+    # The onset report fires before anything has been suppressed, so 0 is the
+    # only correct value -- do not "fix" this to the burst length. structlog
+    # does not %-interpolate positional args, so the count is unreachable from
+    # getMessage() and has to be read from the event dict.
+    assert reports[0].msg["positional_args"] == (0,), (
+        f"expected the onset report to carry a suppressed count of 0, got: {reports[0].msg}"
+    )
 
 
 async def test_listener_reconnect_logging_does_not_report_twice_at_onset(

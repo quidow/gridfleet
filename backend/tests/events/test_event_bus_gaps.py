@@ -304,6 +304,9 @@ async def test_gap_resolution_costs_one_statement_regardless_of_gap_count(
         counts.append(statements)
 
     assert counts[0] == counts[1], f"poll statement count grew with gap-set size: {counts}"
+    # Equality alone passes if the lookup raised on both arms. Pin the absolute
+    # cost: one gap lookup + one empty forward-scan page.
+    assert counts[0] == 2, f"expected exactly 2 statements per poll (gap lookup + scan page), got {counts[0]}"
 
 
 async def test_late_notification_for_a_promoted_row_is_not_redispatched(
