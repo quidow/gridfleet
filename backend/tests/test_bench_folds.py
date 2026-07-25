@@ -1108,7 +1108,7 @@ async def test_bench_device_health_loop_fold(
             churn=CHURN,
         ).unhealthy_count
         if effective_unhealthy > 0 and scenario.reseed_per_iteration:
-            assert commits.count > 0
+            assert tap.counter["INSERT system_events"] > 0
         if scenario.verify is not None:
             await scenario.verify(db_session, tap, devices)
     finally:
