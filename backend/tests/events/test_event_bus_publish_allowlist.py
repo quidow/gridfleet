@@ -22,9 +22,10 @@ APP_ROOT = Path(__file__).resolve().parents[2] / "app"
 # the source effects actually were.
 STANDALONE_PUBLISHERS: dict[str, str] = {
     "app/hosts/router.py:_auto_discover": (
-        "host.discovery_completed -- background task: every device row it summarises was already "
-        "committed inside discovery.discover_devices, and the enclosing session holds no open "
-        "transaction by the time the summary is built"
+        "host.discovery_completed -- background task: discover_devices is a read-only diff (it "
+        "SELECTs existing rows and returns candidates without writing), and the devices the payload "
+        "counts are by construction the ones not yet in the database; confirm_discovery, the write "
+        "path, runs from a different endpoint. There is no mutation for the event to ride"
     ),
     "app/agent_comm/circuit_breaker.py:AgentCircuitBreaker.record_success": (
         "host.circuit_breaker.closed -- breaker state is process-local (self._states); there is no "
