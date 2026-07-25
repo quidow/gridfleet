@@ -282,6 +282,11 @@ class EventBus:
                     LISTENER_READY_TIMEOUT_SEC,
                 )
             self._last_seen_system_event_id = await self._read_latest_row_id()
+            # Bound the dedupe map across a shutdown/restart within one process.
+            # shutdown() sets _started = False but deliberately does not clear
+            # _dispatched_row_ids, so this call is what enforces the grace period
+            # on restart. Otherwise redundant with the first poll's prune five
+            # seconds later.
             self._prune_dispatched_row_ids()
         except BaseException:
             # Never orphan the listener: ``_started`` stays False on this path,
