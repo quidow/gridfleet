@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 _WS = re.compile(r"\s+")
 ACTIVE_DB_CALLSITE: ContextVar[str] = ContextVar("fold_bench_db_callsite", default="unattributed")
 _ACTIVE_DB_TASK: ContextVar[asyncio.Task[object] | None] = ContextVar("fold_bench_db_task", default=None)
-DEFERRED_EVENT_CALLSITE = "app.events.event_bus._persist_system_event"
 
 
 def validate_benchmark_knobs(*, devices: int, iters: int, warmup: int, churn: float) -> None:
@@ -118,10 +117,6 @@ def install_async_session_callsite_profiler(monkeypatch: pytest.MonkeyPatch) -> 
     for method_name in ("commit", "execute", "flush", "get", "refresh", "scalar", "scalars"):
         original = getattr(AsyncSession, method_name)
         monkeypatch.setattr(AsyncSession, method_name, profiled_async_session_method(original))
-
-
-def is_deferred_event_callsite(callsite: str) -> bool:
-    return callsite == DEFERRED_EVENT_CALLSITE
 
 
 def statement_signature(sql: str) -> str:
@@ -222,18 +217,6 @@ class QueryTap:
 
         return {str(value) for parameters in self.statement_parameters[key] for value in flattened(parameters)}
 
-    @property
-    def deferred_total(self) -> int:
-        return sum(
-            count
-            for (callsite, _signature_name), count in self.callsite_counter.items()
-            if is_deferred_event_callsite(callsite)
-        )
-
-    @property
-    def source_total(self) -> int:
-        return self.total - self.deferred_total
-
 
 def explain_statement_sql(statement: str) -> str:
     """EXPLAIN wrapper: ANALYZE only for SELECTs — an ANALYZE'd write would execute it."""
@@ -292,13 +275,11 @@ def build_json_report(
         "config": config,
         "wall_ms": {"fold_return": wall(fold_wall_ms), "event_settled": wall(settled_wall_ms)},
         "queries": {
-            "source_per_fold": tap.source_total / iters,
-            "deferred_per_fold": tap.deferred_total / iters,
+            "source_per_fold": tap.total / iters,
             "complete_per_fold": tap.total / iters,
         },
         "commits": {
-            "source_per_fold": commits.source_count / iters,
-            "deferred_per_fold": commits.deferred_count / iters,
+            "source_per_fold": commits.count / iters,
             "complete_per_fold": commits.count / iters,
         },
         "signatures": {signature: count / iters for signature, count in tap.counter.most_common()},
@@ -317,11 +298,3 @@ class CommitTap:
         if self.armed:
             self.count += 1
             self.callsite_counter[ACTIVE_DB_CALLSITE.get()] += 1
-
-    @property
-    def deferred_count(self) -> int:
-        return sum(count for callsite, count in self.callsite_counter.items() if is_deferred_event_callsite(callsite))
-
-    @property
-    def source_count(self) -> int:
-        return self.count - self.deferred_count

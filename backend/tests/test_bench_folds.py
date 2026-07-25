@@ -885,8 +885,7 @@ def _report_device_health_loop(
     fold_wall_ms: list[float],
     settled_wall_ms: list[float],
 ) -> None:
-    source_queries_per_fold = tap.source_total / ITERS
-    deferred_queries_per_fold = tap.deferred_total / ITERS
+    source_queries_per_fold = tap.total / ITERS
     complete_queries_per_fold = tap.total / ITERS
     candidate_signatures = (
         "SELECT device_remediation_log",
@@ -898,7 +897,7 @@ def _report_device_health_loop(
     )
     candidate_total = sum(tap.counter.get(signature, 0) for signature in candidate_signatures)
     candidate_per_fold = candidate_total / ITERS
-    candidate_share = 100.0 * candidate_total / tap.source_total if tap.source_total else 0.0
+    candidate_share = 100.0 * candidate_total / tap.total if tap.total else 0.0
 
     print(
         f"\n{'=' * 78}\nfold_host_devices: {DEVICES} devices x {ITERS} iters  churn={CHURN}  lifecycle={LIFECYCLE_MODE}"
@@ -915,10 +914,8 @@ def _report_device_health_loop(
         f"  SOURCE queries/fold:         {source_queries_per_fold:.0f}   "
         f"({source_queries_per_fold / DEVICES:.2f} per device)"
     )
-    print(f"  DEFERRED event queries/fold: {deferred_queries_per_fold:.0f}")
     print(f"  COMPLETE queries/fold:       {complete_queries_per_fold:.0f}")
-    print(f"  SOURCE commits/fold:         {commits.source_count / ITERS:.1f}")
-    print(f"  DEFERRED event commits/fold: {commits.deferred_count / ITERS:.1f}")
+    print(f"  SOURCE commits/fold:         {commits.count / ITERS:.1f}")
     print(f"  COMPLETE commits/fold:       {commits.count / ITERS:.1f}")
     print(
         "  candidate batch reads/fold: "
@@ -1102,17 +1099,16 @@ async def test_bench_device_health_loop_fold(
         # already offline is never re-escalated (connectivity._escalate_health_failure
         # skips handle_health_failure once was_offline), so a static scenario that
         # never re-seeds (e.g. repeat-unhealthy) has its one real transition land in
-        # the unarmed warm-up iteration and legitimately shows zero deferred queries
-        # in the armed window -- that non-reseeding no-op is exactly what such a
-        # scenario measures. scenario.verify is the honesty guard for that case.
+        # the unarmed warm-up iteration and legitimately emits no event in the armed
+        # window -- that non-reseeding no-op is exactly what such a scenario
+        # measures. scenario.verify is the honesty guard for that case.
         effective_unhealthy = scenario_observation_shape(
             scenario=SCENARIO,
             devices=len(devices),
             churn=CHURN,
         ).unhealthy_count
         if effective_unhealthy > 0 and scenario.reseed_per_iteration:
-            assert tap.deferred_total > 0
-            assert commits.deferred_count > 0
+            assert commits.count > 0
         if scenario.verify is not None:
             await scenario.verify(db_session, tap, devices)
     finally:
@@ -1178,7 +1174,7 @@ async def test_bench_healthy_fold_statement_budget(
     snapshot_ladder = tap.callsite_counter[
         ("app.devices.services.decision_snapshot._load_current_ladder", "SELECT device_remediation_log")
     ]
-    source_commits = commits.source_count
+    source_commits = commits.count
     # Any remediation-ladder read not attributed to the snapshot loader is a
     # standalone read Phase 3 removed; likewise any reservation-table select
     # (the snapshot folds the reservation into the claims/intents select).

@@ -128,29 +128,27 @@ async def test_bench_session_wrapper_relabels_inherited_child_task_context() -> 
     assert observed == "tests.test_bench_instrumentation.run_child"
 
 
-def test_bench_cost_partition_separates_deferred_event_work() -> None:
+def test_bench_taps_total_across_every_callsite() -> None:
+    """Events now stage inside the source transaction, so there is no second event
+    transaction to partition out: every statement and commit is fold cost, and the
+    totals aggregate across call sites rather than splitting into source/deferred."""
     tap = QueryTap()
-    tap.total = 3
-    tap.callsite_counter.update(
-        {
-            ("app.devices.locking.lock_device", "SELECT devices"): 1,
-            ("app.events.event_bus._persist_system_event", "INSERT system_events"): 1,
-            ("app.events.event_bus._persist_system_event", "SELECT ?"): 1,
-        }
-    )
     commits = CommitTap()
-    commits.count = 3
-    commits.callsite_counter.update(
-        {
-            "app.devices.services.connectivity.fold_host_devices": 1,
-            "app.events.event_bus._persist_system_event": 2,
-        }
-    )
+    for callsite in (
+        "app.devices.locking.lock_device",
+        "app.devices.services.connectivity.fold_host_devices",
+    ):
+        token = ACTIVE_DB_CALLSITE.set(callsite)
+        try:
+            tap(None, None, "SELECT devices.id FROM devices")
+            commits(None)
+        finally:
+            ACTIVE_DB_CALLSITE.reset(token)
 
-    assert tap.source_total == 1
-    assert tap.deferred_total == 2
-    assert commits.source_count == 1
-    assert commits.deferred_count == 2
+    assert tap.total == 2
+    assert commits.count == 2
+    assert sum(tap.callsite_counter.values()) == tap.total
+    assert sum(commits.callsite_counter.values()) == commits.count
 
 
 def test_bench_percentile_nearest_rank() -> None:
@@ -230,8 +228,8 @@ def test_bench_json_report_shape() -> None:
 
     assert report["config"] == {"scenario": "steady", "devices": 2, "iters": 2}
     assert report["wall_ms"]["fold_return"] == {"median": 10.0, "p95": 20.0, "all": [10.0, 20.0]}
-    assert report["queries"] == {"source_per_fold": 2.0, "deferred_per_fold": 0.0, "complete_per_fold": 2.0}
-    assert report["commits"] == {"source_per_fold": 1.0, "deferred_per_fold": 0.0, "complete_per_fold": 1.0}
+    assert report["queries"] == {"source_per_fold": 2.0, "complete_per_fold": 2.0}
+    assert report["commits"] == {"source_per_fold": 1.0, "complete_per_fold": 1.0}
     assert report["signatures"] == {"SELECT devices": 2.0}
     (entry,) = report["callsites"]
     assert entry == {

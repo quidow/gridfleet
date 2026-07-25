@@ -85,22 +85,22 @@ def render_summary(out_dir: Path, statuses: dict[str, bool]) -> str:
     lines = [
         f"# Device health fold benchmark sweep — {datetime.date.today().isoformat()}",
         "",
-        "| Cell | Scenario | Devices | Churn | Fleet | Source q/fold | q/device | Deferred q | Source commits |"
+        "| Cell | Scenario | Devices | Churn | Fleet | Source q/fold | q/device | Source commits |"
         " Wall median ms | Wall p95 ms |",
-        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|---:|",
+        "|---|---|---:|---:|---|---:|---:|---:|---:|---:|",
     ]
     for name in CELLS:
         if name not in statuses:
             continue  # filtered out by --only
         if not statuses[name]:
-            lines.append(f"| {name} | FAILED | | | | | | | | | |")
+            lines.append(f"| {name} | FAILED | | | | | | | | |")
             continue
         doc = json.loads((out_dir / f"{name}.json").read_text())
         cfg, q, c, wall = doc["config"], doc["queries"], doc["commits"], doc["wall_ms"]["fold_return"]
         devices = int(cfg["devices"])
         lines.append(
             f"| {name} | {cfg['scenario']} | {devices} | {cfg['churn']} | {cfg['fleet']} "
-            f"| {q['source_per_fold']:.0f} | {q['source_per_fold'] / devices:.2f} | {q['deferred_per_fold']:.0f} "
+            f"| {q['source_per_fold']:.0f} | {q['source_per_fold'] / devices:.2f} "
             f"| {c['source_per_fold']:.1f} | {wall['median']:.1f} | {wall['p95']:.1f} |"
         )
     failed = sorted(name for name, ok in statuses.items() if not ok)

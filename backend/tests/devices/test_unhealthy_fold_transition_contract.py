@@ -687,7 +687,7 @@ async def test_unhealthy_fold_uses_one_commit_and_no_general_device_relock(
     finally:
         event.remove(engine, "commit", commit_tap)
 
-    assert commit_tap.source_count == 1
+    assert commit_tap.count == 1
     lock_device_spy.assert_not_awaited()
     device_events = list(
         (

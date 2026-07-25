@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event as sa_event
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.metrics import register_gauge_refresher
@@ -23,16 +23,14 @@ from app.events.catalog import (
     default_severity_for,
 )
 from app.events.models import SystemEvent
+from app.events.outbox_schema import NOTIFY_CHANNEL
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
     from sqlalchemy.orm import Session
 
-    from app.events.protocols import EventPublisher
-
 logger = get_logger(__name__)
 
-NOTIFY_CHANNEL = "system_events"
 LISTENER_POLL_INTERVAL_SEC = 5
 HANDLER_DRAIN_TIMEOUT_SEC = 5.0
 
@@ -69,6 +67,38 @@ class Event:
             id=row.event_id,
             severity=severity,
         )
+
+
+def build_event(
+    event_type: str,
+    data: dict[str, Any],
+    *,
+    severity: EventSeverity | None = None,
+) -> Event:
+    """Validate and construct the single Event envelope for one emission.
+
+    This is the one place an event is *emitted*, so it is also the one place
+    the published counter is incremented. Loaders rebuild envelopes through
+    ``Event.from_system_event`` and must not count again: with N workers each
+    reloading every committed row, counting at dispatch would multiply
+    ``gridfleet_events_published_total`` by the worker count. The tradeoff is
+    that an emission whose transaction later rolls back is still counted.
+    """
+    if event_type in PUBLIC_EVENT_NAME_SET:
+        resolved: EventSeverity = severity if severity is not None else default_severity_for(event_type)
+        allowed = allowed_severities_for(event_type)
+        if resolved not in allowed:
+            raise ValueError(f"severity {resolved!r} not allowed for {event_type!r}; allowed: {sorted(allowed)!r}")
+    else:
+        resolved = severity if severity is not None else "neutral"
+    record_event_published(event_type)
+    return Event(type=event_type, data=data, severity=resolved)
+
+
+def stage_system_event(db: AsyncSession | Session, event: Event) -> SystemEvent:
+    row = SystemEvent(event_id=event.id, type=event.type, data=event.data, severity=event.severity)
+    db.add(row)
+    return row
 
 
 EventHandler = Callable[[Event], Awaitable[None] | None]
@@ -149,18 +179,30 @@ class EventBus:
         data: dict[str, Any],
         *,
         severity: EventSeverity | None = None,
-    ) -> None:
-        """Queue an event to dispatch after the outer transaction commits.
+    ) -> SystemEvent | None:
+        """Stage an event row in the caller's open source transaction.
 
         Accepts either an ``AsyncSession`` or the underlying sync ``Session`` —
         callers that pull the session out of ``inspect(obj).session`` get the
         sync object directly and can pass it without reconstructing the
         ``AsyncSession``.
 
-        On commit, ``loop.create_task(self.publish(event_type, data))`` runs for
-        each queued event. On rollback, the queue is dropped — SSE
-        subscribers never see a transition that did not become durable. ``data``
-        is captured by reference — do not mutate it after queuing.
+        The row is added but never flushed, committed, or dispatched here: the
+        caller's commit makes it durable and the database trigger notifies
+        listeners, so a rollback (or savepoint rollback) drops the event with
+        the change that caused it. An unconfigured bus has no outbox and falls
+        back to the in-memory after-commit queue, returning ``None`` instead of
+        the staged row. ``data`` is captured by reference — do not mutate it
+        after queuing.
+        """
+        event = build_event(event_type, data, severity=severity)
+        if self._session_factory is None:
+            self._queue_fallback_event(db, event)
+            return None
+        return stage_system_event(db, event)
+
+    def _queue_fallback_event(self, db: AsyncSession | Session, event: Event) -> None:
+        """In-memory after-commit queue for an unconfigured (non-persistent) bus.
 
         The running loop is captured at registration time (when this method is
         called from inside an awaited coroutine). This is strictly safer than
@@ -169,25 +211,29 @@ class EventBus:
         ``asyncio.get_running_loop()`` would raise ``RuntimeError``.
         """
         sync_session = db.sync_session if isinstance(db, AsyncSession) else db
+        if sync_session.get_transaction() is None:
+            # Ride a real transaction the way persistent staging does, where
+            # ``db.add`` autobegins one. Without it ``Session.rollback()`` has
+            # nothing to roll back and fires no drop hook, so the queue would
+            # survive to be dispatched by the next unrelated commit.
+            sync_session.begin()
         loop = asyncio.get_running_loop()
 
-        pending: list[tuple[str, dict[str, Any], EventSeverity | None]] = sync_session.info.setdefault(
-            _PENDING_EVENTS_KEY, []
-        )
-        pending.append((event_type, data, severity))
+        pending: list[Event] = sync_session.info.setdefault(_PENDING_EVENTS_KEY, [])
+        pending.append(event)
 
         if sync_session.info.get(_PENDING_EVENTS_LISTENER_KEY):
             return
         sync_session.info[_PENDING_EVENTS_LISTENER_KEY] = True
 
         def _flush_on_commit(_session: object) -> None:
-            events: list[tuple[str, dict[str, Any], EventSeverity | None]] = sync_session.info.pop(
-                _PENDING_EVENTS_KEY, []
-            )
+            events: list[Event] = sync_session.info.pop(_PENDING_EVENTS_KEY, [])
             sync_session.info.pop(_PENDING_EVENTS_LISTENER_KEY, None)
             if not events:
                 return
-            task = loop.create_task(_publish_pending_events(events, self))
+            # ``loop.create_task`` (not ``asyncio.create_task``): after_commit is a sync
+            # SQLAlchemy callback that can fire with no running loop.
+            task = loop.create_task(_dispatch_pending_fallback(events, self))
             self.track_task(task)
 
         def _drop_on_rollback(_session: object) -> None:
@@ -201,18 +247,18 @@ class EventBus:
         sa_event.listen(sync_session, "after_rollback", _drop_on_rollback, once=True)
 
     async def publish(self, event_type: str, data: dict[str, Any], severity: EventSeverity | None = None) -> None:
-        if event_type in PUBLIC_EVENT_NAME_SET:
-            resolved: EventSeverity = severity if severity is not None else default_severity_for(event_type)
-            allowed = allowed_severities_for(event_type)
-            if resolved not in allowed:
-                raise ValueError(f"severity {resolved!r} not allowed for {event_type!r}; allowed: {sorted(allowed)!r}")
-        else:
-            resolved = severity if severity is not None else "neutral"
-        event = Event(type=event_type, data=data, severity=resolved)
-        record_event_published(event_type)
-        if self._session_factory is not None:
-            await self._persist_system_event(event)
-        self._remember_and_dispatch(event)
+        """Publish a standalone event that cannot join a source transaction.
+
+        Persistent mode owns one short outbox transaction and then waits for the
+        listener or poller to deliver the committed row — it never dispatches
+        locally, so every worker sees the event exactly the same way.
+        """
+        event = build_event(event_type, data, severity=severity)
+        if self._session_factory is None:
+            self._remember_and_dispatch(event)
+            return
+        async with self._session_factory.begin() as db:
+            stage_system_event(db, event)
 
     async def get_recent_events_persisted(
         self,
@@ -263,19 +309,6 @@ class EventBus:
         async with self._session_factory() as db:
             result = await db.execute(select(func.max(SystemEvent.id)))
             return int(result.scalar() or 0)
-
-    async def _persist_system_event(self, event: Event) -> None:
-        assert self._session_factory is not None
-        async with self._session_factory() as db:
-            row = SystemEvent(event_id=event.id, type=event.type, data=event.data, severity=event.severity)
-            db.add(row)
-            await db.flush()
-            self._last_seen_system_event_id = max(self._last_seen_system_event_id, int(row.id))
-            await db.execute(
-                text("SELECT pg_notify(:channel, :payload)"),
-                {"channel": NOTIFY_CHANNEL, "payload": str(row.id)},
-            )
-            await db.commit()
 
     async def _dispatch_handlers(self, event: Event) -> None:
         for handler in self._handlers:
@@ -411,11 +444,14 @@ _PENDING_EVENTS_KEY = "_pending_event_bus_events"
 _PENDING_EVENTS_LISTENER_KEY = "_pending_event_bus_events_listener"
 
 
-async def _publish_pending_events(
-    events: list[tuple[str, dict[str, Any], EventSeverity | None]], bus: EventPublisher
-) -> None:
-    for event_type, data, severity in events:
+async def _dispatch_pending_fallback(events: list[Event], bus: EventBus) -> None:
+    """Dispatch fallback-mode events that survived to commit.
+
+    Dispatches directly rather than re-entering ``publish`` so a session reused
+    after a rollback can never republish a discarded event.
+    """
+    for event in events:
         try:
-            await bus.publish(event_type, data, severity=severity)
+            bus._remember_and_dispatch(event)
         except Exception:
-            logger.exception("Failed to publish deferred event %s", event_type)
+            logger.exception("Failed to dispatch deferred event %s", event.type)

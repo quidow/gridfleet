@@ -15,12 +15,13 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from app.events.catalog import EventSeverity
+    from app.events.models import SystemEvent
 
 
 class EventPublisher(Protocol):
-    async def publish(
-        self, event_type: str, data: dict[str, Any], *, severity: EventSeverity | None = None
-    ) -> None: ...
+    async def publish(self, event_type: str, data: dict[str, Any], *, severity: EventSeverity | None = None) -> None:
+        """Publish a standalone event; persistent implementations own a short outbox transaction."""
+        ...
 
     def track_task(self, task: asyncio.Task[None]) -> None: ...
 
@@ -31,4 +32,6 @@ class EventPublisher(Protocol):
         data: dict[str, Any],
         *,
         severity: EventSeverity | None = None,
-    ) -> None: ...
+    ) -> SystemEvent | None:
+        """Stage an event in the caller's open source transaction; caller owns commit or rollback."""
+        ...

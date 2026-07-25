@@ -83,6 +83,9 @@ async def test_publish_persists_and_reads_recent_events(db_session: AsyncSession
 
     assert total == 1
     assert persisted[0]["type"] == "device.updated"
+    # Persistent publish only stages; the in-memory log fills when the poller reloads.
+    assert recent_events(bus) == []
+    await bus._dispatch_missed_events()
     assert recent_events(bus, limit=2)[-1]["type"] == "device.updated"
 
 
@@ -107,8 +110,10 @@ async def test_load_system_event_skips_duplicate_entries(db_session: AsyncSessio
     await bus.publish("device.created", {"device_id": "1"})
     row_id = await db_session.scalar(select(SystemEvent.id))
     assert row_id is not None
+    await bus._load_and_dispatch_system_event(int(row_id))
 
     original = recent_events(bus)
+    assert len(original) == 1
     await bus._load_and_dispatch_system_event(int(row_id))
 
     assert recent_events(bus) == original
