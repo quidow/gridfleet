@@ -136,19 +136,6 @@ async def publish(job: dict[str, Any]) -> None:
         publisher.queue_for_session(db, VERIFICATION_EVENT, snap, severity=severity)
 
 
-async def persist_job(job: dict[str, Any]) -> None:
-    session_factory = cast("SessionFactory", job[_SESSION_FACTORY_KEY])
-    async with session_factory() as db:
-        row = await db.get(Job, job[_DB_JOB_ID_KEY])
-        if row is None:
-            return
-        row.snapshot = snapshot(job)
-        row.status = str(job["status"])
-        finished_at = job.get("finished_at")
-        row.completed_at = datetime.fromisoformat(finished_at) if isinstance(finished_at, str) else None
-        await db.commit()
-
-
 def stage(job: dict[str, Any], name: str) -> dict[str, Any]:
     for current_stage in cast("list[dict[str, Any]]", job["stages"]):
         if current_stage["name"] == name:

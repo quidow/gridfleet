@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.events.event_bus import build_event, stage_system_event
 from app.events.models import SystemEvent
+from app.events.protocols import EventPublisher
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.verification.services import job_state
@@ -41,11 +42,16 @@ class _RecordingPublisher:
         raise AssertionError("publish() called: job_state.publish must stage in the source transaction, not emit")
 
 
-async def test_device_verification_job_state_persist_and_stage_resolution_branches() -> None:
+async def test_device_verification_job_state_publish_and_stage_resolution_branches() -> None:
+    """The missing-row and completed-job branches, now owned by ``publish``.
+
+    They used to be exercised through ``persist_job``, which was deleted once
+    ``publish`` inlined the same writes and no caller was left.
+    """
+
     class Session:
         def __init__(self, row: object | None) -> None:
             self.row = row
-            self.commit = AsyncMock()
 
         async def __aenter__(self) -> Session:
             return self
@@ -56,28 +62,41 @@ async def test_device_verification_job_state_persist_and_stage_resolution_branch
         async def get(self, *_args: object) -> object | None:
             return self.row
 
+    class SessionFactory:
+        """``publish`` opens ``session_factory.begin()``; the block owns the commit."""
+
+        def __init__(self, row: object | None) -> None:
+            self.session = Session(row)
+
+        def begin(self) -> Session:
+            return self.session
+
+    missing_publisher = AsyncMock(spec=EventPublisher)
     missing_job = job_state.hydrate_job(
         job_state.new_job("missing"),
         db_job_id="missing",
         payload={"operation_id": "missing"},
-        session_factory=lambda: Session(None),
-        publisher=AsyncMock(),
+        session_factory=SessionFactory(None),
+        publisher=missing_publisher,
     )
-    await job_state.persist_job(missing_job)
+    await job_state.publish(missing_job)
+    missing_publisher.queue_for_session.assert_not_called()
 
     row = SimpleNamespace(snapshot=None, status=None, completed_at=None)
+    completed_publisher = AsyncMock(spec=EventPublisher)
     completed = job_state.hydrate_job(
         job_state.new_job("done"),
         db_job_id="done",
         payload={"operation_id": "done"},
-        session_factory=lambda: Session(row),
-        publisher=AsyncMock(),
+        session_factory=SessionFactory(row),
+        publisher=completed_publisher,
     )
     completed["status"] = "completed"
     completed["finished_at"] = "2026-05-13T12:00:00+00:00"
-    await job_state.persist_job(completed)
+    await job_state.publish(completed)
     assert row.status == "completed"
     assert row.completed_at is not None
+    completed_publisher.queue_for_session.assert_called_once()
 
     failed = job_state.new_job("failed")
     failed["status"] = "failed"
