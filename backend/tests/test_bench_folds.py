@@ -75,7 +75,6 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy import event, func, select, update
 
-from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.appium_nodes.services.node_health import NodeHealthService
 from app.appium_nodes.services.reconciler import ReconcilerService, converge_pushed_host
@@ -83,28 +82,21 @@ from app.core.metrics_recorders import HOST_PUSH_OBSERVATION_FAILURES
 from app.core.observation_revision import next_observation_revision
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.models.intent import DeviceIntent
 from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.models.reservation import DeviceReservation, ExclusionKind
 from app.devices.services import lifecycle_policy_state
-from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent_types import CommandKind, verification_intent_source
 from app.devices.services.property_refresh import PropertyRefreshService
-from app.devices.services.review import ReviewService
 from app.devices.services.state import derive_operational_state
-from app.events.models import SystemEvent
-from app.hosts.models import Host, HostStatus
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
-from app.hosts.service_status_push import OBSERVATION_REVISION_KEY, HostStatusPushService, ObservationFold
+from app.hosts.service_status_push import HostStatusPushService, ObservationFold
 from app.lifecycle.services import remediation_log
-from app.lifecycle.services.actions import LifecyclePolicyActionsService
-from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.packs.services.discovery import PackDiscoveryService
 from app.runs.models import RunState, TestRun
-from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.bench_instrumentation import (
     CommitTap,
@@ -118,6 +110,15 @@ from tests.bench_instrumentation import (
     validate_benchmark_knobs,
 )
 from tests.fakes import FakeSettingsReader
+from tests.fold_fixtures import (
+    HOMOGENEOUS_FLEET,
+    MIXED_FLEET,
+    SeededDevice,
+    TupleSpec,
+    build_real_lifecycle_connectivity_service,
+    device_health_loop_section,
+    seed_fleet,
+)
 from tests.helpers import build_connectivity_service, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
@@ -125,6 +126,9 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+
+    from app.devices.services.connectivity import ConnectivityService
+    from app.hosts.models import Host
 
 pytestmark = [
     pytest.mark.db,
@@ -157,13 +161,13 @@ class _HealthScenario:
     """
 
     reseed_per_iteration: bool
-    seed_extra: Callable[[AsyncSession, list[_SeededDevice]], Awaitable[None]] | None = None
-    rearm: Callable[[AsyncSession, list[_SeededDevice]], Awaitable[None]] | None = None
-    verify: Callable[[AsyncSession, QueryTap, list[_SeededDevice]], Awaitable[None]] | None = None
+    seed_extra: Callable[[AsyncSession, list[SeededDevice]], Awaitable[None]] | None = None
+    rearm: Callable[[AsyncSession, list[SeededDevice]], Awaitable[None]] | None = None
+    verify: Callable[[AsyncSession, QueryTap, list[SeededDevice]], Awaitable[None]] | None = None
     expect_receipts: str = "all"  # "all" | "present-only"
 
 
-async def _verify_repeat_unhealthy(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+async def _verify_repeat_unhealthy(db: AsyncSession, tap: QueryTap, devices: list[SeededDevice]) -> None:
     assert all(d.identity.startswith("bench-g0-") for d in devices), (
         "repeat-unhealthy must observe the generation-0 fleet across all iterations; a re-seed occurred"
     )
@@ -178,7 +182,7 @@ async def _verify_repeat_unhealthy(db: AsyncSession, tap: QueryTap, devices: lis
     )
 
 
-async def _verify_unhealthy_cardinality(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+async def _verify_unhealthy_cardinality(db: AsyncSession, tap: QueryTap, devices: list[SeededDevice]) -> None:
     shape = scenario_observation_shape(scenario=SCENARIO, devices=len(devices), churn=CHURN)
     unhealthy = await db.scalar(
         select(func.count())
@@ -193,7 +197,7 @@ async def _verify_unhealthy_cardinality(db: AsyncSession, tap: QueryTap, devices
 _DEEP_HISTORY_ROWS = 200
 
 
-async def _arm_stale_ladders(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+async def _arm_stale_ladders(db: AsyncSession, devices: list[SeededDevice]) -> None:
     """Give every device an active escalation episode (a bare failure row) so the
     healthy fold's self-heal hook takes its residue-clear mutation path. Used as
     ``rearm`` so the path re-fires every iteration, warm-up included."""
@@ -202,11 +206,11 @@ async def _arm_stale_ladders(db: AsyncSession, devices: list[_SeededDevice]) -> 
     await db.commit()
 
 
-async def _verify_stale_ladder_cleared(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+async def _verify_stale_ladder_cleared(db: AsyncSession, tap: QueryTap, devices: list[SeededDevice]) -> None:
     ladder = await remediation_log.load_ladder(db, devices[0].device_id)
     assert ladder.episode_active is False, "self-heal residue clear did not run"
     # The appium-xcuitest test-fixture manifest (tests/packs/fixtures/manifests/appium-xcuitest.yaml)
-    # marks "bundle_id" required_for_session for real devices; _seed_fleet never sets it, so those
+    # marks "bundle_id" required_for_session for real devices; seed_fleet never sets it, so those
     # devices are permanently setup_required -> offline and never reach the connectivity healthy
     # path's self-heal branch. Only the appium-uiautomator2 share of the fleet is ready (all of it,
     # under FOLD_BENCH_FLEET=homogeneous), so the reset-append floor is scoped to those devices.
@@ -216,7 +220,7 @@ async def _verify_stale_ladder_cleared(db: AsyncSession, tap: QueryTap, devices:
     )
 
 
-async def _seed_deep_history(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+async def _seed_deep_history(db: AsyncSession, devices: list[SeededDevice]) -> None:
     """~200 remediation rows per device ending in a reset: episode inactive, so the
     healthy path only READS the deep ladder without appending."""
     base = now_utc() - timedelta(hours=1)
@@ -248,7 +252,7 @@ async def _seed_deep_history(db: AsyncSession, devices: list[_SeededDevice]) -> 
     await db.commit()
 
 
-async def _verify_deep_history_untouched(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+async def _verify_deep_history_untouched(db: AsyncSession, tap: QueryTap, devices: list[SeededDevice]) -> None:
     count = await db.scalar(
         select(func.count())
         .select_from(DeviceRemediationLogEntry)
@@ -265,7 +269,7 @@ async def _verify_deep_history_untouched(db: AsyncSession, tap: QueryTap, device
     )
 
 
-async def _seed_active_claims(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+async def _seed_active_claims(db: AsyncSession, devices: list[SeededDevice]) -> None:
     """Claim the first half of the fleet: even claimed indexes get a live session
     (busy mask), odd get an unexpired verification lease (verifying mask)."""
     lease_until = now_utc() + timedelta(hours=1)
@@ -285,7 +289,7 @@ async def _seed_active_claims(db: AsyncSession, devices: list[_SeededDevice]) ->
     await db.commit()
 
 
-async def _verify_claims_intact(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+async def _verify_claims_intact(db: AsyncSession, tap: QueryTap, devices: list[SeededDevice]) -> None:
     claimed = devices[: len(devices) // 2]
     sessions = await db.scalar(
         select(func.count())
@@ -316,7 +320,7 @@ async def _verify_claims_intact(db: AsyncSession, tap: QueryTap, devices: list[_
         assert state == expected, f"claim for {seeded.identity} projected {state}, expected {expected}"
 
 
-async def _seed_maintenance_half(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+async def _seed_maintenance_half(db: AsyncSession, devices: list[SeededDevice]) -> None:
     """First half (the section-present half) goes into maintenance; the second half
     stays out of the pushed section entirely (the missing-device skip)."""
     for d in devices[: len(devices) // 2]:
@@ -325,7 +329,7 @@ async def _seed_maintenance_half(db: AsyncSession, devices: list[_SeededDevice])
         await db.commit()
 
 
-async def _verify_terminal_noop(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+async def _verify_terminal_noop(db: AsyncSession, tap: QueryTap, devices: list[SeededDevice]) -> None:
     # Maintenance devices are pushed UNHEALTHY on purpose: the in_maintenance
     # short-circuit precedes health evaluation, so surviving health facts prove
     # the short-circuit fired; the normal path would flip them to False.
@@ -340,7 +344,7 @@ async def _verify_terminal_noop(db: AsyncSession, tap: QueryTap, devices: list[_
     assert still_healthy == len(devices) // 2, "maintenance short-circuit must ignore the pushed unhealthy signal"
 
 
-async def _seed_stale_run_exclusions(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+async def _seed_stale_run_exclusions(db: AsyncSession, devices: list[SeededDevice]) -> None:
     """One non-terminal run reserving every device, each reservation carrying an
     indefinite health exclusion — the state restore_run_after_self_heal clears."""
     run = TestRun(name="bench-exclusion-run", state=RunState.active, requirements=[])
@@ -367,7 +371,7 @@ async def _seed_stale_run_exclusions(db: AsyncSession, devices: list[_SeededDevi
     await db.commit()
 
 
-async def _rearm_run_exclusions(db: AsyncSession, devices: list[_SeededDevice]) -> None:
+async def _rearm_run_exclusions(db: AsyncSession, devices: list[SeededDevice]) -> None:
     await db.execute(
         update(DeviceReservation)
         .where(
@@ -385,9 +389,9 @@ async def _rearm_run_exclusions(db: AsyncSession, devices: list[_SeededDevice]) 
     await db.commit()
 
 
-async def _verify_run_exclusion_restored(db: AsyncSession, tap: QueryTap, devices: list[_SeededDevice]) -> None:
+async def _verify_run_exclusion_restored(db: AsyncSession, tap: QueryTap, devices: list[SeededDevice]) -> None:
     # The appium-xcuitest test-fixture manifest (tests/packs/fixtures/manifests/appium-xcuitest.yaml)
-    # marks "bundle_id" required_for_session for real devices; _seed_fleet never sets it, so those
+    # marks "bundle_id" required_for_session for real devices; seed_fleet never sets it, so those
     # devices are permanently setup_required -> offline and never reach the connectivity healthy
     # path's self-heal branch (_maybe_auto_recover only calls reconcile_self_heal_locked when
     # operational_state != offline). Only the appium-uiautomator2 share of the fleet is ready (all of
@@ -448,84 +452,16 @@ if SCENARIO not in _SCENARIOS:
     raise ValueError(f"unknown FOLD_BENCH_SCENARIO {SCENARIO!r}; known: {sorted(_SCENARIOS)}")
 
 
-def _build_real_lifecycle_connectivity_service() -> ConnectivityService:
-    review = ReviewService()
-    incidents = LifecycleIncidentService(publisher=event_bus)
-    reservation = RunReservationService(review=review)
-    actions = LifecyclePolicyActionsService(
-        publisher=event_bus,
-        reservation=reservation,
-        incidents=incidents,
-    )
-    lifecycle_policy = LifecyclePolicyService(
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        actions=actions,
-        incidents=incidents,
-        viability=AsyncMock(),
-        node_manager=AsyncMock(),
-        review=review,
-    )
-    return ConnectivityService(
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        lifecycle_policy=lifecycle_policy,
-        health=DeviceHealthService(publisher=event_bus),
-    )
-
-
 def _build_device_health_benchmark_service(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> ConnectivityService:
     if LIFECYCLE_MODE == "isolated":
         return build_connectivity_service(session_factory)
-    return _build_real_lifecycle_connectivity_service()
+    return build_real_lifecycle_connectivity_service()
 
 
-@dataclass(frozen=True)
-class _TupleSpec:
-    """One (pack, platform, device_type, connection) shape a host runs."""
-
-    pack_id: str
-    platform_id: str
-    device_type: DeviceType
-    connection_type: ConnectionType
-    identity_scheme: str
-    os_version: str
-    drift_os_version: str  # property-churn target; must differ from os_version
-
-
-@dataclass(frozen=True)
-class _SeededDevice:
-    device_id: uuid.UUID
-    identity: str  # identity_value == connection_target
-    port: int
-    pid: int
-    spec: _TupleSpec
-
-
-# Mixed-per-host default: two distinct (pack, platform, device_type) tuples so
-# the connectivity fold's pack_platform_resolution_cache and preloaded catalog
-# take the cache-MISS path they take in a real mixed deployment. Both USB, so no
-# network-device identity-rewrite path is involved.
-_MIXED_FLEET: tuple[_TupleSpec, ...] = (
-    _TupleSpec(
-        "appium-uiautomator2",
-        "android_mobile",
-        DeviceType.real_device,
-        ConnectionType.usb,
-        "android_serial",
-        "14",
-        "15",
-    ),
-    _TupleSpec("appium-xcuitest", "ios", DeviceType.real_device, ConnectionType.usb, "apple_udid", "17", "18"),
-)
-# Baseline: today's uniform shape, for mixed-vs-homogeneous cache comparison.
-_HOMOGENEOUS_FLEET: tuple[_TupleSpec, ...] = (_MIXED_FLEET[0],)
-
-FLEET: tuple[_TupleSpec, ...] = (
-    _HOMOGENEOUS_FLEET if os.getenv("FOLD_BENCH_FLEET", "mixed") == "homogeneous" else _MIXED_FLEET
+FLEET: tuple[TupleSpec, ...] = (
+    HOMOGENEOUS_FLEET if os.getenv("FOLD_BENCH_FLEET", "mixed") == "homogeneous" else MIXED_FLEET
 )
 
 
@@ -534,70 +470,7 @@ def _churn_count(n: int, churn: float) -> int:
     return round(n * churn)
 
 
-async def _seed_fleet(
-    db: AsyncSession, specs: tuple[_TupleSpec, ...], n: int, generation: int = 0
-) -> tuple[Host, list[_SeededDevice]]:
-    # generation makes hostname + identity_value unique so churn re-seeds are a
-    # clean fleet (hostname is globally unique; identity_value keys the fold's
-    # control-plane escalation state, so it must not repeat across generations).
-    host = Host(
-        hostname=f"bench-host-g{generation}",
-        ip="10.0.0.10",
-        os_type="linux",
-        agent_port=5100,
-        status=HostStatus.online,
-    )
-    db.add(host)
-    await db.flush()
-    seeded: list[_SeededDevice] = []
-    for i in range(n):
-        spec = specs[i % len(specs)]  # round-robin, deterministic
-        ident = f"bench-g{generation}-{i:04d}"
-        device = Device(
-            pack_id=spec.pack_id,
-            platform_id=spec.platform_id,
-            identity_scheme=spec.identity_scheme,
-            identity_scope="host",
-            identity_value=ident,
-            connection_target=ident,
-            name=f"Bench Device {i}",
-            os_version=spec.os_version,
-            host_id=host.id,
-            operational_state=DeviceOperationalState.available,
-            device_checks_healthy=True,
-            verified_at=now_utc(),
-            device_type=spec.device_type,
-            connection_type=spec.connection_type,
-        )
-        db.add(device)
-        await db.flush()
-        db.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723 + i,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723 + i,
-                pid=1000 + i,
-                active_connection_target=ident,
-                health_running=True,
-                last_health_checked_at=now_utc(),
-                last_observed_at=now_utc(),
-            )
-        )
-        seeded.append(
-            _SeededDevice(
-                device_id=device.id,
-                identity=ident,
-                port=4723 + i,
-                pid=1000 + i,
-                spec=spec,
-            )
-        )
-    await db.commit()
-    return host, seeded
-
-
-def _device_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str, object]:
+def _device_section(devices: list[SeededDevice], churn: float = 0.0) -> dict[str, object]:
     k = _churn_count(len(devices), churn)
     return {
         "reported_at": now_utc().isoformat(),
@@ -608,32 +481,7 @@ def _device_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[st
     }
 
 
-def _device_health_loop_section(
-    devices: list[_SeededDevice],
-    *,
-    unhealthy_count: int,
-    revision: int,
-    section_sequence: int,
-) -> dict[str, object]:
-    return {
-        "reported_at": now_utc().isoformat(),
-        "section_sequence": section_sequence,
-        OBSERVATION_REVISION_KEY: revision,
-        "complete_gather": True,
-        "devices": [
-            {
-                "device_id": str(device.device_id),
-                "probe_status": "observed",
-                "presence": "present",
-                "health": {"healthy": index >= unhealthy_count, "checks": []},
-                "lifecycle_state": {"status": "unsupported", "value": None},
-            }
-            for index, device in enumerate(devices)
-        ],
-    }
-
-
-def _node_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str, object]:
+def _node_section(devices: list[SeededDevice], churn: float = 0.0) -> dict[str, object]:
     k = _churn_count(len(devices), churn)
     return {
         "reported_at": now_utc().isoformat(),
@@ -650,7 +498,7 @@ def _node_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str,
     }
 
 
-def _properties_section(devices: list[_SeededDevice], churn: float = 0.0) -> dict[str, object]:
+def _properties_section(devices: list[SeededDevice], churn: float = 0.0) -> dict[str, object]:
     k = _churn_count(len(devices), churn)
     return {
         "reported_at": now_utc().isoformat(),
@@ -678,8 +526,8 @@ def _report(label: str, tap: QueryTap, wall_ms: list[float]) -> None:
 async def _measure(
     label: str,
     *,
-    seed: Callable[[int], Awaitable[tuple[Host, list[_SeededDevice]]]],
-    run: Callable[[Host, list[_SeededDevice]], Awaitable[None]],
+    seed: Callable[[int], Awaitable[tuple[Host, list[SeededDevice]]]],
+    run: Callable[[Host, list[SeededDevice]], Awaitable[None]],
     tap: QueryTap,
 ) -> None:
     """Run ITERS timed iterations. Under churn, re-seed a fresh generation per
@@ -712,10 +560,10 @@ async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
     tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
-    async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
-        return await _seed_fleet(db_session, FLEET, DEVICES, generation=gen)
+    async def _seed(gen: int) -> tuple[Host, list[SeededDevice]]:
+        return await seed_fleet(db_session, FLEET, DEVICES, generation=gen)
 
-    async def _run(host: Host, devices: list[_SeededDevice]) -> None:
+    async def _run(host: Host, devices: list[SeededDevice]) -> None:
         await service.fold_host_nodes(db_session, host.id, _node_section(devices, CHURN))
 
     await _measure("fold_host_nodes", seed=_seed, run=_run, tap=tap)
@@ -733,10 +581,10 @@ async def test_bench_device_properties_fold(db_session: AsyncSession) -> None:
     tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
-    async def _seed(gen: int) -> tuple[Host, list[_SeededDevice]]:
-        return await _seed_fleet(db_session, FLEET, DEVICES, generation=gen)
+    async def _seed(gen: int) -> tuple[Host, list[SeededDevice]]:
+        return await seed_fleet(db_session, FLEET, DEVICES, generation=gen)
 
-    async def _run(host: Host, devices: list[_SeededDevice]) -> None:
+    async def _run(host: Host, devices: list[SeededDevice]) -> None:
         await service.fold_host_device_properties(db_session, host.id, _properties_section(devices, CHURN))
 
     await _measure("fold_host_device_properties", seed=_seed, run=_run, tap=tap)
@@ -763,7 +611,7 @@ async def test_bench_host_telemetry_fold(db_session: AsyncSession) -> None:
     tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
     tap.armed = False  # exclude the one-time seed from the per-push query count
-    host, _devices = await _seed_fleet(db_session, FLEET, DEVICES)
+    host, _devices = await seed_fleet(db_session, FLEET, DEVICES)
     wall_ms: list[float] = []
     for iteration in range(ITERS):
         tap.armed = True
@@ -776,7 +624,7 @@ async def test_bench_host_telemetry_fold(db_session: AsyncSession) -> None:
 
 
 def test_bench_real_lifecycle_composition() -> None:
-    service = _build_real_lifecycle_connectivity_service()
+    service = build_real_lifecycle_connectivity_service()
 
     assert isinstance(service._lifecycle_policy, LifecyclePolicyService)
     assert isinstance(service._health, DeviceHealthService)
@@ -833,7 +681,7 @@ def _build_push_service(session_factory: async_sessionmaker[AsyncSession]) -> Ho
     )
 
 
-def _consolidated_payload(devices: list[_SeededDevice], churn: float, iteration: int) -> dict[str, object]:
+def _consolidated_payload(devices: list[SeededDevice], churn: float, iteration: int) -> dict[str, object]:
     node_section = _node_section(devices, churn)
     return {
         "appium_processes": {
@@ -884,7 +732,7 @@ def _report_device_health_loop(
     tap: QueryTap,
     commits: CommitTap,
     fold_wall_ms: list[float],
-    settled_wall_ms: list[float],
+    poll_delivery_wall_ms: list[float],
 ) -> None:
     source_queries_per_fold = tap.total / ITERS
     complete_queries_per_fold = tap.total / ITERS
@@ -908,8 +756,9 @@ def _report_device_health_loop(
         f"p95 {percentile(fold_wall_ms, 0.95):.1f} ms   ({', '.join(f'{wall:.0f}' for wall in fold_wall_ms)})"
     )
     print(
-        f"  event-settled wall time:     median {percentile(settled_wall_ms, 0.5):.1f} ms   "
-        f"p95 {percentile(settled_wall_ms, 0.95):.1f} ms   ({', '.join(f'{wall:.0f}' for wall in settled_wall_ms)})"
+        f"  poller round-trip wall time: median {percentile(poll_delivery_wall_ms, 0.5):.1f} ms   "
+        f"p95 {percentile(poll_delivery_wall_ms, 0.95):.1f} ms   "
+        f"({', '.join(f'{wall:.0f}' for wall in poll_delivery_wall_ms)})"
     )
     print(
         f"  SOURCE queries/fold:         {source_queries_per_fold:.0f}   "
@@ -951,12 +800,12 @@ async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: asyn
 
     tap.armed = False
     commits.armed = False
-    host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=0)
+    host, devices = await seed_fleet(db_session, FLEET, DEVICES, generation=0)
     await db_session.commit()  # ensure the seed is visible to factory-opened sessions
     wall_ms: list[float] = []
     for iteration in range(ITERS):
         if CHURN > 0 and iteration > 0:
-            host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
+            host, devices = await seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
             await db_session.commit()
         payload = _consolidated_payload(devices, CHURN, iteration)
         tap.armed = True
@@ -993,16 +842,16 @@ async def test_bench_device_health_loop_fold(
     tap.armed = False
     commits.armed = False
     fold_wall_ms: list[float] = []
-    settled_wall_ms: list[float] = []
+    poll_delivery_wall_ms: list[float] = []
 
     try:
-        host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=0)
+        host, devices = await seed_fleet(db_session, FLEET, DEVICES, generation=0)
         if scenario.seed_extra is not None:
             await scenario.seed_extra(db_session, devices)
         for iteration in range(WARMUP + ITERS):
             armed = iteration >= WARMUP
             if scenario.reseed_per_iteration and iteration > 0:
-                host, devices = await _seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
+                host, devices = await seed_fleet(db_session, FLEET, DEVICES, generation=iteration)
                 if scenario.seed_extra is not None:
                     await scenario.seed_extra(db_session, devices)
             if scenario.rearm is not None:
@@ -1011,7 +860,7 @@ async def test_bench_device_health_loop_fold(
             shape = scenario_observation_shape(scenario=SCENARIO, devices=len(devices), churn=CHURN)
             present = devices[: shape.present_count]
             revision = await next_observation_revision(db_session)
-            section = _device_health_loop_section(
+            section = device_health_loop_section(
                 present,
                 unhealthy_count=shape.unhealthy_count,
                 revision=revision,
@@ -1031,10 +880,10 @@ async def test_bench_device_health_loop_fold(
             finally:
                 fold_returned_at = perf_counter()
                 await dispatch_committed_events()
-                event_settled_at = perf_counter()
+                poll_delivered_at = perf_counter()
                 if armed:
                     fold_wall_ms.append((fold_returned_at - t0) * 1000)
-                    settled_wall_ms.append((event_settled_at - t0) * 1000)
+                    poll_delivery_wall_ms.append((poll_delivered_at - t0) * 1000)
                 tap.armed = False
                 commits.armed = False
 
@@ -1073,7 +922,7 @@ async def test_bench_device_health_loop_fold(
                 for line in entry["plan"].splitlines():
                     print(f"       {line}")
 
-        _report_device_health_loop(tap, commits, fold_wall_ms, settled_wall_ms)
+        _report_device_health_loop(tap, commits, fold_wall_ms, poll_delivery_wall_ms)
         if JSON_PATH:
             report = build_json_report(
                 config={
@@ -1089,7 +938,7 @@ async def test_bench_device_health_loop_fold(
                 commits=commits,
                 iters=ITERS,
                 fold_wall_ms=fold_wall_ms,
-                settled_wall_ms=settled_wall_ms,
+                poll_delivery_wall_ms=poll_delivery_wall_ms,
                 explain_plans=explain_plans,
             )
             Path(JSON_PATH).write_text(json.dumps(report, indent=2))
@@ -1133,7 +982,7 @@ async def test_bench_healthy_fold_statement_budget(
     """
     install_async_session_callsite_profiler(monkeypatch)
     device_count = 10
-    service = _build_real_lifecycle_connectivity_service()
+    service = build_real_lifecycle_connectivity_service()
     tap = QueryTap()
     commits = CommitTap()
     engine = db_session.bind.sync_engine
@@ -1142,9 +991,9 @@ async def test_bench_healthy_fold_statement_budget(
     tap.armed = False
     commits.armed = False
     try:
-        host, devices = await _seed_fleet(db_session, FLEET, device_count, generation=0)
+        host, devices = await seed_fleet(db_session, FLEET, device_count, generation=0)
         revision = await next_observation_revision(db_session)
-        section = _device_health_loop_section(
+        section = device_health_loop_section(
             devices,
             unhealthy_count=0,
             revision=revision,
@@ -1199,101 +1048,3 @@ async def test_bench_healthy_fold_statement_budget(
         "legacy_reservation_load": 0,
     }
     assert budget == expected, f"healthy-fold statement budget drift: {budget} != {expected}"
-
-
-async def test_bench_event_fold_commit_and_notify_budget(
-    db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An event-bearing fold does one source commit; the event row rides that transaction.
-
-    Phase 6 stages the event row (``publisher.queue_for_session``) on the same source
-    transaction as the device mutation that caused it, and a database trigger
-    (``notify_system_event_insert``) does the ``pg_notify`` at commit time -- there is
-    no second, event-only commit. Before this phase, the source transaction committed
-    and then the now-deleted ``EventBus._persist_system_event`` opened a *second*
-    transaction to insert the ``system_events`` row and issued an application-side
-    ``SELECT pg_notify(...)``. Both symbols were deleted in Task 2. The pre-phase
-    baseline for the second-commit half is recorded here rather than re-derived --
-    the same underlying invariant (a reintroduced event-only commit) was guarded by
-    the old ``CommitTap.deferred_count > 0`` assertion at the now-deleted
-    ``tests/test_bench_folds.py:1115``, though that assertion lived inside
-    ``test_bench_device_health_loop_fold``'s env-parameterized multi-scenario sweep
-    (gated on ``effective_unhealthy``/``reseed_per_iteration``), not this fixture.
-    The application-side-notify half is guarded separately and statically, not here:
-    see ``tests/events/test_event_bus_publish_allowlist.py::test_no_unexpected_pg_notify_sites``.
-    A tap-based ``pg_notify`` assertion was tried here first and removed --
-    ``statement_signature()`` collapses any statement to verb+table, so
-    ``SELECT pg_notify('system_events', '999')`` collapses to ``'SELECT ?'`` under
-    bind-param, positional-param, and literal forms alike, indistinguishable from any
-    other argument-less SELECT. The assertion could never fail against this tap and was
-    vacuous.
-
-    This one-device first-unhealthy transition genuinely stages three events, not one:
-    ``device.operational_state_changed`` (available -> offline), ``device.health_changed``
-    (overall: failed), and ``device.lifecycle_incident`` (lifecycle_auto_stopped) -- the
-    real lifecycle stack's full escalation for a device's first observed failure. Those
-    three rows land in two ``INSERT INTO system_events`` statements, not one: an unrelated
-    write elsewhere in the same fold (``app.core.leader.state_store.set_value``) triggers
-    an autoflush that happens to catch the first two events batched together, and the
-    commit-time flush (attributed to
-    ``app.devices.services.connectivity.fold_host_devices``) picks up the third alone.
-    That split is an artifact of *when* an unrelated autoflush fires mid-fold, not a
-    property of the outbox itself, so the statement count is deliberately not asserted --
-    pinning it would couple this test to autoflush timing having nothing to do with
-    events.
-
-    The two assertions below cover different halves of the outbox invariant and are NOT
-    interchangeable:
-
-    - ``commits.count == 1`` is what actually catches a reintroduced separate event
-      transaction. ``CommitTap`` hooks the engine-level ``"commit"`` event, so it fires
-      no matter which session API issued the commit. Do not weaken or remove it on the
-      theory that the attribution check below already covers separate-transaction
-      regressions -- it does not (see next bullet).
-    - the callsite-attribution check only covers an INSERT reached through the
-      instrumented ``AsyncSession`` methods (``install_async_session_callsite_profiler``).
-      It is blind to ``EventBus.publish()``'s standalone
-      ``async with self._session_factory.begin() as db`` path: an INSERT reaching the
-      database through that path attributes to ``"unattributed"``, which trivially
-      satisfies ``not callsite.startswith("app.events.")`` and would NOT be caught here.
-    """
-    install_async_session_callsite_profiler(monkeypatch)
-    device_count = 1
-    service = _build_real_lifecycle_connectivity_service()
-    tap = QueryTap()
-    commits = CommitTap()
-    engine = db_session.bind.sync_engine
-    event.listen(engine, "before_cursor_execute", tap)
-    event.listen(engine, "commit", commits)
-    tap.armed = False
-    commits.armed = False
-    try:
-        host, devices = await _seed_fleet(db_session, FLEET, device_count, generation=0)
-        revision = await next_observation_revision(db_session)
-        section = _device_health_loop_section(
-            devices,
-            unhealthy_count=1,
-            revision=revision,
-            section_sequence=1,
-        )
-        tap.armed = True
-        commits.armed = True
-        settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
-        tap.armed = False
-        commits.armed = False
-        await dispatch_committed_events()
-        assert settled is True
-    finally:
-        event.remove(engine, "before_cursor_execute", tap)
-        event.remove(engine, "commit", commits)
-
-    inserts = [callsite for (callsite, signature) in tap.callsite_counter if signature == "INSERT system_events"]
-    assert inserts, "fold emitted no outbox row"
-    assert not any(callsite.startswith("app.events.") for callsite in inserts), (
-        f"outbox INSERT ran outside the source transaction: {inserts}"
-    )
-    assert commits.count == 1
-    event_row_count = await db_session.scalar(select(func.count()).select_from(SystemEvent))
-    assert event_row_count is not None
-    assert event_row_count >= 1

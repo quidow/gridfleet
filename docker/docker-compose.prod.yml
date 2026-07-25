@@ -44,6 +44,10 @@ services:
       - postgres
       - -c
       - max_connections=${POSTGRES_MAX_CONNECTIONS:-200}
+      # See docker-compose.yml for the derivation; the two files must agree, and
+      # backend/tests/contracts/test_compose_config.py asserts they do.
+      - -c
+      - idle_in_transaction_session_timeout=60s
     expose:
       - "5432"
     volumes:

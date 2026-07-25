@@ -542,7 +542,7 @@ async def test_concurrent_allocation_single_winner(
 
 async def _started_events_for(session_id: str) -> list[dict[str, Any]]:
     """Dispatch committed events and return session.started events for a session id."""
-    await dispatch_committed_events(event_bus)
+    await dispatch_committed_events()
     return [
         e["data"]
         for e in recent_events(event_bus, event_types=["session.started"])

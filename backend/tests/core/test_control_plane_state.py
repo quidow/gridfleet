@@ -113,6 +113,8 @@ async def test_operational_state_edge_publishes_only_on_change(db_session: Async
 
     changed = await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
     assert changed is False
+    await db_session.commit()
+    await dispatch_committed_events()
     assert recent_events(event_bus) == []
 
     db_session.add(Session(session_id="availability-session", device_id=device.id, status=SessionStatus.running))
@@ -120,7 +122,7 @@ async def test_operational_state_edge_publishes_only_on_change(db_session: Async
     changed = await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
     assert changed is True
     await db_session.commit()
-    await dispatch_committed_events(event_bus)
+    await dispatch_committed_events()
     events = recent_events(event_bus)
     assert len(events) == 1
     assert events[0]["data"]["old_operational_state"] == "offline"

@@ -498,7 +498,7 @@ async def test_update_session_status(client: AsyncClient, db_session: AsyncSessi
     assert data["status"] == "failed"
     assert data["ended_at"] is not None
 
-    await dispatch_committed_events(event_bus)
+    await dispatch_committed_events()
     events = recent_events(event_bus, limit=1)
     assert len(events) == 1
     assert events[0]["type"] == "session.ended"
