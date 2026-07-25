@@ -6,30 +6,21 @@ retires them on a time bound derived from Postgres'
 anywhere, which is the whole point: two designs that reasoned about transaction
 ids shipped and were withdrawn.
 
-OPEN QUESTION, awaiting a ruling. This module was also meant to hold
-``test_unserialised_polls_strand_a_row_that_the_lock_prevents`` -- the test
-``tests/events/test_event_bus_concurrency.py`` promises "lands with that
-rewrite", showing that two unserialised ``_dispatch_and_promote`` bodies strand a
-row and that ``_dispatch_lock`` is what prevents it. It is absent because its
-premise is false against this implementation: three separate interleavings
-(pause after the scan, pause between keyset pages, pause inside gap resolution)
-all deliver every committed row with the lock bypassed. The reason is structural
--- ``_dispatch_new_rows``, ``_record_new_gaps``, the frontier write and the prune
-are one synchronous block, so they are atomic on the event loop, and
-``_record_new_gaps`` covers exactly ``(frontier_it_reads, frontier]``. A body can
-only "skip" a gap because another body's atomic block already recorded it. The
-lock still buys frontier monotonicity and one scan's worth of database work per
-tick, but on this evidence it is defence in depth, not the thing that makes gap
-tracking correct. Decide whether to keep the lock and say so, or to write a test
-of what it does guarantee, before adding a test that asserts a strand.
+This module was originally specified to hold a test showing that two
+unserialised ``_dispatch_and_promote`` bodies *strand* a row, with
+``_dispatch_lock`` as the thing that prevents it. No such test exists, because
+no such strand exists: the hypothesis assumed the poll snapshots the watermark
+before its scan, and it does not. ``test_the_lock_keeps_the_frontier_monotonic``
+is what replaced it, and its docstring carries the reasoning.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from itertools import pairwise
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -41,6 +32,8 @@ from app.events.event_bus import Event, EventBus
 from tests.helpers import drain_handlers
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 pytestmark = pytest.mark.db
@@ -53,6 +46,42 @@ def _build_bus(db_session: AsyncSession, maker: async_sessionmaker[AsyncSession]
     received: list[Event] = []
     bus.register_handler(received.append)
     return bus, received
+
+
+async def _commit_row(bus: EventBus, maker: async_sessionmaker[AsyncSession], device_id: str) -> int:
+    """Stage and commit one outbox row in its own transaction; return its id."""
+    async with maker() as db:
+        row = bus.queue_for_session(db, "device.updated", {"device_id": device_id})
+        assert row is not None
+        await db.flush()
+        row_id = int(row.id)
+        await db.commit()
+    return row_id
+
+
+def _scan_that_parks_the_first_caller(
+    bus: EventBus, parked: asyncio.Event, release: asyncio.Event
+) -> Callable[[AsyncSession], Awaitable[Any]]:
+    """Wrap ``_scan_window`` so its first caller stops just after scanning.
+
+    A passthrough: it never names the scan's return shape, so a change to that
+    shape leaves every test using it alone. Parking *after* the real scan is what
+    leaves the caller holding a frontier that the world can then move past.
+    """
+    original = bus._scan_window
+    calls = 0
+
+    async def scan(db: AsyncSession) -> Any:  # noqa: ANN401
+        nonlocal calls
+        calls += 1
+        mine = calls
+        result = await original(db)
+        if mine == 1:
+            parked.set()
+            await release.wait()
+        return result
+
+    return scan
 
 
 def _retirements() -> float:
@@ -258,6 +287,134 @@ async def test_failed_gap_resolution_keeps_the_gap_set_and_the_frontier(
 
     assert set(bus._pending_gaps) == {10_001}
     assert bus._last_seen_system_event_id == frontier_before
+
+
+async def test_the_lock_keeps_the_frontier_monotonic(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """What ``_dispatch_lock`` actually buys: the frontier only ever moves forward.
+
+    ``_last_seen_system_event_id = frontier`` is an unconditional write, so a body
+    that scanned a while ago holds a stale, lower frontier and will write it
+    regardless of what happened since. With the lock bypassed a peer can advance
+    the frontier inside that window, and the stale body then drags it backwards.
+    Through the locked entry point the same interleaving cannot: the second body
+    does not scan until the first has finished, so it never holds a stale
+    frontier.
+
+    What the lock does **not** buy -- and what the delivery assertions in both
+    halves are here to say -- is protection from stranding or from duplication.
+    Both hold with the lock bypassed:
+
+    * Stranding is unreachable because ``_dispatch_new_rows``, ``_record_new_gaps``,
+      the frontier write and the prune are one ``await``-free block, so nothing can
+      interrupt a body between recording its gaps and writing its frontier; and
+      because ``_record_new_gaps`` reads ``_last_seen_system_event_id`` live at call
+      time rather than from a pre-scan snapshot. A stale body's gap interval
+      therefore collapses to empty once a peer has promoted -- it cannot skip an
+      id, because the peer that promoted past that id recorded it as a gap in the
+      same atomic step.
+    * Duplication is prevented by the check-then-record over ``_dispatched_row_ids``,
+      which is likewise ``await``-free.
+
+    So a regressed frontier costs a re-scan of a range whose rows are all already
+    in the dedupe map: work amplification, not data loss. That is the lock's other
+    benefit -- one forward scan and one gap-resolution round trip per tick instead
+    of one per concurrent caller.
+
+    Recorded because two hypotheses died here: the test this replaced asserted
+    that unserialised polls *strand* a row, which they do not, on the assumption
+    that the poll snapshots the watermark before scanning, which it does not.
+    """
+    bus, received = _build_bus(db_session, db_session_maker)
+
+    first_id = await _commit_row(bus, db_session_maker, "u-first")
+    await bus._dispatch_and_promote()
+    await drain_handlers(bus)
+    assert bus._last_seen_system_event_id == first_id
+
+    parked, release = asyncio.Event(), asyncio.Event()
+    frontiers = [bus._last_seen_system_event_id]
+    with patch.object(bus, "_scan_window", new=_scan_that_parks_the_first_caller(bus, parked, release)):
+        stale = asyncio.create_task(bus._dispatch_and_promote())
+        await parked.wait()
+        # The parked body has already scanned. It holds frontier == first_id and
+        # will write it whenever it resumes, however far the frontier has moved.
+        later_ids = [await _commit_row(bus, db_session_maker, f"u-{index}") for index in range(3)]
+        await bus._dispatch_and_promote()  # unserialised: takes no lock
+        frontiers.append(bus._last_seen_system_event_id)
+        release.set()
+        await stale
+    frontiers.append(bus._last_seen_system_event_id)
+    await drain_handlers(bus)
+
+    assert frontiers[1] == later_ids[-1], f"the peer poll did not advance the frontier: {frontiers}"
+    assert frontiers[2] < frontiers[1], (
+        f"expected the stale unserialised body to drag the frontier backwards, got {frontiers}. "
+        "If this passes, the frontier write is no longer unconditional and this test no longer "
+        "describes the code -- read _dispatch_and_promote before deleting either."
+    )
+    assert sorted(event.data["device_id"] for event in received) == ["u-0", "u-1", "u-2", "u-first"], (
+        "the regression changed what was delivered"
+    )
+
+    # And the cost of the regression is exactly one wasted re-scan: every row in
+    # the range is already in the dedupe map, so nothing is delivered twice.
+    await bus._dispatch_and_promote()
+    await drain_handlers(bus)
+    assert sorted(event.data["device_id"] for event in received) == ["u-0", "u-1", "u-2", "u-first"], (
+        "the re-scan forced by the regression duplicated a row"
+    )
+    assert bus._last_seen_system_event_id == later_ids[-1], "the re-scan did not recover the frontier"
+
+    # The identical interleaving through the locked entry point. Seeded from
+    # MAX(id) the way ``start()`` seeds a real bus -- left at 0 it would re-deliver
+    # the first half's rows, which would say nothing about the lock.
+    bus2, received2 = _build_bus(db_session, db_session_maker)
+    bus2._last_seen_system_event_id = await bus2._read_latest_row_id()
+
+    guarded_first = await _commit_row(bus2, db_session_maker, "g-first")
+    await bus2._dispatch_missed_events()
+    await drain_handlers(bus2)
+    assert bus2._last_seen_system_event_id == guarded_first
+
+    # Every frontier write, in the order the bodies wrote it -- not three
+    # snapshots. The append runs immediately after the body's ``await``-free tail
+    # and, under the lock, still inside it, so no write can hide between samples.
+    guarded_writes: list[int] = []
+    original_promote = bus2._dispatch_and_promote
+
+    async def promote_and_record() -> None:
+        await original_promote()
+        guarded_writes.append(bus2._last_seen_system_event_id)
+
+    parked2, release2 = asyncio.Event(), asyncio.Event()
+    with (
+        patch.object(bus2, "_scan_window", new=_scan_that_parks_the_first_caller(bus2, parked2, release2)),
+        patch.object(bus2, "_dispatch_and_promote", new=promote_and_record),
+    ):
+        holder = asyncio.create_task(bus2._dispatch_missed_events())
+        await parked2.wait()
+        guarded_later = [await _commit_row(bus2, db_session_maker, f"g-{index}") for index in range(3)]
+        waiter = asyncio.create_task(bus2._dispatch_missed_events())
+        # One yield is all it takes: ``waiter`` reaches ``async with
+        # self._dispatch_lock`` and suspends there. It cannot scan -- which is
+        # precisely why it cannot end up holding a stale frontier.
+        await asyncio.sleep(0)
+        assert guarded_writes == [], "a second body promoted while the first held the lock"
+        release2.set()
+        await asyncio.gather(holder, waiter)
+    await drain_handlers(bus2)
+
+    assert guarded_writes == sorted(guarded_writes), (
+        f"the locked entry point let the frontier regress: {guarded_first} then {guarded_writes}"
+    )
+    assert guarded_writes == [guarded_first, guarded_later[-1]], (
+        f"expected the parked body to write its own frontier, then the waiter to advance: {guarded_writes}"
+    )
+    assert bus2._last_seen_system_event_id == guarded_later[-1]
+    delivered2 = sorted(event.data["device_id"] for event in received2)
+    assert delivered2 == ["g-0", "g-1", "g-2", "g-first"], f"delivery differed under the lock: {delivered2}"
 
 
 async def test_failed_forward_scan_keeps_dispatched_gap_rows_out_of_a_retry(

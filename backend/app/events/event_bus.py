@@ -610,9 +610,18 @@ class EventBus:
         withdrawn gates and is what keeps them from coming back -- including
         back into this docstring, which is why they are not named here.
 
-        The whole body is serialised: the frontier, the gap set, and the dedupe
-        map are read-modify-written across DB round trips, and a doorbell wake
-        would make concurrent polls reachable.
+        The body is serialised, but not for delivery safety. The tail that
+        dispatches, records gaps, writes the frontier and prunes contains no
+        ``await``, so no concurrent body can interleave with it, and
+        ``_record_new_gaps`` reads the frontier live rather than from a pre-scan
+        snapshot -- which together make stranding unreachable with or without the
+        lock. What the lock buys is that the unconditional frontier write cannot
+        *regress*: a body that scanned before a peer promoted would otherwise
+        drag the frontier backwards, costing a re-scan of rows that are all
+        already in the dedupe map. That is work amplification, not data loss, so
+        this is serialisation for monotonicity and for holding a doorbell wake to
+        one scan per tick rather than one per caller. Pinned by
+        ``tests/events/test_event_bus_gaps.py::test_the_lock_keeps_the_frontier_monotonic``.
         """
         if self._session_factory is None:
             return
