@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
@@ -490,3 +491,34 @@ async def test_listener_reconnects_after_connection_loss(
             assert attempts >= 2, "listener did not reconnect after a dropped connection"
         finally:
             await bus.shutdown()
+
+
+async def test_listener_reconnect_logging_backs_off_during_an_outage(caplog: pytest.LogCaptureFixture) -> None:
+    """A database outage must not produce one traceback per second per worker.
+
+    The reconnect delay stays at 1s -- the listener should come back promptly
+    and the 5s poller is only a backstop -- so the burst is absorbed by the
+    logging, which reports how many failures it suppressed.
+    """
+    bus = EventBus()
+    bus.configure(session_factory=None, engine=cast("AsyncEngine", object()))
+    attempts = 0
+
+    async def always_failing() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts > 5:
+            raise asyncio.CancelledError
+        raise ConnectionResetError("database is down")
+
+    with (
+        patch.object(bus, "_listen_once", new=always_failing),
+        patch("app.events.event_bus.asyncio.sleep", new=AsyncMock()),
+        caplog.at_level(logging.ERROR),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await bus._listen_for_notifications()
+
+    reports = [record for record in caplog.records if "listener connection failed" in record.getMessage()]
+    assert len(reports) == 1, f"expected one report for a burst of 5 failures, got {len(reports)}"
+    assert "suppressed" in reports[0].getMessage()

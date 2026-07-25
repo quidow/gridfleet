@@ -36,6 +36,8 @@ logger = get_logger(__name__)
 
 LISTENER_POLL_INTERVAL_SEC = 5
 LISTENER_RECONNECT_DELAY_SEC = 1.0
+LISTENER_LOG_BACKOFF_INITIAL_SEC = 1.0
+LISTENER_LOG_BACKOFF_MAX_SEC = 60.0
 LISTENER_READY_TIMEOUT_SEC = 5.0
 HANDLER_DRAIN_TIMEOUT_SEC = 5.0
 POLL_SCAN_CHUNK_SIZE = 500
@@ -702,13 +704,34 @@ class EventBus:
         # with no engine would spin through the reconnect sleep forever.
         if self._engine is None:
             return
+        log_interval = LISTENER_LOG_BACKOFF_INITIAL_SEC
+        next_log_at = 0.0
+        suppressed = 0
         while True:
             try:
                 await self._listen_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("System event listener connection failed; reconnecting")
+                now = time.monotonic()
+                if now < next_log_at:
+                    # Same outage, still inside the quiet window: count it and
+                    # stay silent. The reconnect delay is unchanged -- only the
+                    # traceback volume is backed off.
+                    suppressed += 1
+                else:
+                    if now - next_log_at >= LISTENER_LOG_BACKOFF_MAX_SEC:
+                        # Quiet for longer than the cap: this is a new incident,
+                        # not the tail of the last one.
+                        log_interval = LISTENER_LOG_BACKOFF_INITIAL_SEC
+                    logger.exception(
+                        "System event listener connection failed; reconnecting "
+                        "(%d further failure(s) suppressed since the last report)",
+                        suppressed,
+                    )
+                    suppressed = 0
+                    next_log_at = now + log_interval
+                    log_interval = min(log_interval * 2, LISTENER_LOG_BACKOFF_MAX_SEC)
             await asyncio.sleep(LISTENER_RECONNECT_DELAY_SEC)
 
     async def _listen_once(self) -> None:
