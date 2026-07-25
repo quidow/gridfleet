@@ -74,3 +74,27 @@ def test_postgres_bounds_idle_in_transaction_sessions() -> None:
 
     assert len(set(values.values())) == 1, f"dev and prod disagree on {_IDLE_TIMEOUT_FLAG}: {values}"
     assert _seconds(next(iter(values.values()))) >= 60, "an idle-transaction bound under 60s will abort slow tests"
+
+
+def test_gap_retirement_is_derived_from_the_idle_transaction_bound() -> None:
+    """``GAP_RETIREMENT_SEC`` is derived from Postgres config, not chosen.
+
+    Retiring a gap early strands an event row. The only thing that genuinely
+    bounds how long a ``system_events`` sequence value can stay unresolved is how
+    long a transaction can stay open, which is what the compose setting caps --
+    so if someone raises or lowers that setting, this test makes them move the
+    constant with it.
+    """
+    from app.events.event_bus import (
+        GAP_RETIREMENT_SAFETY_MULTIPLE,
+        GAP_RETIREMENT_SEC,
+        IDLE_IN_TRANSACTION_BOUND_SEC,
+    )
+
+    compose_bound = _seconds(_postgres_command_flags("docker-compose.yml")[_IDLE_TIMEOUT_FLAG])
+
+    assert compose_bound == IDLE_IN_TRANSACTION_BOUND_SEC, (
+        "app/events/event_bus.py mirrors the compose idle-in-transaction bound; they have drifted"
+    )
+    assert GAP_RETIREMENT_SEC == IDLE_IN_TRANSACTION_BOUND_SEC * GAP_RETIREMENT_SAFETY_MULTIPLE
+    assert GAP_RETIREMENT_SAFETY_MULTIPLE >= 2.0, "the retirement bound must keep headroom over the raw timeout"

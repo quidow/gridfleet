@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-import uuid
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.events import Event, EventBus
 from app.events.models import SystemEvent
-from app.hosts.models.host import Host, OSType
 from tests.helpers import drain_handlers, recent_events
 
 
@@ -145,9 +143,9 @@ async def test_dispatch_missed_events_loads_new_rows_and_skips_duplicates(db_ses
     await bus._dispatch_missed_events()
 
     assert [event["id"] for event in recent_events(bus, limit=10)] == ["evt-a", "evt-b"]
-    # The watermark itself lags behind a snapshot horizon that other sessions
-    # can hold open, so the deterministic assertion is on the candidate.
-    assert bus._watermark_candidate_id >= int(row_b.id)
+    # Promotion is unconditional now, so the frontier itself is deterministic:
+    # nothing another session holds open can hold it back.
+    assert bus._last_seen_system_event_id >= int(row_b.id)
 
 
 async def test_shutdown_handler_tasks_cancels_pending_tasks() -> None:
@@ -394,74 +392,25 @@ async def test_poller_delivers_row_committed_after_a_higher_id(
 
 
 @pytest.mark.db
-async def test_poller_holds_the_watermark_behind_an_open_transaction(
-    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
-) -> None:
-    """The promotion gate must not clear while a transaction holds an unpublished id.
-
-    Ordered the way a real publisher runs: each transaction writes a domain row
-    — taking its transaction id — before staging its event, and ``fast`` takes
-    the *lower* transaction id while ``slow`` takes the *lower* event row id.
-    That interleaving is what a ``pg_snapshot_xmax`` horizon mis-handles:
-    ``xmax`` is ``latestCompletedXid + 1``, so once ``fast`` commits the
-    captured horizon lands at or below ``slow``'s still-running transaction id,
-    the gate clears while ``slow`` is open, and ``slow``'s row is skipped
-    forever.
-    """
-    bus = EventBus()
-    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
-    received: list[Event] = []
-    bus.register_handler(received.append)
-
-    async with db_session_maker() as slow, db_session_maker() as fast:
-        fast.add(Host(hostname=f"fast-{uuid.uuid4().hex[:8]}", ip="10.0.0.1", os_type=OSType.linux))
-        await fast.flush()  # fast takes the lower transaction id
-        slow.add(Host(hostname=f"slow-{uuid.uuid4().hex[:8]}", ip="10.0.0.2", os_type=OSType.linux))
-        await slow.flush()  # slow takes the higher transaction id
-
-        slow_row = bus.queue_for_session(slow, "device.updated", {"device_id": "slow"})
-        assert slow_row is not None
-        await slow.flush()  # lower event row id, still invisible
-        bus.queue_for_session(fast, "device.updated", {"device_id": "fast"})
-        await fast.commit()  # higher event row id, commits first
-        slow_id = int(slow_row.id)
-
-        await bus._dispatch_missed_events()
-        await bus._dispatch_missed_events()
-        await drain_handlers(bus)
-        assert [event.data["device_id"] for event in received] == ["fast"]
-        assert bus._last_seen_system_event_id < slow_id, "watermark promoted past a row still in flight"
-
-        await slow.commit()
-        await bus._dispatch_missed_events()
-        await drain_handlers(bus)
-        assert sorted(event.data["device_id"] for event in received) == ["fast", "slow"]
-
-    # And the gate does clear: a horizon every transaction has passed promotes
-    # the candidate. Waiting for real global quiescence would be flaky under
-    # xdist, where peer workers hold their own write transactions open.
-    bus._watermark_candidate_horizon = "1"
-    await bus._dispatch_missed_events()
-    assert bus._last_seen_system_event_id >= slow_id
-
-
-@pytest.mark.db
-async def test_poller_scans_the_whole_window_while_promotion_is_stalled(
+async def test_poller_pages_the_whole_window_in_one_poll(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
 ) -> None:
     """Chunking bounds the statement, not the window.
 
-    A plain ``LIMIT`` on the watermark predicate would starve everything past
-    the first page for as long as promotion is stalled, because the watermark
-    is the scan floor and stalled promotion is exactly what stops it moving.
+    Every committed row above the frontier is delivered in a single poll, in
+    ``POLL_SCAN_CHUNK_SIZE`` keyset pages. A plain ``LIMIT`` on the frontier
+    predicate would deliver one page per poll instead -- correct, since
+    promotion is unconditional, but slower to drain a backlog.
     """
     bus = EventBus()
     bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
     received: list[Event] = []
     bus.register_handler(received.append)
 
-    for index in range(5):
-        bus.queue_for_session(db_session, "device.updated", {"device_id": f"d{index}"})
+    rows = [bus.queue_for_session(db_session, "device.updated", {"device_id": f"d{index}"}) for index in range(5)]
+    await db_session.flush()
+    assert all(row is not None for row in rows)
+    top_id = max(int(row.id) for row in rows if row is not None)
     await db_session.commit()
 
     with patch("app.events.event_bus.POLL_SCAN_CHUNK_SIZE", 2):
@@ -469,7 +418,8 @@ async def test_poller_scans_the_whole_window_while_promotion_is_stalled(
         await drain_handlers(bus)
 
     assert sorted(event.data["device_id"] for event in received) == ["d0", "d1", "d2", "d3", "d4"]
-    assert bus._last_seen_system_event_id == 0, "the first poll has no horizon to promote against"
+    assert bus._last_seen_system_event_id == top_id
+    assert bus._pending_gaps == {}
 
 
 @pytest.mark.db
@@ -479,9 +429,9 @@ async def test_poll_does_not_redispatch_a_row_the_listener_delivered_mid_scan(
     """Delivery dedupe must be read at dispatch time, not snapshotted before the scan.
 
     ``_scan_window`` awaits at least twice before ``_dispatch_missed_events``
-    reaches its dispatch loop, and the watermark structurally lags one poll, so
-    the same rows are re-scanned every tick. A row the listener delivers inside
-    that window must still be dispatched exactly once.
+    reaches its dispatch loop, and the frontier is written only after the
+    dispatch loop, so a row the listener delivers between the scan and the
+    dispatch must still be dispatched exactly once.
     """
     bus = EventBus()
     bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
@@ -496,44 +446,18 @@ async def test_poll_does_not_redispatch_a_row_the_listener_delivered_mid_scan(
 
     scan_window = bus._scan_window
 
-    async def scan_then_deliver(db: AsyncSession) -> tuple[list[SystemEvent], int]:
-        pending = await scan_window(db)
+    async def scan_then_deliver(db: AsyncSession) -> Any:  # noqa: ANN401
+        result = await scan_window(db)
         # The NOTIFY lands while the poller sits between its scan and its
         # dispatch loop — the exact window a pre-scan snapshot would miss.
         await bus._load_and_dispatch_system_event(row_id)
-        return pending
+        return result
 
     with patch.object(bus, "_scan_window", new=scan_then_deliver):
         await bus._dispatch_missed_events()
     await drain_handlers(bus)
 
     assert [event.data["device_id"] for event in received] == ["mid-scan"]
-
-
-@pytest.mark.db
-async def test_poll_dispatches_rows_when_the_promotion_horizon_read_fails(
-    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
-) -> None:
-    """A failed horizon read costs the promotion, not the delivery.
-
-    ``pg_current_xact_id()`` raises for the whole of recovery on a standby. If
-    that escaped, the poller would deliver nothing instead of degrading to
-    never promoting — and not promoting is always safe.
-    """
-    bus = EventBus()
-    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
-    received: list[Event] = []
-    bus.register_handler(received.append)
-
-    bus.queue_for_session(db_session, "device.updated", {"device_id": "standby"})
-    await db_session.commit()
-
-    with patch("app.events.event_bus._XACT_HORIZON_SQL", text("SELECT 1 / 0")):
-        await bus._dispatch_missed_events()
-    await drain_handlers(bus)
-
-    assert [event.data["device_id"] for event in received] == ["standby"]
-    assert bus._watermark_candidate_horizon is None, "promoted against a horizon that was never read"
 
 
 @pytest.mark.db
