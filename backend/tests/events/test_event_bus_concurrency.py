@@ -1,16 +1,23 @@
-"""Two overlapping polls must strand nothing and duplicate nothing.
+"""A poll that starts while another is mid-scan delivers every row exactly once.
 
-``_dispatch_lock`` guards the read-modify-write across the poller's delivery
-state. Nothing in production drives two polls at once today -- one poller task
-per process calls ``_dispatch_missed_events`` -- so this test fabricates the
-interleaving that a doorbell wake would make reachable.
+``_dispatch_lock`` wraps the whole of ``_dispatch_and_promote``, including the
+forward scan, so a second ``_dispatch_missed_events()`` call does not interleave
+with a paused first one: it blocks on ``acquire()`` and its body runs strictly
+afterwards, re-scanning the same window. What this test pins is that the re-scan
+delivers nothing twice and drops nothing -- the dispatch loop's check-then-add
+over ``_dispatched_row_ids`` runs with no ``await`` between the membership test
+and the dispatch, and that is what makes the second pass a no-op.
 
-What actually prevents a duplicate is the dedupe map, read and written with no
-``await`` between the check and the dispatch; the lock is what keeps the frontier
-and the gap set consistent across the awaits in between. The assertion below is
-falsifiable against the dedupe map (see the demonstration step in the plan), not
-against the lock alone -- stated here so a later reader does not mistake a
-passing test for proof that removing the lock is safe.
+What it deliberately does NOT prove: that the lock is load-bearing. Serialising
+is what stops the two bodies from overlapping in the first place, so this test
+would still pass with the lock removed. The test that fails without the lock
+needs state the two bodies can corrupt -- the gap-tracking rewrite's
+unconditional frontier write and the interval its gap detection derives from the
+frontier, which a second unserialised poll can regress and skip a row out of.
+That test lands with that rewrite, in this file.
+
+The pause is a passthrough wrapper that never names ``_scan_window``'s return
+shape, so the rewrite's change to that shape leaves this test untouched.
 """
 
 from __future__ import annotations
@@ -29,7 +36,7 @@ if TYPE_CHECKING:
 
 
 @pytest.mark.db
-async def test_two_overlapping_polls_dispatch_every_row_exactly_once(
+async def test_a_second_poll_behind_a_paused_one_delivers_every_row_exactly_once(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
 ) -> None:
     bus = EventBus()
@@ -63,9 +70,11 @@ async def test_two_overlapping_polls_dispatch_every_row_exactly_once(
         first = asyncio.create_task(bus._dispatch_missed_events())
         await first_scan_done.wait()
         second = asyncio.create_task(bus._dispatch_missed_events())
-        # Give the second poll every chance to run ahead of the paused first one.
-        for _ in range(10):
-            await asyncio.sleep(0)
+        # One yield is all that is needed and all that has any effect: ``second``
+        # reaches ``async with self._dispatch_lock`` and suspends there until
+        # ``first`` releases it. Scheduling it before that release is the point --
+        # its body then runs against state ``first`` has already written.
+        await asyncio.sleep(0)
         release_first_scan.set()
         await asyncio.gather(first, second)
     await drain_handlers(bus)
