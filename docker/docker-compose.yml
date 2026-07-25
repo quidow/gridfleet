@@ -1,6 +1,23 @@
 services:
   postgres:
     image: postgres:18-bookworm
+    command:
+      - postgres
+      # Bounds how long a session may sit idle inside a transaction. Measured
+      # ceiling was 6.07s (one xdist worker during a full `pytest -n auto` run,
+      # a fixture holding a session open across awaits); the live stack's
+      # production database peaked at 0.04s over 45 minutes. This is ~10x the
+      # suite's worst case, floored at 60s. The outbox poller's
+      # GAP_RETIREMENT_SEC (backend/app/events/event_bus.py) is derived from this
+      # value: a system_events sequence value cannot stay unresolved longer than
+      # the transaction holding it, so this is what makes time-based gap
+      # retirement principled instead of arbitrary. Deliberately a literal, not
+      # an env override: backend/tests/contracts/test_compose_config.py pins both
+      # files to the same value and pins the constant to it. Note that the
+      # control-plane leader's advisory-lock session is `idle`, not `idle in
+      # transaction`, so this does not disturb it.
+      - -c
+      - idle_in_transaction_session_timeout=60s
     environment:
       POSTGRES_USER: gridfleet
       POSTGRES_PASSWORD: gridfleet
