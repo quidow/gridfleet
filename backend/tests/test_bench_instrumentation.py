@@ -223,7 +223,7 @@ def test_bench_json_report_shape() -> None:
         commits=commits,
         iters=2,
         fold_wall_ms=[10.0, 20.0],
-        settled_wall_ms=[11.0, 21.0],
+        poll_delivery_wall_ms=[11.0, 21.0],
     )
 
     assert report["config"] == {"scenario": "steady", "devices": 2, "iters": 2}

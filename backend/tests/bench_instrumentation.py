@@ -250,7 +250,7 @@ def build_json_report(
     commits: CommitTap,
     iters: int,
     fold_wall_ms: list[float],
-    settled_wall_ms: list[float],
+    poll_delivery_wall_ms: list[float],
     explain_plans: list[dict[str, str]] | None = None,
 ) -> dict[str, object]:
     """Machine-readable single-cell result for the sweep script. Per-fold values
@@ -273,7 +273,7 @@ def build_json_report(
     ]
     return {
         "config": config,
-        "wall_ms": {"fold_return": wall(fold_wall_ms), "event_settled": wall(settled_wall_ms)},
+        "wall_ms": {"fold_return": wall(fold_wall_ms), "poll_delivery": wall(poll_delivery_wall_ms)},
         "queries": {
             "source_per_fold": tap.total / iters,
             "complete_per_fold": tap.total / iters,

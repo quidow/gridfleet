@@ -732,7 +732,7 @@ def _report_device_health_loop(
     tap: QueryTap,
     commits: CommitTap,
     fold_wall_ms: list[float],
-    settled_wall_ms: list[float],
+    poll_delivery_wall_ms: list[float],
 ) -> None:
     source_queries_per_fold = tap.total / ITERS
     complete_queries_per_fold = tap.total / ITERS
@@ -756,8 +756,9 @@ def _report_device_health_loop(
         f"p95 {percentile(fold_wall_ms, 0.95):.1f} ms   ({', '.join(f'{wall:.0f}' for wall in fold_wall_ms)})"
     )
     print(
-        f"  event-settled wall time:     median {percentile(settled_wall_ms, 0.5):.1f} ms   "
-        f"p95 {percentile(settled_wall_ms, 0.95):.1f} ms   ({', '.join(f'{wall:.0f}' for wall in settled_wall_ms)})"
+        f"  poller round-trip wall time: median {percentile(poll_delivery_wall_ms, 0.5):.1f} ms   "
+        f"p95 {percentile(poll_delivery_wall_ms, 0.95):.1f} ms   "
+        f"({', '.join(f'{wall:.0f}' for wall in poll_delivery_wall_ms)})"
     )
     print(
         f"  SOURCE queries/fold:         {source_queries_per_fold:.0f}   "
@@ -841,7 +842,7 @@ async def test_bench_device_health_loop_fold(
     tap.armed = False
     commits.armed = False
     fold_wall_ms: list[float] = []
-    settled_wall_ms: list[float] = []
+    poll_delivery_wall_ms: list[float] = []
 
     try:
         host, devices = await seed_fleet(db_session, FLEET, DEVICES, generation=0)
@@ -879,10 +880,10 @@ async def test_bench_device_health_loop_fold(
             finally:
                 fold_returned_at = perf_counter()
                 await dispatch_committed_events()
-                event_settled_at = perf_counter()
+                poll_delivered_at = perf_counter()
                 if armed:
                     fold_wall_ms.append((fold_returned_at - t0) * 1000)
-                    settled_wall_ms.append((event_settled_at - t0) * 1000)
+                    poll_delivery_wall_ms.append((poll_delivered_at - t0) * 1000)
                 tap.armed = False
                 commits.armed = False
 
@@ -921,7 +922,7 @@ async def test_bench_device_health_loop_fold(
                 for line in entry["plan"].splitlines():
                     print(f"       {line}")
 
-        _report_device_health_loop(tap, commits, fold_wall_ms, settled_wall_ms)
+        _report_device_health_loop(tap, commits, fold_wall_ms, poll_delivery_wall_ms)
         if JSON_PATH:
             report = build_json_report(
                 config={
@@ -937,7 +938,7 @@ async def test_bench_device_health_loop_fold(
                 commits=commits,
                 iters=ITERS,
                 fold_wall_ms=fold_wall_ms,
-                settled_wall_ms=settled_wall_ms,
+                poll_delivery_wall_ms=poll_delivery_wall_ms,
                 explain_plans=explain_plans,
             )
             Path(JSON_PATH).write_text(json.dumps(report, indent=2))
