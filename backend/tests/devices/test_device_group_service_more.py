@@ -14,7 +14,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.service import DeviceCrudService
 from tests.concurrency.group_lock_helpers import capture_statements
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device_record, seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import create_device_record, dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
         db_session,
         DeviceGroupCreate(key="static-phones", name="static phones", description="operator set", group_type="static"),
     )
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     assert await svc.add_members(db_session, group["key"], [first_device.id, second_device.id]) == 2
     assert await svc.add_members(db_session, group["key"], [first_device.id]) == 0
@@ -121,7 +121,7 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
         db_session,
         DeviceGroupCreate(key="dynamic-smoke", name="dynamic smoke", group_type="dynamic", filters=filters),
     )
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     groups = await svc.list_groups(db_session)
     detail = await svc.get_group(db_session, group["key"])
@@ -227,7 +227,7 @@ async def test_delete_dynamic_group_succeeds_when_unreferenced(db_session: Async
             filters=DeviceGroupFilters(member_of=["del-static"]),
         ),
     )
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     assert await svc.delete_group(db_session, dynamic["key"]) is True
     assert await svc.get_group(db_session, dynamic["key"]) is None
@@ -244,7 +244,7 @@ async def test_delete_dynamic_group_rejects_dangling_reference(db_session: Async
         db_session,
         DeviceGroupCreate(key="dangling-target", name="dangling target", group_type="dynamic"),
     )
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
     # Bypass the service so the otherwise-rejected reference reaches the table.
     db_session.add(
         DeviceGroup(
@@ -297,7 +297,7 @@ async def test_remove_members_with_no_device_ids_releases_the_row_lock(db_sessio
         db_session,
         DeviceGroupCreate(key="empty-remove", name="empty remove", group_type="static"),
     )
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     assert await svc.remove_members(db_session, group["key"], []) == 0
     assert not db_session.in_transaction(), "the row lock must be released, not carried to teardown"

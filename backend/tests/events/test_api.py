@@ -190,6 +190,7 @@ async def test_verification_job_event_stream_emits_initial_summary_and_scoped_up
     updated_job["stages"][2]["status"] = "running"
     updated_job["stages"][2]["detail"] = "Starting temporary verification node"
     await event_bus.publish("device.verification.updated", updated_job)
+    await event_bus._dispatch_missed_events()  # persistent publish stages; the poller fans out to subscribers
 
     payload = await asyncio.wait_for(task, 1)
     data = json.loads(payload["data"])
@@ -233,6 +234,7 @@ async def test_verification_job_event_stream_closes_after_terminal_event(
     terminal_job["finished_at"] = "2026-03-30T10:00:03Z"
     terminal_job["device_id"] = "device-123"
     await event_bus.publish("device.verification.updated", terminal_job)
+    await event_bus._dispatch_missed_events()  # persistent publish stages; the poller fans out to subscribers
 
     payload = await asyncio.wait_for(task, 1)
     data = json.loads(payload["data"])

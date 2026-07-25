@@ -252,25 +252,16 @@ async def create_reservation(
     return res
 
 
-async def settle_after_commit_tasks() -> None:
-    """Drain after_commit-created publish tasks so contract assertions run after dispatch.
+async def dispatch_committed_events(bus: EventBus = test_event_bus) -> None:
+    """Dispatch durable rows that have committed and wait for local handlers.
 
-    The previous implementation yielded the event loop twice. That was sufficient
-    in the common case but raced under load: when multiple host sessions commit
-    concurrently (heartbeat cascade tests), each one schedules its own
-    ``loop.create_task(_publish_pending_events(...))`` and two yields can return
-    before all of those tasks reach their first append, leaving
-    ``event_bus_capture`` empty when the assertion runs. Waiting on the
-    ``event_bus._handler_tasks`` set is deterministic — it only returns after
-    every queued publish task has completed.
+    Persistent mode no longer dispatches from the writing coroutine: the row is
+    staged in the source transaction and delivered only after it commits, via
+    the notification listener or this poll. Contract tests call this instead of
+    asserting that a handler finished when the service call returned.
     """
-    # Yield once so any after_commit hooks fired during the just-completed
-    # await have a chance to call ``loop.create_task`` and register on
-    # ``_handler_tasks`` before we snapshot the set.
-    await asyncio.sleep(0)
-    pending = {task for task in test_event_bus._handler_tasks if not task.done()}
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+    await bus._dispatch_missed_events()
+    await drain_handlers(bus)
 
 
 async def seed_host_and_device(
@@ -443,6 +434,18 @@ def reset_event_bus(bus: EventBus) -> None:
     bus._session_factory = None
     bus._engine = None
     bus._last_seen_system_event_id = 0
+    # Clear the gated-promotion state too: a candidate left over from the
+    # previous test would promote the rewound watermark past the next test's
+    # rows on the first poll.
+    bus._watermark_candidate_id = 0
+    bus._watermark_candidate_horizon = None
+    # Every test schema restarts the ``system_events`` id sequence at 1, so a
+    # dispatched-id left over from the previous test would suppress a
+    # legitimate dispatch in the next one.
+    bus._dispatched_row_ids.clear()
+    # A fresh lock per test: ``asyncio.Lock`` binds to the loop it first blocks
+    # on, and each test runs on its own loop.
+    bus._dispatch_lock = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------

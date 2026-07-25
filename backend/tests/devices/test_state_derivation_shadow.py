@@ -7,7 +7,7 @@ import pytest
 from app.devices.models import DeviceOperationalState
 from app.devices.services.state import emit_operational_state_transition
 from app.events.protocols import EventPublisher
-from tests.helpers import create_device_record, create_host, settle_after_commit_tasks
+from tests.helpers import create_device_record, create_host, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
@@ -34,6 +34,7 @@ async def test_emit_operational_state_transition_writes_and_emits(
         operational_state=DeviceOperationalState.offline,
         verified=True,
     )
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     changed = await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
@@ -44,7 +45,7 @@ async def test_emit_operational_state_transition_writes_and_emits(
 
     # Commit so the after_commit hook fires and publish is invoked.
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     names = [name for name, _ in event_bus_capture]
     assert "device.operational_state_changed" in names
@@ -74,6 +75,8 @@ async def test_emit_operational_state_transition_no_op_when_state_matches(
     assert device.operational_state_last_emitted is DeviceOperationalState.available
 
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
-    publisher.publish.assert_not_called()
+    # ``queue_for_session``, not ``publish``: the emit path stages on the source
+    # transaction, so asserting on ``publish`` could never fail here.
+    publisher.queue_for_session.assert_not_called()

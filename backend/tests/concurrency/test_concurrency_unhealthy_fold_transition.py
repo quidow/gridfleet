@@ -28,7 +28,7 @@ from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader
-from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -416,7 +416,7 @@ async def test_unhealthy_fold_and_background_intent_reconciler_do_not_deadlock_o
     assert reconcile_device_locked_wait_task is not None
     reconcile_task.result()
     assert reconcile_device_locked_wait_task.result() is True
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
     assert reconcile_blocked, "background reconciler acquired the Device lock before the fold committed"
     assert fold_task.result() is True
 

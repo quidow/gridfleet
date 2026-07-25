@@ -35,7 +35,7 @@ from app.verification.services.execution import (
 from app.verification.services.job_state import new_job
 from app.verification.services.preparation import PreparedVerificationEffect
 from tests.fakes import FakeSettingsReader, build_review_service
-from tests.helpers import create_device, settle_after_commit_tasks
+from tests.helpers import create_device, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 from tests.verification._lease_helpers import register_verification_node_intent
 
@@ -215,6 +215,7 @@ async def test_finalize_success_single_edge_no_flap(
         db_session, device, settings=FakeSettingsReader({}), publisher=event_bus, operation_id=operation_id
     )
     await db_session.commit()
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     monkeypatch.setattr("app.verification.services.execution.set_stage", AsyncMock())
@@ -223,7 +224,7 @@ async def test_finalize_success_single_edge_no_flap(
     outcome = await svc._finalize_success(effect, job=_job(), node_id=node.id)
     assert outcome.status == "completed"
     assert outcome.superseded is False
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
     await db_session.refresh(device)
 
     edges = [
@@ -263,6 +264,7 @@ async def test_finalize_failure_single_edge_no_flap(
         ],
     )
     await db_session.commit()
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     monkeypatch.setattr("app.verification.services.execution.set_stage", AsyncMock())
@@ -276,7 +278,7 @@ async def test_finalize_failure_single_edge_no_flap(
     )
     assert outcome.status == "failed"
     assert outcome.superseded is False
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
     await db_session.refresh(device)
 
     edges = [

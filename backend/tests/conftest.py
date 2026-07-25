@@ -104,7 +104,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
     from pathlib import Path
 
-    from app.events.event_bus import EventBus
+    from app.events.event_bus import Event, EventBus
 
 settings_service = SettingsService()
 test_http_pool = AgentHttpPool()
@@ -689,19 +689,19 @@ async def db_host(db_session: AsyncSession) -> AsyncGenerator[Host]:
 
 
 @pytest.fixture
-def event_bus_capture(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
-    """Capture every event_bus.publish invocation for after-commit contract tests.
+def event_bus_capture() -> list[tuple[str, dict[str, Any]]]:
+    """Record every event this process dispatches, as ``(type, data)``.
 
-    Captures ``(name, payload)``; the ``severity`` kwarg is accepted but dropped
-    so existing destructure-by-position tests stay compatible. Tests that need
-    to assert severity should install their own monkeypatch.
+    Persistent mode delivers from a committed row, so the recorder is a handler
+    rather than a ``publish`` monkeypatch. Nothing lands until the test calls
+    ``dispatch_committed_events()``.
     """
     captured: list[tuple[str, dict[str, Any]]] = []
 
-    async def _fake_publish(name: str, payload: dict[str, Any], severity: str | None = None) -> None:
-        captured.append((name, payload))
+    async def capture(event: Event) -> None:
+        captured.append((event.type, event.data))
 
-    monkeypatch.setattr(test_event_bus, "publish", _fake_publish)
+    test_event_bus.register_handler(capture)
     return captured
 
 

@@ -367,10 +367,10 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     await leader.release()
     assert leader._connection is None
 
-    monkeypatch.setattr(event_bus, "publish", AsyncMock(side_effect=RuntimeError("publish failed")))
+    monkeypatch.setattr(event_bus, "_remember_and_dispatch", Mock(side_effect=RuntimeError("dispatch failed")))
     monkeypatch.setattr(event_bus_mod.logger, "exception", Mock())
-    await event_bus_mod._publish_pending_events(
-        [("device.operational_state_changed", {"device_id": "d"}, None)], event_bus
+    await event_bus_mod._dispatch_pending_fallback(
+        [event_bus_mod.Event(type="device.operational_state_changed", data={"device_id": "d"})], event_bus
     )
     event_bus_mod.logger.exception.assert_called_once()
 
@@ -380,7 +380,8 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
         listeners[identifier] = fn
 
     monkeypatch.setattr(event_bus_mod.sa_event, "listen", capture_listener)
-    sync_session = SimpleNamespace(info={})
+    active_transaction = SimpleNamespace()
+    sync_session = SimpleNamespace(info={}, get_transaction=lambda: active_transaction)
     event_bus.queue_for_session(sync_session, "device.operational_state_changed", {"device_id": "d"})
     event_bus.queue_for_session(sync_session, "device.operational_state_changed", {"device_id": "d"})
     listener = sync_session.info[event_bus_mod._PENDING_EVENTS_LISTENER_KEY]
@@ -389,6 +390,16 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
     sync_session.info[event_bus_mod._PENDING_EVENTS_KEY] = []
     listeners["after_commit"](sync_session)  # type: ignore[operator]
     assert event_bus._handler_tasks == set()
+
+    # A configured (persistent) bus stages an outbox row instead and leaves session.info alone.
+    staging_bus = event_bus_mod.EventBus()
+    staging_bus._session_factory = object()  # type: ignore[assignment]
+    staged_rows: list[object] = []
+    staging_session = SimpleNamespace(info={}, add=staged_rows.append)
+    staged = staging_bus.queue_for_session(staging_session, "device.operational_state_changed", {"device_id": "d"})
+    assert isinstance(staged, event_bus_mod.SystemEvent)
+    assert staged_rows == [staged]
+    assert staging_session.info == {}
 
     assert await bulk_service._load_existing_device_ids(AsyncMock(), []) == []
 

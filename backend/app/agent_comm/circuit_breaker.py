@@ -117,6 +117,7 @@ class AgentCircuitBreaker:
                 "host": host,
                 **(await _resolve_host_identity(host, session_factory=self._session_factory)),
             }
+            # Standalone summary: source effects have already committed or are in-memory.
             await self._publisher.publish(
                 "host.circuit_breaker.closed",
                 payload,
@@ -167,6 +168,7 @@ class AgentCircuitBreaker:
                 "last_error": error,
                 **(await _resolve_host_identity(host, session_factory=self._session_factory)),
             }
+            # Standalone summary: source effects have already committed or are in-memory.
             await self._publisher.publish(
                 "host.circuit_breaker.opened",
                 payload,

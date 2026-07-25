@@ -13,7 +13,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.service import DeviceCrudService
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from tests.fakes import FakeSettingsReader, build_review_service
-from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ async def test_bulk_enter_maintenance_queues_summary(
     event_bus_capture.clear()
 
     await _svc().bulk_enter_maintenance(db_session, [device.id])
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     summary = [p for n, p in event_bus_capture if n == "bulk.operation_completed"]
     assert len(summary) == 1
@@ -56,10 +56,11 @@ async def test_bulk_exit_maintenance_queues_summary(
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="bulk-exit-maint-1")
     await _svc().bulk_enter_maintenance(db_session, [device.id])
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     await _svc().bulk_exit_maintenance(db_session, [device.id])
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     summary = [p for n, p in event_bus_capture if n == "bulk.operation_completed"]
     assert len(summary) == 1

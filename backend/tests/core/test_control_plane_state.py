@@ -12,7 +12,7 @@ from app.jobs.models import Job
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import (
     delete_jobs_by_kind,
-    drain_handlers,
+    dispatch_committed_events,
     get_connectivity_control_plane_state,
     get_session_viability_control_plane_state,
     recent_events,
@@ -120,7 +120,7 @@ async def test_operational_state_edge_publishes_only_on_change(db_session: Async
     changed = await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
     assert changed is True
     await db_session.commit()
-    await drain_handlers(event_bus)
+    await dispatch_committed_events(event_bus)
     events = recent_events(event_bus)
     assert len(events) == 1
     assert events[0]["data"]["old_operational_state"] == "offline"

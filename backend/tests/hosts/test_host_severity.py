@@ -7,10 +7,13 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from app.hosts.service import _host_status_severity
+from tests.helpers import dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.events import Event
 
 # ---------------------------------------------------------------------------
 # Unit tests: _host_status_severity helper
@@ -64,28 +67,27 @@ def test_host_status_none_old_to_offline_emits_info() -> None:
 pytestmark_db = pytest.mark.db
 
 
-def _make_severity_capture(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """Return a list that accumulates {type, severity} for each publish call."""
+def _make_severity_capture() -> list[dict[str, Any]]:
+    """Return a list that accumulates {type, severity} for each dispatched event."""
     captured: list[dict[str, Any]] = []
 
-    async def _fake_publish(name: str, payload: dict[str, Any], *, severity: str | None = None) -> None:
-        captured.append({"type": name, "severity": severity})
+    async def capture(event: Event) -> None:
+        captured.append({"type": event.type, "severity": event.severity})
 
-    monkeypatch.setattr(event_bus, "publish", _fake_publish)
+    event_bus.register_handler(capture)
     return captured
 
 
 @pytest.mark.db
 async def test_approve_host_pending_to_online_emits_success(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """approve_host transitions pending→online and should emit severity='success'."""
     from app.hosts.models import Host, HostStatus, OSType
     from app.hosts.service import HostCrudService
     from tests.fakes import FakeSettingsReader
 
-    captured = _make_severity_capture(monkeypatch)
+    captured = _make_severity_capture()
 
     host = Host(
         hostname="approve-severity-host",
@@ -102,6 +104,7 @@ async def test_approve_host_pending_to_online_emits_success(
     )
     assert approved is not None
 
+    await dispatch_committed_events()
     events = [e for e in captured if e["type"] == "host.status_changed"]
     assert len(events) == 1
     assert events[0]["severity"] == "success"

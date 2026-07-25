@@ -24,7 +24,7 @@ from app.grid.matching import CapabilityMergeError
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
-from tests.helpers import drain_handlers, recent_events, seed_host_and_running_node
+from tests.helpers import dispatch_committed_events, recent_events, seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -541,8 +541,8 @@ async def test_concurrent_allocation_single_winner(
 
 
 async def _started_events_for(session_id: str) -> list[dict[str, Any]]:
-    """Drain after-commit handlers and return session.started events for a session id."""
-    await drain_handlers(event_bus)
+    """Dispatch committed events and return session.started events for a session id."""
+    await dispatch_committed_events(event_bus)
     return [
         e["data"]
         for e in recent_events(event_bus, event_types=["session.started"])

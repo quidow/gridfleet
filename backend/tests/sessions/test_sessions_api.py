@@ -7,7 +7,7 @@ from sqlalchemy import inspect
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions import service as session_module
 from app.sessions.service_viability import PROBE_TEST_NAME
-from tests.helpers import create_device_record, create_reserved_run, drain_handlers, recent_events
+from tests.helpers import create_device_record, create_reserved_run, dispatch_committed_events, recent_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -498,7 +498,7 @@ async def test_update_session_status(client: AsyncClient, db_session: AsyncSessi
     assert data["status"] == "failed"
     assert data["ended_at"] is not None
 
-    await drain_handlers(event_bus)
+    await dispatch_committed_events(event_bus)
     events = recent_events(event_bus, limit=1)
     assert len(events) == 1
     assert events[0]["type"] == "session.ended"

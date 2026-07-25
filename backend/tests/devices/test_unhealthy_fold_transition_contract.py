@@ -25,7 +25,7 @@ from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from tests.bench_instrumentation import CommitTap, install_async_session_callsite_profiler
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device, create_reserved_run, seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import create_device, create_reserved_run, dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -122,7 +122,7 @@ async def test_unhealthy_fold_preserves_transition_artifacts_and_order(
     assert before_counts == (0, 0)
 
     assert await service.fold_host_devices(db_session, device.host_id, section, boot_id=_BOOT_ID) is True
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     device_events = (
         (
@@ -304,7 +304,7 @@ async def test_unhealthy_fold_preserves_transition_artifacts_and_order(
     assert first_delivery_counts == (5, 3)
 
     assert await service.fold_host_devices(db_session, device.host_id, section, boot_id=_BOOT_ID) is True
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
     redelivery_counts = (
         await db_session.scalar(
             select(func.count()).select_from(DeviceEvent).where(DeviceEvent.device_id == device.id)
@@ -349,7 +349,7 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
     monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", fail_after_mutations)
 
     assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is False
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     async with db_session_maker() as verify:
         rolled_back = await verify.get(Device, device_id)
@@ -414,7 +414,7 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
 
     monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", original)
     assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is True
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     async with db_session_maker() as verify:
         applied = await verify.get(Device, device_id)
@@ -485,7 +485,7 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
     assert first_history == ["failure_observed", "auto_stop_commissioned", "auto_stopped"]
 
     assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is True
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
     async with db_session_maker() as verify:
         redelivered_node = (
             await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device_id))
@@ -582,7 +582,7 @@ async def test_unhealthy_fold_failure_keeps_prior_device_and_retries_remaining_d
 
     monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", fail_middle)
     assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is False
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     async with db_session_maker() as verify:
         after_failure = {
@@ -632,7 +632,7 @@ async def test_unhealthy_fold_failure_keeps_prior_device_and_retries_remaining_d
 
     monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", original)
     assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is True
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     async with db_session_maker() as verify:
         completed = {
@@ -683,11 +683,11 @@ async def test_unhealthy_fold_uses_one_commit_and_no_general_device_relock(
     event.listen(engine, "commit", commit_tap)
     try:
         assert await service.fold_host_devices(db_session, device.host_id, section, boot_id=_BOOT_ID) is True
-        await settle_after_commit_tasks()
+        await dispatch_committed_events()
     finally:
         event.remove(engine, "commit", commit_tap)
 
-    assert commit_tap.source_count == 1
+    assert commit_tap.count == 1
     lock_device_spy.assert_not_awaited()
     device_events = list(
         (

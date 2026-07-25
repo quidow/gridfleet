@@ -288,6 +288,7 @@ class DataCleanupService:
             counts.test_runs_deleted,
             counts.jobs_deleted,
         )
+        # Standalone summary: source effects have already committed or are in-memory.
         await self._publisher.publish(
             "system.cleanup_completed",
             {

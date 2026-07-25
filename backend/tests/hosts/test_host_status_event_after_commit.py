@@ -12,7 +12,7 @@ import pytest
 from app.appium_nodes.services.heartbeat import HeartbeatService
 from app.core.timeutil import now_utc
 from tests.fakes import FakeSettingsReader
-from tests.helpers import run_one_heartbeat_cycle, seed_host_with_devices, settle_after_commit_tasks
+from tests.helpers import dispatch_committed_events, run_one_heartbeat_cycle, seed_host_with_devices
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -46,7 +46,7 @@ async def test_host_offline_cascade_queues_all_events(
     svc._last_cycle_monotonic = time.monotonic()
 
     await run_one_heartbeat_cycle(db_session, svc)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     types_in_order = [n for n, _ in event_bus_capture]
     assert "host.status_changed" in types_in_order

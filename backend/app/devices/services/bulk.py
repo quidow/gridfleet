@@ -136,6 +136,7 @@ async def _run_per_device_node_action(
     total = len(existing_device_ids)
     failed = len(errors)
     data, severity = _completion_payload(operation, total, succeeded, failed)
+    # Standalone summary: source effects have already committed or are in-memory.
     await publisher.publish("bulk.operation_completed", data, severity=severity)
     return _result(len(existing_device_ids), succeeded, errors)
 
@@ -209,6 +210,7 @@ class BulkOperationsService:
         total = len(device_ids)
         failed = len(errors)
         data, severity = _completion_payload("delete", total, succeeded, failed)
+        # Standalone summary: source effects have already committed or are in-memory.
         await self._publisher.publish("bulk.operation_completed", data, severity=severity)
         return _result(len(device_ids), succeeded, errors)
 
@@ -330,5 +332,6 @@ class BulkOperationsService:
         total = len(devices)
         failed = len(errors)
         data, severity = _completion_payload("reconnect", total, succeeded, failed)
+        # Standalone summary: source effects have already committed or are in-memory.
         await self._publisher.publish("bulk.operation_completed", data, severity=severity)
         return _result(len(devices), succeeded, errors)
