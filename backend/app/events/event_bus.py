@@ -285,8 +285,11 @@ class EventBus:
             # Bound the dedupe map across a shutdown/restart within one process.
             # shutdown() sets _started = False but deliberately does not clear
             # _dispatched_row_ids, so this call is what enforces the grace period
-            # on restart. Otherwise redundant with the first poll's prune five
-            # seconds later.
+            # on restart. Clearing the map in shutdown() instead would let a fast
+            # restart re-deliver rows the previous incarnation already handled --
+            # tolerable under at-least-once, bought for nothing. Otherwise
+            # redundant with the next poll's prune, which runs immediately and
+            # every 5s thereafter.
             self._prune_dispatched_row_ids()
         except BaseException:
             # Never orphan the listener: ``_started`` stays False on this path,
