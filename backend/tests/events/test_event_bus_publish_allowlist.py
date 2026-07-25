@@ -11,30 +11,44 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parents[2] / "app"
 
 
-_STANDALONE_SUMMARY = "Standalone summary: source effects have already committed or are in-memory."
-
-# The seven documented standalone summaries. Keyed by ``path:enclosing scope``,
-# never by line number: a whitespace edit would otherwise fail this test with a
-# confusing "new site" *and* "stale entry" pair.
-ALLOWED_EAGER_PUBLISH_SITES: dict[str, str] = {
-    "app/hosts/router.py:_auto_discover": f"host.discovery_completed -- {_STANDALONE_SUMMARY}",
+# Every sanctioned standalone publisher, keyed by ``<path>:<enclosing qualname>``,
+# valued with the reason it cannot ride a source transaction. The registry lives
+# in the test, not under ``app/``, so production takes no dependency on its own
+# contract test. The scanned set must equal these keys in BOTH directions: an
+# undeclared callsite fails, and a stale declaration fails too.
+#
+# The reason is the part a reviewer needs. "Standalone summary" is a restatement
+# of the category, not a justification, which is why every entry now says what
+# the source effects actually were.
+STANDALONE_PUBLISHERS: dict[str, str] = {
+    "app/hosts/router.py:_auto_discover": (
+        "host.discovery_completed -- background task: every device row it summarises was already "
+        "committed inside discovery.discover_devices, and the enclosing session holds no open "
+        "transaction by the time the summary is built"
+    ),
     "app/agent_comm/circuit_breaker.py:AgentCircuitBreaker.record_success": (
-        f"host.circuit_breaker.closed -- {_STANDALONE_SUMMARY}"
+        "host.circuit_breaker.closed -- breaker state is process-local (self._states); there is no "
+        "database mutation for the event to ride"
     ),
     "app/agent_comm/circuit_breaker.py:AgentCircuitBreaker.record_failure": (
-        f"host.circuit_breaker.opened -- {_STANDALONE_SUMMARY}"
+        "host.circuit_breaker.opened -- breaker state is process-local (self._states); there is no "
+        "database mutation for the event to ride"
     ),
     "app/devices/services/bulk.py:_run_per_device_node_action": (
-        f"bulk.operation_completed (start/stop/restart) -- {_STANDALONE_SUMMARY}"
+        "bulk.operation_completed (start/stop/restart) -- each per-device action commits in its own "
+        "session inside _one; the batch summary spans all of them and belongs to no single one"
     ),
     "app/devices/services/bulk.py:BulkOperationsService.bulk_delete": (
-        f"bulk.operation_completed (delete) -- {_STANDALONE_SUMMARY}"
+        "bulk.operation_completed (delete) -- DeviceService.delete_device commits per device, so the "
+        "summary follows N already-committed transactions"
     ),
     "app/devices/services/bulk.py:BulkOperationsService.bulk_reconnect": (
-        f"bulk.operation_completed (reconnect) -- {_STANDALONE_SUMMARY}"
+        "bulk.operation_completed (reconnect) -- the reconnect is a remote agent call with no database "
+        "mutation; the summary reports remote outcomes after they have all returned"
     ),
     "app/devices/services/data_cleanup.py:DataCleanupService.cleanup_old_data": (
-        f"system.cleanup_completed -- {_STANDALONE_SUMMARY}"
+        "system.cleanup_completed -- each delete batch commits in its own transaction; the summary "
+        "reports counts across all of them"
     ),
 }
 
@@ -56,8 +70,8 @@ class _PublishSiteVisitor(ast.NodeVisitor):
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self._visit_function(node)
 
-    def visit_Await(self, node: ast.Await) -> None:
-        if _is_event_bus_publish_call(node.value):
+    def visit_Call(self, node: ast.Call) -> None:
+        if _is_event_bus_publish_call(node):
             qualifier = ".".join(self.scope) if self.scope else "<module>"
             self.sites.add(f"{self.rel_path}:{qualifier}")
         self.generic_visit(node)
@@ -71,10 +85,14 @@ class _PublishSiteVisitor(ast.NodeVisitor):
 def _is_event_bus_publish_call(node: ast.AST) -> bool:
     """Match ``<receiver>.publish(...)`` for any receiver the codebase actually uses.
 
-    Matching only ``event_bus.publish`` made this guard unfireable: production
-    injects the publisher and calls it ``publisher`` or ``self._publisher``, and
-    the literal name ``event_bus`` appears at no callsite. Accept a bare name
-    and a ``self.<attr>`` receiver so an eighth eager publish fails CI.
+    Matched at the Call node, not at an enclosing ``await``: the policy is about
+    reaching ``publish`` at all, and ``asyncio.create_task(publisher.publish(...))``
+    or ``coro = publisher.publish(...); await coro`` reach it just as surely as a
+    direct ``await`` does. Matching only ``event_bus.publish`` made this guard
+    unfireable in a different way -- production injects the publisher and calls it
+    ``publisher`` or ``self._publisher``, and the literal name ``event_bus``
+    appears at no callsite -- so a bare name and a ``self.<attr>`` receiver both
+    count.
     """
     if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "publish"):
         return False
@@ -94,23 +112,35 @@ def _scan_publish_sites() -> set[str]:
     return sites
 
 
-def test_no_unexpected_eager_event_bus_publish_sites() -> None:
-    actual = _scan_publish_sites()
-    expected = set(ALLOWED_EAGER_PUBLISH_SITES.keys())
+def test_standalone_publishers_are_declared_with_a_reason() -> None:
+    """The scanned publish surface must equal the declared registry, both ways.
 
-    new_sites = sorted(actual - expected)
-    assert not new_sites, (
-        "New eager `await event_bus.publish(` callsite(s) detected:\n  "
-        + "\n  ".join(new_sites)
-        + "\n\nEither replace with `publisher.queue_for_session` or add a justified allowlist entry."
+    The policy is semantic -- a mutation with an open transaction must use
+    ``queue_for_session``; ``publish`` is only for effects that cannot join a
+    source transaction -- and no syntax match expresses it. A declaration with a
+    reason per site is the closest mechanizable form.
+    """
+    actual = _scan_publish_sites()
+    expected = set(STANDALONE_PUBLISHERS)
+
+    undeclared = sorted(actual - expected)
+    assert not undeclared, (
+        "Undeclared standalone `.publish(` callsite(s):\n  "
+        + "\n  ".join(undeclared)
+        + "\n\nA mutation with an open transaction must use `publisher.queue_for_session` so the event "
+        "row commits with it. If this call genuinely cannot join a source transaction, add it to "
+        "STANDALONE_PUBLISHERS with a one-line reason saying what its source effects were. If the "
+        "receiver is not an event publisher at all, narrow _is_event_bus_publish_call rather than "
+        "widening the registry."
     )
 
     stale = sorted(expected - actual)
     assert not stale, (
-        "Allowlist contains stale entries no longer present in the source:\n  "
-        + "\n  ".join(stale)
-        + "\n\nRemove them from ALLOWED_EAGER_PUBLISH_SITES."
+        "STANDALONE_PUBLISHERS declares callsite(s) that no longer exist:\n  " + "\n  ".join(stale) + "\n\nRemove them."
     )
+
+    unexplained = sorted(site for site, reason in STANDALONE_PUBLISHERS.items() if len(reason.strip()) < 20)
+    assert not unexplained, f"STANDALONE_PUBLISHERS entries without a real reason: {unexplained}"
 
 
 ALLOWED_SYSTEM_EVENT_CONSTRUCTOR_SITES: dict[str, str] = {
@@ -198,7 +228,9 @@ def _scan_pg_notify_files() -> set[str]:
     """
     files: set[str] = set()
     for path in APP_ROOT.rglob("*.py"):
-        if "pg_notify" in path.read_text():
+        # Case-insensitive: PostgreSQL identifiers are case-insensitive, so
+        # ``PERFORM PG_NOTIFY(...)`` is the same call and must not evade this.
+        if "pg_notify" in path.read_text().lower():
             files.add(path.relative_to(APP_ROOT.parent).as_posix())
     return files
 
