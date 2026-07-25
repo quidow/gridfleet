@@ -62,3 +62,17 @@ async def test_the_poll_path_falls_back_to_the_shared_factory(
     await bus._dispatch_missed_events()
 
     assert bus._poll_session_factory is db_session_maker
+
+
+async def test_the_poller_task_is_named(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """An unnamed task is an unreadable task dump during an incident."""
+    bus = EventBus()
+    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
+    await bus.start()
+    try:
+        assert bus._poller_task is not None
+        assert bus._poller_task.get_name() == "system_event_poller"
+    finally:
+        await bus.shutdown()

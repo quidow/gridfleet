@@ -266,7 +266,7 @@ class EventBus:
             await asyncio.gather(listener_task, return_exceptions=True)
             self._listener_task = None
             raise
-        self._poller_task = asyncio.create_task(self._poll_for_missed_events())
+        self._poller_task = asyncio.create_task(self._poll_for_missed_events(), name="system_event_poller")
         self._started = True
 
     async def shutdown(self) -> None:
