@@ -157,6 +157,11 @@ jobs:
         working-directory: agent
         run: uv sync --extra dev --locked
 
+      - name: Bound idle transactions (parity with the compose stacks)
+        run: |
+          PGPASSWORD=gridfleet psql -h 127.0.0.1 -U gridfleet -d gridfleet \
+            -c "ALTER DATABASE gridfleet SET idle_in_transaction_session_timeout = '60s';"
+
       - name: Test
         working-directory: backend
         run: uv run --locked --extra dev pytest -q -n auto
