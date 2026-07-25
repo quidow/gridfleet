@@ -50,6 +50,27 @@ LISTENER_READY_TIMEOUT_SEC = 5.0
 HANDLER_DRAIN_TIMEOUT_SEC = 5.0
 POLL_SCAN_CHUNK_SIZE = 500
 
+# Bounds one statement on the poll path, applied as asyncpg's ``command_timeout``
+# on the poller's own connection (``app.core.database.build_poller_engine``).
+#
+# The measured quantity is one ``LIMIT POLL_SCAN_CHUNK_SIZE`` page plus its
+# hydration -- both indexed reads -- not a whole scan. A scan is deliberately
+# unbounded: ``_scan_window`` walks the entire interval above the frontier in
+# one iteration so a backlog drains in one poll rather than one page per poll.
+# That is exactly why the bound is per statement. An iteration-level timeout
+# shorter than a recovery scan would discard the page cursor, restart from the
+# same frontier, and time out again forever -- a livelock, arriving precisely
+# when the poller matters most, because the outage that wedges a poller is the
+# one that builds the backlog.
+#
+# Measured max over 30 samples against a 4-page table on the dev stack: 0.0154s.
+# The multiple biases high: timing out early costs one retried poll and nothing
+# else -- the dedupe map blocks re-delivery, ``_pending_gaps`` is untouched, and
+# the frontier has not moved -- while timing out late leaves a wedge open
+# longer. Unlike a per-iteration value, "high" here is anchored to a finite
+# measurable quantity.
+POLL_STATEMENT_TIMEOUT_SEC = 1.5
+
 # The ``idle_in_transaction_session_timeout`` both compose files set on the
 # postgres service. Mirrored here, not read from the database, so the derivation
 # below is visible at the constant;
