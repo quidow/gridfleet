@@ -13,7 +13,7 @@ from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
 from tests.conftest import test_circuit_breaker
 from tests.fakes import FakeSettingsReader
-from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -65,7 +65,7 @@ async def test_create_run_queues_run_created(
     _, device = await seed_host_and_device(db_session, identity="run-create-1")
     event_bus_capture.clear()
     result = await _make_allocator_svc(db_session_maker).create_run(_build_request(device, "contract-run"))
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     created = [p for n, p in event_bus_capture if n == "run.created"]
     assert len(created) == 1
@@ -85,7 +85,7 @@ async def test_run_created_dropped_on_rollback(
         {"run_id": "00000000-0000-0000-0000-000000000000", "name": "rollback-test"},
     )
     await db_session.rollback()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     assert [n for n, _ in event_bus_capture if n == "run.created"] == []
 
@@ -100,10 +100,11 @@ async def test_signal_ready_emits_active(
     allocator = _make_allocator_svc(db_session_maker)
     lifecycle = _make_lifecycle_svc(db_session_maker)
     result = await allocator.create_run(_build_request(device, "states-run"))
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     await lifecycle.signal_ready(result.response.id)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
     assert any(n == "run.active" for n, _ in event_bus_capture)
 
 
@@ -120,10 +121,11 @@ async def test_complete_run_queues_run_completed(
     run_id = result.response.id
     await lifecycle.signal_ready(run_id)
     await lifecycle.signal_active(run_id)
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     await lifecycle.complete_run(run_id)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     completed = [p for n, p in event_bus_capture if n == "run.completed"]
     assert len(completed) == 1
@@ -140,10 +142,11 @@ async def test_cancel_run_queues_run_cancelled(
     allocator = _make_allocator_svc(db_session_maker)
     lifecycle = _make_lifecycle_svc(db_session_maker)
     result = await allocator.create_run(_build_request(device, "cancel-run"))
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     await lifecycle.cancel_run(result.response.id)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     cancelled = [p for n, p in event_bus_capture if n == "run.cancelled"]
     assert len(cancelled) == 1
@@ -160,10 +163,11 @@ async def test_force_release_queues_admin_cancelled(
     allocator = _make_allocator_svc(db_session_maker)
     lifecycle = _make_lifecycle_svc(db_session_maker)
     result = await allocator.create_run(_build_request(device, "force-run"))
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     await lifecycle.force_release(result.response.id)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     cancelled = [p for n, p in event_bus_capture if n == "run.cancelled"]
     assert len(cancelled) == 1
@@ -181,10 +185,11 @@ async def test_expire_run_queues_run_expired(
     lifecycle = _make_lifecycle_svc(db_session_maker)
     result = await allocator.create_run(_build_request(device, "expire-run"))
     await lifecycle.signal_active(result.response.id)
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     await lifecycle.expire_run(result.response.id, "ttl")
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     expired = [p for n, p in event_bus_capture if n == "run.expired"]
     assert len(expired) == 1
@@ -203,10 +208,11 @@ async def test_expire_run_from_preparing_queues_never_activated_and_expired(
     allocator = _make_allocator_svc(db_session_maker)
     lifecycle = _make_lifecycle_svc(db_session_maker)
     result = await allocator.create_run(_build_request(device, "expire-prep-run"))
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     await lifecycle.expire_run(result.response.id, "ttl")
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     expired = [p for n, p in event_bus_capture if n == "run.expired"]
     assert len(expired) == 1

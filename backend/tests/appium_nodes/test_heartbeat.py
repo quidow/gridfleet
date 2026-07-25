@@ -25,12 +25,14 @@ from app.devices.services.state import derive_operational_state
 from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.fakes import FakeSettingsReader
-from tests.helpers import test_event_bus
+from tests.helpers import dispatch_committed_events, test_event_bus
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.events import Event
 
 
 def _hb_svc(
@@ -383,14 +385,13 @@ async def test_partition_probe_records_metric_and_log_without_state_change(db_se
 
 async def test_host_offline_cascade_publishes_canonical_availability_event(
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: list[tuple[str, dict[str, object], str | None]] = []
 
-    async def fake_publish(name: str, payload: dict[str, object], *, severity: str | None = None) -> None:
-        captured.append((name, payload, severity))
+    async def capture(event: Event) -> None:
+        captured.append((event.type, event.data, event.severity))
 
-    monkeypatch.setattr(test_event_bus, "publish", fake_publish)
+    test_event_bus.register_handler(capture)
 
     host = Host(
         hostname="cascade-host",
@@ -423,6 +424,7 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
     guard = _unguarded_guard(svc)
     await svc.evaluate_host(db_session, host, guard=guard)
     await db_session.commit()
+    await dispatch_committed_events()
 
     availability_events = [
         (payload, severity) for name, payload, severity in captured if name == "device.operational_state_changed"

@@ -117,7 +117,7 @@ from tests.bench_instrumentation import (
     validate_benchmark_knobs,
 )
 from tests.fakes import FakeSettingsReader
-from tests.helpers import build_connectivity_service, settle_after_commit_tasks
+from tests.helpers import build_connectivity_service, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -1029,7 +1029,7 @@ async def test_bench_device_health_loop_fold(
                 )
             finally:
                 fold_returned_at = perf_counter()
-                await settle_after_commit_tasks()
+                await dispatch_committed_events()
                 event_settled_at = perf_counter()
                 if armed:
                     fold_wall_ms.append((fold_returned_at - t0) * 1000)
@@ -1154,7 +1154,7 @@ async def test_bench_healthy_fold_statement_budget(
         settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
         tap.armed = False
         commits.armed = False
-        await settle_after_commit_tasks()
+        await dispatch_committed_events()
         assert settled is True
     finally:
         event.remove(engine, "before_cursor_execute", tap)

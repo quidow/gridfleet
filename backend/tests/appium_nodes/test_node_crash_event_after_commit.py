@@ -10,7 +10,7 @@ import pytest
 from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.services.heartbeat import _ingest_appium_restart_events
 from tests.fakes import FakeSettingsReader
-from tests.helpers import seed_host_and_running_node, settle_after_commit_tasks
+from tests.helpers import dispatch_committed_events, seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ async def test_restart_succeeded_queues_node_state_changed(
 
     await _ingest_appium_restart_events(db_session, host, health_data, publisher=event_bus)
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     state = next((p for n, p in event_bus_capture if n == "node.state_changed"), None)
     assert state is not None
@@ -73,7 +73,7 @@ async def test_restart_exhausted_queues_node_crash_and_device_crashed(
 
     await _ingest_appium_restart_events(db_session, host, health_data, publisher=event_bus)
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     types = [n for n, _ in event_bus_capture]
     assert "node.crash" in types
@@ -107,7 +107,7 @@ async def test_restart_failed_dropped_on_rollback(
 
     await _ingest_appium_restart_events(db_session, host, health_data, publisher=event_bus)
     await db_session.rollback()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     assert [n for n, _ in event_bus_capture if n in {"node.crash", "device.crashed"}] == []
 
@@ -155,7 +155,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
         ),
     )
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     types = [n for n, _ in event_bus_capture]
     assert "node.crash" not in types

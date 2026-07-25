@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.events import Event, EventBus
 from app.events.models import SystemEvent
-from tests.helpers import recent_events
+from tests.helpers import drain_handlers, recent_events
 
 
 def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
@@ -299,3 +299,55 @@ async def test_poll_for_missed_events_logs_exceptions_and_sleeps() -> None:
         await bus._poll_for_missed_events()
 
     sleep.assert_awaited()
+
+
+@pytest.mark.db
+async def test_listener_loads_committed_triggered_row_before_dispatch(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    bus = EventBus()
+    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
+    received: list[Event] = []
+    bus.register_handler(received.append)
+
+    def mine() -> list[Event]:
+        return [event for event in received if event.data.get("device_id") == "listener"]
+
+    await bus.start()
+    try:
+        bus.queue_for_session(db_session, "device.updated", {"device_id": "listener"})
+        await asyncio.sleep(0)
+        assert mine() == [], "notification escaped before commit"
+        await db_session.commit()
+        for _ in range(500):
+            if mine():
+                break
+            await asyncio.sleep(0.01)
+        assert [event.data for event in mine()] == [{"device_id": "listener"}]
+    finally:
+        await bus.shutdown()
+
+
+@pytest.mark.db
+async def test_poller_recovers_committed_row_when_notify_wake_up_is_lost(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    bus = EventBus()
+    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
+    received: list[Event] = []
+    bus.register_handler(received.append)
+    await bus.start()
+    try:
+        assert bus._listener_task is not None
+        bus._listener_task.cancel()
+        await asyncio.gather(bus._listener_task, return_exceptions=True)
+        bus._listener_task = None
+        bus.queue_for_session(db_session, "device.updated", {"device_id": "poller"})
+        await db_session.commit()
+        await bus._dispatch_missed_events()
+        await drain_handlers(bus)
+        await bus._dispatch_missed_events()
+        await drain_handlers(bus)
+        assert [event.data["device_id"] for event in received] == ["poller"]
+    finally:
+        await bus.shutdown()

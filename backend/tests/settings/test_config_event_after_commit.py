@@ -8,7 +8,7 @@ from app.hosts.schemas import HostRegister
 from app.hosts.service import HostCrudService
 from app.settings.service_config import SettingsConfigService
 from tests.fakes import FakeSettingsReader
-from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ async def test_register_host_queues_host_registered(
     host, _is_new = await HostCrudService(publisher=event_bus, settings=FakeSettingsReader({})).register_host(
         db_session, payload
     )
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     registered = [p for n, p in event_bus_capture if n == "host.registered"]
     assert len(registered) == 1
@@ -45,13 +45,14 @@ async def test_approve_host_queues_status_changed(
         publisher=event_bus, settings=FakeSettingsReader({"agent.auto_accept_hosts": False})
     ).register_host(db_session, payload)
     assert host.status.value == "pending"
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     approved = await HostCrudService(publisher=event_bus, settings=FakeSettingsReader({})).approve_host(
         db_session, host.id
     )
     assert approved is not None
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     changed = [p for n, p in event_bus_capture if n == "host.status_changed"]
     assert len(changed) == 1
@@ -68,7 +69,7 @@ async def test_merge_device_config_queues_config_updated(
     await SettingsConfigService(publisher=event_bus).merge_device_config(
         db_session, device, {"wifi": {"ssid": "lab"}}, changed_by="tester"
     )
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     updated = [p for n, p in event_bus_capture if n == "config.updated"]
     assert len(updated) == 1

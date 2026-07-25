@@ -41,7 +41,7 @@ from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
-from tests.helpers import create_device, create_reserved_run, settle_after_commit_tasks
+from tests.helpers import create_device, create_reserved_run, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -264,7 +264,7 @@ async def test_handle_health_failure_locked_reuses_lock_and_does_not_commit(
         ]
 
         await db_session.commit()
-        await settle_after_commit_tasks()
+        await dispatch_committed_events()
         system_event_types = list(
             (
                 await db_session.execute(
@@ -338,7 +338,7 @@ async def test_handle_health_failure_locked_defers_without_commit(
         assert await _event_types_for_device(db_session, device.id) == [DeviceEventType.lifecycle_deferred_stop]
 
         await db_session.commit()
-        await settle_after_commit_tasks()
+        await dispatch_committed_events()
         system_event_types = list(
             (
                 await db_session.execute(

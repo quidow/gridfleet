@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from tests.conftest import settings_service
-from tests.helpers import settle_after_commit_tasks
+from tests.helpers import dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -17,7 +17,7 @@ async def test_update_queues_settings_changed(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     await settings_service.update(db_session, "general.session_viability_timeout_sec", 30, publisher=event_bus)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]
     assert len(changed) == 1
@@ -29,7 +29,7 @@ async def test_bulk_update_queues_one_event(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     await settings_service.bulk_update(db_session, {"general.session_viability_timeout_sec": 45}, publisher=event_bus)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]
     assert len(changed) == 1
@@ -41,7 +41,7 @@ async def test_reset_queues_event(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     await settings_service.reset(db_session, "general.session_viability_timeout_sec", publisher=event_bus)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]
     assert len(changed) == 1
@@ -53,7 +53,7 @@ async def test_reset_all_queues_event(
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     await settings_service.reset_all(db_session, publisher=event_bus)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]
     assert len(changed) == 1

@@ -252,25 +252,16 @@ async def create_reservation(
     return res
 
 
-async def settle_after_commit_tasks() -> None:
-    """Drain after_commit-created publish tasks so contract assertions run after dispatch.
+async def dispatch_committed_events(bus: EventBus = test_event_bus) -> None:
+    """Dispatch durable rows that have committed and wait for local handlers.
 
-    The previous implementation yielded the event loop twice. That was sufficient
-    in the common case but raced under load: when multiple host sessions commit
-    concurrently (heartbeat cascade tests), each one schedules its own
-    ``loop.create_task(_publish_pending_events(...))`` and two yields can return
-    before all of those tasks reach their first append, leaving
-    ``event_bus_capture`` empty when the assertion runs. Waiting on the
-    ``event_bus._handler_tasks`` set is deterministic — it only returns after
-    every queued publish task has completed.
+    Persistent mode no longer dispatches from the writing coroutine: the row is
+    staged in the source transaction and delivered only after it commits, via
+    the notification listener or this poll. Contract tests call this instead of
+    asserting that a handler finished when the service call returned.
     """
-    # Yield once so any after_commit hooks fired during the just-completed
-    # await have a chance to call ``loop.create_task`` and register on
-    # ``_handler_tasks`` before we snapshot the set.
-    await asyncio.sleep(0)
-    pending = {task for task in test_event_bus._handler_tasks if not task.done()}
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+    await bus._dispatch_missed_events()
+    await drain_handlers(bus)
 
 
 async def seed_host_and_device(

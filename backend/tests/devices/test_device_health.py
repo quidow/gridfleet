@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -19,6 +18,7 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services import health as svc
 from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.health import DeviceHealthService
+from tests.helpers import dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -51,11 +51,6 @@ async def db_with_device(db_session: AsyncSession, db_host: Host) -> AsyncGenera
     await db_session.flush()
     await db_session.refresh(device, attribute_names=["appium_node"])
     yield db_session, device
-
-
-async def _drain_after_commit_tasks() -> None:
-    for _ in range(2):
-        await asyncio.sleep(0)
 
 
 @pytest.mark.db
@@ -366,7 +361,7 @@ async def test_health_changed_event_fires_on_derived_flip(
     await db.commit()
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="boom")
     await db.commit()
-    await _drain_after_commit_tasks()
+    await dispatch_committed_events()
     names = [name for name, _payload in event_bus_capture]
     assert "device.health_changed" in names
 
@@ -382,7 +377,7 @@ async def test_health_changed_event_skipped_when_derived_unchanged(
     await db.commit()
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=True, summary="still ok")
     await db.commit()
-    await _drain_after_commit_tasks()
+    await dispatch_committed_events()
     names = [name for name, _payload in event_bus_capture]
     assert "device.health_changed" not in names
 
@@ -401,7 +396,7 @@ async def test_health_changed_fires_on_any_verdict_status_change(
     await db.commit()
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="boom")
     await db.commit()
-    await _drain_after_commit_tasks()
+    await dispatch_committed_events()
     payloads = [payload for name, payload in event_bus_capture if name == "device.health_changed"]
     assert len(payloads) == 1
     event = payloads[0]
@@ -423,7 +418,7 @@ async def test_health_changed_not_fired_when_only_details_change(
     await db.commit()
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="boom 2")
     await db.commit()
-    await _drain_after_commit_tasks()
+    await dispatch_committed_events()
     names = [name for name, _payload in event_bus_capture]
     assert "device.health_changed" not in names
 
@@ -439,7 +434,7 @@ async def test_health_changed_event_dropped_on_rollback(
     await db.commit()
     await DeviceHealthService(publisher=event_bus).update_device_checks(db, device, healthy=False, summary="boom")
     await db.rollback()
-    await _drain_after_commit_tasks()
+    await dispatch_committed_events()
     names = [name for name, _payload in event_bus_capture]
     assert "device.health_changed" not in names
 
@@ -510,7 +505,7 @@ async def test_apply_node_state_transition_emits_event_on_node_only_flip(
         db, device, health_running=False, health_state="error", mark_offline=False
     )
     await db.commit()
-    await _drain_after_commit_tasks()
+    await dispatch_committed_events()
     names = [name for name, _payload in event_bus_capture]
     assert "device.health_changed" in names
 

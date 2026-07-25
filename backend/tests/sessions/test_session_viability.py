@@ -29,6 +29,7 @@ from tests.conftest import settings_service
 from tests.fakes import FakeSettingsReader
 from tests.helpers import (
     create_reservation,
+    dispatch_committed_events,
     get_session_viability_control_plane_state,
     set_session_viability_control_plane_entry,
 )
@@ -1759,6 +1760,7 @@ async def test_run_session_viability_probe_passes_does_not_flap_offline_when_sto
             checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
         )
 
+    await dispatch_committed_events()
     op_events = [
         payload
         for name, payload in event_bus_capture

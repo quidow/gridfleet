@@ -23,7 +23,7 @@ from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service import SessionCrudService, _session_ended_severity
 from tests.fakes import build_review_service
-from tests.helpers import create_device_record, settle_after_commit_tasks
+from tests.helpers import create_device_record, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -307,7 +307,7 @@ async def test_update_session_status_does_not_flap_offline_on_session_end(
     # ``update_session_status`` is transaction-local (no commit); mirror the
     # router's ``await db.commit()`` so after_commit tasks fire in-unit-test.
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     assert updated is not None
     op_events = [
@@ -392,7 +392,7 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     # ``update_session_status`` is transaction-local (no commit); mirror the
     # router's ``await db.commit()`` so after_commit tasks fire in-unit-test.
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     assert updated is not None
     op_events = [
@@ -563,7 +563,7 @@ async def test_update_session_status_preserves_pre_stamped_error_type_when_run_t
     crud = SessionCrudService(publisher=event_bus, lifecycle=AsyncMock())
     updated = await crud.update_session_status(db_session, "pre-stamped-sess", SessionStatus.error)
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     assert updated is not None
     assert updated.status == SessionStatus.error

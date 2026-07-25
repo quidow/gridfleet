@@ -13,7 +13,7 @@ from app.events.protocols import EventPublisher
 from app.lifecycle.services import remediation_log
 from app.sessions.models import Session, SessionStatus
 from tests.fakes import FakeSettingsReader, build_review_service
-from tests.helpers import create_device, settle_after_commit_tasks
+from tests.helpers import create_device, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ async def test_enter_maintenance_emits_operational_state_changed_and_audit_row(
     await MaintenanceService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=publisher
     ).enter_maintenance(db_session, locked)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     emitted = [call.args[1] for call in publisher.queue_for_session.call_args_list]
     assert "device.operational_state_changed" in emitted
@@ -73,7 +73,7 @@ async def test_enter_maintenance_bus_event_is_uncaused(
     await MaintenanceService(
         review=build_review_service(), settings=FakeSettingsReader({}), publisher=publisher
     ).enter_maintenance(db_session, locked)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     op_calls = [
         call

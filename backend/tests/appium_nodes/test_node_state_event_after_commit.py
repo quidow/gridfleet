@@ -10,7 +10,7 @@ from app.appium_nodes.services.reconciler_agent import mark_node_started, mark_n
 from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
 from tests.fakes import FakeSettingsReader
-from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -32,7 +32,7 @@ async def test_mark_node_started_queues_state_changed_after_availability(
 
     locked = await device_locking.lock_device(db_session, device.id)
     await mark_node_started(db_session, locked, port=4730, pid=42, publisher=event_bus, settings=FakeSettingsReader({}))
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     types_in_order = [name for name, _ in event_bus_capture]
     assert "node.state_changed" in types_in_order
@@ -54,11 +54,12 @@ async def test_mark_node_stopped_queues_state_changed(
 
     locked = await device_locking.lock_device(db_session, device.id)
     await mark_node_started(db_session, locked, port=4731, pid=43, publisher=event_bus, settings=FakeSettingsReader({}))
+    await dispatch_committed_events()
     event_bus_capture.clear()
 
     locked = await device_locking.lock_device(db_session, device.id)
     await mark_node_stopped(db_session, locked, publisher=event_bus)
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     node_events = [p for n, p in event_bus_capture if n == "node.state_changed"]
     assert len(node_events) == 1

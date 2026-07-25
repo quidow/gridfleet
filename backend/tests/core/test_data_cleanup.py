@@ -12,7 +12,7 @@ from app.hosts.models import Host, HostResourceSample
 from app.sessions.models import Session, SessionStatus
 from app.settings.models import ConfigAuditLog
 from tests.fakes import FakeSettingsReader
-from tests.helpers import recent_events
+from tests.helpers import dispatch_committed_events, recent_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -272,6 +272,7 @@ async def test_cleanup_batches_deletes_and_reports_aggregated_counts(db_session:
     result = await db_session.execute(select(Session))
     remaining = result.scalars().all()
     assert len(remaining) == 1
+    await dispatch_committed_events(event_bus)
     events = recent_events(event_bus, event_types=["system.cleanup_completed"])
     assert len(events) == 1
     assert events[0]["data"]["sessions_deleted"] == 4
@@ -327,6 +328,7 @@ async def test_cleanup_host_resource_samples_in_batches_and_reports_counts(
     remaining = result.scalars().all()
     assert len(remaining) == 2
 
+    await dispatch_committed_events(event_bus)
     events = recent_events(event_bus, event_types=["system.cleanup_completed"])
     assert len(events) == 1
     assert events[0]["data"]["host_resource_samples_deleted"] == 4
@@ -365,6 +367,7 @@ async def test_cleanup_purges_old_terminal_grid_tickets(db_session: AsyncSession
     assert recent_expired.id in remaining
     assert old_waiting.id in remaining
 
+    await dispatch_committed_events(event_bus)
     events = recent_events(event_bus, event_types=["system.cleanup_completed"])
     assert events[0]["data"]["grid_queue_tickets_deleted"] == 2
 
@@ -406,6 +409,7 @@ async def test_cleanup_capacity_snapshots_in_batches_and_reports_counts(db_sessi
     remaining = result.scalars().all()
     assert len(remaining) == 2
 
+    await dispatch_committed_events(event_bus)
     events = recent_events(event_bus, event_types=["system.cleanup_completed"])
     assert len(events) == 1
     assert events[0]["data"]["capacity_snapshots_deleted"] == 4

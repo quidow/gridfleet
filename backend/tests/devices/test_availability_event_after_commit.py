@@ -15,7 +15,7 @@ import pytest
 
 from app.devices import locking as device_locking
 from app.devices.services.state import emit_operational_state_transition
-from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -34,12 +34,12 @@ async def test_event_dispatches_after_commit(
     locked = await device_locking.lock_device(db_session, device.id)
     await emit_operational_state_transition(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
     # Pre-commit: nothing dispatched yet.
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
     assert event_bus_capture == [], f"Helper must not dispatch before commit; got {event_bus_capture}"
 
     await db_session.commit()
     # The after_commit hook schedules a task; let it run.
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     avail = [(n, p) for n, p in event_bus_capture if n == "device.operational_state_changed"]
     assert len(avail) == 1, f"Expected one event after commit; got {avail}"
@@ -57,7 +57,7 @@ async def test_event_dropped_on_rollback(
     await emit_operational_state_transition(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
 
     await db_session.rollback()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     avail = [(n, p) for n, p in event_bus_capture if n == "device.operational_state_changed"]
     assert avail == [], f"Rollback must drop queued events; got {avail}"
@@ -78,7 +78,7 @@ async def test_multiple_events_dispatch_in_queue_order(
         await emit_operational_state_transition(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
 
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     avail = [p for n, p in event_bus_capture if n == "device.operational_state_changed"]
     assert [p["device_name"] for p in avail] == ["Device multi-a", "Device multi-b"], (

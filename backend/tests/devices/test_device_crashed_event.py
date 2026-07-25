@@ -9,7 +9,7 @@ import pytest
 from app.devices.services.event import build_device_crashed_payload
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import build_review_service
-from tests.helpers import seed_host_and_device, settle_after_commit_tasks
+from tests.helpers import dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -37,11 +37,11 @@ async def test_device_crashed_dispatches_after_commit(
             process="appium",
         ),
     )
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
     assert event_bus_capture == [], "must not dispatch before commit"
 
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     crashed = [(n, p) for n, p in event_bus_capture if n == "device.crashed"]
     assert len(crashed) == 1
@@ -74,7 +74,7 @@ async def test_device_crashed_dropped_on_rollback(
         ),
     )
     await db_session.rollback()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     assert [n for n, _ in event_bus_capture if n == "device.crashed"] == []
 
@@ -102,7 +102,7 @@ async def test_handle_node_crash_queues_device_crashed(
         reason="ADB disconnect",
     )
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     crashed = [p for n, p in event_bus_capture if n == "device.crashed"]
     assert len(crashed) == 1
@@ -140,7 +140,7 @@ async def test_handle_node_crash_skips_crashed_event_when_already_offline(
         reason="Recovery probe failed",
     )
     await db_session.commit()
-    await settle_after_commit_tasks()
+    await dispatch_committed_events()
 
     # device.crashed must NOT fire for an already-offline device
     crashed = [p for n, p in event_bus_capture if n == "device.crashed"]
