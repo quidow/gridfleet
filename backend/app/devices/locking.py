@@ -15,6 +15,13 @@ required by lifecycle_policy callers that read session-related state inside
 the locked transaction. ``lock_device_handle`` joins the two scalar relationships
 into its locked statement, honours ``load_sessions`` with or without
 ``predicates``, and returns transaction-bound proof of ownership.
+
+EVENT DELIVERY: nothing here is load-bearing for the outbox any more. Until the
+poller tracked gaps explicitly, event delivery depended on this lock assigning a
+transaction id before an event row was staged, and dropping the lock from a path
+would have silently stranded its events. The poller now records any row id its
+forward scan passed over and resolves it by lookup, so it consults no
+transaction id at all (``app.events.event_bus``).
 """
 
 from __future__ import annotations
