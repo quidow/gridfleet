@@ -80,3 +80,70 @@ def test_no_unexpected_eager_event_bus_publish_sites() -> None:
         + "\n  ".join(stale)
         + "\n\nRemove them from ALLOWED_EAGER_PUBLISH_SITES."
     )
+
+
+ALLOWED_SYSTEM_EVENT_CONSTRUCTOR_SITES: dict[str, str] = {
+    "app/events/event_bus.py:stage_system_event": "the one sanctioned SystemEvent(...) constructor",
+}
+
+
+class _SystemEventConstructorVisitor(ast.NodeVisitor):
+    def __init__(self, rel_path: str) -> None:
+        self.rel_path = rel_path
+        self.scope: list[str] = []
+        self.sites: set[str] = set()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.scope.append(node.name)
+        self.generic_visit(node)
+        self.scope.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if _is_system_event_constructor_call(node):
+            qualifier = ".".join(self.scope) if self.scope else "<module>"
+            self.sites.add(f"{self.rel_path}:{qualifier}")
+        self.generic_visit(node)
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.scope.append(node.name)
+        self.generic_visit(node)
+        self.scope.pop()
+
+
+def _is_system_event_constructor_call(node: ast.AST) -> bool:
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "SystemEvent"
+
+
+def _scan_system_event_constructor_sites() -> set[str]:
+    sites: set[str] = set()
+    for path in APP_ROOT.rglob("*.py"):
+        rel = path.relative_to(APP_ROOT.parent).as_posix()
+        visitor = _SystemEventConstructorVisitor(rel)
+        visitor.visit(ast.parse(path.read_text(), filename=str(path)))
+        sites.update(visitor.sites)
+    return sites
+
+
+def test_no_unexpected_system_event_constructor_sites() -> None:
+    actual = _scan_system_event_constructor_sites()
+    expected = set(ALLOWED_SYSTEM_EVENT_CONSTRUCTOR_SITES.keys())
+
+    new_sites = sorted(actual - expected)
+    assert not new_sites, (
+        "New direct `SystemEvent(...)` constructor callsite(s) detected:\n  "
+        + "\n  ".join(new_sites)
+        + "\n\nRoute through app.events.event_bus.build_event + stage_system_event instead."
+    )
+
+    stale = sorted(expected - actual)
+    assert not stale, (
+        "Allowlist contains stale entries no longer present in the source:\n  "
+        + "\n  ".join(stale)
+        + "\n\nRemove them from ALLOWED_SYSTEM_EVENT_CONSTRUCTOR_SITES."
+    )

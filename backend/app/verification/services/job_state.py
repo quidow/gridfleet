@@ -118,18 +118,22 @@ def public_snapshot(job: dict[str, Any]) -> dict[str, Any]:
 
 
 async def publish(job: dict[str, Any]) -> None:
-    await persist_job(job)
     snap = snapshot(job)
     job_status = str(snap.get("status", "pending"))
-    # Determine current stage status for severity derivation.
     _, current_stage = _resolve_current_stage(snap)
     stage_status = current_stage.get("status") if current_stage else None
+    severity = _verification_severity(job_status, stage_status)
+    session_factory = cast("SessionFactory", job[_SESSION_FACTORY_KEY])
     publisher: EventPublisher = job[_PUBLISHER_KEY]
-    await publisher.publish(
-        VERIFICATION_EVENT,
-        snap,
-        severity=_verification_severity(job_status, stage_status),
-    )
+    async with session_factory.begin() as db:
+        row = await db.get(Job, job[_DB_JOB_ID_KEY])
+        if row is None:
+            return
+        row.snapshot = snap
+        row.status = str(job["status"])
+        finished_at = job.get("finished_at")
+        row.completed_at = datetime.fromisoformat(finished_at) if isinstance(finished_at, str) else None
+        publisher.queue_for_session(db, VERIFICATION_EVENT, snap, severity=severity)
 
 
 async def persist_job(job: dict[str, Any]) -> None:

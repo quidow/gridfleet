@@ -121,6 +121,7 @@ async def _auto_discover(
                 return
             result = await discovery.discover_devices(db, host)
             if result.new_devices:
+                # Standalone summary: source effects have already committed or are in-memory.
                 await publisher.publish(
                     "host.discovery_completed",
                     {

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.events.models import SystemEvent
 from app.packs.services.ingest import record_pack_upload
@@ -60,3 +60,33 @@ async def test_record_pack_upload_event_id_is_unique(db_session: AsyncSession) -
     assert len(rows) == 2
     event_ids = {r.event_id for r in rows}
     assert len(event_ids) == 2
+
+
+@pytest.mark.db
+async def test_record_pack_upload_stages_a_catalog_validated_row(db_session: AsyncSession) -> None:
+    await record_pack_upload(
+        db_session,
+        username="alice",
+        pack_id="vendor-foo",
+        release="0.1.0",
+        artifact_sha256="a" * 64,
+        origin_filename="vendor-foo-0.1.0.tar.gz",
+    )
+    await db_session.flush()
+    row = (await db_session.execute(select(SystemEvent))).scalar_one()
+    assert row.type == "driver_pack.upload"
+    assert row.severity == "neutral"
+
+
+@pytest.mark.db
+async def test_record_pack_upload_rolls_back_with_its_outbox_row(db_session: AsyncSession) -> None:
+    await record_pack_upload(
+        db_session,
+        username="alice",
+        pack_id="vendor-foo",
+        release="0.1.0",
+        artifact_sha256="a" * 64,
+        origin_filename="vendor-foo-0.1.0.tar.gz",
+    )
+    await db_session.rollback()
+    assert await db_session.scalar(select(func.count()).select_from(SystemEvent)) == 0

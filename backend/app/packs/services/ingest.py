@@ -5,7 +5,6 @@ import hashlib
 import io
 import logging
 import tarfile
-import uuid
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -13,7 +12,7 @@ import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from app.events.models import SystemEvent
+from app.events.event_bus import build_event, stage_system_event
 from app.packs.manifest import ManifestValidationError, load_manifest_yaml
 from app.packs.models import (
     DriverPack,
@@ -139,18 +138,19 @@ async def record_pack_upload(
     artifact_sha256: str,
     origin_filename: str,
 ) -> None:
-    event = SystemEvent(
-        event_id=str(uuid.uuid4()),
-        type="driver_pack.upload",
-        data={
-            "uploaded_by": username,
-            "pack_id": pack_id,
-            "release": release,
-            "artifact_sha256": artifact_sha256,
-            "origin_filename": origin_filename,
-        },
+    stage_system_event(
+        session,
+        build_event(
+            "driver_pack.upload",
+            {
+                "uploaded_by": username,
+                "pack_id": pack_id,
+                "release": release,
+                "artifact_sha256": artifact_sha256,
+                "origin_filename": origin_filename,
+            },
+        ),
     )
-    session.add(event)
 
 
 async def ingest_pack_tarball(
