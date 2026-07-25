@@ -225,10 +225,15 @@ class EventBus:
         # silently lose dedupe. Bounded by ``DEDUPE_GRACE_SEC`` instead.
         self._dispatched_row_ids: dict[int, float] = {}
         self._dispatch_lock = asyncio.Lock()
-        # Monotonic time of the last poll that completed without raising. None
-        # until the first one. Exported as ``outbox_poll_age_seconds``: the
-        # statement bound stops a wedge, but a poller that fails every iteration
-        # is only visible here.
+        # Monotonic time of the last poll that completed without raising.
+        # ``start()`` seeds this to its own call time before the poller task's
+        # first iteration runs, so a poller that fails every iteration from
+        # process start still shows a growing age instead of pinning at zero.
+        # Stays ``None`` only for a bus that is never started -- e.g. the
+        # dispatch-body tests below, which call ``_dispatch_missed_events``
+        # directly without going through ``start()``. Exported as
+        # ``outbox_poll_age_seconds``: the statement bound stops a wedge, but a
+        # poller that fails every iteration is only visible here.
         self._last_successful_poll_at: float | None = None
         self._started = False
 
@@ -277,6 +282,11 @@ class EventBus:
             await asyncio.gather(listener_task, return_exceptions=True)
             self._listener_task = None
             raise
+        # Seeded here, not in ``__init__``: a bus that is constructed and never
+        # started has no poller whose age would mean anything. Set before the
+        # task's first iteration so a poller that fails from its very first
+        # poll still ages from this point instead of pinning at zero.
+        self._last_successful_poll_at = time.monotonic()
         self._poller_task = asyncio.create_task(self._poll_for_missed_events(), name="system_event_poller")
         self._started = True
 
@@ -880,7 +890,8 @@ def register_events_gauge_refresher(bus: EventBus) -> None:
     the ``backend-scheduler`` process's poller is scraped at
     ``backend-scheduler:8000/metrics`` on the internal network; and with
     ``GRIDFLEET_UVICORN_WORKERS`` above 1 an API scrape samples one arbitrary
-    worker. See docs/runbooks/slow-system.md.
+    worker. The statement bound, not the gauge, is the mitigation. See
+    docs/runbooks/slow-system.md.
     """
 
     async def _refresh(db: object) -> None:

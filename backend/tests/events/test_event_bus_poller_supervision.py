@@ -139,11 +139,21 @@ async def test_the_poll_age_gauge_resets_on_a_successful_poll(
     bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
 
     assert bus._last_successful_poll_at is None
+    # Seed a deliberately stale value first: a gauge that could not tell this
+    # apart from a fresh poll would be no better than the old None-fallback,
+    # which pinned at 0.0 regardless of whether a poll had ever succeeded.
+    bus._last_successful_poll_at = time.monotonic() - 100.0
+    refresh_outbox_gauges(bus)
+    stale_age = OUTBOX_POLL_AGE_SECONDS._value.get()
+    assert stale_age >= 100.0
+
     await bus._dispatch_missed_events()
     assert bus._last_successful_poll_at is not None
 
     refresh_outbox_gauges(bus)
-    assert OUTBOX_POLL_AGE_SECONDS._value.get() < 5.0
+    fresh_age = OUTBOX_POLL_AGE_SECONDS._value.get()
+    assert fresh_age < 5.0
+    assert fresh_age < stale_age
 
 
 async def test_the_gap_gauge_reports_the_pending_set_size(
