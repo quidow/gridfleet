@@ -439,6 +439,13 @@ def reset_event_bus(bus: EventBus) -> None:
     # rows on the first poll.
     bus._watermark_candidate_id = 0
     bus._watermark_candidate_horizon = None
+    # Every test schema restarts the ``system_events`` id sequence at 1, so a
+    # dispatched-id left over from the previous test would suppress a
+    # legitimate dispatch in the next one.
+    bus._dispatched_row_ids.clear()
+    # A fresh lock per test: ``asyncio.Lock`` binds to the loop it first blocks
+    # on, and each test runs on its own loop.
+    bus._dispatch_lock = asyncio.Lock()
 
 
 # ---------------------------------------------------------------------------

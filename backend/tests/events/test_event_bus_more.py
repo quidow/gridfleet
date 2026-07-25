@@ -7,7 +7,7 @@ from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.events import Event, EventBus
@@ -139,7 +139,9 @@ async def test_dispatch_missed_events_loads_new_rows_and_skips_duplicates(db_ses
     db_session.add_all([row_a, row_b])
     await db_session.commit()
 
-    bus._remember_and_dispatch(Event(type="a", data={"n": 1}, id="evt-a"))
+    # Deliver row A the way a notification would, so the poll's dedupe has a
+    # dispatched row id to skip.
+    await bus._load_and_dispatch_system_event(int(row_a.id))
     await bus._dispatch_missed_events()
 
     assert [event["id"] for event in recent_events(bus, limit=10)] == ["evt-a", "evt-b"]
@@ -468,6 +470,70 @@ async def test_poller_scans_the_whole_window_while_promotion_is_stalled(
 
     assert sorted(event.data["device_id"] for event in received) == ["d0", "d1", "d2", "d3", "d4"]
     assert bus._last_seen_system_event_id == 0, "the first poll has no horizon to promote against"
+
+
+@pytest.mark.db
+async def test_poll_does_not_redispatch_a_row_the_listener_delivered_mid_scan(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """Delivery dedupe must be read at dispatch time, not snapshotted before the scan.
+
+    ``_scan_window`` awaits at least twice before ``_dispatch_missed_events``
+    reaches its dispatch loop, and the watermark structurally lags one poll, so
+    the same rows are re-scanned every tick. A row the listener delivers inside
+    that window must still be dispatched exactly once.
+    """
+    bus = EventBus()
+    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
+    received: list[Event] = []
+    bus.register_handler(received.append)
+
+    row = bus.queue_for_session(db_session, "device.updated", {"device_id": "mid-scan"})
+    assert row is not None
+    await db_session.flush()
+    row_id = int(row.id)
+    await db_session.commit()
+
+    scan_window = bus._scan_window
+
+    async def scan_then_deliver(db: AsyncSession) -> tuple[list[SystemEvent], int]:
+        pending = await scan_window(db)
+        # The NOTIFY lands while the poller sits between its scan and its
+        # dispatch loop — the exact window a pre-scan snapshot would miss.
+        await bus._load_and_dispatch_system_event(row_id)
+        return pending
+
+    with patch.object(bus, "_scan_window", new=scan_then_deliver):
+        await bus._dispatch_missed_events()
+    await drain_handlers(bus)
+
+    assert [event.data["device_id"] for event in received] == ["mid-scan"]
+
+
+@pytest.mark.db
+async def test_poll_dispatches_rows_when_the_promotion_horizon_read_fails(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """A failed horizon read costs the promotion, not the delivery.
+
+    ``pg_current_xact_id()`` raises for the whole of recovery on a standby. If
+    that escaped, the poller would deliver nothing instead of degrading to
+    never promoting — and not promoting is always safe.
+    """
+    bus = EventBus()
+    bus.configure(session_factory=db_session_maker, engine=cast("AsyncEngine", db_session.bind))
+    received: list[Event] = []
+    bus.register_handler(received.append)
+
+    bus.queue_for_session(db_session, "device.updated", {"device_id": "standby"})
+    await db_session.commit()
+
+    with patch("app.events.event_bus._XACT_HORIZON_SQL", text("SELECT 1 / 0")):
+        await bus._dispatch_missed_events()
+    await drain_handlers(bus)
+
+    assert [event.data["device_id"] for event in received] == ["standby"]
+    assert bus._watermark_candidate_horizon is None, "promoted against a horizon that was never read"
 
 
 @pytest.mark.db
