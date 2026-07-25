@@ -113,6 +113,7 @@ async def test_operational_state_edge_publishes_only_on_change(db_session: Async
 
     changed = await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
     assert changed is False
+    await db_session.commit()
     await dispatch_committed_events()
     assert recent_events(event_bus) == []
 
