@@ -84,23 +84,22 @@ class _PublishSiteVisitor(ast.NodeVisitor):
 
 
 def _is_event_bus_publish_call(node: ast.AST) -> bool:
-    """Match ``<receiver>.publish(...)`` for any receiver the codebase actually uses.
+    """Match ``<any receiver>.publish(...)``, regardless of receiver shape.
 
     Matched at the Call node, not at an enclosing ``await``: the policy is about
     reaching ``publish`` at all, and ``asyncio.create_task(publisher.publish(...))``
     or ``coro = publisher.publish(...); await coro`` reach it just as surely as a
-    direct ``await`` does. Matching only ``event_bus.publish`` made this guard
-    unfireable in a different way -- production injects the publisher and calls it
-    ``publisher`` or ``self._publisher``, and the literal name ``event_bus``
-    appears at no callsite -- so a bare name and a ``self.<attr>`` receiver both
-    count.
+    direct ``await`` does. Matching only a bare name or a single-level
+    ``self.<attr>`` receiver made this guard blind in a different way --
+    ``self._deps.publisher.publish(...)``, ``registry["bus"].publish(...)``, and
+    ``get_bus().publish(...)`` all reach ``publish`` too, and a two-level or
+    computed receiver could add an eighth eager publisher invisibly. Matching on
+    the attribute name alone, with no constraint on the receiver, is safe
+    precisely because ``test_standalone_publishers_are_declared_with_a_reason``
+    asserts set equality in both directions: a false positive here fails loudly
+    and gets narrowed or declared, it does not pass silently.
     """
-    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "publish"):
-        return False
-    receiver = node.func.value
-    if isinstance(receiver, ast.Name):
-        return True
-    return isinstance(receiver, ast.Attribute) and isinstance(receiver.value, ast.Name) and receiver.value.id == "self"
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "publish"
 
 
 def _scan_publish_sites() -> set[str]:
