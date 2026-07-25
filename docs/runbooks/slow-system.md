@@ -40,7 +40,37 @@ Prioritize these patterns:
 - `agent_calls_total{outcome!="success"}` increasing:
   - the backend is spending time failing remote agent calls (the only non-failure value is `success`; explicit failure values are `circuit_open`, `http_error`, `timeout`, `dns_error`, `connect_error`, `unexpected_error`)
 
-## 3. Inspect container logs for the slow component
+## 3. Outbox delivery health
+
+Two gauges cover the poller that backstops `NOTIFY` delivery:
+
+```bash
+curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/metrics | egrep '^(outbox_poll_age_seconds|outbox_pending_gaps|outbox_gaps_retired_total)'
+```
+
+`outbox_poll_age_seconds` growing past a few multiples of the 5s poll interval
+means that process's poller is failing or wedged. Delivery does not stop on its
+own when it does — the listener is a separate task on a separate connection —
+so the symptom is missed events only when a `NOTIFY` is also lost.
+
+`outbox_pending_gaps` is bounded in steady state only. A large value right after
+an outage is expected: the recovery poll enumerates the whole interval it
+missed. A large value that does not fall is not.
+
+**These gauges are per-process, and one poller is not on this port.** Every
+process runs its own poller, and the registry is single-process:
+
+- `backend-scheduler` runs a second poller and has no host port mapping. Scrape
+  it from inside the network:
+  `docker compose exec backend curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://backend-scheduler:8000/metrics`
+- With `GRIDFLEET_UVICORN_WORKERS` above 1, a scrape of `localhost:8000` lands on
+  one arbitrary worker, so a single wedged poller shows up in 1/N of scrapes.
+  Read the gauge as "the process that answered", not "the backend".
+
+The per-statement timeout, not these gauges, is what stops a wedged poller from
+being permanent. The gauges are how you find out it happened.
+
+## 4. Inspect container logs for the slow component
 
 ```bash
 cd docker
@@ -54,7 +84,7 @@ Look for:
 - repeated agent timeouts or `AGENT_UNREACHABLE`
 - long stretches of router or Appium-node startup churn
 
-## 4. Check Postgres saturation
+## 5. Check Postgres saturation
 
 ```bash
 cd docker
@@ -78,7 +108,7 @@ curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://loca
 
 `db_pool_checked_out` near `db_pool_size + max_overflow` (and `db_pool_overflow` pinned at its max) means the worker is pool-starved; otherwise the contention is row-level, not pool-level.
 
-## 5. Check whether the issue is queue pressure or device scarcity
+## 6. Check whether the issue is queue pressure or device scarcity
 
 ```bash
 curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/api/runs | python -m json.tool
@@ -102,7 +132,7 @@ Interpretation:
 - healthy fleet + rising queue:
   - focus on router, Appium-node startup, or backend loop failures
 
-## 6. Next actions
+## 7. Next actions
 
 - If readiness or metrics point at control-plane loop failure:
   - follow the specific error in backend logs first
