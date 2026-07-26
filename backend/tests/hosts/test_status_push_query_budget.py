@@ -1,13 +1,31 @@
 """Statement and commit budgets for one consolidated status push.
 
-Phase 8 split the push path into short, explicit transactions. This module is
-the proof that the split did not multiply database work: it drives the real
-``POST /agent/hosts/status`` endpoint with production-shaped wiring against
-1-, 10-, and 50-device hosts and pins what the engine actually executes.
+Phase 8 split the push path into short, explicit transactions. This module
+drives the real ``POST /agent/hosts/status`` endpoint with production-shaped
+wiring against 1-, 10-, and 50-device hosts and pins what the engine actually
+executes — for TWO distinct payload shapes, each covering a different fraction
+of the split:
+
+- ``test_status_push_statement_and_commit_budget`` (``STATUS_PUSH_MAX`` /
+  ``STATUS_PUSH_COMMITS``) drives the CONFIRM/STEADY-STATE path: every device's
+  reported node matches the database exactly, so ``decide_convergence_action``
+  returns ``confirm_running`` and the per-device convergence settlement
+  transaction is never entered. This is what a healthy, unchanged host pushes
+  every 10 s. It is proof the split did not multiply database work for THIS
+  shape; it says nothing about the settle path below.
+- ``test_status_push_settle_path_statement_and_commit_budget``
+  (``STATUS_PUSH_SETTLE_MAX`` / ``STATUS_PUSH_SETTLE_COMMITS``) drives the
+  SETTLE path: every device requires a real ``db_mark_running`` write — the
+  shape a host pushes right after its Appium processes actually (re)started.
+  This is the shape that matters most operationally, and it costs
+  considerably more than the confirm path (see that test's docstring for the
+  measured numbers and a plan-ceiling conflict this exposed).
 
 The pinned constants are MEASURED, not derived. ``FORMULA_MAX`` is the Phase 8
-Global-Constraints ceiling (``24 + 9n``) and is asserted separately; a measured
-count above it is an implementation defect, never a reason to raise the formula.
+Global-Constraints ceiling (``24 + 9n``); it is asserted against the
+confirm-path measurement only, where a count above it is an implementation
+defect, never a reason to raise the formula. It is NOT asserted against the
+settle-path measurement — see that test's docstring.
 """
 
 from __future__ import annotations
@@ -64,9 +82,54 @@ FLEET_SIZES = (1, 10, 50)
 STATUS_PUSH_MAX = {1: 24, 10: 51, 50: 171}
 STATUS_PUSH_COMMITS = {1: 6, 10: 15, 50: 55}
 
-# Phase 8 Global Constraints ceiling. Asserted separately from the measurement:
-# a count above this is a Task 2/3/5 defect, not a reason to raise the formula.
+# Phase 8 Global Constraints ceiling for the CONFIRM/STEADY-STATE path measured
+# above. Asserted separately from that measurement: a count above this is a
+# Task 2/3/5 defect for that path, not a reason to raise the formula. It is NOT
+# asserted against the settle-path measurement below — see that section.
 FORMULA_MAX = {n: 24 + 9 * n for n in FLEET_SIZES}
+
+# MEASURED on this branch, not derived: the SETTLE path, where every device
+# takes a real db_mark_running settlement (see _settle_push_payload). Per
+# device this is the confirm-path's 3 (property fold: 1 SELECT devices,
+# 1 SELECT hosts selectinload, 1 UPDATE devices) PLUS the reconciler's own
+# per-device settlement cost measured standalone in
+# test_appium_reconciler_query_budget.py's RECONCILER_MAX (9, one of which is
+# that module's documented unbudgeted driver-pack catalog read):
+#   1 SELECT devices FOR UPDATE   (lock_device_handle)
+#   1 SELECT device_intents       (snapshot claims)
+#   1 SELECT device_remediation_log (snapshot ladder)
+#   3 SELECT driver_pack*         (load_packs_by_ids fallback — the surplus)
+#   1 SELECT appium_nodes FOR UPDATE (lock_appium_node_for_device)
+#   1 UPDATE appium_nodes         (mark_node_started)
+#   1 INSERT system_events        (node.state_changed)
+# => 3 + 9 = 12 raw statements/device, exactly: constant stays 21 (unchanged —
+# the batched last_observed_at touch and every other constant statement are
+# already per-push, not per-action), so raw = 21 + 12n exactly at all three
+# sizes. Commits/device: 1 (property fold) + 1 (the reconciler's own
+# session_factory.begin() per device in apply_observed_node_command) = 2, so
+# commits = 5 + 2n exactly. Lower these when a reduction lands; never raise one
+# without attaching the inventory that explains the new statement.
+STATUS_PUSH_SETTLE_MAX = {1: 33, 10: 141, 50: 621}
+STATUS_PUSH_SETTLE_COMMITS = {1: 7, 10: 25, 50: 105}
+
+# Same exclusion as test_appium_reconciler_query_budget.py's
+# UNBUDGETED_STATEMENTS_PER_DEVICE: one of the settlement's three driver-pack
+# catalog reads, netted out per device before comparing against FORMULA_MAX.
+UNBUDGETED_STATEMENTS_PER_DEVICE = 1
+
+# MEASURED GAP AGAINST THE CEILING (settle path only — the confirm path above
+# stays inside FORMULA_MAX with room to spare). Net of the single unbudgeted
+# statement per device, the settle path measures 21 + 11n statements
+# (STATUS_PUSH_SETTLE_MAX minus n), against the Phase 8 Global Constraints
+# ceiling of 24 + 9n: satisfied only at n=1 (32 <= 33); exceeded by 17 at n=10
+# (131 vs 114) and by 97 at n=50 (571 vs 474). This is NOT the catalog-read
+# surplus the exclusion above already accounts for — it is the reconciler's
+# per-device settlement (8 statements even net of that surplus) landing on top
+# of the property-refresh fold's own per-device 3, for 11 net per device
+# against a 9-per-device formula that has no headroom left once convergence
+# actually writes. A human needs to decide whether the formula, the
+# implementation, or the netting is wrong; this module does not assert
+# STATUS_PUSH_SETTLE_MAX against FORMULA_MAX and pins only the measured values.
 
 
 def _build_push_service(session_factory: async_sessionmaker[AsyncSession]) -> HostStatusPushService:
@@ -122,14 +185,17 @@ def _install_push_wiring(session_factory: async_sessionmaker[AsyncSession]) -> N
 
 
 def _push_payload(devices: list[SeededDevice]) -> dict[str, Any]:
-    """One consolidated push for a whole host.
+    """One consolidated push for a whole host — the confirm-path shape.
 
     ``appium_processes`` reports every seeded node exactly as the database
-    already records it, so convergence confirms rather than writes — the
-    steady state a healthy host pushes every 10 s. ``device_properties``
-    carries drifted OS versions so the per-device settlement boundary Phase 8
-    isolated (one fresh session and one commit per device) is actually
-    exercised rather than short-circuited.
+    already records it, so convergence *confirms* rather than writes — the
+    steady state a healthy host pushes every 10 s, where ``decide_convergence_
+    action`` returns ``confirm_running`` for every device and the per-device
+    settlement transaction in ``app.appium_nodes.services.reconciler`` is never
+    entered. ``device_properties`` carries drifted OS versions so the property
+    fold's own per-device settlement boundary (one fresh session and one commit
+    per device) is exercised regardless. See ``_settle_push_payload`` below for
+    the shape that also drives convergence's ``db_mark_running`` path.
     """
     reported_at = now_utc().isoformat()
     return {
@@ -194,6 +260,25 @@ def _push_payload(devices: list[SeededDevice]) -> dict[str, Any]:
     }
 
 
+def _settle_push_payload(devices: list[SeededDevice]) -> dict[str, Any]:
+    """Settle-path variant of ``_push_payload``: forces ``db_mark_running``.
+
+    Adds a drifted ``started_at`` to every reported node — the same technique
+    ``test_appium_reconciler_query_budget.py``'s ``_payload`` uses — so
+    ``decide_convergence_action`` returns ``db_mark_running`` for every device
+    instead of ``confirm_running``. This is the shape a host pushes right after
+    its Appium processes actually (re)started — e.g. following a host reboot or
+    a fleet-wide Appium restart — where every device drives the per-device
+    Device-locked settlement transaction Phase 8 isolated, not the steady state
+    ``_push_payload`` measures.
+    """
+    payload = _push_payload(devices)
+    started_at = now_utc().isoformat()
+    for node in payload["appium_processes"]["running_nodes"]:
+        node["started_at"] = started_at
+    return payload
+
+
 def _observation_failure_total() -> float:
     """Sum every child counter of HOST_PUSH_OBSERVATION_FAILURES.
 
@@ -213,7 +298,7 @@ async def _measure_push(
     client: AsyncClient,
     engine: Any,  # noqa: ANN401 - SQLAlchemy sync Engine, only ever handed to event.listen
     host: Host,
-    devices: list[SeededDevice],
+    body: dict[str, Any],
 ) -> tuple[QueryTap, CommitTap]:
     """Drive one real push and return the statements/commits it executed.
 
@@ -222,7 +307,7 @@ async def _measure_push(
     immediately after the response: no seeding, teardown, or unrelated
     connection traffic can inflate the count.
     """
-    payload = {"host_id": str(host.id), **_push_payload(devices)}
+    payload = {"host_id": str(host.id), **body}
     tap = QueryTap()
     commits = CommitTap()
     event.listen(engine, "before_cursor_execute", tap)
@@ -259,7 +344,7 @@ async def test_status_push_statement_and_commit_budget(
     verbs: dict[int, Counter[str]] = {}
     for generation, size in enumerate(FLEET_SIZES):
         host, devices = await seed_fleet(db_session, HOMOGENEOUS_FLEET, size, generation=generation)
-        tap, commit_tap = await _measure_push(client, engine, host, devices)
+        tap, commit_tap = await _measure_push(client, engine, host, _push_payload(devices))
         counts[size] = tap.total
         commits[size] = commit_tap.count
         verbs[size] = _by_verb(tap)
@@ -298,3 +383,83 @@ async def test_status_push_statement_and_commit_budget(
         assert verbs[50][verb] - verbs[10][verb] <= 40 * 9, (
             f"{verb} grew faster than 9/device between 10 and 50 devices"
         )
+
+
+async def test_status_push_settle_path_statement_and_commit_budget(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The settle path: every device requires a real ``db_mark_running`` write.
+
+    ``test_status_push_statement_and_commit_budget`` above pins the
+    confirm/steady-state path, where convergence never enters its per-device
+    settlement transaction. This is the shape that matters most operationally —
+    a host whose Appium processes just (re)started, e.g. after a host reboot or
+    a fleet-wide Appium restart — where every device drives both the property
+    fold's per-device settlement AND the reconciler's per-device Device-locked
+    settlement (``app.appium_nodes.services.reconciler.apply_observed_node_
+    command``, measured standalone in ``test_appium_reconciler_query_budget.py``).
+
+    One statement per device here is the same unbudgeted driver-pack catalog
+    read that module's docstring attributes to ``load_packs_by_ids`` (outside
+    this phase's editable file list); netted out below for the same reason.
+
+    PLAN-CEILING CONFLICT: even net of that one statement, this measurement
+    does NOT satisfy the Phase 8 Global Constraints ceiling (``24 + 9n``) at
+    n=10 or n=50 — see the module-level comment above ``STATUS_PUSH_SETTLE_MAX``
+    for the numbers. This test therefore pins the measured values on their own
+    terms and does not assert them against ``FORMULA_MAX``.
+    """
+    _install_push_wiring(db_session_maker)
+    assert db_session.bind is not None
+    engine = db_session.bind.sync_engine
+    failures_before = _observation_failure_total()
+
+    counts: dict[int, int] = {}
+    net_counts: dict[int, int] = {}
+    commits: dict[int, int] = {}
+    verbs: dict[int, Counter[str]] = {}
+    for generation, size in enumerate(FLEET_SIZES):
+        host, devices = await seed_fleet(db_session, HOMOGENEOUS_FLEET, size, generation=generation)
+        tap, commit_tap = await _measure_push(client, engine, host, _settle_push_payload(devices))
+        counts[size] = tap.total
+        net_counts[size] = tap.total - UNBUDGETED_STATEMENTS_PER_DEVICE * size
+        commits[size] = commit_tap.count
+        verbs[size] = _by_verb(tap)
+        print(
+            f"\nstatus push (settle) n={size}: statements={tap.total} (net {net_counts[size]}, "
+            f"ceiling {FORMULA_MAX[size]}) commits={commit_tap.count} verbs={dict(verbs[size])}"
+        )
+        for signature, count in tap.counter.most_common():
+            print(f"    {count:5d}  {signature}")
+
+    # A wiring gap would make process_observations skip a stage silently, and a
+    # skipped stage measures a budget nobody runs.
+    assert _observation_failure_total() == failures_before, "a push stage failed (check the wiring)"
+    assert counts[1] > 0, "the tap counted no statements at all"
+    assert counts[50] > counts[1], "the push must do more work for 50 devices than for 1"
+    for size in FLEET_SIZES:
+        # The property fold wrote one column per device AND the reconciler
+        # settled one AppiumNode row per device: two UPDATEs each, not one — a
+        # mis-shaped payload that confirmed instead of settled would only hit
+        # the property fold's UPDATE and undercount by exactly n.
+        assert verbs[size]["UPDATE"] >= 2 * size, (
+            f"the settle-path payload did not drive both per-device UPDATEs at {size} devices "
+            f"(got {verbs[size]['UPDATE']}): the payload may have confirmed instead of settled"
+        )
+
+    # Exact, not <=: this is the measured settle-path pin itself, not a formula
+    # ceiling with slack under it. See the module-level comment above
+    # STATUS_PUSH_SETTLE_MAX — net of the one unbudgeted catalog read per
+    # device, this measurement EXCEEDS the Phase 8 Global Constraints ceiling
+    # (24 + 9n) at n=10 and n=50. That is a plan-ceiling conflict for a human
+    # to resolve, not something this test may silently widen or shrink.
+    assert counts == STATUS_PUSH_SETTLE_MAX, (
+        f"settle-path status push statement counts {counts} moved off the measured pin "
+        f"{STATUS_PUSH_SETTLE_MAX}: attach a captured statement inventory before updating this"
+    )
+
+    # A new commit is a transaction-boundary regression even when the statement
+    # total stays on the pin, so these are exact too.
+    assert commits == STATUS_PUSH_SETTLE_COMMITS
