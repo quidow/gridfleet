@@ -78,12 +78,22 @@ POLL_SCAN_CHUNK_SIZE = 500
 # one that builds the backlog.
 #
 # Measured max over 30 samples against a 4-page table on the dev stack: 0.0154s.
-# Set to roughly 100x that measurement (1.5s / 0.0154s ~= 97x). The multiple
-# biases high: timing out early costs one retried poll and nothing else -- the
-# dedupe map blocks re-delivery, ``_pending_gaps`` is untouched, and the
-# frontier has not moved -- while timing out late leaves a wedge open longer.
-# Unlike a per-iteration value, "high" here is anchored to a finite measurable
-# quantity.
+# The measurement is biased low on three axes it did not vary: every sample
+# re-read the same page, so the buffer cache stayed warm; the rows carried
+# ``'{}'::jsonb`` payloads, understating real hydration transfer; and the
+# table itself had only four pages, so the index lookup never had to go
+# deeper. Set to roughly 100x that measurement anyway (1.5s / 0.0154s ~= 97x).
+# The multiple biases high: timing out early costs one retried poll and
+# nothing else -- the dedupe map blocks re-delivery, ``_pending_gaps`` is
+# untouched, and the frontier has not moved -- while timing out late leaves a
+# wedge open longer. Unlike a per-iteration value, "high" here is anchored to
+# a finite measurable quantity -- one measured under kinder conditions than a
+# live poller sees, which the multiple is what has to absorb.
+#
+# When this fires, asyncpg raises a bare ``TimeoutError`` -- not a
+# ``SQLAlchemyError`` subclass -- and SQLAlchemy does not wrap it, because
+# ``should_wrap`` in its exception handler is false once an execution context
+# exists. Any handler added on the poll path later must catch both.
 POLL_STATEMENT_TIMEOUT_SEC = 1.5
 
 # The ``idle_in_transaction_session_timeout`` both compose files set on the
@@ -768,7 +778,15 @@ class EventBus:
         async with poll_session_factory() as db:
             try:
                 gap_rows = await self._resolve_pending_gaps(db)
-            except SQLAlchemyError as exc:
+            except (SQLAlchemyError, TimeoutError) as exc:
+                # TimeoutError alongside SQLAlchemyError: a command_timeout cutoff
+                # (POLL_STATEMENT_TIMEOUT_SEC) surfaces from asyncpg as a bare
+                # TimeoutError, which SQLAlchemy does not wrap once an execution
+                # context exists -- see the comment at POLL_STATEMENT_TIMEOUT_SEC.
+                # Catching only SQLAlchemyError let a timed-out gap lookup take
+                # the withdrawn ``return`` path below by accident, aborting the
+                # whole poll instead of just the gap dispatch.
+                #
                 # Skip only the gap-row dispatch this tick, then carry on. This
                 # first shipped as ``return``, which quietly made one statement a
                 # precondition for all delivery: a deterministically failing
