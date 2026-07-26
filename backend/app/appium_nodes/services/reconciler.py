@@ -15,16 +15,13 @@ and durable facts — this family only converges toward desired rows it reads.
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Select, func, select, update
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.orm import selectinload
 
-from app.agent_comm.operations import agent_nodes_refresh
+from app.agent_comm.node_poke import NodeRefreshTarget, poke_node_refresh_target
 from app.agent_comm.snapshot import parse_running_nodes
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
@@ -46,7 +43,6 @@ from app.appium_nodes.services.reconciler_convergence import (
     rows_needing_stale_clear,
     translate_action_for_pull,
 )
-from app.core.database import async_session
 from app.core.metrics_recorders import (
     APPIUM_PULL_MODE_ORPHANS_OBSERVED,
     APPIUM_PULL_MODE_SKIPPED_ACTIONS,
@@ -67,7 +63,7 @@ from app.lifecycle.services.actions import (
 
 if TYPE_CHECKING:
     import uuid
-    from contextlib import AbstractAsyncContextManager
+    from collections.abc import Awaitable, Callable
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -81,11 +77,6 @@ if TYPE_CHECKING:
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
-
-if TYPE_CHECKING:
-    SessionScope = Callable[[], AbstractAsyncContextManager[AsyncSession]]
-else:
-    SessionScope = Callable[[], object]
 
 
 def _desired_select() -> Select[Any]:
@@ -177,26 +168,6 @@ async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredR
             ladder.last_failure_source == "appium_reconciler" and ladder.last_failure_reason is not None
         ),
     )
-
-
-def _session_scope(db: AsyncSession | None) -> SessionScope:
-    if db is None:
-        return async_session
-
-    @asynccontextmanager
-    async def _reuse_session() -> AsyncIterator[AsyncSession]:
-        yield db
-
-    return _reuse_session
-
-
-async def _load_device_for_reconciler(db: AsyncSession, device_id: uuid.UUID) -> Device | None:
-    result = await db.execute(
-        select(Device)
-        .where(Device.id == device_id)
-        .options(selectinload(Device.host), selectinload(Device.appium_node))
-    )
-    return result.scalar_one_or_none()
 
 
 async def _lock_device_for_reconciler(db: AsyncSession, device_id: uuid.UUID) -> LockedDevice | None:
@@ -372,7 +343,6 @@ async def _reset_start_failure(
     session_factory: SessionFactory,
     settings: SettingsReader,
 ) -> None:
-    _ = settings
     async with session_factory.begin() as db:
         locked = await _lock_device_for_reconciler(db, row.device_id)
         if locked is None:
@@ -647,37 +617,24 @@ class ReconcilerService:
 
         return _reset
 
-    async def converge_device_now(self, device_id: uuid.UUID, *, db: AsyncSession | None = None) -> AppiumNode | None:
-        """Run one desired-state convergence pass for a single operator-requested device.
+    async def converge_device_now(self, device_id: uuid.UUID) -> None:
+        """Wake the agent to run one desired-state convergence pass for a single
+        operator-requested device.
 
         The periodic leader loop remains the durable fallback. This path only removes
         operator-visible latency after a route has already accepted and committed a
-        desired-state change.
+        desired-state change. Observe-only: no agent start/stop/restart I/O here,
+        just a best-effort poke so the agent's own poller re-pulls desired state
+        now — the next status push is what updates backend-observed state.
         """
-        session_scope = _session_scope(db)
-        async with session_scope() as read_db:
+        async with self._session_factory() as read_db:
             row = await _fetch_desired_row(read_db, device_id)
             if row is None:
-                return None
+                return
             host = await read_db.get(Host, row.host_id)
             if host is None or not host_online(
                 host, offline_after_sec=self._settings.get_float("general.host_offline_after_sec")
             ):
-                return None
-
-        # No agent start/stop/restart I/O here — just wake the agent's own
-        # poller so it re-pulls desired state now.
-        try:
-            await agent_nodes_refresh(
-                host.ip,
-                host.agent_port,
-                pool=self._pool,
-                circuit_breaker=self._circuit_breaker,
-            )
-        except Exception:  # noqa: BLE001 - poke is best-effort
-            logger.debug("agent nodes refresh poke failed for host %s", host.id, exc_info=True)
-        async with session_scope() as read_db:
-            node = await read_db.get(AppiumNode, row.node_id)
-            if node is not None:
-                await read_db.refresh(node)
-            return node
+                return
+            target = NodeRefreshTarget(ip=host.ip, agent_port=host.agent_port)
+        await poke_node_refresh_target(target, circuit_breaker=self._circuit_breaker, pool=self._pool)

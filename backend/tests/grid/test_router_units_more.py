@@ -1830,7 +1830,6 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         )
 
     restarted = SimpleNamespace(id=uuid.uuid4())
-    converged = SimpleNamespace(id=uuid.uuid4())
     fake_db = SimpleNamespace(refresh=AsyncMock())
     ra_restart = AsyncMock()
     ra_restart.restart_node = AsyncMock(return_value=restarted)
@@ -1847,12 +1846,12 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
                 db=fake_db,
                 appium_services=SimpleNamespace(
                     reconciler_agent=ra_restart,
-                    reconciler=SimpleNamespace(converge_device_now=AsyncMock(return_value=converged)),
+                    reconciler=SimpleNamespace(converge_device_now=AsyncMock(return_value=None)),
                 ),
             )
-            is converged
+            is restarted
         )
-    fake_db.refresh.assert_awaited_once_with(converged)
+    fake_db.refresh.assert_awaited_once_with(restarted)
 
 
 async def test_device_group_router_bulk_and_membership_branches() -> None:

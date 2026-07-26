@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
-import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    import uuid
     from datetime import datetime
 
     from app.appium_nodes.protocols import OperatorNodeManager
@@ -458,19 +455,4 @@ class ReconcilerAgentService:
 
         node = await self._operator.request_restart(db, device, caller=caller, reason=f"{caller} restart requested")
         await db.commit()
-        await db.refresh(node)
         return node
-
-    async def wait_for_node_running(
-        self, db: AsyncSession, node_id: uuid.UUID, *, timeout_sec: int, poll_interval_sec: float = 0.5
-    ) -> AppiumNode | None:
-        """Poll until an AppiumNode reaches observed running state."""
-        deadline = time.monotonic() + timeout_sec
-        while time.monotonic() < deadline:
-            node = await db.get(AppiumNode, node_id)
-            if node is not None:
-                await db.refresh(node)
-                if node.observed_running:
-                    return node
-            await asyncio.sleep(poll_interval_sec)
-        return None

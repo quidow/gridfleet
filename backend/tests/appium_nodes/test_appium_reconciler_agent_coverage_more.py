@@ -121,34 +121,6 @@ async def test_start_stop_restart_node_guard_paths(
     assert restarted.restart_requested_at is not None
 
 
-async def test_wait_for_node_running(monkeypatch: pytest.MonkeyPatch) -> None:
-    _wait_settings = FakeSettingsReader({})
-    svc = node_agent.ReconcilerAgentService(
-        settings=_wait_settings,
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=_wait_settings, publisher=event_bus
-        ),
-    )
-    db = MagicMock()
-    db.refresh = AsyncMock()
-    db.commit = AsyncMock()
-    device_id = uuid.uuid4()
-
-    node_id = uuid.uuid4()
-    not_running = AppiumNode(device_id=device_id, port=4725)
-    running_node = AppiumNode(device_id=device_id, port=4725, pid=2, active_connection_target="dev")
-    db.refresh.reset_mock()
-    db.get = AsyncMock(side_effect=[not_running, running_node])
-    monkeypatch.setattr(node_agent.asyncio, "sleep", AsyncMock())
-    found = await svc.wait_for_node_running(db, node_id, timeout_sec=1, poll_interval_sec=0)
-    assert found is running_node
-    assert db.get.await_count == 2
-    assert db.refresh.await_count == 2
-
-    db.get = AsyncMock(return_value=None)
-    assert await svc.wait_for_node_running(db, node_id, timeout_sec=0, poll_interval_sec=0) is None
-
-
 async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
     device = Device(
         id=uuid.uuid4(),

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, Mock
 
 from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services.reconciler import ReconcilerService
@@ -20,29 +20,29 @@ if TYPE_CHECKING:
 
 async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     device_id = uuid.uuid4()
-    db = MagicMock()
+    factory = _FakeSessionFactory()
     svc = ReconcilerService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         pool=None,
         circuit_breaker=Mock(),
-        session_factory=AsyncMock(),
+        session_factory=factory,  # type: ignore[arg-type]
     )
 
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_row", AsyncMock(return_value=None))
-    assert await svc.converge_device_now(device_id, db=db) is None
+    assert await svc.converge_device_now(device_id) is None
 
     row = SimpleNamespace(device_id=device_id, host_id=uuid.uuid4(), node_id=uuid.uuid4())
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_row", AsyncMock(return_value=row))
-    db.get = AsyncMock(return_value=None)
-    assert await svc.converge_device_now(device_id, db=db) is None
+    factory.session.get = AsyncMock(return_value=None)
+    assert await svc.converge_device_now(device_id) is None
 
 
 async def test_converge_device_now_pokes_agent_without_agent_io(monkeypatch: pytest.MonkeyPatch) -> None:
     """Observe-only convergence: no ``converge_host_rows`` I/O — fire a wake
-    poke and return the node row."""
+    poke, once the read session that found the host has already closed."""
     device_id = uuid.uuid4()
-    db = MagicMock()
+    factory = _FakeSessionFactory()
     settings = FakeSettingsReader({})
     circuit_breaker = Mock()
     svc = ReconcilerService(
@@ -50,7 +50,7 @@ async def test_converge_device_now_pokes_agent_without_agent_io(monkeypatch: pyt
         settings=settings,
         pool=None,
         circuit_breaker=circuit_breaker,
-        session_factory=AsyncMock(),
+        session_factory=factory,  # type: ignore[arg-type]
     )
     row = SimpleNamespace(device_id=device_id, host_id=uuid.uuid4(), node_id=uuid.uuid4())
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_row", AsyncMock(return_value=row))
@@ -62,19 +62,20 @@ async def test_converge_device_now_pokes_agent_without_agent_io(monkeypatch: pyt
         agent_port=5100,
         capabilities=None,
     )
-    node = SimpleNamespace(id=row.node_id)
-    db.get = AsyncMock(side_effect=[host, node])
-    db.refresh = AsyncMock()
+    factory.session.get = AsyncMock(return_value=host)
     converge = AsyncMock()
     monkeypatch.setattr(ReconcilerService, "converge_host_rows", converge)
     poke = AsyncMock()
-    monkeypatch.setattr(appium_reconciler, "agent_nodes_refresh", poke)
+    monkeypatch.setattr(appium_reconciler, "poke_node_refresh_target", poke)
 
-    assert await svc.converge_device_now(device_id, db=db) is node
+    assert await svc.converge_device_now(device_id) is None
 
-    poke.assert_awaited_once_with(host.ip, host.agent_port, pool=None, circuit_breaker=circuit_breaker)
+    poke.assert_awaited_once_with(
+        appium_reconciler.NodeRefreshTarget(ip=host.ip, agent_port=host.agent_port),
+        circuit_breaker=circuit_breaker,
+        pool=None,
+    )
     converge.assert_not_awaited()
-    db.refresh.assert_awaited_once_with(node)
 
 
 class _FakeSessionFactory:
@@ -193,12 +194,6 @@ async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatc
     await observed(row=row, state="stopped", port=None, pid=None, clear_desired_port=True)
     appium_reconciler.mark_node_stopped.assert_awaited_once()
     write.assert_not_awaited()
-
-
-async def test_session_scope_reuses_existing_db() -> None:
-    db = object()
-    async with appium_reconciler._session_scope(db)() as yielded:
-        assert yielded is db
 
 
 async def test_reconcile_host_returns_for_malformed_appium_processes(monkeypatch: pytest.MonkeyPatch) -> None:

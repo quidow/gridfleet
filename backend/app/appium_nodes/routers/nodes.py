@@ -99,9 +99,10 @@ async def restart_node(device_id: uuid.UUID, db: DbDep, appium_services: AppiumN
         return await start_node(device_id, db, appium_services)
     node = await appium_services.reconciler_agent.restart_node(db, device, caller="operator_restart")
     try:
-        converged_node = await appium_services.reconciler.converge_device_now(device.id, db=db)
-        if converged_node is not None:
-            node = converged_node
+        # Best-effort wake hint: converge_device_now no longer returns a row —
+        # it opens and closes its own read session, so the node returned by
+        # restart_node above stays the source of truth for this response.
+        await appium_services.reconciler.converge_device_now(device.id)
     except Exception:  # noqa: BLE001 — best-effort convergence; route must return the restart node even if convergence fails
         logger.warning("operator_restart_immediate_convergence_failed", exc_info=True, device_id=str(device.id))
     await db.refresh(node)

@@ -10,6 +10,7 @@ push cannot deliver — the host that stopped pushing.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy import select
@@ -41,6 +42,16 @@ PARTITION_PROBE_INTERVAL_SEC = 60.0
 HOST_SWEEP_PARALLELISM = 8
 
 
+@dataclass(frozen=True, slots=True)
+class HostProbeTarget:
+    """One host's liveness verdict, frozen after its own read/write context closes."""
+
+    host_id: uuid.UUID
+    host_ip: str
+    agent_port: int
+    alive: bool
+
+
 async def run_host_sweep_once(
     db: AsyncSession,
     *,
@@ -53,7 +64,13 @@ async def run_host_sweep_once(
     """Fetch and process one shared agent-health observation per host."""
     guard = heartbeat.begin_cycle()
     offline_after = settings.get_float("general.host_offline_after_sec")
-    host_ids = list((await db.execute(select(Host.id).where(Host.status != HostStatus.pending))).scalars().all())
+    # Inventory in its own short session: the BackgroundLoop-supplied `db` is
+    # left untouched so its implicit read transaction never spans the fan-out
+    # below (which probes agents over HTTP).
+    async with session_factory() as inventory_db:
+        host_ids = list(
+            (await inventory_db.execute(select(Host.id).where(Host.status != HostStatus.pending))).scalars().all()
+        )
     probe_due = stage_due(
         cycle_index,
         base_interval=HOST_SWEEP_INTERVAL_SEC,
@@ -64,24 +81,25 @@ async def run_host_sweep_once(
     async def _sweep_host(host_id: uuid.UUID) -> None:
         async with semaphore:
             try:
-                async with session_factory() as host_db:
+                async with session_factory.begin() as host_db:
                     host = await host_db.get(Host, host_id)
                     if host is None:
                         return
                     await heartbeat.evaluate_host(host_db, host, guard=guard)
-                    host_alive = host_online(host, offline_after_sec=offline_after)
-                    host_ip, agent_port = host.ip, host.agent_port
-                    await host_db.commit()
+                    target = HostProbeTarget(
+                        host.id, host.ip, host.agent_port, host_online(host, offline_after_sec=offline_after)
+                    )
             except Exception:
                 logger.exception("host_sweep_liveness_failed", host_id=str(host_id))
                 return
-            if not host_alive:
+            if not (target.alive and probe_due):
                 return
-            if probe_due:
-                try:
-                    await heartbeat.probe_host(host_id=str(host_id), host_ip=host_ip, agent_port=agent_port)
-                except Exception:
-                    logger.exception("host_sweep_probe_failed", host_id=str(host_id))
+            try:
+                await heartbeat.probe_host(
+                    host_id=str(target.host_id), host_ip=target.host_ip, agent_port=target.agent_port
+                )
+            except Exception:
+                logger.exception("host_sweep_probe_failed", host_id=str(host_id))
 
     await asyncio.gather(*(_sweep_host(host_id) for host_id in host_ids))
 
