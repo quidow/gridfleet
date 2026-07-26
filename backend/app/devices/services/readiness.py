@@ -213,7 +213,9 @@ async def assess_devices_async(
 
     *packs* may be supplied by a caller that has already loaded the catalog (e.g. the
     device-list serializer, which also needs it for blocked-reason evaluation) to
-    avoid loading it twice.
+    avoid loading it twice. Unlike ``assess_device_async``, this entry point does not
+    consult the ``preloaded_pack_catalog`` ContextVar, so a batch caller inside a
+    ``preloaded_pack_catalog`` block must still pass ``packs=`` explicitly.
     """
     device_list = list(devices)
     if packs is None:

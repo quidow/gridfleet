@@ -14,7 +14,7 @@ from app.packs.services.platform_resolver import pack_platform_resolution_cache
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import AsyncIterator, Collection, Iterable, Iterator, Mapping
+    from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -91,7 +91,7 @@ class DeviceHealthFoldScope:
         cls,
         db: AsyncSession,
         *,
-        pack_ids: Collection[str],
+        pack_ids: Iterable[str],
         presence_namespaces: Iterable[str],
         presence_keys: Iterable[str],
     ) -> DeviceHealthFoldScope:

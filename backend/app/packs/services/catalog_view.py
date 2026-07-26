@@ -28,7 +28,7 @@ from sqlalchemy.orm import joinedload
 from app.packs.models import DriverPack, DriverPackRelease
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Iterable
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,6 +59,10 @@ class PackReleaseView:
 
 @dataclass(frozen=True, slots=True)
 class PackView:
+    # Redundant with the dict key in load_pack_catalog's return value, but a
+    # PackView is also passed around bare with no key in hand (e.g.
+    # assess_device_with_pack(device, pack)), so carrying its own id keeps it
+    # self-describing outside that dict context.
     id: str
     state: PackState
     current_release: str | None
@@ -94,7 +98,7 @@ def project_pack(pack: DriverPack) -> PackView:
     )
 
 
-async def load_pack_catalog(session: AsyncSession, pack_ids: Collection[str]) -> dict[str, PackView]:
+async def load_pack_catalog(session: AsyncSession, pack_ids: Iterable[str]) -> dict[str, PackView]:
     """One read: the named packs with their releases and platforms, as values.
 
     A single joined statement. The two ``joinedload``s are a *chain* (pack ->

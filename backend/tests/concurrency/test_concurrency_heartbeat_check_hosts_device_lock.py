@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from app.devices.locking import LockedDevice
     from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.hosts.models import Host
-    from app.packs.models import DriverPack
+    from app.packs.services.catalog_view import PackView
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 
@@ -68,7 +68,7 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
         db: AsyncSession,
         locked: LockedDevice,
         *,
-        packs: Mapping[str, DriverPack] | None = None,
+        packs: Mapping[str, PackView] | None = None,
         now: datetime,
     ) -> DeviceDecisionSnapshot:
         if locked.device.id == device_id:

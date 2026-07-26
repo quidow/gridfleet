@@ -213,10 +213,7 @@ async def test_reconciler_cycle_statement_commit_and_lock_budget(
         host, devices = await seed_fleet(db_session, HOMOGENEOUS_FLEET, size, generation=generation)
         tap, commit_tap, log = await _measure_cycle(db_session_maker, engine, host.id, devices)
         counts[size] = tap.total
-        catalog_reads = sum(
-            tap.callsite_counter[("app.packs.services.catalog_view.load_pack_catalog", signature)]
-            for signature in PACK_CATALOG_SIGNATURES
-        )
+        catalog_reads = sum(tap.counter[signature] for signature in PACK_CATALOG_SIGNATURES)
         # Pins the driver-pack catalog read as ONE constant statement for the
         # whole host cycle, not one per device: converge_pushed_host reads it
         # once and publishes it on the preloaded_pack_catalog ContextVar, so a
