@@ -43,9 +43,17 @@ class PackPlatformView:
     it is already a plain deserialized dict by the time SQLAlchemy returns it,
     nothing in the control plane mutates it, and deep-copying every manifest on
     every catalog read is the expensive half of the read.
+
+    ``display_name`` is carried for the device-list read alone, and it is here
+    because of what it removes: that path used to issue a separate three-
+    statement query (``load_platform_label_map``) over these same rows to get
+    this one string. Every field on this type is a field every consumer pays for
+    on every catalog read — the next one proposed here has to show the same kind
+    of removal, not a convenience.
     """
 
     manifest_platform_id: str
+    display_name: str
     automation_name: str
     appium_platform_name: str
     data: dict[str, Any]
@@ -86,6 +94,7 @@ def project_pack(pack: DriverPack) -> PackView:
                 platforms=tuple(
                     PackPlatformView(
                         manifest_platform_id=platform.manifest_platform_id,
+                        display_name=platform.display_name,
                         automation_name=platform.automation_name,
                         appium_platform_name=platform.appium_platform_name,
                         data=platform.data,
@@ -140,6 +149,7 @@ async def load_pack_catalog(session: AsyncSession, pack_ids: Iterable[str]) -> d
                     .joinedload(DriverPackRelease.platforms)
                     .load_only(
                         DriverPackPlatform.manifest_platform_id,
+                        DriverPackPlatform.display_name,
                         DriverPackPlatform.automation_name,
                         DriverPackPlatform.appium_platform_name,
                         DriverPackPlatform.data,

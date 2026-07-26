@@ -289,3 +289,26 @@ async def test_batch_projection_matches_async_serializer_for_multi_axis_device(
     per_device = await presenter.serialize_device(db_session, loaded_device)
 
     assert projected == per_device
+
+
+@pytest.mark.db
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_projection_reads_the_pack_tables_once(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """The catalog read is the device-list path's only walk of the pack tables.
+
+    It used to walk them twice: ``load_platform_label_map`` added a three-
+    statement ``selectinload`` chain over the same rows, for one string per
+    platform the catalog was already carrying.
+    """
+    device, _run = await _seed_projected_device(db_session, host_id=db_host.id, prefix="label-source")
+    [loaded_device] = await _load_with_declared_graph(db_session, [device.id])
+
+    with capture_read_statements(db_session) as reads:
+        projections = await load_device_read_projections(db_session, [loaded_device], now=now_utc())
+
+    pack_reads = [sql for sql in reads if "driver_pack" in sql.lower()]
+    assert len(pack_reads) == 1, f"pack tables read {len(pack_reads)} times: {pack_reads}"
+    assert projections[device.id].platform_label == "Android"

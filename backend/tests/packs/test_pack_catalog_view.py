@@ -31,6 +31,7 @@ CATALOG_COLUMNS = frozenset(
         "driver_pack_releases.release",
         "driver_pack_platforms.id",
         "driver_pack_platforms.manifest_platform_id",
+        "driver_pack_platforms.display_name",
         "driver_pack_platforms.automation_name",
         "driver_pack_platforms.appium_platform_name",
         "driver_pack_platforms.data",
