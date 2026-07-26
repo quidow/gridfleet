@@ -99,6 +99,19 @@ class ObservationFold:
     fold: Callable[[AsyncSession, uuid.UUID, dict[str, Any]], Awaitable[None]]
 
 
+@dataclass(frozen=True, slots=True)
+class StatusPushTarget:
+    """The pushing host's identity and dial address, detached from its ORM row.
+
+    Prepublication stages open their own sessions, so they receive these scalars
+    rather than a ``Host`` loaded by a transaction that has already closed.
+    """
+
+    host_id: uuid.UUID
+    host_ip: str
+    agent_port: int
+
+
 @dataclass(frozen=True)
 class PendingStatusPush:
     """Txn-A result carried across restart ingest and convergence.
@@ -388,14 +401,7 @@ class HostStatusPushService:
         host.observation_cursors = new_cursors
         return revision, True, False, received_at
 
-    async def process_prepublication(
-        self,
-        *,
-        host_id: uuid.UUID,
-        host_ip: str,
-        agent_port: int,
-        payload: dict[str, Any],
-    ) -> bool:
+    async def process_prepublication(self, *, target: StatusPushTarget, payload: dict[str, Any]) -> bool:
         """Run restart ingest and convergence before guarded publication.
 
         Restart-event failure is contained independently. Convergence failure
@@ -406,30 +412,33 @@ class HostStatusPushService:
             return True
         if self._ingest_restart_events is not None:
             started = perf_counter()
+            # The whole boundary is contained: a failure exits and rolls the
+            # ordered restart section back before convergence starts.
             try:
-                async with self._session_factory() as db:
-                    host = await db.get(Host, host_id)
+                async with self._session_factory.begin() as db:
+                    # Unlocked read: the endpoint already holds this Host row
+                    # FOR UPDATE, so re-locking here would deadlock the request.
+                    host = await db.get(Host, target.host_id)
                     if host is not None:
                         await self._ingest_restart_events(db, host, payload)
-                        await db.commit()
             except Exception:  # noqa: BLE001 - observation stages must never starve liveness
                 HOST_PUSH_OBSERVATION_FAILURES.labels(stage="restart_events").inc()
-            self._log_stage("restart_events", host_id, started)
+            self._log_stage("restart_events", target.host_id, started)
         if self._converge_host is None:
             return True
         started = perf_counter()
         try:
             await self._converge_host(
-                host_id=host_id,
-                host_ip=host_ip,
-                agent_port=agent_port,
+                host_id=target.host_id,
+                host_ip=target.host_ip,
+                agent_port=target.agent_port,
                 payload=payload,
             )
         except Exception:  # noqa: BLE001 - observation stages must never starve liveness
             HOST_PUSH_OBSERVATION_FAILURES.labels(stage="convergence").inc()
-            self._log_stage("convergence", host_id, started)
+            self._log_stage("convergence", target.host_id, started)
             return False
-        self._log_stage("convergence", host_id, started)
+        self._log_stage("convergence", target.host_id, started)
         return True
 
     async def process_observation_folds(self, *, host_id: uuid.UUID, payload: dict[str, Any]) -> None:
@@ -449,18 +458,11 @@ class HostStatusPushService:
                 HOST_PUSH_OBSERVATION_FAILURES.labels(stage=f"fold:{entry.section}").inc()
             self._log_stage(f"fold:{entry.section}", host_id, started)
 
-    async def process_observations(
-        self, *, host_id: uuid.UUID, host_ip: str, agent_port: int, payload: dict[str, Any]
-    ) -> None:
+    async def process_observations(self, *, target: StatusPushTarget, payload: dict[str, Any]) -> None:
         """Run restart ingest, convergence, and folds without raising to the endpoint."""
-        converged = await self.process_prepublication(
-            host_id=host_id,
-            host_ip=host_ip,
-            agent_port=agent_port,
-            payload=payload,
-        )
+        converged = await self.process_prepublication(target=target, payload=payload)
         if converged:
-            await self.process_observation_folds(host_id=host_id, payload=payload)
+            await self.process_observation_folds(host_id=target.host_id, payload=payload)
 
     @staticmethod
     def _log_stage(stage: str, host_id: uuid.UUID, started: float) -> None:

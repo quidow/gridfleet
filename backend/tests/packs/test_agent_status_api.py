@@ -88,6 +88,10 @@ async def test_agent_status_persists_blocked_reason(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:
     await seed_test_packs(db_session)
+    # The push endpoint owns its own transaction, so the pack rows the FK points
+    # at must be committed before the request runs (the other tests in this
+    # module get that from the commit that persists their host).
+    await db_session.commit()
     payload = {
         "host_id": default_host_id,
         "packs": {

@@ -92,7 +92,7 @@ from app.devices.services.intent_types import CommandKind, verification_intent_s
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import derive_operational_state
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
-from app.hosts.service_status_push import HostStatusPushService, ObservationFold
+from app.hosts.service_status_push import HostStatusPushService, ObservationFold, StatusPushTarget
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.packs.services.discovery import PackDiscoveryService
@@ -811,9 +811,7 @@ async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: asyn
         tap.armed = True
         commits.armed = True
         t0 = perf_counter()
-        await service.process_observations(
-            host_id=host.id, host_ip=host.ip, agent_port=host.agent_port, payload=payload
-        )
+        await service.process_observations(target=StatusPushTarget(host.id, host.ip, host.agent_port), payload=payload)
         wall_ms.append((perf_counter() - t0) * 1000)
         tap.armed = False
         commits.armed = False
