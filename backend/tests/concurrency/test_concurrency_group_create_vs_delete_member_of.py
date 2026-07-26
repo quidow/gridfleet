@@ -28,7 +28,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.devices.models.group import DeviceGroup, DeviceGroupMemberOf, GroupType
@@ -429,6 +429,68 @@ async def test_rejected_writers_leave_no_open_transaction(
                 ),
             )
         assert not session.in_transaction(), "a refused create_group left its transaction open"
+
+
+async def test_dynamic_device_count_leaves_no_open_transaction(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The dynamic device count runs *after* its caller's commit, so nothing
+    else will ever end the transaction its reads autobegin.
+
+    Both the create and the update path finish by calling
+    ``_dynamic_device_count``, which issues three reads and returns a number —
+    no commit, no rollback of its own beyond the ``finally``. Without that
+    ``finally`` the caller is handed back a session sitting idle in a
+    transaction that survives to request teardown, where only
+    ``idle_in_transaction_session_timeout`` (pinned by
+    ``tests/contracts/test_idle_transaction_bound_live.py``) ends it.
+
+    Asserted *inside* ``async with db_session_maker()``: that context manager's
+    exit rolls back, so a check after it would pass vacuously.
+    """
+    static_key, dynamic_key, _static_id = await _seed_static(db_session)
+    service = build_groups_service()
+
+    async with db_session_maker() as session:
+        created = await service.create_group(
+            session,
+            DeviceGroupCreate(
+                key=dynamic_key,
+                name=dynamic_key,
+                group_type=GroupType.dynamic,
+                filters={"member_of": [static_key]},  # type: ignore[arg-type]
+            ),
+        )
+        assert created["device_count"] == 0
+        assert not session.in_transaction(), "the create path's dynamic device count left its reads in a transaction"
+
+        updated = await service.update_group(session, dynamic_key, DeviceGroupUpdate(description="relabelled"))
+        assert updated is not None
+        assert not session.in_transaction(), "the update path's dynamic device count left its reads in a transaction"
+
+    # The failure branch matters more than the success one: it returns ``None``
+    # from an ``except`` clause, so the ``finally`` is the only thing that can
+    # end the transaction the reads before the failure opened. The failure is
+    # real, not injected — ``filters`` written straight to the column with a
+    # value ``DeviceGroupFilters`` rejects, which is what a hand-edited row or a
+    # rolled-back schema change looks like, and which raises inside
+    # ``_load_devices_in_scope`` after ``load_member_of_keys`` has already read.
+    async with db_session_maker() as poisoned:
+        await poisoned.execute(
+            update(DeviceGroup).where(DeviceGroup.key == dynamic_key).values(filters={"device_type": "not-a-type"})
+        )
+        await poisoned.commit()
+
+    async with db_session_maker() as session:
+        group = (await session.execute(select(DeviceGroup).where(DeviceGroup.key == dynamic_key))).scalar_one_or_none()
+        assert group is not None
+        # Commit, not rollback: both end the read transaction, but a root
+        # rollback expires every loaded row and ``group`` is about to be read
+        # attribute-by-attribute from a synchronous context.
+        await session.commit()
+        assert await service._dynamic_device_count(session, group) is None, "the poisoned filters must have raised"
+        assert not session.in_transaction(), "a failed dynamic device count left its reads in a transaction"
 
 
 async def test_capture_statements_does_not_open_a_transaction(db_session: AsyncSession) -> None:

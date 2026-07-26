@@ -674,6 +674,45 @@ async def _dependent_dynamic_keys(db: AsyncSession, static_group_id: uuid.UUID) 
     return sorted((await db.execute(stmt)).scalars().all())
 
 
+async def _lock_referencing_edges(db: AsyncSession, static_group_id: uuid.UUID) -> None:
+    """Hoist the RESTRICT trigger's own row lock ahead of the parent row's.
+
+    Deleting a referenced group is two lock acquisitions in a fixed order, and
+    the order is the opposite of the one a reference writer uses:
+
+    * ``delete_group`` takes the exclusive lock on the ``device_groups`` row at
+      its ``DELETE``, and only then does ``fk_device_group_member_of_static_group``
+      fire ``SELECT 1 FROM device_group_member_of WHERE static_group_id = $1
+      FOR KEY SHARE`` — wanting the edge tuples second.
+    * ``update_group`` takes the edge tuples first (``_replace_member_of``'s
+      ``DELETE`` write-locks every committed edge of the source group) and asks
+      for ``FOR KEY SHARE`` on the target ``device_groups`` row second, through
+      the replacement INSERT's foreign key.
+
+    Tuples-then-row against row-then-tuples is an ABBA cycle: PostgreSQL aborts
+    one side with 40P01, which is a plain ``DBAPIError`` that neither writer's
+    ``except IntegrityError`` catches and no router maps — a 500 on an
+    interleaving whose documented answers are 409 and 422. Taking the trigger's
+    lock here, before the ``DELETE``, puts both writers on the same order.
+
+    ``FOR KEY SHARE`` deliberately, not ``FOR UPDATE``: it is exactly the mode
+    the trigger itself takes, so this only moves an acquisition earlier rather
+    than strengthening it, and concurrent deletes of different targets still
+    share these rows freely.
+
+    Edges *created* after this runs are not covered and do not need to be. To
+    insert one, a peer must take ``FOR KEY SHARE`` on the target row — which
+    this caller is about to lock exclusively — so the peer waits on us and can
+    never be the head of a cycle. Only pre-existing edges can be held by
+    somebody who then wants the target, and those are what this locks.
+    """
+    await db.execute(
+        select(DeviceGroupMemberOf.dynamic_group_id)
+        .where(DeviceGroupMemberOf.static_group_id == static_group_id)
+        .with_for_update(read=True, key_share=True)
+    )
+
+
 async def _try_delete_group_row(db: AsyncSession, group_id: uuid.UUID) -> bool:
     """Delete the definition row; ``False`` when the RESTRICT foreign key stopped it.
 
@@ -723,10 +762,18 @@ async def _delete_group_or_dependents(db: AsyncSession, group_id: uuid.UUID) -> 
     peer deleted and recreated the key inside this window — the lock would land
     on a row this delete never touches, and the row it does delete would be left
     unprotected.
+
+    Every ``device_groups`` lock this function takes is preceded by
+    :func:`_lock_referencing_edges`, which is what keeps the acquisition order
+    the same as a reference writer's and stops the two deadlocking.
     """
     dependents = await _dependent_dynamic_keys(db, group_id)
     if dependents:
         return dependents
+    # Taken at the root, not inside _try_delete_group_row's savepoint: the
+    # replay below needs the same ordering guarantee, and a savepoint rollback
+    # would release these locks between the two attempts.
+    await _lock_referencing_edges(db, group_id)
     if await _try_delete_group_row(db, group_id):
         return []
 

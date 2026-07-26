@@ -18,6 +18,15 @@ Both interleavings are driven by committing real rows from a second session at a
 known point, so the ``DELETE`` hits the genuine RESTRICT trigger. Nothing here
 patches the failure itself — only the point at which the peer commits.
 
+That point is now ``_lock_referencing_edges``, the pre-lock that keeps
+``delete_group`` from deadlocking against a reference writer. It holds
+``FOR KEY SHARE`` on every edge that already exists, which narrows this whole
+branch to edges created after it: an older edge cannot be withdrawn mid-recovery
+because this transaction is holding it. The branch is not dead — a peer can
+still insert one in the remaining window, since inserting takes ``FOR KEY SHARE``
+on a target row the deleter has not locked yet — but the peer's commit has to
+land on the far side of the pre-lock to be reachable at all.
+
 This branch used to be unreachable in practice: the group-mutation advisory lock
 kept every in-app writer off it, which is also why neither of its two recovery
 mechanisms was pinned by anything. Both are load-bearing now that the foreign
@@ -81,13 +90,24 @@ def _commit_reference_inside_the_gap(
     static_group_id: uuid.UUID,
     withdraw_before_reread: bool,
 ) -> list[list[str]]:
-    """Commit the relation row from a peer session once the dependent read has
-    returned, and optionally withdraw it again before the re-read.
+    """Commit the relation row from a peer session once the deleter has taken
+    its edge pre-lock, and optionally withdraw it again before the re-read.
+
+    The insert lands after ``_lock_referencing_edges``, not after the dependent
+    read, and that placement is forced rather than incidental. The pre-lock
+    takes ``FOR KEY SHARE`` on every edge that already exists, so an edge
+    committed *before* it could not be withdrawn again until this transaction
+    ended — the peer would block on the deleter while the deleter waited on the
+    peer. It is also the only version of this interleaving that production can
+    reach: an edge that predates the pre-lock is held by it, so the branch this
+    file exercises belongs entirely to edges created inside the remaining
+    window.
 
     The seam is the *scheduling*, not the failure: the row is a real committed
     row and the ``DELETE`` that follows hits the real foreign key.
     """
-    original = group_service._dependent_dynamic_keys
+    original_dependents = group_service._dependent_dynamic_keys
+    original_prelock = group_service._lock_referencing_edges
     observed: list[list[str]] = []
 
     async def _insert() -> None:
@@ -102,17 +122,20 @@ def _commit_reference_inside_the_gap(
             )
             await peer.commit()
 
+    async def prelock(db: AsyncSession, static_id: uuid.UUID) -> None:
+        await original_prelock(db, static_id)
+        await _insert()
+
     async def probe(db: AsyncSession, group_id: uuid.UUID) -> list[str]:
         call = len(observed) + 1
         if call == 2 and withdraw_before_reread:
             await _withdraw()
-        result = await original(db, group_id)
+        result = await original_dependents(db, group_id)
         observed.append(result)
-        if call == 1:
-            await _insert()
         return result
 
     monkeypatch.setattr(group_service, "_dependent_dynamic_keys", probe)
+    monkeypatch.setattr(group_service, "_lock_referencing_edges", prelock)
     return observed
 
 
@@ -304,7 +327,8 @@ async def test_recovery_locks_the_row_it_replays(
     lock is taken on the id.
     """
     pair = await _seed_unreferenced_pair(db_session)
-    original = group_service._dependent_dynamic_keys
+    original_dependents = group_service._dependent_dynamic_keys
+    original_prelock = group_service._lock_referencing_edges
     calls = 0
     recreated_id: list[uuid.UUID] = []
 
@@ -312,6 +336,17 @@ async def test_recovery_locks_the_row_it_replays(
         async with db_session_maker() as peer:
             await fn(peer)
             await peer.commit()
+
+    async def prelock(db: AsyncSession, static_id: uuid.UUID) -> None:
+        # Arm the foreign key *after* the pre-lock, for the reason
+        # ``_commit_reference_inside_the_gap`` documents: an edge that predates
+        # it is held by it and could not be withdrawn again below.
+        await original_prelock(db, static_id)
+
+        async def _arm(peer: AsyncSession) -> None:
+            peer.add(DeviceGroupMemberOf(dynamic_group_id=pair.dynamic_id, static_group_id=pair.static_id))
+
+        await _peer(_arm)
 
     async def probe(db: AsyncSession, group_id: uuid.UUID) -> list[str]:
         nonlocal calls
@@ -332,18 +367,10 @@ async def test_recovery_locks_the_row_it_replays(
                 recreated_id.append(replacement.id)
 
             await _peer(_swap)
-        result = await original(db, group_id)
-        if calls == 1:
-
-            async def _arm(peer: AsyncSession) -> None:
-                peer.add(
-                    DeviceGroupMemberOf(dynamic_group_id=pair.dynamic_id, static_group_id=pair.static_id),
-                )
-
-            await _peer(_arm)
-        return result
+        return await original_dependents(db, group_id)
 
     monkeypatch.setattr(group_service, "_dependent_dynamic_keys", probe)
+    monkeypatch.setattr(group_service, "_lock_referencing_edges", prelock)
 
     async with db_session_maker() as session:
         observed = _probe_key_lock_before_commit(session, db_session_maker, pair.static_key)
