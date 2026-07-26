@@ -1,35 +1,50 @@
-"""Concurrent group writers must never abort with a deadlock.
+"""Group definition writers acquire parent rows before edges, always.
 
 Successor to the deleted ``test_concurrency_group_row_lock_order.py``. That file
 pinned a *uniform* lock order — every ``device_groups`` acquisition was one
 ascending-key ``FOR UPDATE`` — and asserted a concurrent delete/update pair never
-deadlocked. The lock graph has not been uniform since, so absence of deadlock has
-to be asserted rather than assumed.
+deadlocked. The resources are no longer just ``device_groups`` rows, so the
+ordering rule had to be restated over both tables rather than abandoned.
 
-The graph is not confined to ``device_groups`` rows, which is what an earlier
-version of this docstring got wrong. It runs through ``device_group_member_of``
-*tuple* locks as well, and those are where the only real cycle lives:
+The rule is: **``device_groups`` rows before ``device_group_member_of`` tuples,
+on every writer.** Left to itself neither writer obeys it, and the two disagree:
 
-* ``update_group(D → [S])`` takes ``FOR UPDATE`` on ``D``, then
-  ``DELETE FROM device_group_member_of WHERE dynamic_group_id = D`` — which takes
-  the write lock on any committed ``(D, S)`` tuple — and only then asks for
-  ``FOR KEY SHARE`` on ``S`` through the reference INSERT's foreign key.
-* ``delete_group(S)`` takes the exclusive lock on ``S`` at its
-  ``DELETE FROM device_groups``, and the ``ON DELETE RESTRICT`` trigger *then*
-  runs ``SELECT 1 FROM device_group_member_of WHERE static_group_id = S
-  FOR KEY SHARE`` — wanting the very tuple the updater is holding.
+* ``update_group(D → [S])`` would take ``FOR UPDATE`` on ``D``, then
+  ``DELETE FROM device_group_member_of WHERE dynamic_group_id = D`` — the write
+  lock on any committed ``(D, S)`` tuple — and only then ask for ``FOR KEY
+  SHARE`` on ``S`` through the reference INSERT's foreign key. Edge, then parent.
+* ``delete_group(S)`` would take the exclusive lock on ``S`` at its
+  ``DELETE FROM device_groups``, and the ``ON DELETE RESTRICT`` trigger would
+  *then* run ``SELECT 1 FROM device_group_member_of WHERE static_group_id = S
+  FOR KEY SHARE`` — wanting the very tuple the updater holds. Parent, then edge.
 
-Tuple-then-row against row-then-tuple is an ABBA cycle, and PostgreSQL resolves
-it by aborting one side with 40P01. Neither ``_try_delete_group_row`` nor
-``_replace_member_of`` catches anything but ``IntegrityError``, so it escapes
-untyped: a 500 where the contract promises 409/422. ``delete_group`` therefore
-hoists the trigger's own lock — ``_lock_referencing_edges`` takes
-``FOR KEY SHARE`` on the referencing tuples *before* the parent row — so both
-writers acquire in the same order and no cycle can form.
+Edge-then-parent against parent-then-edge is an ABBA cycle, and PostgreSQL
+resolves it by aborting one side with 40P01 — a plain ``DBAPIError`` that no
+writer catches and no router maps, so it reaches the operator as a 500 where the
+contract promises 409/422. Both writers therefore hoist their parent
+acquisition to the front: ``delete_group`` takes ``FOR UPDATE`` on its target
+before it reads anything, and ``_replace_member_of`` takes ``FOR KEY SHARE`` on
+its targets before its edge ``DELETE``. Doing only one of the two would invert
+the cycle rather than remove it.
+
+The trigger's own acquisition cannot be hoisted instead: it runs after the
+parent lock by construction and covers edges that appear later, so an earlier
+``FOR KEY SHARE`` on the edges can only ever cover part of the set. That was
+tried, and it left the window between the hoist and the ``DELETE`` open.
+
+``delete_group``'s ``FOR UPDATE`` does more than order the locks; it excludes.
+No peer can insert an edge to a group being deleted (inserting one needs
+``FOR KEY SHARE`` on that row), so the dependent read is authoritative rather
+than advisory, and it cannot be deleted and recreated underneath the call
+either. Those two consequences are asserted here alongside the deadlock
+freedom, because they are the same lock.
 
 ``add_members``/``remove_members`` take one ``device_groups`` row lock via
 ``_get_group_row(..., for_update=True)`` and want nothing else in this graph;
-they can block a peer but cannot be part of a cycle.
+``create_group`` mints its source id in its own transaction and takes only
+target locks; the portability importer references only rows it created in the
+same transaction. None of them ever holds an edge while wanting a parent, so
+none can join either cycle.
 """
 
 from __future__ import annotations
@@ -39,35 +54,46 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import Delete, text
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy import Delete, select, text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.devices.models.group import DeviceGroup, DeviceGroupMemberOf, GroupType
-from app.devices.schemas.group import DeviceGroupUpdate
+from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services import groups as group_service
 from app.devices.services.groups import GroupReferencedError, UnknownMemberOfError
-from tests.concurrency.group_lock_helpers import build_groups_service, fetch_group_rows, fetch_member_of_keys
+from tests.concurrency.group_lock_helpers import (
+    build_groups_service,
+    capture_statements,
+    fetch_group_rows,
+    fetch_member_of_keys,
+)
 from tests.helpers import create_device, create_host
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.db, pytest.mark.asyncio]
 
-# A bound on the whole gather, not a race parameter. Real writers contending for
-# one row settle in milliseconds; anything approaching this is a wedge, and a
-# legible timeout beats a hung CI job (``pytest-timeout`` is not a dependency).
-GATHER_TIMEOUT_SEC = 15.0
+# How long to wait for a named backend to reach its blocking statement.
+# Comfortably above PostgreSQL's 1 s default ``deadlock_timeout`` so a real
+# deadlock is detected and reported rather than mistaken for a slow peer. This
+# is the largest wait any coordinated test here can legitimately incur.
+PEER_BLOCK_TIMEOUT_SEC = 10.0
 
-# Waits on a coordinating seam. Same reasoning: bounds a seam that stopped
-# firing instead of hanging the run.
+# Waits on an ``asyncio.Event`` a seam sets. Bounds a seam that stopped firing
+# instead of hanging the run (``pytest-timeout`` is not a dependency).
 EVENT_WAIT_TIMEOUT_SEC = 5.0
 
-# How long to wait for a peer backend to reach its blocking statement.
-# Comfortably above PostgreSQL's 1 s default ``deadlock_timeout`` so a real
-# deadlock is detected and reported rather than mistaken for a slow peer.
-PEER_BLOCK_TIMEOUT_SEC = 10.0
+# A wedge detector for the whole gather, so it has to clear every bounded wait
+# inside it — otherwise it would fire on a slow handoff rather than on a hang,
+# and the failure would name the wrong thing. The uncoordinated test below has
+# no such wait and gets the tighter bound: writers contending for one row settle
+# in milliseconds there, so anything near it really is a wedge.
+COORDINATED_TIMEOUT_SEC = PEER_BLOCK_TIMEOUT_SEC + EVENT_WAIT_TIMEOUT_SEC + 5.0
+GATHER_TIMEOUT_SEC = 5.0
 
 
 async def _wait(flag: asyncio.Event, *, label: str) -> None:
@@ -77,26 +103,49 @@ async def _wait(flag: asyncio.Event, *, label: str) -> None:
         raise AssertionError(f"{label}: the coordinating seam never fired within {EVENT_WAIT_TIMEOUT_SEC}s") from None
 
 
-async def _wait_until_a_peer_blocks(db_session_maker: async_sessionmaker[AsyncSession], *, label: str) -> None:
-    """Return once some other backend in this database is waiting on a lock.
+async def _backend_pid(session: AsyncSession) -> int:
+    """The PostgreSQL backend PID behind *session*'s current transaction.
 
-    Deterministic where a sleep would not be: the handoff condition is "the peer
-    has reached its blocking statement", which ``pg_stat_activity`` reports as a
-    fact rather than something a duration approximates. Each xdist worker owns
-    its own database and runs its tests serially, so
-    ``datname = current_database()`` scopes this to the sessions under test.
+    Must be read while the transaction the caller cares about is open: a session
+    returns its connection to the pool on commit or rollback and may check out a
+    different one — and therefore a different backend — for the next statement.
     """
-    stmt = text(
-        "SELECT count(*) FROM pg_stat_activity "
-        "WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()"
-    )
+    return int((await session.execute(text("SELECT pg_backend_pid()"))).scalar_one())
+
+
+async def _blocked_on_a_lock(db_session_maker: async_sessionmaker[AsyncSession], pid: int) -> bool:
+    stmt = text("SELECT count(*) FROM pg_stat_activity WHERE pid = :pid AND wait_event_type = 'Lock'")
+    async with db_session_maker() as watcher:
+        blocked = int((await watcher.execute(stmt, {"pid": pid})).scalar_one())
+        await watcher.rollback()
+    return bool(blocked)
+
+
+async def _wait_until_backend_blocks(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    pid_holder: list[int],
+    *,
+    label: str,
+) -> None:
+    """Return once the backend named by *pid_holder* is waiting on a lock.
+
+    Deterministic where a sleep would not be: the handoff condition is "that
+    session has reached its blocking statement", which ``pg_stat_activity``
+    reports as a fact rather than something a duration approximates.
+
+    Keyed on one PID rather than "is anything blocked", which is the difference
+    between a guard that fails closed and one that fails open. A test-database
+    connection blocked for some unrelated reason would satisfy an
+    any-backend predicate and release the waiter early, greening the test
+    without the interleaving ever occurring — the one direction a
+    race-reproduction guard must never fail in. ``pid_holder`` is a list because
+    the PID is captured by the coroutine being waited on, after this call is
+    already scheduled.
+    """
 
     async def _poll() -> None:
         while True:
-            async with db_session_maker() as watcher:
-                blocked = int((await watcher.execute(stmt)).scalar_one())
-                await watcher.rollback()
-            if blocked:
+            if pid_holder and await _blocked_on_a_lock(db_session_maker, pid_holder[0]):
                 return
             await asyncio.sleep(0.02)
 
@@ -104,15 +153,45 @@ async def _wait_until_a_peer_blocks(db_session_maker: async_sessionmaker[AsyncSe
         await asyncio.wait_for(_poll(), timeout=PEER_BLOCK_TIMEOUT_SEC)
     except TimeoutError:
         raise AssertionError(
-            f"{label}: no peer backend blocked on a lock within {PEER_BLOCK_TIMEOUT_SEC}s, so the "
-            "interleaving under test never happened"
+            f"{label}: backend {pid_holder or '<never captured>'} did not block on a lock within "
+            f"{PEER_BLOCK_TIMEOUT_SEC}s, so the interleaving under test never happened"
         ) from None
+
+
+async def _wait_until_blocked_or_settled(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    pid_holder: list[int],
+    task_holder: list[asyncio.Task[Any]],
+    *,
+    reached: asyncio.Event | None = None,
+    label: str,
+) -> None:
+    """Wait for whichever state the build under test actually produces.
+
+    A peer released mid-transaction either runs to the point the test cares
+    about or blocks on a lock, and *which* one is the behaviour being asserted —
+    so the handoff cannot wait on just one of them without budgeting a sleep for
+    the branch that does not happen. Waiting on "blocked, finished, or reached
+    its marker" keeps the test deterministic in both directions and lets the
+    assertions, rather than the timing, decide whether the build is correct.
+    """
+    deadline = asyncio.get_running_loop().time() + PEER_BLOCK_TIMEOUT_SEC
+    while asyncio.get_running_loop().time() < deadline:
+        if reached is not None and reached.is_set():
+            return
+        if task_holder and task_holder[0].done():
+            return
+        if pid_holder and await _blocked_on_a_lock(db_session_maker, pid_holder[0]):
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"{label} neither settled nor blocked; the interleaving under test never happened")
 
 
 def _park_after_the_edge_delete(
     session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
     edge_locked: asyncio.Event,
+    deleter_pid: list[int],
 ) -> None:
     """Hold *session* between ``_replace_member_of``'s DELETE and its INSERT.
 
@@ -132,37 +211,34 @@ def _park_after_the_edge_delete(
             fired = True
             session.execute = original_execute  # type: ignore[assignment, method-assign]
             edge_locked.set()
-            # Only proceed once the deleter is genuinely blocked; otherwise the
+            # Only proceed once the deleter itself is blocked; otherwise the
             # INSERT wins the race to S and no cycle can form.
-            await _wait_until_a_peer_blocks(db_session_maker, label="updater")
+            await _wait_until_backend_blocks(db_session_maker, deleter_pid, label="updater")
         return result
 
     session.execute = _intercepted  # type: ignore[assignment, method-assign]
 
 
-async def test_reference_replacement_and_delete_do_not_deadlock(
+async def test_no_edge_can_be_committed_once_the_delete_has_started(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The ABBA cycle in this module's docstring, driven to completion.
+    """The exclusion that makes the dependent read authoritative.
 
-    Fully real on both sides — real ``delete_group``, real ``update_group``, a
-    real committed edge, real foreign-key triggers. Only the *scheduling* is
-    patched, through the same ``_dependent_dynamic_keys`` seam the sibling
-    recovery tests use:
+    ``delete_group`` takes ``FOR UPDATE`` on its target *before* the dependent
+    read, not merely before the ``DELETE``. That ordering is what turns the read
+    from a hint into a decision: inserting a reference requires ``FOR KEY SHARE``
+    on the referenced row, which conflicts, so from the moment the lock is held
+    no peer can commit an edge to this group and the read sees every edge that
+    will ever exist for this delete.
 
-    1. the deleter's preflight runs and genuinely finds no referrer;
-    2. a peer commits the ``(D, S)`` edge inside that gap — the window the
-       recovery path exists for;
-    3. the updater re-asserts ``member_of: [S]``, so its ``DELETE`` takes the
-       write lock on that committed tuple, and parks before its INSERT;
-    4. the deleter proceeds and blocks;
-    5. the updater then asks for ``FOR KEY SHARE`` on ``S``.
-
-    Before ``_lock_referencing_edges`` this aborted one side with 40P01, a
-    ``DBAPIError`` neither writer catches and the routers do not map — a 500 on
-    an interleaving whose documented answers are 409 and 422.
+    Seamed on the dependent read itself, one statement *earlier* than the
+    sibling test below. Moving the lock to after the read would leave that
+    sibling green — its peer would still be excluded, because by then the lock
+    is held either way — while reopening the window in which an edge lands
+    between a clean read and the ``DELETE``, which is the interleaving the
+    deleted savepoint-and-replay machinery used to exist for.
     """
     suffix = uuid.uuid4().hex[:8]
     static_key, dynamic_key = f"static-{suffix}", f"dynamic-{suffix}"
@@ -173,63 +249,335 @@ async def test_reference_replacement_and_delete_do_not_deadlock(
     static_id, dynamic_id = static.id, dynamic.id
 
     service = build_groups_service()
-    preflight_done = asyncio.Event()
-    edge_locked = asyncio.Event()
+    peer_pid: list[int] = []
+    arming: list[asyncio.Task[Any]] = []
     original_preflight = group_service._dependent_dynamic_keys
     calls = 0
+
+    async def arm_the_edge() -> None:
+        async with db_session_maker() as peer:
+            peer_pid.append(await _backend_pid(peer))
+            peer.add(DeviceGroupMemberOf(dynamic_group_id=dynamic_id, static_group_id=static_id))
+            await peer.commit()
 
     async def preflight(db: AsyncSession, group_id: uuid.UUID) -> list[str]:
         nonlocal calls
         calls += 1
-        result = await original_preflight(db, group_id)
         if calls == 1:
-            assert result == [], "the preflight must have run before the edge existed"
-            async with db_session_maker() as peer:
-                peer.add(DeviceGroupMemberOf(dynamic_group_id=dynamic_id, static_group_id=static_id))
-                await peer.commit()
-            preflight_done.set()
-            await _wait(edge_locked, label="deleter")
-        return result
+            arming.append(asyncio.create_task(arm_the_edge()))
+            await _wait_until_backend_blocks(db_session_maker, peer_pid, label="deleter")
+        return await original_preflight(db, group_id)
 
     monkeypatch.setattr(group_service, "_dependent_dynamic_keys", preflight)
 
-    async def replace_reference() -> dict[str, Any] | None:
-        await _wait(preflight_done, label="updater")
+    async def delete_static() -> bool:
         async with db_session_maker() as session:
-            _park_after_the_edge_delete(session, db_session_maker, edge_locked)
+            return await service.delete_group(session, static_key)
+
+    delete_result = await asyncio.wait_for(delete_static(), timeout=COORDINATED_TIMEOUT_SEC)
+    arm_result = await asyncio.wait_for(
+        asyncio.gather(*arming, return_exceptions=True), timeout=COORDINATED_TIMEOUT_SEC
+    )
+
+    assert calls >= 1, "the seam never fired"
+    assert delete_result is True, f"nothing was ever committed against the target, so it must delete: {delete_result!r}"
+    assert isinstance(arm_result[0], IntegrityError), (
+        f"the blocked edge must be refused once the target is gone, got {arm_result[0]!r}"
+    )
+    static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    assert static_row is None and dynamic_row is not None
+    assert await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key) == []
+
+
+async def test_edge_armed_immediately_before_the_parent_delete_does_not_deadlock(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The same cycle, armed one statement later — and by a *different* holder.
+
+    The first fix hoisted a ``FOR KEY SHARE`` onto the referencing edges just
+    before the parent ``DELETE``, and argued that edges created after it could
+    not head a cycle because their inserter must wait on the parent row this
+    caller was "about to" lock. About to is not holds. Between that hoist and
+    the ``DELETE`` the deleter held nothing on the parent, so a peer committed an
+    edge unimpeded — and a *later* transaction then took that committed edge's
+    write lock and wanted the parent, reforming the identical cycle. The
+    argument covered the inserting peer and not the next holder of what it
+    created.
+
+    The seam here is "immediately before the ``DELETE`` against
+    ``device_groups``", which is one statement later than the previous test's
+    and is the last moment at which the window can still be open. Under
+    parent-before-edge ordering the deleter already holds ``FOR UPDATE`` on the
+    target by then, so the peer's INSERT cannot commit at all: it blocks, the
+    delete completes, and the INSERT fails against a target that is gone. That
+    exclusion is the property replacing the whole preflight-gap recovery path.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    static_key, dynamic_key = f"static-{suffix}", f"dynamic-{suffix}"
+    static = DeviceGroup(key=static_key, name=static_key, group_type=GroupType.static)
+    dynamic = DeviceGroup(key=dynamic_key, name=dynamic_key, group_type=GroupType.dynamic)
+    db_session.add_all([static, dynamic])
+    await db_session.commit()
+    static_id, dynamic_id = static.id, dynamic.id
+
+    service = build_groups_service()
+    parked = asyncio.Event()
+    armer_pid: list[int] = []
+    deleter_pid: list[int] = []
+    armer: list[asyncio.Task[Any]] = []
+
+    async def arm_and_replace() -> dict[str, Any] | None:
+        # Commit the edge from a peer, then hand it to a *second* transaction —
+        # the holder the previous argument missed.
+        async with db_session_maker() as peer:
+            armer_pid.append(await _backend_pid(peer))
+            peer.add(DeviceGroupMemberOf(dynamic_group_id=dynamic_id, static_group_id=static_id))
+            await peer.commit()
+        async with db_session_maker() as session:
+            _park_after_the_edge_delete(session, db_session_maker, parked, deleter_pid)
             return await service.update_group(
                 session,
                 dynamic_key,
                 DeviceGroupUpdate(filters={"member_of": [static_key]}),  # type: ignore[arg-type]
             )
 
+    async def _hand_over() -> None:
+        await _wait_until_blocked_or_settled(
+            db_session_maker,
+            armer_pid,
+            armer,
+            reached=parked,
+            label="the arming peer",
+        )
+
+    def _arm_before_the_parent_delete(session: AsyncSession) -> None:
+        original_execute = session.execute
+        fired = False
+
+        async def _intercepted(stmt: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            nonlocal fired
+            if not fired and isinstance(stmt, Delete) and stmt.table.name == DeviceGroup.__tablename__:
+                fired = True
+                session.execute = original_execute  # type: ignore[assignment, method-assign]
+                deleter_pid.append(await _backend_pid(session))
+                armer.append(asyncio.create_task(arm_and_replace()))
+                await _hand_over()
+            return await original_execute(stmt, *args, **kwargs)
+
+        session.execute = _intercepted  # type: ignore[assignment, method-assign]
+
+    async def delete_static() -> bool:
+        async with db_session_maker() as session:
+            _arm_before_the_parent_delete(session)
+            return await service.delete_group(session, static_key)
+
+    delete_result: bool | BaseException
+    try:
+        delete_result = await asyncio.wait_for(delete_static(), timeout=COORDINATED_TIMEOUT_SEC)
+    except AssertionError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — the whole point is what escapes delete_group
+        delete_result = exc
+    armer_result = await asyncio.wait_for(
+        asyncio.gather(*armer, return_exceptions=True), timeout=COORDINATED_TIMEOUT_SEC
+    )
+
+    assert armer, "the seam never fired; delete_group issued no DELETE against device_groups"
+    assert not isinstance(delete_result, DBAPIError), (
+        f"delete_group aborted with an untyped database error. The routers map only GroupReferencedError "
+        f"and UnknownMemberOfError, so this reaches the operator as a 500: {delete_result!r}"
+    )
+    assert delete_result is True, f"the target was unreferenced when the delete ran: {delete_result!r}"
+
+    # The exclusion, stated positively: the edge never landed, because the
+    # INSERT could not take FOR KEY SHARE on a row the deleter held FOR UPDATE.
+    assert isinstance(armer_result[0], IntegrityError), (
+        f"the peer's edge must be refused against a deleted target, got {armer_result[0]!r}"
+    )
+    static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    assert static_row is None, "the delete must have completed"
+    assert dynamic_row is not None
+    assert await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key) == []
+
+
+def _first_index(statements: list[str], *, predicate: Callable[[str], bool], what: str) -> int:
+    index = next((i for i, statement in enumerate(statements) if predicate(statement)), None)
+    assert index is not None, f"no statement {what}: {statements}"
+    return index
+
+
+async def test_definition_writers_lock_parents_before_touching_edges(
+    db_session: AsyncSession,
+) -> None:
+    """The ordering rule itself, asserted on the statements each writer issues.
+
+    The other tests here assert *consequences* — no 40P01, no edge slipping past
+    a delete. Consequences are the right thing to assert, but they are also why
+    the first attempt at this fix looked correct: an argument about one writer's
+    behaviour can hold while the rule it was supposed to establish does not.
+    Both halves of a lock order have to be in place for either to be worth
+    anything, and with ``delete_group`` fixed the deleter's own exclusion makes
+    ``_replace_member_of``'s half currently unobservable through outcomes alone.
+
+    So this pins the rule directly: on both writers, the ``device_groups``
+    acquisition precedes the first statement that touches
+    ``device_group_member_of``. A future writer that reverses either half
+    reintroduces the cycle, and would otherwise reintroduce it silently.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    static_key, dynamic_key = f"static-{suffix}", f"dynamic-{suffix}"
+    static = DeviceGroup(key=static_key, name=static_key, group_type=GroupType.static)
+    dynamic = DeviceGroup(key=dynamic_key, name=dynamic_key, group_type=GroupType.dynamic)
+    db_session.add_all([static, dynamic])
+    await db_session.flush()
+    # A committed edge, so the replacement's DELETE has a real tuple to lock.
+    db_session.add(DeviceGroupMemberOf(dynamic_group_id=dynamic.id, static_group_id=static.id))
+    await db_session.commit()
+    service = build_groups_service()
+
+    def touches_edges(statement: str) -> bool:
+        return DeviceGroupMemberOf.__tablename__ in statement.lower()
+
+    async with capture_statements(db_session) as statements:
+        updated = await service.update_group(
+            db_session,
+            dynamic_key,
+            DeviceGroupUpdate(filters={"member_of": [static_key]}),  # type: ignore[arg-type]
+        )
+    assert updated is not None
+    lock_index = _first_index(
+        statements,
+        predicate=lambda s: "for key share" in s.lower() and "device_groups" in s.lower(),
+        what="takes FOR KEY SHARE on device_groups",
+    )
+    edge_index = _first_index(statements, predicate=touches_edges, what="touches device_group_member_of")
+    assert lock_index < edge_index, (
+        "_replace_member_of touched device_group_member_of before locking its target rows; "
+        f"that is the edge-then-parent order delete_group deadlocks against:\n{statements}"
+    )
+
+    async with capture_statements(db_session) as statements:
+        with pytest.raises(GroupReferencedError):
+            await service.delete_group(db_session, static_key)
+    lock_index = _first_index(
+        statements,
+        predicate=lambda s: "for update" in s.lower() and "device_groups" in s.lower(),
+        what="takes FOR UPDATE on device_groups",
+    )
+    edge_index = _first_index(statements, predicate=touches_edges, what="touches device_group_member_of")
+    assert lock_index < edge_index, (
+        "delete_group read device_group_member_of before locking its target row, so the dependent read "
+        f"is not authoritative and an edge can still land behind it:\n{statements}"
+    )
+
+
+async def test_concurrent_duplicate_deletes_report_exactly_one_success(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Two operators deleting the same group: one 204, one 404.
+
+    Without the target lock both callers read the row, both preflight it clean,
+    and both issue ``DELETE ... WHERE id = :id``. The loser's statement matches
+    zero rows — the winner already removed it — but a zero-row ``DELETE`` is not
+    an error, so it committed, published a second
+    ``device_group.updated {"action": "deleted"}`` and returned success for work
+    it did not do. Under ``FOR UPDATE`` the loser's read blocks, re-checks the
+    locked tuple through EvalPlanQual, finds it deleted and returns no row at
+    all, which is the 404 the contract already documents.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    static_key = f"static-{suffix}"
+    db_session.add(DeviceGroup(key=static_key, name=static_key, group_type=GroupType.static))
+    await db_session.commit()
+    service = build_groups_service()
+
     async def delete_static() -> bool:
         async with db_session_maker() as session:
             return await service.delete_group(session, static_key)
 
-    update_result, delete_result = await asyncio.wait_for(
-        asyncio.gather(replace_reference(), delete_static(), return_exceptions=True),
+    results = await asyncio.wait_for(
+        asyncio.gather(delete_static(), delete_static(), return_exceptions=True),
         timeout=GATHER_TIMEOUT_SEC,
     )
 
-    for label, result in (("update_group", update_result), ("delete_group", delete_result)):
-        if isinstance(result, AssertionError):
-            raise result  # a coordinating seam failed; its message is the real one
-        assert not isinstance(result, DBAPIError), (
-            f"{label} aborted with an untyped database error. The routers map only GroupReferencedError "
-            f"and UnknownMemberOfError, so this reaches the operator as a 500: {result!r}"
-        )
-
-    assert calls >= 2, "the deleter never reached its DELETE; the interleaving under test did not happen"
-    assert not isinstance(update_result, Exception), f"the updater held the edge and must win: {update_result!r}"
-    assert isinstance(delete_result, GroupReferencedError), (
-        f"the deleter must be refused by the committed edge, got {delete_result!r}"
+    assert sorted(map(repr, results)) == ["False", "True"], (
+        f"exactly one caller may report having deleted the group, got {results!r}"
     )
-    assert delete_result.dependents == [dynamic_key]
+    static_row, _ = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=static_key)
+    assert static_row is None
 
-    static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
-    assert static_row is not None and dynamic_row is not None
-    assert await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key) == [static_key]
+
+async def test_a_peer_cannot_delete_and_recreate_the_target_underneath_a_delete(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``delete_group`` matches its target by key but removes it by id.
+
+    Without the lock those two identities can drift apart mid-call: a peer that
+    deletes the key and recreates it hands the ``DELETE`` an id that no longer
+    exists, so it matches nothing while the call still commits, publishes
+    ``device_group.updated {"action": "deleted"}`` and returns ``True`` — for a
+    group that, by key, is still there. Holding ``FOR UPDATE`` on the row from
+    the first read makes the pair inseparable: the peer cannot delete it, so
+    there is nothing to recreate.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    static_key = f"static-{suffix}"
+    static = DeviceGroup(key=static_key, name=static_key, group_type=GroupType.static)
+    db_session.add(static)
+    await db_session.commit()
+    original_id = static.id
+
+    service = build_groups_service()
+    peer_pid: list[int] = []
+    peer_task: list[asyncio.Task[Any]] = []
+    peer_delete: list[bool] = []
+    original_preflight = group_service._dependent_dynamic_keys
+    calls = 0
+
+    async def delete_and_recreate() -> None:
+        async with db_session_maker() as session:
+            peer_pid.append(await _backend_pid(session))
+            peer_delete.append(await service.delete_group(session, static_key))
+        if peer_delete[0]:
+            async with db_session_maker() as session:
+                await service.create_group(
+                    session,
+                    DeviceGroupCreate(key=static_key, name=static_key, group_type=GroupType.static),
+                )
+
+    async def preflight(db: AsyncSession, group_id: uuid.UUID) -> list[str]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            peer_task.append(asyncio.create_task(delete_and_recreate()))
+            await _wait_until_blocked_or_settled(db_session_maker, peer_pid, peer_task, label="the recreating peer")
+        return await original_preflight(db, group_id)
+
+    monkeypatch.setattr(group_service, "_dependent_dynamic_keys", preflight)
+
+    async def delete_static() -> bool:
+        async with db_session_maker() as session:
+            return await service.delete_group(session, static_key)
+
+    delete_result = await asyncio.wait_for(delete_static(), timeout=COORDINATED_TIMEOUT_SEC)
+    await asyncio.wait_for(asyncio.gather(*peer_task), timeout=COORDINATED_TIMEOUT_SEC)
+
+    assert calls >= 1, "the seam never fired"
+    assert delete_result is True, f"this caller held the row and must have removed it: {delete_result!r}"
+    assert peer_delete == [False], (
+        f"the peer deleted the target out from under a call that then reported success for it; got {peer_delete!r}"
+    )
+    async with db_session_maker() as verify:
+        surviving = (
+            await verify.execute(select(DeviceGroup.id).where(DeviceGroup.key == static_key))
+        ).scalar_one_or_none()
+    assert surviving is None, (
+        f"the key still resolves after a delete that reported success (row {surviving!r}, originally {original_id!r})"
+    )
 
 
 async def _seed_writers_fixture(db_session: AsyncSession) -> tuple[str, str, str, str, str]:

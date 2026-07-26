@@ -335,47 +335,6 @@ async def test_restrictive_foreign_key_refuses_a_plain_delete(
     assert static_row is not None, "the refused DELETE must have left the target in place"
 
 
-async def test_blind_dependent_scan_still_yields_a_named_409(
-    db_session: AsyncSession,
-    db_session_maker: async_sessionmaker[AsyncSession],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Correctness must not depend on the preflight scan seeing anything.
-
-    ``_dependent_dynamic_keys`` is an optimisation and an error-message source,
-    not the guard. Blind its first call — the state a peer's mid-flight commit
-    produces — and the delete must still be refused, and still name the
-    referrer, because the refusal comes from the foreign key.
-    """
-    static_key, dynamic_key, static_id = await _seed_static(db_session)
-    dynamic = DeviceGroup(key=dynamic_key, name=dynamic_key, group_type=GroupType.dynamic)
-    db_session.add(dynamic)
-    await db_session.flush()
-    db_session.add(DeviceGroupMemberOf(dynamic_group_id=dynamic.id, static_group_id=static_id))
-    await db_session.commit()
-
-    original = group_service._dependent_dynamic_keys
-    calls = 0
-
-    async def blind_first_scan(db: AsyncSession, group_id: uuid.UUID) -> list[str]:
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return []
-        return await original(db, group_id)
-
-    monkeypatch.setattr(group_service, "_dependent_dynamic_keys", blind_first_scan)
-
-    async with db_session_maker() as session:
-        with pytest.raises(GroupReferencedError) as exc:
-            await build_groups_service().delete_group(session, static_key)
-
-    assert exc.value.dependents == [dynamic_key]
-    assert calls >= 2, "the blinded preflight must have been followed by a re-read"
-    static_row, _ = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
-    assert static_row is not None, "a refused delete must leave the target in place"
-
-
 async def test_rejected_writers_leave_no_open_transaction(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],

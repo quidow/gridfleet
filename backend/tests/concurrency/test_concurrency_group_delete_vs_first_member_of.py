@@ -32,7 +32,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select
 
 from app.devices.models.group import DeviceGroup, DeviceGroupMemberOf, GroupType
 from app.devices.schemas.group import DeviceGroupUpdate
@@ -250,6 +250,47 @@ async def test_target_deleted_after_resolution_refuses_the_update(
         update_result=update_result,
         delete_result=delete_result,
     )
+
+
+async def test_reference_insert_violation_rolls_back_only_to_a_savepoint(db_session: AsyncSession) -> None:
+    """A refused reference INSERT must not take its caller's transaction with it.
+
+    ``_replace_member_of`` used to answer the foreign-key violation with a root
+    ``db.rollback()`` — silently discarding whatever the caller had staged, from
+    inside a helper the caller cannot see into. ``update_group`` arrives here
+    with a flushed field update and a queued event.
+
+    Still reachable, and deliberately so: the target ``FOR KEY SHARE`` this
+    function hoists ahead of its edge ``DELETE`` orders the acquisition but does
+    not verify it, so a target deleted between ``_resolve_static_member_of`` and
+    the INSERT is caught by the foreign key rather than by a second application
+    check. This test uses a target row that never existed at all, which raises
+    the same violation without needing a peer.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    dynamic_key = f"dynamic-{suffix}"
+    dynamic = DeviceGroup(key=dynamic_key, name=dynamic_key, group_type=GroupType.dynamic)
+    db_session.add(dynamic)
+    await db_session.commit()
+    dynamic_id = dynamic.id
+
+    ghost = DeviceGroup(
+        id=uuid.uuid4(),
+        key=f"ghost-{uuid.uuid4().hex[:8]}",
+        name="ghost",
+        group_type=GroupType.static,
+    )
+
+    with pytest.raises(UnknownMemberOfError) as exc:
+        await group_service._replace_member_of(db_session, dynamic_id, {ghost.key: ghost})
+
+    assert exc.value.keys == [ghost.key]
+    assert db_session.in_transaction(), (
+        "a rejected reference INSERT rolled the caller's transaction back to the root, not to a SAVEPOINT"
+    )
+    assert not inspect(dynamic).expired, "a savepoint rollback must leave a clean loaded row populated"
+    assert dynamic.key == dynamic_key
+    await db_session.rollback()
 
 
 async def test_unsynchronised_update_and_delete_reach_a_consistent_state(

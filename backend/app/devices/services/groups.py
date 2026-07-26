@@ -319,19 +319,39 @@ class DeviceGroupsService:
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
         try:
-            group = await _get_group_row(db, group_key)
+            # ``FOR UPDATE`` before anything else reads, and it is doing three
+            # jobs at once.
+            #
+            # Ordering: it is the parent half of the parent-before-edge rule
+            # every group-definition writer follows (see ``_replace_member_of``).
+            # Taking it here, rather than letting the ``DELETE`` take it later,
+            # is what keeps this writer from holding a ``device_groups`` row
+            # while a reference writer holds a ``device_group_member_of`` tuple
+            # and each waits for the other's.
+            #
+            # Exclusion: inserting a reference to this group requires
+            # ``FOR KEY SHARE`` on this row, which conflicts. So no edge can be
+            # committed against it from here on, the dependent read below sees
+            # every edge that will ever exist for this delete, and the
+            # ``ON DELETE RESTRICT`` foreign key cannot fire.
+            #
+            # Identity: the row is matched by key but deleted by id. Holding it
+            # is what stops a peer from deleting and recreating the key
+            # underneath us, which would leave the ``DELETE`` matching nothing
+            # while this call still reported success. A peer that got there
+            # first makes this read return no row at all — EvalPlanQual re-checks
+            # the locked tuple and finds it deleted — so a concurrent duplicate
+            # delete gets the 404 it should rather than a second success.
+            group = await _get_group_row(db, group_key, for_update=True)
             if group is None:
                 return False
-            # Bind the id up front. Not because the recovery's savepoint expires
-            # it — a savepoint rollback restores dirty states only, so this clean
-            # row survives one fully populated — but because the delete, the
-            # recovery's lock, and the replay must all mean the same row, and
-            # because the ``finally`` below rolls back to the *root*, which does
-            # expire every loaded row on the way out.
+            # Bound before the ``finally`` below, which rolls back to the *root*
+            # and expires every loaded row on the way out.
             group_id = group.id
-            dependents = await _delete_group_or_dependents(db, group_id)
+            dependents = await _dependent_dynamic_keys(db, group_id)
             if dependents:
                 raise GroupReferencedError(dependents)
+            await db.execute(delete(DeviceGroup).where(DeviceGroup.id == group_id))
             self._publisher.queue_for_session(
                 db,
                 "device_group.updated",
@@ -341,8 +361,7 @@ class DeviceGroupsService:
             return True
         finally:
             # See create_group. The GroupReferencedError path in particular
-            # leaves a live transaction: its savepoint rollback deliberately
-            # kept the root one open so the referrer could be named.
+            # leaves a live transaction holding the target's row lock.
             if db.in_transaction():
                 await db.rollback()
 
@@ -623,17 +642,35 @@ async def _replace_member_of(
     in this transaction, so nothing can reference it yet and the delete would be
     a statement that provably matches no row.
 
-    The INSERT runs in a SAVEPOINT for the same reason
-    :func:`_try_delete_group_row`'s ``DELETE`` does. A root rollback here would
-    reach past this function and discard whatever the caller had staged —
+    The INSERT runs in a SAVEPOINT because it can still fail: the pre-lock below
+    orders the acquisition but deliberately does not verify it, so a target
+    deleted between :func:`_resolve_static_member_of` and here is still caught by
+    the foreign key rather than by a second application check. A root rollback
+    would reach past this function and discard whatever the caller had staged —
     ``update_group`` arrives with a flushed field update and a queued event —
     and would expire every loaded row, from inside a helper the caller cannot
     see into. Rolling back to a savepoint confines the undo to the statement
     that failed and leaves the abort decision where it belongs.
     """
+    target_ids = sorted({group.id for group in targets.values()})
+    # Parent rows before edges, in a deterministic order.
+    #
+    # The INSERT below has to take ``FOR KEY SHARE`` on each target anyway — that
+    # is how PostgreSQL enforces the foreign key. Taking it here instead means
+    # this writer never holds a ``device_group_member_of`` tuple (which the
+    # ``DELETE`` that follows locks) while still wanting a ``device_groups`` row,
+    # which is the only shape that can deadlock against ``delete_group``. Sorted
+    # by id so two callers with overlapping target sets cannot deadlock against
+    # each other either.
+    if target_ids:
+        await db.execute(
+            select(DeviceGroup.id)
+            .where(DeviceGroup.id.in_(target_ids))
+            .order_by(DeviceGroup.id)
+            .with_for_update(read=True, key_share=True)
+        )
     if clear_existing:
         await db.execute(delete(DeviceGroupMemberOf).where(DeviceGroupMemberOf.dynamic_group_id == dynamic_group_id))
-    target_ids = sorted({group.id for group in targets.values()})
     if not target_ids:
         return
     stmt = pg_insert(DeviceGroupMemberOf).values(
@@ -672,129 +709,6 @@ async def _dependent_dynamic_keys(db: AsyncSession, static_group_id: uuid.UUID) 
         .where(DeviceGroupMemberOf.static_group_id == static_group_id)
     )
     return sorted((await db.execute(stmt)).scalars().all())
-
-
-async def _lock_referencing_edges(db: AsyncSession, static_group_id: uuid.UUID) -> None:
-    """Hoist the RESTRICT trigger's own row lock ahead of the parent row's.
-
-    Deleting a referenced group is two lock acquisitions in a fixed order, and
-    the order is the opposite of the one a reference writer uses:
-
-    * ``delete_group`` takes the exclusive lock on the ``device_groups`` row at
-      its ``DELETE``, and only then does ``fk_device_group_member_of_static_group``
-      fire ``SELECT 1 FROM device_group_member_of WHERE static_group_id = $1
-      FOR KEY SHARE`` — wanting the edge tuples second.
-    * ``update_group`` takes the edge tuples first (``_replace_member_of``'s
-      ``DELETE`` write-locks every committed edge of the source group) and asks
-      for ``FOR KEY SHARE`` on the target ``device_groups`` row second, through
-      the replacement INSERT's foreign key.
-
-    Tuples-then-row against row-then-tuples is an ABBA cycle: PostgreSQL aborts
-    one side with 40P01, which is a plain ``DBAPIError`` that neither writer's
-    ``except IntegrityError`` catches and no router maps — a 500 on an
-    interleaving whose documented answers are 409 and 422. Taking the trigger's
-    lock here, before the ``DELETE``, puts both writers on the same order.
-
-    ``FOR KEY SHARE`` deliberately, not ``FOR UPDATE``: it is exactly the mode
-    the trigger itself takes, so this only moves an acquisition earlier rather
-    than strengthening it, and concurrent deletes of different targets still
-    share these rows freely.
-
-    Edges *created* after this runs are not covered and do not need to be. To
-    insert one, a peer must take ``FOR KEY SHARE`` on the target row — which
-    this caller is about to lock exclusively — so the peer waits on us and can
-    never be the head of a cycle. Only pre-existing edges can be held by
-    somebody who then wants the target, and those are what this locks.
-    """
-    await db.execute(
-        select(DeviceGroupMemberOf.dynamic_group_id)
-        .where(DeviceGroupMemberOf.static_group_id == static_group_id)
-        .with_for_update(read=True, key_share=True)
-    )
-
-
-async def _try_delete_group_row(db: AsyncSession, group_id: uuid.UUID) -> bool:
-    """Delete the definition row; ``False`` when the RESTRICT foreign key stopped it.
-
-    Two things this shape is load-bearing for.
-
-    The ``DELETE`` is inside the ``try``, not a following ``flush``. An
-    ``ON DELETE RESTRICT`` foreign key is a non-deferrable AFTER ROW trigger, so
-    it fires at the end of the statement that armed it: the violation comes out
-    of ``execute``, and a ``try`` wrapped around a later ``flush`` never sees it.
-
-    The statement runs in a SAVEPOINT so the violation does not abort the
-    caller's transaction. A root rollback would end the transaction and expire
-    every loaded row, so the re-read that names the referrer would run against a
-    fresh snapshot with nothing the caller established still in hand; rolling
-    back to a savepoint keeps both, and the caller can still ask *why* it failed
-    on the same session.
-    """
-    try:
-        async with db.begin_nested():
-            await db.execute(delete(DeviceGroup).where(DeviceGroup.id == group_id))
-    except IntegrityError as exc:
-        if constraint_name(exc) == "fk_device_group_member_of_static_group":
-            return False
-        raise
-    return True
-
-
-async def _delete_group_or_dependents(db: AsyncSession, group_id: uuid.UUID) -> list[str]:
-    """Delete the group's definition row, or name the dependents that stopped it.
-
-    Returns ``[]`` only when the row is gone; a non-empty result is always a
-    populated ``GroupReferencedError`` payload, never an empty one.
-
-    The dependent read and the ``DELETE`` are two statements, so a reference
-    committed between them is invisible to the first and fatal to the second.
-    The foreign key catches that, and the re-read names the referrer. When the
-    re-read comes back empty the referrer was inserted *and* removed inside the
-    gap, so there is nothing to report and nothing left to block the delete —
-    replaying it is the only answer that is neither a 500 nor a 409 naming
-    nobody.
-
-    The replay holds ``FOR UPDATE`` on the target row, keyed on the same
-    ``group_id`` the replay deletes. That conflicts with the ``FOR KEY SHARE`` a
-    referencing insert must take on the row it references, so no peer can re-arm
-    the foreign key underneath it: the replay is final, and the recovery cannot
-    loop. Locking by *key* instead would break exactly that guarantee whenever a
-    peer deleted and recreated the key inside this window — the lock would land
-    on a row this delete never touches, and the row it does delete would be left
-    unprotected.
-
-    Every ``device_groups`` lock this function takes is preceded by
-    :func:`_lock_referencing_edges`, which is what keeps the acquisition order
-    the same as a reference writer's and stops the two deadlocking.
-    """
-    dependents = await _dependent_dynamic_keys(db, group_id)
-    if dependents:
-        return dependents
-    # Taken at the root, not inside _try_delete_group_row's savepoint: the
-    # replay below needs the same ordering guarantee, and a savepoint rollback
-    # would release these locks between the two attempts.
-    await _lock_referencing_edges(db, group_id)
-    if await _try_delete_group_row(db, group_id):
-        return []
-
-    dependents = await _dependent_dynamic_keys(db, group_id)
-    if dependents:
-        return dependents
-
-    locked: uuid.UUID | None = await db.scalar(
-        select(DeviceGroup.id).where(DeviceGroup.id == group_id).with_for_update()
-    )
-    if locked is None:
-        # A peer deleted the group itself while we were recovering. Reporting it
-        # as deleted would be a lie about who did it, but the row is gone either
-        # way and the caller's contract only distinguishes "gone" from
-        # "referenced".
-        return []
-    dependents = await _dependent_dynamic_keys(db, group_id)
-    if dependents:
-        return dependents
-    await db.execute(delete(DeviceGroup).where(DeviceGroup.id == group_id))
-    return []
 
 
 def _validate_filters(filters_payload: dict[str, Any] | None) -> DeviceGroupFilters:
