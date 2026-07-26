@@ -11,9 +11,13 @@ from sqlalchemy.orm import raiseload, selectinload
 
 from app.core.locks import group_mutation_lock
 from app.core.timeutil import now_utc
-from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
+from app.devices.models import Device, DeviceGroup, DeviceGroupMemberOf, DeviceGroupMembership, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
-from app.devices.services.group_membership import load_group_membership_index
+from app.devices.services.group_membership import (
+    load_group_definition_batch,
+    load_group_membership_index,
+    load_member_of_keys,
+)
 from app.devices.services.read_projection import load_device_read_projections
 from app.devices.services.service import device_scope_conditions
 
@@ -97,25 +101,28 @@ class DeviceGroupsService:
     async def create_group(self, db: AsyncSession, data: DeviceGroupCreate) -> dict[str, Any]:
         # Only member_of creates resolve peer rows and need definition serialization.
         is_dynamic = data.group_type == GroupType.dynamic
-        member_of = _member_of_keys(data.filters) if is_dynamic else set()
-        async with group_mutation_lock(db, when=bool(member_of)):
-            if member_of:
-                _assert_member_of_resolves(data.filters, await _load_groups_by_key(db, member_of))
+        requested_keys = sorted(_member_of_keys(data.filters)) if is_dynamic else []
+        async with group_mutation_lock(db, when=bool(requested_keys)):
+            targets: dict[str, DeviceGroup] = {}
+            if requested_keys:
+                targets = await _resolve_static_member_of(db, set(requested_keys))
             elif not is_dynamic and _has_filter_values(data.filters):
                 raise StaticGroupFiltersError
-            group, payload = await self._insert_group(db, data)
+            group, payload = await self._insert_group(db, data, targets)
         if is_dynamic:
             payload["device_count"] = await self._dynamic_device_count(db, group)
         return payload
 
-    async def _insert_group(self, db: AsyncSession, data: DeviceGroupCreate) -> tuple[DeviceGroup, dict[str, Any]]:
+    async def _insert_group(
+        self, db: AsyncSession, data: DeviceGroupCreate, targets: Mapping[str, DeviceGroup]
+    ) -> tuple[DeviceGroup, dict[str, Any]]:
         """Insert and commit a group, serializing its stable fields before peers can delete it."""
         group = DeviceGroup(
             key=data.key,
             name=data.name,
             description=data.description,
             group_type=GroupType(data.group_type),
-            filters=_dump_filters(data.filters),
+            filters=_dump_native_filters(data.filters),
         )
         db.add(group)
         try:
@@ -125,26 +132,41 @@ class DeviceGroupsService:
             if constraint_name(exc) == "ix_device_groups_key":
                 raise GroupKeyConflictError(f"Device group key '{data.key}' already exists") from exc
             raise
+        # After the flush, so the source id exists; before the commit, so a
+        # rejected reference takes the group row down with it.
+        await _replace_member_of(db, group.id, targets)
         await db.refresh(group)
         self._publisher.queue_for_session(
             db,
             "device_group.updated",
             {"group_key": group.key, "action": "created"},
         )
-        payload = _serialize_group(group, device_count=0)
+        payload = _serialize_group(group, device_count=0, member_of_keys=targets.keys())
         await db.commit()
         return group, payload
 
     async def _dynamic_device_count(self, db: AsyncSession, group: DeviceGroup) -> int | None:
         if db.in_transaction():
             raise RuntimeError("dynamic device counts must run outside definition transactions")
+        # Read the key before the block. Any failure in here leaves an open
+        # transaction that the lock's exit rolls back, and a rollback expires
+        # every loaded row — so reading ``group.key`` in the handler would need
+        # IO from a synchronous context and replace the logged failure with a
+        # MissingGreenlet that escapes this method entirely.
+        group_key = group.key
         try:
             async with group_mutation_lock(db, when=False):
-                devices = await _load_devices_in_scope(db, [group])
-                index = await load_group_membership_index(db, groups=[group], devices=devices)
-                return len(index.device_ids(group.key))
+                references = await load_member_of_keys(db, [group.id])
+                devices = await _load_devices_in_scope(db, [group], references)
+                index = await load_group_membership_index(
+                    db,
+                    groups=[group],
+                    devices=devices,
+                    member_of_keys_by_dynamic_group_id=references,
+                )
+                return len(index.device_ids(group_key))
         except Exception:
-            logger.exception("device_group_dynamic_count_failed", extra={"group_key": group.key})
+            logger.exception("device_group_dynamic_count_failed", extra={"group_key": group_key})
             return None
 
     async def list_groups(self, db: AsyncSession) -> list[dict[str, Any]]:
@@ -158,14 +180,25 @@ class DeviceGroupsService:
         static_counts = await _static_member_counts(db) if any(_is_static(g) for g in groups) else {}
         dynamic_groups = [group for group in groups if not _is_static(group)]
         dynamic_counts: dict[str, int] = {}
+        # This path reads every group, so the keyed batch loader has nothing to
+        # narrow on; one id-keyed read serves both the scope query and the
+        # evaluator, and doubles as the serializer's reference map.
+        references: Mapping[uuid.UUID, frozenset[str]] = {}
         if dynamic_groups:
-            devices = await _load_devices_in_scope(db, dynamic_groups)
-            index = await load_group_membership_index(db, groups=dynamic_groups, devices=devices)
+            references = await load_member_of_keys(db, [group.id for group in dynamic_groups])
+            devices = await _load_devices_in_scope(db, dynamic_groups, references)
+            index = await load_group_membership_index(
+                db,
+                groups=dynamic_groups,
+                devices=devices,
+                member_of_keys_by_dynamic_group_id=references,
+            )
             dynamic_counts = {group.key: len(index.device_ids(group.key)) for group in dynamic_groups}
         return [
             _serialize_group(
                 group,
                 device_count=static_counts.get(group.key, 0) if _is_static(group) else dynamic_counts[group.key],
+                member_of_keys=references.get(group.id, frozenset()),
             )
             for group in groups
         ]
@@ -178,18 +211,21 @@ class DeviceGroupsService:
 
         One ``load_device_read_projections`` batch serves both membership
         selection (for a dynamic group) and DTO construction; for a dynamic group
-        the membership index reuses those projection facts, so it issues no extra
-        pack/reservation/static/operational-state query.
+        the membership index reuses those projection facts *and* the reference
+        map the definition read already produced, so it issues no extra
+        pack/reservation/static/operational-state/``member_of`` query.
         """
-        group = await _get_group_row(db, group_key)
+        definitions = await load_group_definition_batch(db, [group_key])
+        group = next((row for row in definitions.groups if row.key == group_key), None)
         if group is None:
             return None
+        references = definitions.member_of_keys_by_dynamic_group_id
 
         if _is_static(group):
             members = await _load_static_members(db, group)
             projections = await load_device_read_projections(db, members, now=now)
         else:
-            candidates = await _load_devices_in_scope(db, [group])
+            candidates = await _load_devices_in_scope(db, [group], references)
             projections = await load_device_read_projections(db, candidates, now=now)
             index = await load_group_membership_index(
                 db,
@@ -199,12 +235,17 @@ class DeviceGroupsService:
                 static_group_keys_by_device_id={d.id: projections[d.id].static_group_keys for d in candidates},
                 readiness_by_device_id={d.id: projections[d.id].readiness for d in candidates},
                 reserved_by_device_id={d.id: _reservation_blocks_allocation(projections[d.id]) for d in candidates},
+                member_of_keys_by_dynamic_group_id=references,
             )
             member_ids = index.device_ids(group.key)
             members = [device for device in candidates if device.id in member_ids]
 
         return DeviceGroupDetailLoad(
-            payload=_serialize_group(group, device_count=len(members)),
+            payload=_serialize_group(
+                group,
+                device_count=len(members),
+                member_of_keys=references.get(group.id, frozenset()),
+            ),
             devices=tuple(members),
             projections={member.id: projections[member.id] for member in members},
         )
@@ -231,19 +272,26 @@ class DeviceGroupsService:
     async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> dict[str, Any] | None:
         # Updates lock unconditionally because filters can introduce references.
         async with group_mutation_lock(db):
-            loaded = await _load_groups_by_key(db, {group_key} | _member_of_keys(data.filters))
-            group = loaded.get(group_key)
+            group = await _load_group_for_mutation(db, group_key)
             if group is None:
                 return None
+            updates = data.model_dump(exclude_unset=True)
+            replaces_filters = "filters" in updates
+            targets: Mapping[str, DeviceGroup] = {}
+            member_of_keys: Collection[str] = ()
             if group.group_type == GroupType.static:
                 # Static groups must not carry filters; reject any filters payload.
                 if _has_filter_values(data.filters):
                     raise StaticGroupFiltersError
-            elif data.filters is not None:
-                _assert_member_of_resolves(data.filters, loaded)
-            updates = data.model_dump(exclude_unset=True)
-            if "filters" in updates:
-                group.filters = _dump_filters(data.filters)
+            elif replaces_filters:
+                targets = await _resolve_static_member_of(db, _member_of_keys(data.filters))
+                member_of_keys = targets.keys()
+            else:
+                # Untouched filters keep the references they already carry, so the
+                # payload has to name them even though nothing is being written.
+                member_of_keys = (await load_member_of_keys(db, [group.id])).get(group.id, frozenset())
+            if replaces_filters:
+                group.filters = _dump_native_filters(data.filters)
                 updates.pop("filters")
             for field, value in updates.items():
                 setattr(group, field, value)
@@ -253,6 +301,8 @@ class DeviceGroupsService:
                 {"group_key": group.key, "action": "updated"},
             )
             await db.flush()
+            if replaces_filters and group.group_type == GroupType.dynamic:
+                await _replace_member_of(db, group.id, targets)
             await db.refresh(group)
             is_static = _is_static(group)
             if is_static:
@@ -262,7 +312,7 @@ class DeviceGroupsService:
                 device_count = int(await db.scalar(count_stmt) or 0)
             else:
                 device_count = 0
-            payload = _serialize_group(group, device_count=device_count)
+            payload = _serialize_group(group, device_count=device_count, member_of_keys=member_of_keys)
             await db.commit()
         if not is_static:
             payload["device_count"] = await self._dynamic_device_count(db, group)
@@ -270,22 +320,24 @@ class DeviceGroupsService:
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
         async with group_mutation_lock(db):
-            # One GIN-backed read loads the target and all member_of candidates.
-            stmt = select(DeviceGroup.key, DeviceGroup.filters).where(
-                or_(DeviceGroup.key == group_key, DeviceGroup.filters.has_key("member_of"))
-            )
-            rows = (await db.execute(stmt)).all()
-            target_exists = False
-            referrers: list[tuple[str, dict[str, Any] | None]] = []
-            for key, filters in rows:
-                if key == group_key:
-                    target_exists = True
-                else:
-                    referrers.append((key, filters))
-            if not target_exists:
+            group = await _get_group_row(db, group_key)
+            if group is None:
                 return False
-            _assert_no_references(group_key, referrers)
-            await db.execute(delete(DeviceGroup).where(DeviceGroup.key == group_key))
+            dependents = await _dependent_dynamic_keys(db, group.id)
+            if dependents:
+                raise GroupReferencedError(dependents)
+            await db.execute(delete(DeviceGroup).where(DeviceGroup.id == group.id))
+            try:
+                await db.flush()
+            except IntegrityError as exc:
+                # A reference committed after the read above: the restrictive FK
+                # is the backstop, and re-reading names the referrer the operator
+                # has to deal with. Roll back first so the re-read runs on a
+                # session that is not in an aborted transaction.
+                await db.rollback()
+                if constraint_name(exc) == "fk_device_group_member_of_static_group":
+                    raise GroupReferencedError(await _dependent_dynamic_keys(db, group.id)) from exc
+                raise
             self._publisher.queue_for_session(
                 db,
                 "device_group.updated",
@@ -357,7 +409,8 @@ class DeviceGroupsService:
         return removed
 
     async def get_group_device_ids(self, db: AsyncSession, group_key: str) -> list[uuid.UUID]:
-        group = await _get_group_row(db, group_key)
+        definitions = await load_group_definition_batch(db, [group_key])
+        group = next((row for row in definitions.groups if row.key == group_key), None)
         if group is None:
             return []
 
@@ -365,8 +418,14 @@ class DeviceGroupsService:
             mem_stmt = select(DeviceGroupMembership.device_id).where(DeviceGroupMembership.group_id == group.id)
             mem_result = await db.execute(mem_stmt)
             return [row[0] for row in mem_result.all()]
-        devices = await _load_devices_in_scope(db, [group])
-        index = await load_group_membership_index(db, groups=[group], devices=devices)
+        references = definitions.member_of_keys_by_dynamic_group_id
+        devices = await _load_devices_in_scope(db, [group], references)
+        index = await load_group_membership_index(
+            db,
+            groups=[group],
+            devices=devices,
+            member_of_keys_by_dynamic_group_id=references,
+        )
         return list(index.device_ids(group.key))
 
 
@@ -408,7 +467,11 @@ async def _load_static_members(db: AsyncSession, group: DeviceGroup) -> list[Dev
     return list((await db.execute(stmt)).scalars().all())
 
 
-async def _load_devices_in_scope(db: AsyncSession, dynamic_groups: list[DeviceGroup]) -> list[Device]:
+async def _load_devices_in_scope(
+    db: AsyncSession,
+    dynamic_groups: list[DeviceGroup],
+    member_of_keys_by_dynamic_group_id: Mapping[uuid.UUID, frozenset[str]],
+) -> list[Device]:
     """One device read bounding the candidates for every supplied dynamic group.
 
     The per-group scopes are ORed so a single batch serves the whole list.
@@ -429,7 +492,10 @@ async def _load_devices_in_scope(db: AsyncSession, dynamic_groups: list[DeviceGr
     scopes: list[ColumnElement[bool]] = []
     unbounded: list[str] = []
     for group in dynamic_groups:
-        conditions = device_scope_conditions(_validate_filters(group.filters))
+        conditions = device_scope_conditions(
+            _validate_filters(group.filters),
+            member_of_keys=member_of_keys_by_dynamic_group_id.get(group.id, frozenset()),
+        )
         if conditions:
             scopes.append(and_(*conditions))
         else:
@@ -448,65 +514,90 @@ async def _load_devices_in_scope(db: AsyncSession, dynamic_groups: list[DeviceGr
 
 
 def _member_of_keys(filters: DeviceGroupFilters | None) -> set[str]:
-    """The schema-validated ``member_of`` keys a filters payload references."""
+    """The schema-validated ``member_of`` keys a filters payload references.
+
+    A set, because ``DeviceGroupFilters.member_of`` is a plain ``list[GroupKey]``
+    with no uniqueness rule: the relation's composite primary key is what makes
+    a repeated reference unrepresentable, so the deduplication happens here.
+    """
     return set() if filters is None else set(filters.member_of)
 
 
-async def _load_groups_by_key(db: AsyncSession, keys: Collection[str]) -> dict[str, DeviceGroup]:
-    """Load named groups after the advisory lock, without redundant row locks."""
-    wanted = {key for key in keys if key}
-    if not wanted:
+async def _load_group_for_mutation(db: AsyncSession, group_key: str) -> DeviceGroup | None:
+    """Load a group after the advisory lock, refreshing any preloaded identity.
+
+    ``populate_existing`` matters: a peer that changed ``group_type`` before this
+    writer took the lock must be visible, or the static/dynamic branch decides
+    against a stale row.
+    """
+    stmt = select(DeviceGroup).where(DeviceGroup.key == group_key).execution_options(populate_existing=True)
+    return (await db.execute(stmt)).scalars().one_or_none()
+
+
+async def _resolve_static_member_of(db: AsyncSession, keys: set[str]) -> dict[str, DeviceGroup]:
+    """Resolve every requested reference key to a static group, or reject the write.
+
+    Runs before the source row is touched so a bad key leaves nothing behind.
+    """
+    if not keys:
         return {}
-    stmt = select(DeviceGroup).where(DeviceGroup.key.in_(wanted)).execution_options(populate_existing=True)
-    return {row.key: row for row in (await db.execute(stmt)).scalars().all()}
+    rows = list((await db.execute(select(DeviceGroup).where(DeviceGroup.key.in_(keys)))).scalars())
+    by_key = {row.key: row for row in rows}
+    invalid = sorted(key for key in keys if key not in by_key or by_key[key].group_type != GroupType.static)
+    if invalid:
+        raise UnknownMemberOfError(invalid)
+    return by_key
 
 
-def _assert_member_of_resolves(filters: DeviceGroupFilters | None, loaded: Mapping[str, DeviceGroup]) -> None:
-    """Require every referenced ``member_of`` key to name a known static group."""
-    wanted = _member_of_keys(filters)
-    if not wanted:
+async def _replace_member_of(db: AsyncSession, dynamic_group_id: uuid.UUID, targets: Mapping[str, DeviceGroup]) -> None:
+    """Swap one dynamic group's reference rows inside the caller's transaction.
+
+    Delete-then-insert rather than a diff: the edge set is small, the source is
+    already serialised by the group-mutation lock, and a full replacement cannot
+    leave a stale edge behind. ``on_conflict_do_nothing`` is deliberately absent
+    — the delete guarantees an empty target and the values are deduplicated, so
+    a conflict here would be a bug worth surfacing.
+    """
+    await db.execute(delete(DeviceGroupMemberOf).where(DeviceGroupMemberOf.dynamic_group_id == dynamic_group_id))
+    target_ids = sorted({group.id for group in targets.values()})
+    if not target_ids:
         return
-    missing = sorted(wanted - loaded.keys())
-    if missing:
-        raise UnknownMemberOfError(missing)
-    non_static = sorted({key for key in wanted if loaded[key].group_type != GroupType.static})
-    if non_static:
-        raise UnknownMemberOfError(non_static)
+    stmt = pg_insert(DeviceGroupMemberOf).values(
+        [
+            {
+                "dynamic_group_id": dynamic_group_id,
+                "dynamic_group_type": GroupType.dynamic,
+                "static_group_id": target_id,
+                "static_group_type": GroupType.static,
+            }
+            for target_id in target_ids
+        ]
+    )
+    try:
+        await db.execute(stmt)
+        # Flush here so a target deleted between the resolve and now surfaces as
+        # a named FK violation at a point this caller still controls, rather than
+        # inside an unrelated commit.
+        await db.flush()
+    except IntegrityError as exc:
+        await db.rollback()
+        if constraint_name(exc) == "fk_device_group_member_of_static_group":
+            raise UnknownMemberOfError(sorted(targets)) from exc
+        raise
 
 
-def _assert_no_references(target_key: str, candidates: Collection[tuple[str, dict[str, Any] | None]]) -> None:
-    """Reject deletion if any candidate ``(key, filters)`` pair references *target_key*.
-
-    Candidates are every group carrying a ``member_of`` other than the target
-    itself; excluding the target is the caller's job. References are read from
-    the raw stored value so one malformed row cannot block unrelated deletes.
-
-    Exactly two shapes are read: the well-formed list form
-    (``{"member_of": ["target"]}``) and the legacy bare-string form
-    (``{"member_of": "target"}``). Other shapes are skipped; only migrations or
-    manual SQL can produce them because application writes are schema-validated.
+async def _dependent_dynamic_keys(db: AsyncSession, static_group_id: uuid.UUID) -> list[str]:
+    """The keys of the dynamic groups whose relation rows reference *static_group_id*.
 
     Membership rows are deliberately ignored because their foreign key carries
-    ``ON DELETE CASCADE``.
+    ``ON DELETE CASCADE``; only ``device_group_member_of`` is restrictive.
     """
-    dependents: list[str] = []
-    for key, filters in candidates:
-        if not isinstance(filters, dict):
-            # ``filters ? 'member_of'`` is not an object-only predicate: Postgres
-            # matches a JSONB *array* containing that string and the bare string
-            # itself, so the scan hands us rows whose filters is not a dict at
-            # all. Reading ``.get`` off one raises AttributeError inside the
-            # advisory lock and 500s every delete in the fleet until that single
-            # row is repaired — the blast radius this scan exists to avoid.
-            continue
-        raw_member_of = filters.get("member_of")
-        if isinstance(raw_member_of, list):
-            if target_key in raw_member_of:
-                dependents.append(key)
-        elif raw_member_of == target_key:
-            dependents.append(key)
-    if dependents:
-        raise GroupReferencedError(sorted(dependents))
+    stmt = (
+        select(DeviceGroup.key)
+        .join(DeviceGroupMemberOf, DeviceGroupMemberOf.dynamic_group_id == DeviceGroup.id)
+        .where(DeviceGroupMemberOf.static_group_id == static_group_id)
+    )
+    return sorted((await db.execute(stmt)).scalars().all())
 
 
 def _validate_filters(filters_payload: dict[str, Any] | None) -> DeviceGroupFilters:
@@ -522,31 +613,45 @@ def _has_filter_values(filters: DeviceGroupFilters | None) -> bool:
     return bool(dumped) or bool(filters.member_of)
 
 
-def _dump_filters(filters: DeviceGroupFilters | None) -> dict[str, Any] | None:
+def _dump_native_filters(filters: DeviceGroupFilters | None) -> dict[str, Any] | None:
+    """The JSON column's value: the native axes only, never ``member_of``.
+
+    References are rows in ``device_group_member_of`` from this phase on. Storing
+    them here too would give the same fact two homes that can disagree.
+    """
     if filters is None:
         return None
     dumped = filters.model_dump(mode="json", exclude_none=True)
-    if not dumped.get("member_of"):
-        dumped.pop("member_of", None)
-    return dumped
+    dumped.pop("member_of", None)
+    return dumped or None
 
 
-def _serialize_filters(filters_payload: dict[str, Any] | None) -> dict[str, Any] | None:
-    if filters_payload is None:
-        return None
-    serialized = _validate_filters(filters_payload).model_dump(exclude_none=True)
-    if not serialized.get("member_of"):
-        serialized.pop("member_of", None)
-    return serialized
+def _serialize_filters(
+    filters_payload: dict[str, Any] | None, member_of_keys: Collection[str]
+) -> dict[str, Any] | None:
+    """Rebuild the public ``filters`` object from the native JSON plus the relation.
+
+    Any stored ``member_of`` is dropped before the merge. The migration leaves
+    legacy static rows' JSON untouched precisely because it is inert, so echoing
+    it back would advertise a restriction nothing enforces.
+    """
+    native = dict(filters_payload or {})
+    native.pop("member_of", None)
+    serialized = _validate_filters(native).model_dump(exclude_none=True)
+    serialized.pop("member_of", None)
+    keys = sorted(member_of_keys)
+    if keys:
+        serialized["member_of"] = keys
+    return serialized or None
 
 
-def _serialize_group(group: DeviceGroup, *, device_count: int) -> dict[str, Any]:
+def _serialize_group(group: DeviceGroup, *, device_count: int, member_of_keys: Collection[str]) -> dict[str, Any]:
     return {
         "key": group.key,
         "name": group.name,
         "description": group.description,
         "group_type": group.group_type.value,
-        "filters": _serialize_filters(group.filters),
+        "filters": _serialize_filters(group.filters, member_of_keys),
         "device_count": device_count,
         "created_at": group.created_at,
         "updated_at": group.updated_at,

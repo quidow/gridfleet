@@ -51,7 +51,7 @@ from app.lifecycle.services import remediation_log
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Collection, Mapping, Sequence
 
     from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -421,20 +421,26 @@ _COLUMN_SCOPE_AXES = frozenset(
 )
 
 
-def device_scope_conditions(filters: DeviceGroupFilters) -> list[ColumnElement[bool]]:
+def device_scope_conditions(
+    filters: DeviceGroupFilters, *, member_of_keys: Collection[str]
+) -> list[ColumnElement[bool]]:
     """Conditions that bound the candidate devices a dynamic group can contain.
 
     A superset filter, never an exact one: it reuses the device-list column
     predicates for the axes that are plain columns plus a static-membership
-    EXISTS per ``member_of`` key, and leaves every fact-derived axis to
+    EXISTS per reference key, and leaves every fact-derived axis to
     :func:`evaluate_group_memberships`. An empty list means "the whole fleet is
     in scope" — the group pins nothing a query can narrow on.
+
+    ``member_of_keys`` is passed in rather than read off ``filters`` because the
+    references live in ``device_group_member_of``; a stored ``filters.member_of``
+    is inert and narrowing on it would contradict the evaluator.
     """
     column_filters = DeviceQueryFilters.model_validate(
         {key: value for key, value in filters.model_dump().items() if key in _COLUMN_SCOPE_AXES}
     )
     conditions = _device_filter_conditions(column_filters)
-    conditions.extend(static_group_membership_exists(key) for key in filters.member_of)
+    conditions.extend(static_group_membership_exists(key) for key in sorted(member_of_keys))
     return conditions
 
 

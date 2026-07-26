@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.core.locks import acquire_group_mutation_lock
-from app.devices.models.group import DeviceGroup, GroupType
+from app.devices.models.group import DeviceGroup, DeviceGroupMemberOf, GroupType
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services.groups import GroupReferencedError
 from app.portability.schemas import (
@@ -72,15 +72,11 @@ async def _seed_referenced_pair(db_session: AsyncSession) -> tuple[str, str]:
     suffix = uuid.uuid4().hex[:8]
     static_key = f"static-{suffix}"
     dynamic_key = f"dynamic-{suffix}"
-    db_session.add(DeviceGroup(key=static_key, name=static_key, group_type=GroupType.static))
-    db_session.add(
-        DeviceGroup(
-            key=dynamic_key,
-            name=dynamic_key,
-            group_type=GroupType.dynamic,
-            filters={"member_of": [static_key]},
-        )
-    )
+    static = DeviceGroup(key=static_key, name=static_key, group_type=GroupType.static)
+    dynamic = DeviceGroup(key=dynamic_key, name=dynamic_key, group_type=GroupType.dynamic)
+    db_session.add_all([static, dynamic])
+    await db_session.flush()
+    db_session.add(DeviceGroupMemberOf(dynamic_group_id=dynamic.id, static_group_id=static.id))
     await db_session.commit()
     return static_key, dynamic_key
 
@@ -89,7 +85,7 @@ async def test_delete_of_referenced_group_releases_the_lock(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    """The 409 path: _assert_no_references raises after the lock is taken."""
+    """The 409 path: the dependent lookup raises after the lock is taken."""
     static_key, _dynamic_key = await _seed_referenced_pair(db_session)
     service = build_groups_service()
 

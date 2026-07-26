@@ -188,13 +188,26 @@ async def test_update_group_refreshes_a_preloaded_identity_after_the_lock(
 
 
 async def test_filter_serialization_helpers_round_trip_valid_payloads() -> None:
-    assert device_group_service._dump_filters(None) is None
-    assert device_group_service._serialize_filters(None) is None
+    assert device_group_service._dump_native_filters(None) is None
+    assert device_group_service._serialize_filters(None, []) is None
 
     filters = DeviceGroupFilters(platform_id="roku_network", connection_type="network")
-    dumped = device_group_service._dump_filters(filters)
+    dumped = device_group_service._dump_native_filters(filters)
     assert dumped == {"platform_id": "roku_network", "connection_type": "network"}
-    assert device_group_service._serialize_filters(dumped) == dumped
+    assert device_group_service._serialize_filters(dumped, []) == dumped
+
+    # References never reach the JSON column, and come back only from the relation.
+    referencing = DeviceGroupFilters(platform_id="roku_network", member_of=["east"])
+    assert device_group_service._dump_native_filters(referencing) == {"platform_id": "roku_network"}
+    assert device_group_service._dump_native_filters(DeviceGroupFilters(member_of=["east"])) is None
+    assert device_group_service._serialize_filters({"platform_id": "roku_network"}, ["west", "east"]) == {
+        "platform_id": "roku_network",
+        "member_of": ["east", "west"],
+    }
+    assert device_group_service._serialize_filters(None, ["east"]) == {"member_of": ["east"]}
+    # A legacy stored member_of is inert: dropped on the way out, never merged.
+    assert device_group_service._serialize_filters({"member_of": ["stale"]}, []) is None
+    assert device_group_service._serialize_filters({"member_of": ["stale"]}, ["east"]) == {"member_of": ["east"]}
 
 
 async def test_get_group_device_ids_returns_empty_for_missing_group(db_session: AsyncSession) -> None:
@@ -208,10 +221,11 @@ async def test_get_group_device_ids_returns_empty_for_missing_group(db_session: 
 
 
 async def test_delete_dynamic_group_succeeds_when_unreferenced(db_session: AsyncSession) -> None:
-    """The reference scan runs for every group type and must not over-reject.
+    """The dependent lookup runs for every group type and must not over-reject.
 
-    ``delete_group`` no longer gates ``_assert_no_references`` on the target being
-    static, so a dynamic group with no dependents must still delete cleanly.
+    ``delete_group`` does not gate ``_dependent_dynamic_keys`` on the target being
+    static, so a dynamic group with no dependents must still delete cleanly —
+    including one that is itself the *source* of a reference.
     """
     svc = _svc()
     await svc.create_group(
@@ -233,28 +247,29 @@ async def test_delete_dynamic_group_succeeds_when_unreferenced(db_session: Async
     assert await svc.get_group(db_session, dynamic["key"]) is None
 
 
-async def test_delete_dynamic_group_rejects_dangling_reference(db_session: AsyncSession) -> None:
-    """A ``member_of`` naming a dynamic group is unreachable through the API
-    (``_assert_member_of_resolves`` rejects it), but nothing structural stops the
-    row from existing — a hand-written row or a data migration can mint one. The
-    delete path scans references unconditionally so such a row cannot be orphaned.
+async def test_delete_dynamic_group_rejects_a_relation_backed_reference(db_session: AsyncSession) -> None:
+    """A referenced *static* target cannot be deleted out from under its source.
+
+    The dynamic-target case this used to cover is gone by construction: the
+    relation's ``static_type`` CHECK and composite foreign key make a reference
+    to a dynamic group unrepresentable, so no hand-written row or data migration
+    can mint one any more.
     """
     svc = _svc()
     target = await svc.create_group(
         db_session,
-        DeviceGroupCreate(key="dangling-target", name="dangling target", group_type="dynamic"),
+        DeviceGroupCreate(key="dangling-target", name="dangling target", group_type="static"),
     )
-    await dispatch_committed_events()
-    # Bypass the service so the otherwise-rejected reference reaches the table.
-    db_session.add(
-        DeviceGroup(
+    await svc.create_group(
+        db_session,
+        DeviceGroupCreate(
             key="dangling-ref",
             name="dangling ref",
-            group_type=GroupType.dynamic,
-            filters={"member_of": [target["key"]]},
-        )
+            group_type="dynamic",
+            filters=DeviceGroupFilters(member_of=[target["key"]]),
+        ),
     )
-    await db_session.commit()
+    await dispatch_committed_events()
 
     with pytest.raises(device_group_service.GroupReferencedError) as exc:
         await svc.delete_group(db_session, target["key"])
@@ -262,13 +277,12 @@ async def test_delete_dynamic_group_rejects_dangling_reference(db_session: Async
 
 
 async def test_delete_group_survives_a_non_object_filters_row(db_session: AsyncSession) -> None:
-    """A JSONB array in `filters` must not 500 unrelated deletes.
+    """A JSONB array in `filters` must not break unrelated deletes.
 
-    `delete_group`'s referrer scan uses `filters ? 'member_of'`, and Postgres
-    matches that against a JSONB array containing the string and against the
-    bare string, not only against objects. Such a row can only come from a
-    migration or manual SQL, but reading `.get` off it would raise inside the
-    advisory lock and take down every group delete in the fleet.
+    Such a row can only come from a migration or manual SQL. The dependent
+    lookup now joins `device_group_member_of` and never reads the JSON column,
+    so a malformed value cannot reach a `.get` inside the advisory lock and take
+    down every group delete in the fleet.
     """
     victim = DeviceGroup(key="victim", name="victim", group_type=GroupType.static, filters=None)
     malformed = DeviceGroup(key="malformed-arr", name="malformed-arr", group_type=GroupType.dynamic)

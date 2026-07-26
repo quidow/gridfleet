@@ -2,8 +2,8 @@
 group it references into a dangling ``member_of``.
 
 ``FOR UPDATE`` cannot close this: the deleter's statement takes its snapshot
-before the creator's INSERT exists, so there is no row to lock and
-``_assert_no_references`` finds nothing. Only serialising the two writers works.
+before the creator's INSERT exists, so there is no row to lock and the dependent
+lookup finds nothing. Only serialising the two writers works.
 
 Both interleavings must end in a typed rejection, never in a committed dynamic
 group pointing at a deleted key.
@@ -25,6 +25,7 @@ from tests.concurrency.group_lock_helpers import (
     build_groups_service,
     capture_statements,
     fetch_group_rows,
+    fetch_member_of_keys,
     signal_after_group_lock,
     wait_for_group_lock,
 )
@@ -84,7 +85,7 @@ async def test_create_wins_delete_is_rejected(
     static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
     assert static_row is not None, "static group must survive the rejected delete"
     assert dynamic_row is not None, "dynamic group must exist after the winning create"
-    assert (dynamic_row.filters or {}).get("member_of") == [static_key], (
+    assert await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key) == [static_key], (
         f"dynamic group {dynamic_key} must reference the surviving static group {static_key}"
     )
 

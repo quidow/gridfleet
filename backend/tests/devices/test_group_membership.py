@@ -770,17 +770,22 @@ async def test_narrow_group_scopes_stay_bounded_and_unbounded_ones_are_reported(
     await db_session.commit()
 
     narrow = _dynamic("narrow-real", filters={"device_type": "real_device"})
-    loaded = await _load_devices_in_scope(db_session, [narrow])
+    loaded = await _load_devices_in_scope(db_session, [narrow], {})
     ids = {d.id for d in loaded}
     assert in_scope.id in ids
     assert out_of_scope.id not in ids, "a narrow group's batch loaded a device outside its scope"
 
     # A group filtered only on an excluded axis pins nothing a query can narrow on.
     unbounded = _dynamic("unbounded-status", filters={"status": "available"})
-    assert device_scope_conditions(DeviceGroupFilters.model_validate(unbounded.filters)) == []
+    unbounded_filters = DeviceGroupFilters.model_validate(unbounded.filters)
+    assert device_scope_conditions(unbounded_filters, member_of_keys=[]) == []
+    # ...but a reference is a narrowable axis, and it now arrives as an argument
+    # rather than being read off the (inert) stored filters.
+    assert len(device_scope_conditions(unbounded_filters, member_of_keys=["east"])) == 1
+    assert device_scope_conditions(DeviceGroupFilters.model_validate({"member_of": ["east"]}), member_of_keys=[]) == []
 
     with caplog.at_level("WARNING", logger="app.devices.services.groups"):
-        await _load_devices_in_scope(db_session, [narrow, unbounded])
+        await _load_devices_in_scope(db_session, [narrow, unbounded], {})
     assert any(
         "device_group_scope_unbounded" in r.message and "unbounded-status" in str(r.args) for r in caplog.records
     )

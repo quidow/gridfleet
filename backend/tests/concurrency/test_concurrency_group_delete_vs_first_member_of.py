@@ -36,6 +36,7 @@ from tests.concurrency.group_lock_helpers import (
     assert_no_dangling_reference,
     build_groups_service,
     fetch_group_rows,
+    fetch_member_of_keys,
     signal_after_group_lock,
     wait_for_group_lock,
 )
@@ -50,15 +51,12 @@ async def _seed_unreferenced_pair(db_session: AsyncSession) -> tuple[str, str]:
     """A static group with *no* referrers and a dynamic group with no ``member_of``.
 
     This is precisely the state the review's interleaving starts from: the
-    dynamic group is invisible to ``delete_group``'s referrer scan until the
+    dynamic group is invisible to ``delete_group``'s dependent lookup until the
     concurrent update commits.
 
-    That scan is ``filters.has_key("member_of")`` (the ``member_of IS NOT NULL``
-    form this file's module docstring describes is history). The seeded row
-    carries ``filters={"device_type": ...}`` and no ``member_of`` key at all, so
-    ``has_key`` does not match it — and a row seeded with an *empty*
-    ``member_of`` would not match either, because ``_dump_filters`` pops the key
-    rather than storing ``[]``.
+    That lookup joins ``device_group_member_of``, and the seeded pair has no row
+    there at all — the reference the race is about is the one ``update_group``
+    is still to write.
     """
     suffix = uuid.uuid4().hex[:8]
     static_key = f"static-{suffix}"
@@ -152,6 +150,5 @@ async def test_first_member_of_reference_wins_delete_is_rejected(
     static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
     assert static_row is not None, "the referenced static group must survive a rejected delete"
     assert dynamic_row is not None, "the referring dynamic group must survive"
-    assert (dynamic_row.filters or {}).get("member_of") == [static_key], (
-        f"the updater's member_of reference must have landed, got {dynamic_row.filters!r}"
-    )
+    references = await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key)
+    assert references == [static_key], f"the updater's member_of reference must have landed, got {references!r}"

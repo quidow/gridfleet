@@ -17,8 +17,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import event, select
+from sqlalchemy.orm import aliased
 
-from app.devices.models.group import DeviceGroup
+from app.devices.models.group import DeviceGroup, DeviceGroupMemberOf
 from app.devices.services.groups import DeviceGroupsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
@@ -111,6 +112,28 @@ async def fetch_group_rows(
         return static_row, dynamic_row
 
 
+async def fetch_member_of_keys(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    *,
+    dynamic_key: str,
+) -> list[str]:
+    """The static-group keys a dynamic group's ``device_group_member_of`` rows name.
+
+    The relation, never ``filters['member_of']``: a stored JSON key is inert from
+    the member-of-FK phase on, so asserting on it would pass over a writer that
+    stopped persisting the reference at all.
+    """
+    source = aliased(DeviceGroup, name="source")
+    stmt = (
+        select(DeviceGroup.key)
+        .join(DeviceGroupMemberOf, DeviceGroupMemberOf.static_group_id == DeviceGroup.id)
+        .join(source, source.id == DeviceGroupMemberOf.dynamic_group_id)
+        .where(source.key == dynamic_key)
+    )
+    async with db_session_maker() as verify:
+        return sorted((await verify.execute(stmt)).scalars().all())
+
+
 async def assert_no_dangling_reference(
     db_session_maker: async_sessionmaker[AsyncSession],
     *,
@@ -128,8 +151,8 @@ async def assert_no_dangling_reference(
     static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
     assert dynamic_row is not None
     if static_row is None:
-        member_of = (dynamic_row.filters or {}).get("member_of", [])
-        assert static_key not in member_of, f"dynamic group {dynamic_key} references deleted static group {static_key}"
+        references = await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key)
+        assert static_key not in references, f"dynamic group {dynamic_key} references deleted static group {static_key}"
 
 
 @asynccontextmanager
