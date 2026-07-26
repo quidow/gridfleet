@@ -38,6 +38,7 @@ from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services import attention as device_attention
 from app.devices.services import readiness as device_readiness
 from app.devices.services.state import derive_operational_states
+from app.packs.services.catalog_view import load_pack_catalog
 from app.runs.service_reservation import get_device_reservation_map, reservation_gating_run_id
 
 # The dynamic-filter matcher is one return per axis by design; the axis set is
@@ -52,7 +53,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.services.readiness import DeviceReadiness
-    from app.packs.models import DriverPack
+    from app.packs.services.catalog_view import PackView
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,7 +310,7 @@ async def load_group_membership_index(  # noqa: PLR0913 - one optional injected 
     *,
     groups: Sequence[DeviceGroup],
     devices: Sequence[Device],
-    pack_catalog: dict[str, DriverPack] | None = None,
+    pack_catalog: dict[str, PackView] | None = None,
     operational_states: Mapping[uuid.UUID, DeviceOperationalState] | None = None,
     static_group_keys_by_device_id: Mapping[uuid.UUID, frozenset[str]] | None = None,
     readiness_by_device_id: Mapping[uuid.UUID, DeviceReadiness] | None = None,
@@ -365,7 +366,7 @@ async def load_group_membership_index(  # noqa: PLR0913 - one optional injected 
     # If both operational state and readiness are injected, neither runs, so a
     # catalog load here would be an extra query with no consumer.
     if needs_native_facts and packs is None and (operational_states is None or readiness_by_device_id is None):
-        packs = await device_readiness.load_packs_by_ids(db, {d.pack_id for d in device_list if d.pack_id})
+        packs = await load_pack_catalog(db, {d.pack_id for d in device_list if d.pack_id})
 
     # Ensure appium_node is loaded for every device so device_allows_allocation
     # (called inside derive_operational_states) does not trigger a sync lazy

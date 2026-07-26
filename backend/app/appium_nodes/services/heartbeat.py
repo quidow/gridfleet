@@ -487,9 +487,7 @@ async def _ingest_appium_restart_events(
     # invalidate a later event in the same ordered section.
     stale_devices: set[uuid.UUID] = set()
     for device_id in sorted(locked_devices):
-        snapshots[device_id] = await load_device_decision_snapshot(
-            db, locked_devices[device_id], packs={}, now=now_utc()
-        )
+        snapshots[device_id] = await load_device_decision_snapshot(db, locked_devices[device_id], now=now_utc())
         locked_node = await appium_node_locking.lock_appium_node_for_device(db, device_id)
         if locked_node is None:
             continue

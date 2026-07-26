@@ -57,7 +57,7 @@ async def test_node_health_auto_restart_registers_restart_watermark_intent(
         incidents=AsyncMock(),
     )
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=now_utc())
     await svc._process_node_health(
         db_session,
         node,
@@ -123,7 +123,7 @@ async def test_node_health_skips_escalation_for_intentionally_stopping_node(
         incidents=AsyncMock(),
     )
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=now_utc())
     await svc._process_node_health(
         db_session,
         node,

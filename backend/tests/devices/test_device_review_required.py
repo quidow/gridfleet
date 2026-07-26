@@ -287,7 +287,7 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     set_recovery_generation(locked.device, gen1)
     await db_session.commit()
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     outcome1 = await svc.finalize_auto_recovery_locked(
         db_session,
         locked,
@@ -310,7 +310,7 @@ async def test_attempt_auto_recovery_promotes_to_review_after_threshold(
     set_recovery_generation(locked.device, gen2)
     await db_session.commit()
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     outcome2 = await svc.finalize_auto_recovery_locked(
         db_session,
         locked,
@@ -359,7 +359,7 @@ async def test_review_required_short_circuits_auto_recovery(
         node_manager=AsyncMock(),
     )
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     prepared = await svc.prepare_auto_recovery_locked(
         db_session,
         locked,

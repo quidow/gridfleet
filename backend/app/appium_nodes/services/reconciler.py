@@ -53,6 +53,7 @@ from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services.decision_snapshot import load_device_decision_snapshot
+from app.devices.services.readiness import preloaded_pack_catalog
 from app.hosts.liveness import host_online
 from app.hosts.models import Host
 from app.lifecycle.services import remediation_log
@@ -60,6 +61,7 @@ from app.lifecycle.services.actions import (
     escalate_device_remediation_failure,
     reset_reconciler_start_failure_if_needed,
 )
+from app.packs.services.catalog_view import load_pack_catalog
 
 if TYPE_CHECKING:
     import uuid
@@ -85,6 +87,7 @@ def _desired_select() -> Select[Any]:
         Device.id.label("device_id"),
         Device.host_id,
         Device.lifecycle_policy_state,
+        Device.pack_id,
         AppiumNode.id.label("node_id"),
         target_expr.label("connection_target"),
         AppiumNode.desired_state,
@@ -114,6 +117,7 @@ def _row_to_desired(row: Any, *, reconciler_failure_present: bool = False) -> De
         stop_pending=row.stop_pending,
         lifecycle_policy_state=row.lifecycle_policy_state,
         reconciler_failure_present=reconciler_failure_present,
+        pack_id=row.pack_id,
     )
 
 
@@ -146,14 +150,25 @@ async def converge_pushed_host(
     async with session_factory() as db:
         rows = await fetch_desired_rows_for_host(db, host_id)
         backoff = await remediation_log.load_active_backoffs(db, now=now_utc())
-    await reconciler.reconcile_host(
-        host_id=host_id,
-        host_ip=host_ip,
-        agent_port=agent_port,
-        rows=rows,
-        backoff_until_by_device=backoff,
-        payload=payload,
-    )
+        # ONE catalog read for the whole host. Every per-device settlement below
+        # opens its own session, so a per-device resolve costs a statement each;
+        # the projection is value-shaped, so it is legal to carry across those
+        # session boundaries (an ORM catalog would not be). A host with no rows
+        # buys no statement at all.
+        catalog = await load_pack_catalog(db, {row.pack_id for row in rows if row.pack_id})
+    # The trade this accepts: a device whose pack row changes mid-cycle is judged
+    # against the catalog as of the read above, self-healing next cycle. A device
+    # whose own pack_id changed is not affected — a catalog miss re-reads that
+    # pack (app.devices.services.readiness.assess_device_async).
+    with preloaded_pack_catalog(catalog):
+        await reconciler.reconcile_host(
+            host_id=host_id,
+            host_ip=host_ip,
+            agent_port=agent_port,
+            rows=rows,
+            backoff_until_by_device=backoff,
+            payload=payload,
+        )
 
 
 async def _fetch_desired_row(db: AsyncSession, device_id: uuid.UUID) -> DesiredRow | None:
@@ -257,7 +272,7 @@ async def apply_observed_node_command(
         locked = await _lock_device_for_reconciler(db, row.device_id)
         if locked is None:
             return
-        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
         locked_node = await lock_appium_node_for_device(db, row.device_id)
         if mutation.state == "running":
             await mark_node_started(
@@ -324,7 +339,7 @@ async def _record_start_failure(
         locked = await _lock_device_for_reconciler(db, row.device_id)
         if locked is None:
             return
-        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
         await escalate_device_remediation_failure(
             db,
             locked.device,
@@ -347,7 +362,7 @@ async def _reset_start_failure(
         locked = await _lock_device_for_reconciler(db, row.device_id)
         if locked is None:
             return
-        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
         await reset_reconciler_start_failure_if_needed(db, locked.device, ladder=snapshot.ladder)
 
 

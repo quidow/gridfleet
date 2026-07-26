@@ -309,7 +309,7 @@ class LifecyclePolicyService:
 
     async def handle_health_failure(self, db: AsyncSession, device: Device, *, source: str, reason: str) -> str:
         locked = await device_locking.lock_device_handle(db, device.id, load_sessions=True)
-        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
         updated = await self.handle_health_failure_locked(db, locked, snapshot, source=source, reason=reason)
         if updated.decision_facts.in_maintenance:
             return "suppressed"

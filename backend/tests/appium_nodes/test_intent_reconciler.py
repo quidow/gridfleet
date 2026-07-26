@@ -90,7 +90,7 @@ async def test_locked_reconcile_uses_supplied_snapshot_without_loading(
     await db_session.commit()
     async with db_session.begin():
         locked = await device_locking.lock_device_handle(db_session, device.id)
-        snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+        snapshot = await load_device_decision_snapshot(db_session, locked, now=now_utc())
 
         async def forbidden(*args: object, **kwargs: object) -> DeviceDecisionSnapshot:
             raise AssertionError("snapshot reloaded")

@@ -137,7 +137,7 @@ async def test_update_locked_device_checks_reuses_scope_lock(
     spy = AsyncMock(wraps=device_locking_mod.lock_device)
     monkeypatch.setattr(device_locking_mod, "lock_device", spy)
     service = DeviceHealthService(publisher=event_bus)
-    snapshot = await load_device_decision_snapshot(db, locked.locked_device, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db, locked.locked_device, now=datetime.now(UTC))
 
     applied = await service.update_locked_device_checks(db, locked, snapshot, healthy=False, summary="Unhealthy")
 
@@ -161,7 +161,7 @@ async def test_update_locked_device_checks_rejects_inactive_lock_proof(
     )
     locked = await scope.lock_device(db, device.id)
     assert locked is not None
-    snapshot = await load_device_decision_snapshot(db, locked.locked_device, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db, locked.locked_device, now=datetime.now(UTC))
     await db.commit()
 
     with pytest.raises(RuntimeError, match="active transaction"):

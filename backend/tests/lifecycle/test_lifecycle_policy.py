@@ -229,7 +229,7 @@ async def test_handle_health_failure_locked_reuses_lock_and_does_not_commit(
 
     event.listen(db_session.sync_session, "after_commit", count_commit)
     try:
-        snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+        snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
         outcome = await _make_svc(publisher=event_bus, publish_incidents=True).handle_health_failure_locked(
             db_session,
             locked,
@@ -308,7 +308,7 @@ async def test_handle_health_failure_locked_defers_without_commit(
 
     event.listen(db_session.sync_session, "after_commit", count_commit)
     try:
-        snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+        snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
         outcome = await _make_svc(publisher=event_bus, publish_incidents=True).handle_health_failure_locked(
             db_session,
             locked,
@@ -560,7 +560,7 @@ async def test_recovery_is_suppressed_during_backoff(db_session: AsyncSession, d
     await db_session.commit()
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     prepared = await _make_svc(publisher=event_bus).prepare_auto_recovery_locked(
         db_session,
         locked,
@@ -628,7 +628,7 @@ async def test_successful_recovery_rejoins_run(db_session: AsyncSession, db_host
 
     svc = _make_svc(publisher=Mock())
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     outcome = await svc.finalize_auto_recovery_locked(
         db_session,
         locked,
@@ -695,7 +695,7 @@ async def test_auto_recovery_supersedes_stale_stop_directive(
 
     svc = _make_svc(publisher=event_bus)
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     outcome = await svc.finalize_auto_recovery_locked(
         db_session,
         locked,
@@ -742,7 +742,7 @@ async def test_auto_recovery_start_directive_has_no_ttl(
 
     generation = uuid.uuid4()
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     prepared = await _make_svc(publisher=event_bus).prepare_auto_recovery_locked(
         db_session,
         locked,
@@ -828,7 +828,7 @@ async def test_auto_recovery_clears_blocking_node_stop_when_observed_running_is_
 
     svc = _make_svc(publisher=event_bus)
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     outcome = await svc.finalize_auto_recovery_locked(
         db_session,
         locked,
@@ -888,7 +888,7 @@ async def test_recovery_reloads_device_before_starting_node(
     register_recovery = AsyncMock()
     with patch.object(IntentService, "register_intents_and_reconcile", new=register_recovery):
         locked = await device_locking.lock_device_handle(db_session, device.id)
-        snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+        snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
         prepared = await _make_svc(publisher=event_bus).prepare_auto_recovery_locked(
             db_session,
             locked,
@@ -958,7 +958,7 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
 
     svc = _make_svc(publisher=Mock())
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     outcome = await svc.finalize_auto_recovery_locked(
         db_session,
         locked,
@@ -1127,7 +1127,7 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
     recovery_started_at = datetime.now(UTC)
     svc = _make_svc(publisher=Mock(), settings=settings)
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     outcome = await svc.finalize_auto_recovery_locked(
         db_session,
         locked,
@@ -1792,7 +1792,7 @@ async def test_suppressed_attempt_writes_no_state_and_no_incident(
     before = dict(locked.lifecycle_policy_state or {})
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     prepared = await _make_svc().prepare_auto_recovery_locked(
         db_session,
         locked,

@@ -123,7 +123,7 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
 
         def all(self) -> list[object]:
             # Node-health inventory now selects (AppiumNode, Device.pack_id) rows; a
-            # None pack_id keeps load_packs_by_ids a no-op for this deleted-device probe.
+            # None pack_id keeps load_pack_catalog a no-op for this deleted-device probe.
             return [(node, None)]
 
     db = AsyncMock()

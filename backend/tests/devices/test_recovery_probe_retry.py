@@ -330,7 +330,7 @@ async def test_attempt_auto_recovery_suppressed_by_pending_session(
     worker = _make_worker(db_session, viability)
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     prepared = await worker._lifecycle_policy.prepare_auto_recovery_locked(
         db_session,
         locked,

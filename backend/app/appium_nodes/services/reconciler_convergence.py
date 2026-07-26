@@ -34,6 +34,9 @@ class DesiredRow:
     # Carried lock-free from the desired-rows SELECT for the confirm_running pre-check.
     lifecycle_policy_state: dict[str, Any] | None = field(default=None)
     reconciler_failure_present: bool = False
+    # Carried lock-free from the desired-rows SELECT so converge_pushed_host can
+    # batch one pack-catalog read for the host instead of one per settlement.
+    pack_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

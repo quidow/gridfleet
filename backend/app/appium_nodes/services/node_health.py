@@ -21,10 +21,10 @@ from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.decision_snapshot import DeviceDecisionSnapshot, load_device_decision_snapshot
 from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
-from app.devices.services.readiness import load_packs_by_ids
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import escalate_device_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
+from app.packs.services.catalog_view import load_pack_catalog
 
 if TYPE_CHECKING:
     import uuid
@@ -190,13 +190,7 @@ class NodeHealthService:
             )
             pack_ids.add(pack_id)
 
-        packs = await load_packs_by_ids(db, pack_ids)
-        # Detach the eager-loaded catalog from the session: a per-device rollback in the
-        # settlement loop below expires every attached ORM row, and a later device's
-        # snapshot load would then sync-lazy-load pack.releases (MissingGreenlet). The
-        # device-health fold detaches its catalog for the same reason.
-        for pack in packs.values():
-            db.expunge(pack)
+        packs = await load_pack_catalog(db, pack_ids)
 
         apply_started = perf_counter()
         retryable = 0

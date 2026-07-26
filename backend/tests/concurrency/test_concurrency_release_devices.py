@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from app.devices.locking import LockedDevice
     from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.hosts.models import Host
-    from app.packs.models import DriverPack
+    from app.packs.services.catalog_view import PackView
 
 _settings = FakeSettingsReader({})
 _release_svc = RunReleaseService(
@@ -175,7 +175,7 @@ async def test_release_devices_serializes_with_concurrent_writer(
         db: AsyncSession,
         locked: LockedDevice,
         *,
-        packs: Mapping[str, DriverPack],
+        packs: Mapping[str, PackView] | None = None,
         now: datetime,
     ) -> DeviceDecisionSnapshot:
         if not stomper_can_go.is_set():

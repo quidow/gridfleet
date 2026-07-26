@@ -28,7 +28,8 @@ from app.devices.services.claims import (
 )
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.lifecycle_policy_state import in_maintenance
-from app.devices.services.readiness import is_ready_for_use_async, load_packs_by_ids
+from app.devices.services.readiness import is_ready_for_use_async
+from app.packs.services.catalog_view import load_pack_catalog
 from app.sessions.models import Session
 
 if TYPE_CHECKING:
@@ -42,7 +43,7 @@ if TYPE_CHECKING:
 
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
-    from app.packs.models import DriverPack
+    from app.packs.services.catalog_view import PackView
 
 logger = get_logger(__name__)
 
@@ -157,7 +158,7 @@ def evaluate_operational_state(facts: DeviceStateFacts) -> DeviceOperationalStat
 
 
 async def gather_device_state_facts(
-    db: AsyncSession, device: Device, *, now: datetime, packs: dict[str, DriverPack] | None = None
+    db: AsyncSession, device: Device, *, now: datetime, packs: dict[str, PackView] | None = None
 ) -> DeviceStateFacts:
     """Gather all inputs needed for state derivation via async DB queries.
 
@@ -313,7 +314,7 @@ async def derive_operational_state(
     device: Device,
     *,
     now: datetime,
-    packs: dict[str, DriverPack] | None = None,
+    packs: dict[str, PackView] | None = None,
 ) -> DeviceOperationalState:
     """Read-time operational state for one loaded device row."""
     return evaluate_operational_state(await gather_device_state_facts(db, device, now=now, packs=packs))
@@ -324,7 +325,7 @@ async def derive_operational_states(
     devices: Sequence[Device],
     *,
     now: datetime,
-    packs: dict[str, DriverPack] | None = None,
+    packs: dict[str, PackView] | None = None,
 ) -> dict[uuid.UUID, DeviceOperationalState]:
     """Batch read-time operational state with bulk claim lookups."""
     ids = [device.id for device in devices]
@@ -346,7 +347,7 @@ async def derive_operational_states(
         .all()
     )
     if packs is None:
-        packs = await load_packs_by_ids(db, {device.pack_id for device in devices if device.pack_id})
+        packs = await load_pack_catalog(db, {device.pack_id for device in devices if device.pack_id})
     result: dict[uuid.UUID, DeviceOperationalState] = {}
     for device in devices:
         withdrawal = WithdrawalFacts.from_device(device)
@@ -397,7 +398,7 @@ async def emit_operational_state_transition(
     *,
     now: datetime,
     publisher: EventPublisher,
-    packs: dict[str, DriverPack] | None = None,
+    packs: dict[str, PackView] | None = None,
 ) -> bool:
     """Emit one edge and advance the ledger when the projected state changes.
 

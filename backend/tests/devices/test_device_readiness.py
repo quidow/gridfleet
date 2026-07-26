@@ -105,10 +105,17 @@ def test_payload_requires_reverification_for_readiness_impacting_change() -> Non
 
 
 async def test_readiness_async_verified_and_unknown_assessment_branches(monkeypatch: pytest.MonkeyPatch) -> None:
-    platform = SimpleNamespace(manifest_platform_id="android_mobile", data={})
-    release = SimpleNamespace(platforms=[platform])
-    pack = SimpleNamespace(id="pack", releases=[release], current_release=None)
+    # automation_name/appium_platform_name/state are unread by this test's assertions
+    # (selected_release is monkeypatched below to hand back this same release object,
+    # bypassing the projected copy) but load_pack_catalog's project_pack walks them
+    # while building the catalog, so the stand-in must carry them.
+    platform = SimpleNamespace(
+        manifest_platform_id="android_mobile", automation_name="UiAutomator2", appium_platform_name="Android", data={}
+    )
+    release = SimpleNamespace(release="1.0.0", platforms=[platform])
+    pack = SimpleNamespace(id="pack", state=None, releases=[release], current_release=None)
     scalars_result = SimpleNamespace(all=lambda: [pack])
+    scalars_result.unique = lambda: scalars_result
     session = SimpleNamespace(scalars=AsyncMock(return_value=scalars_result))
     device = SimpleNamespace(pack_id="pack", platform_id="android_mobile", device_type=None)
     monkeypatch.setattr(device_readiness, "selected_release", lambda _releases, _current: release)
@@ -140,15 +147,25 @@ async def test_readiness_async_verified_and_unknown_assessment_branches(monkeypa
 
 async def test_assess_devices_async_batches_pack_lookups(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify the batch helper loads all needed packs in one query and maps each device correctly."""
-    platform_alpha = SimpleNamespace(manifest_platform_id="android_mobile", data={})
-    release_alpha = SimpleNamespace(platforms=[platform_alpha])
-    pack_alpha = SimpleNamespace(id="alpha", releases=[release_alpha], current_release=None)
+    # automation_name/appium_platform_name/state are unread by this test's assertions
+    # (selected_release is monkeypatched below to return the first element of
+    # whatever releases tuple it's given, i.e. the projected PackReleaseView, so the
+    # assertions do flow through the projection) but load_pack_catalog's project_pack
+    # walks them while building the catalog, so each stand-in must carry them.
+    platform_alpha = SimpleNamespace(
+        manifest_platform_id="android_mobile", automation_name="UiAutomator2", appium_platform_name="Android", data={}
+    )
+    release_alpha = SimpleNamespace(release="1.0.0", platforms=[platform_alpha])
+    pack_alpha = SimpleNamespace(id="alpha", state=None, releases=[release_alpha], current_release=None)
 
-    platform_beta = SimpleNamespace(manifest_platform_id="ios", data={})
-    release_beta = SimpleNamespace(platforms=[platform_beta])
-    pack_beta = SimpleNamespace(id="beta", releases=[release_beta], current_release=None)
+    platform_beta = SimpleNamespace(
+        manifest_platform_id="ios", automation_name="XCUITest", appium_platform_name="iOS", data={}
+    )
+    release_beta = SimpleNamespace(release="1.0.0", platforms=[platform_beta])
+    pack_beta = SimpleNamespace(id="beta", state=None, releases=[release_beta], current_release=None)
 
     scalars_result = SimpleNamespace(all=lambda: [pack_alpha, pack_beta])
+    scalars_result.unique = lambda: scalars_result
     scalars_mock = AsyncMock(return_value=scalars_result)
     session = SimpleNamespace(scalars=scalars_mock)
 

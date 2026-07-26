@@ -76,7 +76,7 @@ async def mark_target_node_down(
             locked = await device_locking.lock_device_handle(db, device_id)
         except NoResultFound:
             return
-        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
         locked_node = await appium_node_locking.lock_appium_node_for_device(db, locked.device.id)
         if locked_node is None:
             return

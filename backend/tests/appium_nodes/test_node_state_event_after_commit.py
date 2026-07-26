@@ -34,7 +34,7 @@ async def test_mark_node_started_queues_state_changed_after_availability(
     event_bus_capture.clear()
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=now_utc())
     locked_node = await lock_appium_node_for_device(db_session, device.id)
     await mark_node_started(
         db_session,
@@ -69,7 +69,7 @@ async def test_mark_node_stopped_queues_state_changed(
     event_bus_capture.clear()
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=now_utc())
     locked_node = await lock_appium_node_for_device(db_session, device.id)
     snapshot = await mark_node_started(
         db_session,
@@ -87,7 +87,7 @@ async def test_mark_node_stopped_queues_state_changed(
     event_bus_capture.clear()
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=now_utc())
     locked_node = await lock_appium_node_for_device(db_session, device.id)
     await mark_node_stopped(db_session, locked, locked_node, snapshot, publisher=event_bus)
     await db_session.commit()

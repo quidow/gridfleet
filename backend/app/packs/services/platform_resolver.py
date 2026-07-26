@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.packs.services.catalog_view import PackView
+
 
 class PackPlatformNotFound(LookupError):  # noqa: N818
     pass
@@ -226,7 +228,7 @@ async def assert_runnable(
         raise PlatformRemovedError(pack_id, platform_id) from exc
 
 
-def evaluate_runnable(pack: DriverPack | None, *, platform_id: str | None) -> str | None:
+def evaluate_runnable(pack: PackView | None, *, platform_id: str | None) -> str | None:
     """Pure, no-DB equivalent of :func:`assert_runnable`'s reachability checks.
 
     Given an already-loaded *pack* (with ``releases`` and their ``platforms`` eager

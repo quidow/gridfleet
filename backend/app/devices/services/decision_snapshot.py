@@ -13,7 +13,7 @@ from app.devices.models import DeviceIntent, DeviceRemediationLogEntry, DeviceRe
 from app.devices.services.claims import is_verification_lease_active, reservation_active
 from app.devices.services.decision import DecisionFacts
 from app.devices.services.health_view import device_allows_allocation
-from app.devices.services.readiness import assess_device_with_pack, load_packs_by_ids
+from app.devices.services.readiness import assess_device_async
 from app.devices.services.state import DeviceStateFacts, WithdrawalFacts, appium_node_stop_in_flight
 from app.lifecycle.services import remediation_log
 from app.runs.models import RunState, TestRun
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
     from app.devices.locking import LockedDevice
     from app.lifecycle.services.remediation_log import LadderState
-    from app.packs.models import DriverPack
+    from app.packs.services.catalog_view import PackView
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,18 +241,20 @@ async def load_device_decision_snapshot(
     db: AsyncSession,
     locked: LockedDevice,
     *,
-    packs: Mapping[str, DriverPack],
+    packs: Mapping[str, PackView] | None = None,
     now: datetime,
 ) -> DeviceDecisionSnapshot:
     locked.assert_active(db)
     device = locked.device
     intents, has_live, has_masking, reservation = await _load_claims_intents_and_reservation(db, device.id)
     ladder = await _load_current_ladder(db, device.id)
-    pack = packs.get(device.pack_id)
-    if pack is None:
-        pack = (await load_packs_by_ids(db, [device.pack_id])).get(device.pack_id)
+    # Resolves against *packs* first, then the ``preloaded_pack_catalog``
+    # ContextVar a per-host caller may have entered, and only then reads this
+    # device's own pack. That ladder — including the self-heal when a prefetched
+    # catalog is missing the device's pack_id — lives in ``assess_device_async``;
+    # do not re-implement it here.
     withdrawal = WithdrawalFacts.from_device(device)
-    assessment_ready = assess_device_with_pack(device, pack).readiness_state == "verified"
+    assessment_ready = (await assess_device_async(db, device, packs=packs)).readiness_state == "verified"
     raw_policy_state = device.lifecycle_policy_state if isinstance(device.lifecycle_policy_state, dict) else {}
     raw_generation = raw_policy_state.get("recovery_generation")
     recovery_generation = _optional_uuid(raw_generation)

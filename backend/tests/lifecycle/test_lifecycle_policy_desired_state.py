@@ -63,7 +63,7 @@ async def test_attempt_auto_recovery_records_recovery_start_action(
     generation = uuid.uuid4()
     with patch("app.devices.services.intent.IntentService.reconcile_now", new=AsyncMock()):
         locked = await device_locking.lock_device_handle(db_session, device.id)
-        snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+        snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
         await svc.prepare_auto_recovery_locked(
             db_session,
             locked,

@@ -303,7 +303,7 @@ async def test_auto_recovery_commission_is_recorded_in_the_remediation_log(
     )
     generation = uuid.uuid4()
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     prepared = await svc.prepare_auto_recovery_locked(
         db_session,
         locked,
@@ -317,7 +317,7 @@ async def test_auto_recovery_commission_is_recorded_in_the_remediation_log(
     assert prepared is True
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     outcome = await svc.finalize_auto_recovery_locked(
         db_session,
         locked,
