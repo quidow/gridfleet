@@ -86,6 +86,7 @@ async def test_claim_rechecks_state_under_lock(db_session: AsyncSession, seeded_
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        member_of_keys_by_dynamic_group_id={},
         pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
@@ -112,6 +113,7 @@ async def test_claim_rechecks_active_sessions_under_lock(
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        member_of_keys_by_dynamic_group_id={},
         pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
@@ -131,6 +133,7 @@ async def test_claim_requires_routable_node(db_session: AsyncSession) -> None:
         row=_eligible_row(device),
         candidate={},
         run_id=None,
+        member_of_keys_by_dynamic_group_id={},
         pack_catalog=await _pack_catalog(db_session, device),
     )
     assert result is None
@@ -161,6 +164,7 @@ async def test_claim_skips_device_with_live_probe_row(
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        member_of_keys_by_dynamic_group_id={},
         pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
@@ -194,6 +198,7 @@ async def test_claim_proceeds_over_terminal_probe_row(
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        member_of_keys_by_dynamic_group_id={},
         pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is not None
@@ -225,6 +230,7 @@ async def test_claim_declines_when_node_not_viable_under_lock(
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        member_of_keys_by_dynamic_group_id={},
         pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None
@@ -591,6 +597,7 @@ async def test_claim_declines_when_node_not_accepting_under_lock(
         row=_eligible_row(seeded_available_device),
         candidate={},
         run_id=None,
+        member_of_keys_by_dynamic_group_id={},
         pack_catalog=await _pack_catalog(db_session, seeded_available_device),
     )
     assert result is None

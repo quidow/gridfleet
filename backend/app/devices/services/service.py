@@ -33,8 +33,8 @@ from app.devices.services.connectivity import (
     PROBE_UNANSWERED_NAMESPACE,
 )
 from app.devices.services.group_membership import (
+    load_group_definition_batch,
     load_group_membership_index,
-    load_groups_by_keys,
     static_group_membership_exists,
 )
 from app.devices.services.state import (
@@ -51,7 +51,7 @@ from app.lifecycle.services import remediation_log
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -112,8 +112,14 @@ class DeviceCrudService:
             raise
 
     async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]:
-        static_keys, dynamic_groups = await self._partition_group_filters(db, filters)
-        return await self._list_devices(db, filters, static_group_keys=static_keys, dynamic_groups=dynamic_groups)
+        static_keys, dynamic_groups, member_of_keys = await self._partition_group_filters(db, filters)
+        return await self._list_devices(
+            db,
+            filters,
+            static_group_keys=static_keys,
+            dynamic_groups=dynamic_groups,
+            member_of_keys_by_dynamic_group_id=member_of_keys,
+        )
 
     async def _list_devices(
         self,
@@ -122,12 +128,15 @@ class DeviceCrudService:
         *,
         static_group_keys: list[str],
         dynamic_groups: list[DeviceGroup],
+        member_of_keys_by_dynamic_group_id: Mapping[uuid.UUID, frozenset[str]],
     ) -> list[Device]:
         stmt = _build_device_list_stmt(filters, static_group_keys=static_group_keys)
         result = await db.execute(stmt)
         devices = list(result.scalars().all())
         if dynamic_groups:
-            devices = await self._apply_dynamic_groups_filter(db, dynamic_groups, devices)
+            devices = await self._apply_dynamic_groups_filter(
+                db, dynamic_groups, devices, member_of_keys_by_dynamic_group_id
+            )
         if filters.needs_attention is not None:
             wanted = filters.needs_attention
             kept: list[Device] = []
@@ -165,7 +174,7 @@ class DeviceCrudService:
 
     async def _partition_group_filters(
         self, db: AsyncSession, filters: DeviceQueryFilters
-    ) -> tuple[list[str], list[DeviceGroup]]:
+    ) -> tuple[list[str], list[DeviceGroup], Mapping[uuid.UUID, frozenset[str]]]:
         """Split ``filters.groups`` into SQL-expressible and evaluator-only keys.
 
         Static membership is a join on ``device_group_memberships``, so those
@@ -175,36 +184,50 @@ class DeviceCrudService:
 
         One read validates the whole key set and raises
         :class:`UnknownGroupKeysError` for any missing key so the router
-        surfaces HTTP 422.
+        surfaces HTTP 422. The same read yields the dynamic groups' reference
+        map, which travels with them so the evaluator never re-reads it.
         """
         keys = list(filters.groups)
         if not keys:
-            return [], []
-        groups = await load_groups_by_keys(db, keys)
-        by_key = {group.key: group for group in groups}
+            return [], [], {}
+        definitions = await load_group_definition_batch(db, keys)
+        by_key = {group.key: group for group in definitions.groups}
         missing = [key for key in keys if key not in by_key]
         if missing:
             raise UnknownGroupKeysError(missing)
         static_keys = [key for key in keys if by_key[key].group_type == GroupType.static]
         dynamic_groups = [by_key[key] for key in keys if by_key[key].group_type == GroupType.dynamic]
-        return static_keys, dynamic_groups
+        return static_keys, dynamic_groups, definitions.member_of_keys_by_dynamic_group_id
 
     async def _apply_dynamic_groups_filter(
-        self, db: AsyncSession, dynamic_groups: list[DeviceGroup], devices: list[Device]
+        self,
+        db: AsyncSession,
+        dynamic_groups: list[DeviceGroup],
+        devices: list[Device],
+        member_of_keys_by_dynamic_group_id: Mapping[uuid.UUID, frozenset[str]],
     ) -> list[Device]:
         """AND membership across the dynamic keys, evaluated live over the batch."""
-        index = await load_group_membership_index(db, groups=dynamic_groups, devices=devices)
+        index = await load_group_membership_index(
+            db,
+            groups=dynamic_groups,
+            devices=devices,
+            member_of_keys_by_dynamic_group_id=member_of_keys_by_dynamic_group_id,
+        )
         keys = [group.key for group in dynamic_groups]
         return [device for device in devices if index.matches_all(device.id, keys)]
 
     async def list_devices_paginated(
         self, db: AsyncSession, filters: DeviceQueryFilters, limit: int, offset: int
     ) -> tuple[list[Device], int]:
-        static_keys, dynamic_groups = await self._partition_group_filters(db, filters)
+        static_keys, dynamic_groups, member_of_keys = await self._partition_group_filters(db, filters)
 
         if _has_post_filters(filters) or dynamic_groups:
             all_devices = await self._list_devices(
-                db, filters, static_group_keys=static_keys, dynamic_groups=dynamic_groups
+                db,
+                filters,
+                static_group_keys=static_keys,
+                dynamic_groups=dynamic_groups,
+                member_of_keys_by_dynamic_group_id=member_of_keys,
             )
             total = len(all_devices)
             page = all_devices[offset : offset + limit]
@@ -219,10 +242,16 @@ class DeviceCrudService:
         return page, total
 
     async def count_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> int:
-        static_keys, dynamic_groups = await self._partition_group_filters(db, filters)
+        static_keys, dynamic_groups, member_of_keys = await self._partition_group_filters(db, filters)
         if _has_post_filters(filters) or dynamic_groups:
             return len(
-                await self._list_devices(db, filters, static_group_keys=static_keys, dynamic_groups=dynamic_groups)
+                await self._list_devices(
+                    db,
+                    filters,
+                    static_group_keys=static_keys,
+                    dynamic_groups=dynamic_groups,
+                    member_of_keys_by_dynamic_group_id=member_of_keys,
+                )
             )
 
         result = await db.execute(_build_device_count_stmt(filters, static_group_keys=static_keys))

@@ -122,6 +122,7 @@ async def test_claim_declines_device_that_lost_readiness_after_poll(db_session: 
         row=row,
         candidate={},
         run_id=None,
+        member_of_keys_by_dynamic_group_id={},
         pack_catalog=pack_catalog,
     )
 

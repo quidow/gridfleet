@@ -7,7 +7,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import event
 
-from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
+from app.devices.models import Device, DeviceGroup, DeviceGroupMemberOf, DeviceGroupMembership, GroupType
 from tests.helpers import create_device_record
 from tests.packs.factories import seed_test_packs
 
@@ -91,13 +91,14 @@ async def _seed_static_group(
     *,
     key: str,
     device_ids: list[uuid.UUID],
-) -> None:
+) -> uuid.UUID:
     group = DeviceGroup(key=key, name=key, group_type=GroupType.static)
     db_session.add(group)
     await db_session.flush()
     for device_id in device_ids:
         db_session.add(DeviceGroupMembership(group_id=group.id, device_id=device_id))
     await db_session.commit()
+    return group.id
 
 
 async def _seed_dynamic_group(
@@ -105,9 +106,18 @@ async def _seed_dynamic_group(
     *,
     key: str,
     filters: dict[str, Any],
+    member_of_ids: list[uuid.UUID] | None = None,
 ) -> None:
+    """Seed a dynamic group and, when given, its ``device_group_member_of`` rows.
+
+    References live in the relation, not in ``filters`` — a JSON ``member_of``
+    key would be inert here.
+    """
     group = DeviceGroup(key=key, name=key, group_type=GroupType.dynamic, filters=filters)
     db_session.add(group)
+    await db_session.flush()
+    for static_id in member_of_ids or []:
+        db_session.add(DeviceGroupMemberOf(dynamic_group_id=group.id, static_group_id=static_id))
     await db_session.commit()
 
 
@@ -295,11 +305,12 @@ async def test_dynamic_requirement_group_parity_with_direct_routing(
     outsider = await _seed_available_device(db_session, default_host_id, "parity-out", "Parity Out")
     _ = outsider
 
-    await _seed_static_group(db_session, key="parity-pool", device_ids=[member_a.id, member_b.id])
+    pool_id = await _seed_static_group(db_session, key="parity-pool", device_ids=[member_a.id, member_b.id])
     await _seed_dynamic_group(
         db_session,
         key="parity-dyn",
-        filters={"member_of": ["parity-pool"]},
+        filters={},
+        member_of_ids=[pool_id],
     )
 
     detail = await client.get("/api/device-groups/parity-dyn")
