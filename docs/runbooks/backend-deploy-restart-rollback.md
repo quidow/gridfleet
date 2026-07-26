@@ -105,11 +105,26 @@ group fails at write time with `fk_device_group_member_of_static_group`
 (`422` to the caller) instead of silently resolving to zero members. There is
 nothing left to audit for on a database already on this migration.
 
-The pre-migration form of this check — the
-`jsonb_array_elements_text(d.filters -> 'member_of')` query this section used
-to publish — is preserved in this release's rollout checklist for anyone
-upgrading a database that predates the migration; the migration performs the
-same validation itself and aborts on any row that query would find.
+Migration `6d8c3b5042b5` validates every dynamic group's references itself
+and aborts on the first one it cannot resolve, but its error names a UUID,
+not a key, and stops at the first offender rather than reporting the rest.
+Anyone upgrading a database that predates this migration should run this
+query first and repair every row it returns — edit the group's filters to
+drop or repoint the key — before running `alembic upgrade head`:
+
+```sql
+SELECT d.key AS dynamic_group, missing.key AS missing_reference
+FROM device_groups d
+CROSS JOIN LATERAL jsonb_array_elements_text(d.filters -> 'member_of') AS missing(key)
+WHERE d.group_type = 'dynamic'
+  AND jsonb_typeof(d.filters -> 'member_of') = 'array'
+  AND NOT EXISTS (
+    SELECT 1 FROM device_groups s WHERE s.key = missing.key AND s.group_type = 'static'
+  );
+```
+
+Duplicate keys and static rows carrying an inert `member_of` need no repair —
+the migration folds the former and leaves the latter alone.
 
 ## 4. Roll back application code without restoring the database
 
