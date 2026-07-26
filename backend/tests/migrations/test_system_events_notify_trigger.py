@@ -176,7 +176,10 @@ async def test_downgrade_removes_only_trigger_and_function(system_events_trigger
 
         def _downgrade(sync_conn: Connection) -> None:
             cfg.attributes["connection"] = sync_conn
-            command.downgrade(cfg, "-1")
+            # Named, not relative: a relative "-1" silently retargets whenever a
+            # later revision lands on top of this one, undoing that revision
+            # instead of the notify trigger this test exercises.
+            command.downgrade(cfg, "20260721_drop_device_telemetry")
 
         await conn.run_sync(_downgrade)
         await conn.commit()
