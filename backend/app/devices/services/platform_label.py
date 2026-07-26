@@ -57,8 +57,8 @@ def platform_labels_from_catalog(packs: Mapping[str, PackView]) -> dict[PackPlat
     as the query-backed map does.
 
     :func:`load_platform_label_map` stays. Its remaining callers have no
-    catalog in hand, and this is a change to one caller, not to the label
-    service.
+    catalog in hand; this serves the ones that do, and is not a change to the
+    label service.
     """
     labels: dict[PackPlatformKey, str] = {}
     for pack in packs.values():

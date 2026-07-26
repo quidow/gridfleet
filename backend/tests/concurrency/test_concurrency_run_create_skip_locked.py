@@ -5,10 +5,10 @@ import pytest
 from sqlalchemy import select
 
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceOperationalState, DeviceReservation
+from app.devices.models import DeviceOperationalState, DeviceReservation
 from app.runs import service_allocator
 from app.runs.schemas import DeviceRequirement, RunCreate
-from app.runs.service_allocator import RunAllocatorService
+from app.runs.service_allocator import RunAllocatorService, _BatchSelection
 from tests.conftest import test_circuit_breaker
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -61,7 +61,7 @@ async def test_create_run_retries_when_candidate_row_transiently_locked(
         requirements: list[DeviceRequirement],
         *,
         restart_window_sec: int,
-    ) -> list[list[Device]]:
+    ) -> _BatchSelection:
         nonlocal calls
         calls += 1
         result = await real_batch_select(
@@ -71,7 +71,7 @@ async def test_create_run_retries_when_candidate_row_transiently_locked(
         )
         if calls == 1:
             # First pass races the held lock: SKIP LOCKED drops the only device.
-            assert result == [[]]
+            assert result.devices_by_requirement == [[]]
             first_match_done.set()
             await asyncio.wait_for(lock_released.wait(), timeout=5.0)
         return result
@@ -145,11 +145,11 @@ async def test_create_run_exhausts_widened_retry_budget(
         requirements: list[DeviceRequirement],
         *,
         restart_window_sec: int,
-    ) -> list[list[Device]]:
+    ) -> _BatchSelection:
         nonlocal calls
         _ = db, restart_window_sec
         calls += 1
-        return [[] for _ in requirements]
+        return _BatchSelection(devices_by_requirement=[[] for _ in requirements], pack_catalog={})
 
     monkeypatch.setattr(service_allocator, "_batch_select_devices", always_empty)
     monkeypatch.setattr(service_allocator, "_MATCH_RETRY_BACKOFF_SEC", 0.0)  # keep the test fast
