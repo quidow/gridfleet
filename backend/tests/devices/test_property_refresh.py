@@ -5,11 +5,28 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.timeutil import now_utc
-from app.devices.models import ConnectionType
+from app.devices.models import ConnectionType, Device
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.hosts.models import Host, HostStatus, OSType
 from app.packs.services.discovery import PackDiscoveryService
 from tests.helpers import create_device_record
+
+
+class _TrackingSessionFactory:
+    """Wraps a real session factory, recording every session it yields.
+
+    Lets a test assert on the shape of sessions opened (one inventory session,
+    then one fresh session per settled device), not just the persisted data.
+    """
+
+    def __init__(self, engine: AsyncEngine) -> None:
+        self._factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        self.sessions: list[AsyncSession] = []
+
+    def __call__(self) -> AsyncSession:
+        session = self._factory()
+        self.sessions.append(session)
+        return session
 
 
 def _properties_section(*connection_targets: str) -> dict[str, object]:
@@ -51,8 +68,7 @@ async def test_fold_applies_only_to_section_devices_on_the_host(
 
     svc = PropertyRefreshService(discovery=_DiscoveryDouble())
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
-    async with session_factory() as db:
-        await svc.fold_host_device_properties(db, host.id, _properties_section("refresh-001"))
+    await svc.fold_host_device_properties(session_factory, host.id, _properties_section("refresh-001"))
 
     applied = [await_call.args[1].identity_value for await_call in apply.await_args_list]
     assert in_section.identity_value in applied
@@ -64,6 +80,9 @@ async def test_fold_continues_after_device_failure(
     db_session: AsyncSession,
     setup_database: AsyncEngine,
 ) -> None:
+    """A real aborted PostgreSQL transaction in the middle device's commit rolls
+    back only that device; first/third persist. Each device settles in its own
+    fresh session, distinct from the one inventory read and from each other."""
     host = Host(hostname="fold-host", ip="10.0.0.12", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
     db_session.add(host)
     await db_session.flush()
@@ -74,26 +93,61 @@ async def test_fold_continues_after_device_failure(
     second = await create_device_record(
         db_session, host_id=host.id, identity_value="refresh-b", connection_target="refresh-b", name="Refresh B"
     )
+    third = await create_device_record(
+        db_session, host_id=host.id, identity_value="refresh-c", connection_target="refresh-c", name="Refresh C"
+    )
 
-    # Capture identity_value in-context: the fold rolls back on the first
-    # failure, which expires the passed instances, so reading identity_value
-    # after the session closes would trigger a lazy load outside the greenlet.
-    applied: list[str] = []
+    discovery = _discovery_service()
+    svc = PropertyRefreshService(discovery=discovery)
 
-    async def _apply(_session: object, device: object, _data: object) -> None:
-        applied.append(device.identity_value)  # type: ignore[attr-defined]
-        if len(applied) == 1:
-            raise RuntimeError("boom")
+    stamp = now_utc().isoformat()
+    section = {
+        "reported_at": stamp,
+        "devices": {
+            "refresh-a": {
+                "identity_value": "refresh-a",
+                "detected_properties": {"os_version": "14.9"},
+                "observed_at": stamp,
+            },
+            "refresh-b": {
+                "identity_value": "refresh-b",
+                # A real PostgreSQL rejection: a non-string value bound against the
+                # VARCHAR os_version column fails during the provider's commit. A
+                # mocked side_effect would leave the session clean and miss the
+                # aborted-transaction path this refactor exists to isolate.
+                "detected_properties": {"os_version": ["invalid"]},
+                "observed_at": stamp,
+            },
+            "refresh-c": {
+                "identity_value": "refresh-c",
+                "detected_properties": {"os_version": "16.0"},
+                "observed_at": stamp,
+            },
+        },
+    }
 
-    class _DiscoveryDouble:
-        apply_pack_device_properties = staticmethod(_apply)
+    tracking_factory = _TrackingSessionFactory(setup_database)
+    await svc.fold_host_device_properties(tracking_factory, host.id, section)
 
-    svc = PropertyRefreshService(discovery=_DiscoveryDouble())
-    session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
-    async with session_factory() as db:
-        await svc.fold_host_device_properties(db, host.id, _properties_section("refresh-a", "refresh-b"))
+    verify_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
+    async with verify_factory() as verify:
+        refreshed_first = await verify.get(Device, first.id)
+        refreshed_second = await verify.get(Device, second.id)
+        refreshed_third = await verify.get(Device, third.id)
 
-    assert sorted(applied) == sorted([first.identity_value, second.identity_value])
+    assert refreshed_first is not None
+    assert refreshed_first.os_version == "14.9"
+    assert refreshed_third is not None
+    assert refreshed_third.os_version == "16.0"
+    assert refreshed_second is not None
+    assert refreshed_second.os_version == "14"  # unchanged: its commit aborted
+
+    # Structural claim: one inventory session, then one distinct fresh session
+    # per settled device (including the one whose commit aborted).
+    assert len(tracking_factory.sessions) == 4
+    inventory_session, *device_sessions = tracking_factory.sessions
+    assert len({id(session) for session in device_sessions}) == 3
+    assert inventory_session not in device_sessions
 
 
 def _discovery_service() -> PackDiscoveryService:

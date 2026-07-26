@@ -93,10 +93,14 @@ STATUS_PUSH_PUBLICATION_CONCURRENCY = max(
 
 @dataclass(frozen=True)
 class ObservationFold:
-    """One push section folded into durable device or host facts."""
+    """One push section folded into durable device or host facts.
+
+    The fold owns its own transaction boundaries: it receives the factory, not a
+    session, so one failed device or section cannot poison a peer.
+    """
 
     section: str
-    fold: Callable[[AsyncSession, uuid.UUID, dict[str, Any]], Awaitable[None]]
+    fold: Callable[[SessionFactory, uuid.UUID, dict[str, Any]], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,9 +455,7 @@ class HostStatusPushService:
                 continue
             started = perf_counter()
             try:
-                async with self._session_factory() as fold_db:
-                    await entry.fold(fold_db, host_id, section)
-                    await fold_db.commit()
+                await entry.fold(self._session_factory, host_id, section)
             except Exception:  # noqa: BLE001 - observation stages must never starve liveness
                 HOST_PUSH_OBSERVATION_FAILURES.labels(stage=f"fold:{entry.section}").inc()
             self._log_stage(f"fold:{entry.section}", host_id, started)

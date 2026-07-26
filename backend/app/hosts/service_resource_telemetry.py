@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.core.type_defs import SessionFactory
 
 logger = get_logger(__name__)
 
@@ -102,27 +103,28 @@ class HostResourceTelemetryService:
         assert existing is not None
         return existing
 
-    async def fold_host_telemetry(self, db: AsyncSession, host_id: UUID, section: dict[str, Any]) -> None:
+    async def fold_host_telemetry(
+        self, session_factory: SessionFactory, host_id: UUID, section: dict[str, Any]
+    ) -> None:
         """Fold the pushed host_telemetry sample, rate-limited so per-push stamps
-        do not multiply row volume over the old 60 s stage cadence."""
-        host = await db.get(Host, host_id)
-        if host is None:
-            return
-        # Capture before the write: a rollback expires the instance, so reading
-        # hostname in the except would trigger a sync lazy-load (MissingGreenlet).
-        hostname = host.hostname
+        do not multiply row volume over the old 60 s stage cadence.
+
+        One native transaction per section: a failure rolls back only this
+        section and leaves no recovery read or rollback on the failed session.
+        """
         try:
-            effective = parse_iso(section.get("recorded_at")) or now_utc()
-            latest = await db.scalar(
-                select(func.max(HostResourceSample.recorded_at)).where(HostResourceSample.host_id == host.id)
-            )
-            if latest is not None and effective < latest + timedelta(seconds=HOST_RESOURCE_SAMPLE_MIN_INTERVAL_SEC):
-                return
-            await self.apply_host_resource_sample(db, host, section)
-            await db.commit()
+            async with session_factory.begin() as db:
+                host = await db.get(Host, host_id)
+                if host is None:
+                    return
+                effective = parse_iso(section.get("recorded_at")) or now_utc()
+                latest = await db.scalar(
+                    select(func.max(HostResourceSample.recorded_at)).where(HostResourceSample.host_id == host.id)
+                )
+                if latest is None or effective >= latest + timedelta(seconds=HOST_RESOURCE_SAMPLE_MIN_INTERVAL_SEC):
+                    await self.apply_host_resource_sample(db, host, section)
         except Exception:
-            await db.rollback()
-            logger.exception("Unexpected host resource telemetry failure for host %s", hostname)
+            logger.exception("Unexpected host resource telemetry failure for host %s", host_id)
 
     async def fetch_host_resource_telemetry(
         self,

@@ -36,10 +36,10 @@ async def test_process_observations_dispatches_sections_to_matching_folds(
 ) -> None:
     seen: list[tuple[str, str]] = []
 
-    async def fold_a(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def fold_a(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         seen.append(("a", section["reported_at"]))
 
-    async def fold_b(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def fold_b(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         seen.append(("b", section["reported_at"]))
 
     service = _service(
@@ -62,10 +62,10 @@ async def test_process_observations_isolates_a_raising_fold(
 ) -> None:
     ran: list[bool] = []
 
-    async def bad(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def bad(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         raise RuntimeError("boom")
 
-    async def good(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def good(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         ran.append(True)
 
     service = _service(
@@ -95,7 +95,7 @@ async def test_process_observations_runs_restart_then_convergence_then_folds(
     async def converge(**kwargs: object) -> None:
         order.append("converge")
 
-    async def fold(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def fold(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         order.append("fold")
 
     service = _service(
@@ -120,7 +120,7 @@ async def test_process_observations_holds_folds_when_convergence_fails(
     async def converge(**kwargs: object) -> None:
         raise RuntimeError("boom")
 
-    async def fold(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def fold(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         ran.append(True)
 
     service = _service(
