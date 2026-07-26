@@ -2,11 +2,16 @@
 
 Every dynamic group's JSON ``member_of`` list becomes one row in the new
 ``device_group_member_of`` table instead of a plain string list buried inside
-``filters``. Each endpoint is pinned to its expected ``group_type`` through
-composite foreign keys against the new ``uq_device_groups_id_group_type``
-unique constraint, so the database -- not just the API -- refuses a dynamic
-group referencing another dynamic group, or a relation row pointing at a
-group that no longer exists.
+``filters``. Each endpoint is pinned to its expected ``group_type`` by a CHECK
+constraint on that column (``dynamic_type`` / ``static_type``) plus a
+composite FK against the new ``uq_device_groups_id_group_type`` unique
+constraint: the CHECK fixes the column to the correct literal, and the FK
+proves the referenced row with that ``(id, group_type)`` pair actually
+exists. The FK alone is not enough -- it only proves *some* row matches the
+pair supplied, so without the CHECK an explicit insert could still name a
+static group's genuine ``(id, 'static')`` pair as the dynamic endpoint. So the
+database -- not just the API -- refuses a dynamic group referencing another
+dynamic group, or a relation row pointing at a group that no longer exists.
 
 Validation runs before any DDL: malformed ``filters`` (present but not an
 object), a malformed ``member_of`` (not an array of strings), a missing
@@ -48,14 +53,15 @@ def _validated_references(bind: sa.Connection) -> list[tuple[uuid.UUID, uuid.UUI
     by_key = {str(row["key"]): row for row in groups}
     edges: list[tuple[uuid.UUID, uuid.UUID]] = []
     for row in groups:
+        # Static rows are inert: the evaluator never reads a static group's
+        # filters, and c1a7e4d9b620 rewrote filters regardless of group_type, so
+        # a static row's filters -- malformed shape included -- is historic
+        # data, not corruption, and is never inspected.
+        if row["group_type"] != "dynamic":
+            continue
         filters = row["filters"]
         if filters is not None and not isinstance(filters, dict):
             raise RuntimeError(f"device group {row['id']} has malformed filters: expected an object")
-        # Static rows are inert: the evaluator never reads a static group's
-        # filters, and c1a7e4d9b620 rewrote filters regardless of group_type, so
-        # a static row holding a member_of is historic data, not corruption.
-        if row["group_type"] != "dynamic":
-            continue
         raw = None if filters is None else filters.get("member_of")
         if raw is None:
             continue
@@ -92,7 +98,20 @@ def upgrade() -> None:
         sa.Column("static_group_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("static_group_type", _GROUP_TYPE, nullable=False, server_default=sa.text("'static'::grouptype")),
         sa.PrimaryKeyConstraint("dynamic_group_id", "static_group_id", name="pk_device_group_member_of"),
-        sa.CheckConstraint("dynamic_group_id <> static_group_id", name="ck_device_group_member_of_not_self"),
+        # Short names: the metadata's "ck" naming convention (POSTGRES_INDEXES_NAMING_CONVENTION)
+        # always rewraps a CHECK constraint's name as f"{table_name}_{name}_check" -- unlike pk/fk/uq,
+        # whose conventions don't reference %(constraint_name)s and so leave an explicit name alone.
+        # A name like "ck_device_group_member_of_not_self" would double up into
+        # "device_group_member_of_ck_device_group_member_of_not_self_check". Task 2's ORM model must
+        # declare these same short names to land on the same final constraint names.
+        sa.CheckConstraint("dynamic_group_id <> static_group_id", name="not_self"),
+        # The FK only proves the (id, group_type) pair exists somewhere in device_groups; it does not
+        # pin this column to a literal, so an explicit insert/update can still write dynamic_group_type
+        # or static_group_type as the wrong enum value and satisfy the FK against a mismatched real row
+        # (e.g. a static group's genuine (id, 'static') pair used as the dynamic endpoint). These two
+        # checks are what actually pin each endpoint to its intended kind.
+        sa.CheckConstraint("dynamic_group_type = 'dynamic'", name="dynamic_type"),
+        sa.CheckConstraint("static_group_type = 'static'", name="static_type"),
         sa.ForeignKeyConstraint(
             ["dynamic_group_id", "dynamic_group_type"],
             ["device_groups.id", "device_groups.group_type"],
@@ -132,7 +151,8 @@ def downgrade() -> None:
     bind.execute(
         sa.text(
             "UPDATE device_groups AS source SET filters = "
-            "COALESCE(source.filters, '{}'::jsonb) || jsonb_build_object('member_of', refs.keys) "
+            "COALESCE(NULLIF(source.filters, 'null'::jsonb), '{}'::jsonb) "
+            "|| jsonb_build_object('member_of', refs.keys) "
             "FROM ("
             "  SELECT r.dynamic_group_id AS id, jsonb_agg(target.key ORDER BY target.key) AS keys "
             "  FROM device_group_member_of r "

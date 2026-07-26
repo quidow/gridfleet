@@ -182,6 +182,31 @@ async def test_upgrade_backfills_edges_removes_json_and_downgrade_restores_it() 
         ]
 
 
+@pytest.mark.db
+async def test_downgrade_rebuilds_member_of_from_a_jsonb_null_filters_row() -> None:
+    """``COALESCE`` alone only neutralizes SQL NULL. A JSONB ``'null'`` literal is
+    a live shape the tags-to-groups migration already treats as "no filters"
+    (see ``test_jsonb_null_tags_are_treated_as_no_tags``), and the same row here
+    carries a relation edge -- ``'null'::jsonb || jsonb_build_object(...)``
+    produces a JSON *array*, not an object, which then aborts a subsequent
+    upgrade at the malformed-filters guard and wedges the database below head.
+    """
+    async with _harness("jsonb_null") as (h, predecessor):
+        await h.seed_group(_EAST, "east", "East", "static", None)
+        await h.seed_group(_EAST_TV, "east-tv", "East TV", "dynamic", {"member_of": ["east"]})
+
+        await h.upgrade("head")
+        await h.execute("UPDATE device_groups SET filters = 'null'::jsonb WHERE key = 'east-tv'")
+
+        await h.downgrade(predecessor)
+
+        assert await h.fetch("SELECT filters FROM device_groups WHERE key = 'east-tv'") == [({"member_of": ["east"]},)]
+
+        # Confirms the fix actually un-wedges the database rather than merely
+        # producing a nicer-looking value that still fails re-validation.
+        await h.upgrade("head")
+
+
 _NORTH_TV = "00000000-0000-0000-0000-000000000204"
 
 
@@ -213,6 +238,47 @@ async def test_relation_endpoints_are_enforced_by_foreign_keys() -> None:
                 {"dynamic_id": _EAST_TV, "static_id": _NORTH_TV},
             )
 
+        # The three attacks below all omit nothing: they supply the discriminator
+        # columns explicitly, so the FK's (id, group_type) pair genuinely exists in
+        # device_groups -- the FK alone would accept every one of these. Only the
+        # CHECK constraints pin each column to its intended literal.
+
+        # A static group as a member_of *source*: (east, 'static') is a real row,
+        # so fk_device_group_member_of_dynamic_group is satisfied; only the
+        # dynamic_type CHECK rejects the wrong endpoint kind.
+        with pytest.raises(IntegrityError, match="device_group_member_of_dynamic_type_check"):
+            await h.execute(
+                "INSERT INTO device_group_member_of "
+                "(dynamic_group_id, dynamic_group_type, static_group_id, static_group_type) "
+                "VALUES (:dynamic_id, 'static', :static_id, 'static')",
+                {"dynamic_id": _EAST, "static_id": _WEST},
+            )
+
+        # A dynamic group as a member_of *target*: (north-tv, 'dynamic') is a real
+        # row, so fk_device_group_member_of_static_group is satisfied; only the
+        # static_type CHECK rejects the wrong endpoint kind.
+        with pytest.raises(IntegrityError, match="device_group_member_of_static_type_check"):
+            await h.execute(
+                "INSERT INTO device_group_member_of "
+                "(dynamic_group_id, dynamic_group_type, static_group_id, static_group_type) "
+                "VALUES (:dynamic_id, 'dynamic', :static_id, 'dynamic')",
+                {"dynamic_id": _EAST_TV, "static_id": _NORTH_TV},
+            )
+
+        # Starting from a valid, default-path row, an UPDATE can still corrupt an
+        # endpoint's kind the same way; the CHECK applies to every write, not only
+        # the initial INSERT.
+        await h.execute(
+            "INSERT INTO device_group_member_of (dynamic_group_id, static_group_id) VALUES (:dynamic_id, :static_id)",
+            {"dynamic_id": _EAST_TV, "static_id": _WEST},
+        )
+        with pytest.raises(IntegrityError, match="device_group_member_of_static_type_check"):
+            await h.execute(
+                "UPDATE device_group_member_of SET static_group_id = :new_static_id, static_group_type = 'dynamic' "
+                "WHERE dynamic_group_id = :dynamic_id",
+                {"new_static_id": _NORTH_TV, "dynamic_id": _EAST_TV},
+            )
+
 
 @pytest.mark.db
 async def test_upgrade_folds_duplicates_and_leaves_static_filters_untouched() -> None:
@@ -239,30 +305,41 @@ async def test_upgrade_folds_duplicates_and_leaves_static_filters_untouched() ->
 _DYNAMIC_TARGET_KEY = "west-tv"
 
 _BAD_SOURCE_CASES = [
-    pytest.param([], None, id="filters_not_object"),
-    pytest.param({"member_of": "east"}, None, id="member_of_not_list"),
-    pytest.param({"member_of": ["east", 7]}, None, id="member_of_non_string_element"),
-    pytest.param({"member_of": ["missing"]}, None, id="member_of_missing_target"),
+    pytest.param([], None, "malformed filters", id="filters_not_object"),
+    pytest.param({"member_of": "east"}, None, "malformed member_of", id="member_of_not_list"),
+    pytest.param({"member_of": ["east", 7]}, None, "malformed member_of", id="member_of_non_string_element"),
+    pytest.param(
+        {"member_of": ["missing"]},
+        None,
+        "references non-static or missing group",
+        id="member_of_missing_target",
+    ),
     pytest.param(
         {"member_of": [_DYNAMIC_TARGET_KEY]},
         (_WEST, _DYNAMIC_TARGET_KEY, "West TV", "dynamic"),
+        "references non-static or missing group",
         id="member_of_dynamic_target",
     ),
 ]
 
 
 @pytest.mark.db
-@pytest.mark.parametrize(("filters", "extra_group"), _BAD_SOURCE_CASES)
+@pytest.mark.parametrize(("filters", "extra_group", "expected_fragment"), _BAD_SOURCE_CASES)
 async def test_upgrade_rejects_malformed_or_invalid_dynamic_source_rows(
     filters: dict[str, Any] | list[Any],
     extra_group: tuple[str, str, str, str] | None,
+    expected_fragment: str,
 ) -> None:
     async with _harness("badsource") as (h, _predecessor):
         if extra_group is not None:
             await h.seed_group(*extra_group, None)
         await h.seed_group(_EAST_TV, "east-tv", "East TV", "dynamic", filters)  # type: ignore[arg-type]
 
-        await h.upgrade_expecting("head", re.escape(_EAST_TV))
+        # Pinning only the source UUID would pass even if the specific branch
+        # under test (e.g. the malformed-shape guard) were deleted, since every
+        # RuntimeError in this migration interpolates the source group's id.
+        # The message fragment pins the branch too.
+        await h.upgrade_expecting("head", f"{re.escape(_EAST_TV)}.*{re.escape(expected_fragment)}")
 
         assert await h.fetch("SELECT filters FROM device_groups WHERE key = 'east-tv'") == [(filters,)]
         assert await h.fetch("SELECT to_regclass('device_group_member_of')") == [(None,)]
