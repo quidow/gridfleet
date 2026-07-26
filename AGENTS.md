@@ -28,7 +28,7 @@ uv run mypy app/                          # strict mypy + pydantic plugin
 uv run vulture app/ .vulture_whitelist.py --min-confidence 80   # dead-code check (CI enforces this)
 uv run pytest -q -n auto                  # parallel via pytest-xdist (~3 min full suite)
 # When debugging cross-file failures (xdist state leak), run halves separately — surfaces failures ~2× faster:
-#   /bin/ls tests/ | grep "^test_.*\.py$" | head -130 | sed "s|^|tests/|" | xargs uv run pytest -n auto --tb=line -q
+#   find tests -name 'test_*.py' | sort | head -234 | xargs uv run pytest -n auto --tb=line -q
 uv run pytest -q tests/test_devices_api.py::test_name   # single test
 uv run alembic upgrade head               # apply migrations
 uv run alembic revision --autogenerate -m "msg"
