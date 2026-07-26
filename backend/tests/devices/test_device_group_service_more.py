@@ -107,6 +107,32 @@ async def test_delete_static_group_leaves_membership_cascade_to_postgres(db_sess
     assert not [statement for statement in statements if "device_group_memberships" in statement.lower()], statements
 
 
+@pytest.mark.parametrize("group_type", ["static", "dynamic"])
+async def test_create_without_references_writes_no_relation_rows(db_session: AsyncSession, group_type: str) -> None:
+    """A create with no ``member_of`` must not touch ``device_group_member_of``.
+
+    The replacement path clears the source's existing rows before inserting, but
+    a source inserted in this very transaction has a freshly minted id that
+    nothing can reference yet — so the clearing DELETE provably matches no row
+    and is skipped. (A dynamic create still *reads* the relation afterwards, for
+    the device count; only writes are asserted on.)
+    """
+    svc = _svc()
+    async with capture_statements(db_session) as statements:
+        await svc.create_group(
+            db_session,
+            DeviceGroupCreate(key=f"no-refs-{group_type}", name="no refs", group_type=group_type),  # type: ignore[arg-type]
+        )
+
+    normalized = [" ".join(statement.lower().split()) for statement in statements]
+    writes = [
+        statement
+        for statement in normalized
+        if "device_group_member_of" in statement and not statement.startswith("select")
+    ]
+    assert not writes, statements
+
+
 async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: AsyncSession) -> None:
     _host, device = await seed_host_and_device(db_session, identity="group-dynamic-1")
     svc = _svc()

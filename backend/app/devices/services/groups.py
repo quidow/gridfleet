@@ -134,7 +134,7 @@ class DeviceGroupsService:
             raise
         # After the flush, so the source id exists; before the commit, so a
         # rejected reference takes the group row down with it.
-        await _replace_member_of(db, group.id, targets)
+        await _replace_member_of(db, group.id, targets, clear_existing=False)
         await db.refresh(group)
         self._publisher.queue_for_session(
             db,
@@ -323,21 +323,14 @@ class DeviceGroupsService:
             group = await _get_group_row(db, group_key)
             if group is None:
                 return False
-            dependents = await _dependent_dynamic_keys(db, group.id)
+            # Bind the id before anything can roll back. A savepoint rollback
+            # expires the rows it restores, and reading an expired attribute
+            # inside the recovery path needs IO from a synchronous context —
+            # which raises MissingGreenlet instead of the error being handled.
+            group_id = group.id
+            dependents = await _delete_group_or_dependents(db, group_id, group_key)
             if dependents:
                 raise GroupReferencedError(dependents)
-            await db.execute(delete(DeviceGroup).where(DeviceGroup.id == group.id))
-            try:
-                await db.flush()
-            except IntegrityError as exc:
-                # A reference committed after the read above: the restrictive FK
-                # is the backstop, and re-reading names the referrer the operator
-                # has to deal with. Roll back first so the re-read runs on a
-                # session that is not in an aborted transaction.
-                await db.rollback()
-                if constraint_name(exc) == "fk_device_group_member_of_static_group":
-                    raise GroupReferencedError(await _dependent_dynamic_keys(db, group.id)) from exc
-                raise
             self._publisher.queue_for_session(
                 db,
                 "device_group.updated",
@@ -538,10 +531,15 @@ async def _resolve_static_member_of(db: AsyncSession, keys: set[str]) -> dict[st
     """Resolve every requested reference key to a static group, or reject the write.
 
     Runs before the source row is touched so a bad key leaves nothing behind.
+
+    ``populate_existing`` for the same reason :func:`_load_group_for_mutation`
+    uses it: a target already in the identity map would otherwise be gated on a
+    ``group_type`` a peer has already changed.
     """
     if not keys:
         return {}
-    rows = list((await db.execute(select(DeviceGroup).where(DeviceGroup.key.in_(keys)))).scalars())
+    stmt = select(DeviceGroup).where(DeviceGroup.key.in_(keys)).execution_options(populate_existing=True)
+    rows = list((await db.execute(stmt)).scalars())
     by_key = {row.key: row for row in rows}
     invalid = sorted(key for key in keys if key not in by_key or by_key[key].group_type != GroupType.static)
     if invalid:
@@ -549,7 +547,13 @@ async def _resolve_static_member_of(db: AsyncSession, keys: set[str]) -> dict[st
     return by_key
 
 
-async def _replace_member_of(db: AsyncSession, dynamic_group_id: uuid.UUID, targets: Mapping[str, DeviceGroup]) -> None:
+async def _replace_member_of(
+    db: AsyncSession,
+    dynamic_group_id: uuid.UUID,
+    targets: Mapping[str, DeviceGroup],
+    *,
+    clear_existing: bool = True,
+) -> None:
     """Swap one dynamic group's reference rows inside the caller's transaction.
 
     Delete-then-insert rather than a diff: the edge set is small, the source is
@@ -557,8 +561,13 @@ async def _replace_member_of(db: AsyncSession, dynamic_group_id: uuid.UUID, targ
     leave a stale edge behind. ``on_conflict_do_nothing`` is deliberately absent
     — the delete guarantees an empty target and the values are deduplicated, so
     a conflict here would be a bug worth surfacing.
+
+    ``clear_existing=False`` is for a freshly inserted source: its id was minted
+    in this transaction, so nothing can reference it yet and the delete would be
+    a statement that provably matches no row.
     """
-    await db.execute(delete(DeviceGroupMemberOf).where(DeviceGroupMemberOf.dynamic_group_id == dynamic_group_id))
+    if clear_existing:
+        await db.execute(delete(DeviceGroupMemberOf).where(DeviceGroupMemberOf.dynamic_group_id == dynamic_group_id))
     target_ids = sorted({group.id for group in targets.values()})
     if not target_ids:
         return
@@ -598,6 +607,74 @@ async def _dependent_dynamic_keys(db: AsyncSession, static_group_id: uuid.UUID) 
         .where(DeviceGroupMemberOf.static_group_id == static_group_id)
     )
     return sorted((await db.execute(stmt)).scalars().all())
+
+
+async def _try_delete_group_row(db: AsyncSession, group_id: uuid.UUID) -> bool:
+    """Delete the definition row; ``False`` when the RESTRICT foreign key stopped it.
+
+    Two things this shape is load-bearing for.
+
+    The ``DELETE`` is inside the ``try``, not a following ``flush``. An
+    ``ON DELETE RESTRICT`` foreign key is a non-deferrable AFTER ROW trigger, so
+    it fires at the end of the statement that armed it: the violation comes out
+    of ``execute``, and a ``try`` wrapped around a later ``flush`` never sees it.
+
+    The statement runs in a SAVEPOINT so the violation does not abort the
+    caller's transaction. A root rollback would drop the transaction-scoped
+    advisory lock (leaving any follow-up read unserialised) and expire every
+    loaded row; rolling back to a savepoint keeps both, so the caller can still
+    ask *why* it failed on the same session.
+    """
+    try:
+        async with db.begin_nested():
+            await db.execute(delete(DeviceGroup).where(DeviceGroup.id == group_id))
+    except IntegrityError as exc:
+        if constraint_name(exc) == "fk_device_group_member_of_static_group":
+            return False
+        raise
+    return True
+
+
+async def _delete_group_or_dependents(db: AsyncSession, group_id: uuid.UUID, group_key: str) -> list[str]:
+    """Delete the group's definition row, or name the dependents that stopped it.
+
+    Returns ``[]`` only when the row is gone; a non-empty result is always a
+    populated ``GroupReferencedError`` payload, never an empty one.
+
+    The dependent read and the ``DELETE`` are two statements, so a reference
+    committed between them is invisible to the first and fatal to the second.
+    The foreign key catches that, and the re-read names the referrer. When the
+    re-read comes back empty the referrer was inserted *and* removed inside the
+    gap, so there is nothing to report and nothing left to block the delete —
+    replaying it is the only answer that is neither a 500 nor a 409 naming
+    nobody.
+
+    The replay holds ``FOR UPDATE`` on the target row. That conflicts with the
+    ``FOR KEY SHARE`` a referencing insert must take on the row it references,
+    so no peer can re-arm the foreign key underneath it: the replay is final,
+    and the recovery cannot loop.
+    """
+    dependents = await _dependent_dynamic_keys(db, group_id)
+    if dependents:
+        return dependents
+    if await _try_delete_group_row(db, group_id):
+        return []
+
+    dependents = await _dependent_dynamic_keys(db, group_id)
+    if dependents:
+        return dependents
+
+    if await _get_group_row(db, group_key, for_update=True) is None:
+        # A peer deleted the group itself while we were recovering. Reporting it
+        # as deleted would be a lie about who did it, but the row is gone either
+        # way and the caller's contract only distinguishes "gone" from
+        # "referenced".
+        return []
+    dependents = await _dependent_dynamic_keys(db, group_id)
+    if dependents:
+        return dependents
+    await db.execute(delete(DeviceGroup).where(DeviceGroup.id == group_id))
+    return []
 
 
 def _validate_filters(filters_payload: dict[str, Any] | None) -> DeviceGroupFilters:

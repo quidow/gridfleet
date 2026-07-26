@@ -622,6 +622,49 @@ async def test_create_dynamic_group_normalizes_duplicate_member_of_keys(
 
 
 @pytest.mark.db
+@pytest.mark.parametrize("sent", [{}, {"member_of": []}])
+async def test_empty_filters_normalize_to_an_absent_filters_key(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    sent: dict[str, Any],
+) -> None:
+    """The second wire change this phase makes, pinned rather than incidental.
+
+    A dynamic group whose filters pin nothing used to store ``{}`` and answer
+    ``"filters": {}``; it now stores SQL ``NULL`` and omits the key. ``{}`` and
+    absent both mean "pins nothing", so collapsing them keeps one shape for one
+    fact — which matters here because ``member_of`` is no longer part of that
+    JSON, so ``{"member_of": [...]}`` reduces to the same empty payload.
+
+    Migrated rows land on the same shape: revision ``6d8c3b5042b5`` leaves
+    ``filters = {}`` on any dynamic group whose only axis was ``member_of``.
+    """
+    created = await client.post(
+        "/api/device-groups",
+        json={"key": "pins-nothing", "name": "Pins nothing", "group_type": "dynamic", "filters": sent},
+    )
+    assert created.status_code == 201, created.text
+    assert "filters" not in created.json()
+    assert await _stored_filters(db_session, "pins-nothing") is None
+
+    fetched = await client.get("/api/device-groups/pins-nothing")
+    assert fetched.status_code == 200, fetched.text
+    assert "filters" not in fetched.json()
+
+    patched = await client.patch("/api/device-groups/pins-nothing", json={"filters": sent})
+    assert patched.status_code == 200, patched.text
+    assert "filters" not in patched.json()
+    assert await _stored_filters(db_session, "pins-nothing") is None
+
+    # A row the migration left holding a literal ``{}`` reads the same way.
+    db_session.add(DeviceGroup(key="migrated", name="Migrated", group_type=GroupType.dynamic, filters={}))
+    await db_session.commit()
+    migrated = await client.get("/api/device-groups/migrated")
+    assert migrated.status_code == 200, migrated.text
+    assert "filters" not in migrated.json()
+
+
+@pytest.mark.db
 async def test_legacy_json_member_of_is_never_echoed_back(
     client: AsyncClient,
     db_session: AsyncSession,
