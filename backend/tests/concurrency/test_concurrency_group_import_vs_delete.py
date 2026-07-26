@@ -23,13 +23,14 @@ from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services.groups import GroupReferencedError
 from app.portability.schemas import ExportBundle, ExportedDeviceGroup, ImportCommitRequest, ImportCommitResult
 from app.portability.services.hash import compute_bundle_hash
-from app.portability.services.import_bundle import PortabilityImportService
+from app.portability.services.import_bundle import PortabilityImportService, UnknownGroupReferenceError
 from app.verification.services.service import VerificationService
 from tests.concurrency.group_lock_helpers import (
     EVENT_WAIT_TIMEOUT_SEC,
     HANDOFF_SEC,
     build_groups_service,
     fetch_group_rows,
+    fetch_member_of_keys,
 )
 
 if TYPE_CHECKING:
@@ -99,15 +100,6 @@ async def _wait_for_import_commit(committed: asyncio.Event) -> None:
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Group references moved to device_group_member_of, and delete_group's dependent lookup now reads "
-        "that relation. commit_import still writes the legacy filters['member_of'] JSON, which restricts "
-        "nothing, so the deleter observes no referrer and the imported dynamic group is left dangling. "
-        "Remove this marker when the portability importer stages relation rows."
-    ),
-)
 async def test_delete_during_import_cannot_orphan_a_dynamic_group(
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -136,13 +128,29 @@ async def test_delete_during_import_cannot_orphan_a_dynamic_group(
 
     import_result, delete_result = await asyncio.gather(run_import(), delete_static(), return_exceptions=True)
 
-    assert not isinstance(import_result, Exception), f"import should have succeeded: {import_result!r}"
-    assert isinstance(delete_result, GroupReferencedError), (
-        f"deleter must observe the imported reference, got {delete_result!r}"
-    )
+    # The only two terminal states that keep the reference from dangling: the
+    # import's definitions (including the member_of edge) commit first and the
+    # deleter observes them and is rejected, or the delete somehow lands first
+    # and the import's own validation/FK rejects the now-missing target. Either
+    # is acceptable; anything else is a bug worth naming loudly rather than
+    # asserting past.
+    if isinstance(import_result, Exception):
+        assert isinstance(import_result, UnknownGroupReferenceError), (
+            f"import may only fail with the group-reference error, got {import_result!r}"
+        )
+        assert delete_result is True, f"deleter must have won when the import lost the race: {delete_result!r}"
+    else:
+        assert isinstance(delete_result, GroupReferencedError), (
+            f"deleter must observe the imported reference, got {delete_result!r}"
+        )
 
     static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
-    assert static_row is not None, "the referenced static group must survive"
-    assert dynamic_row is not None, "the dynamic group must survive"
-    member_of = (dynamic_row.filters or {}).get("member_of", [])
-    assert static_key in member_of
+    if isinstance(import_result, Exception):
+        assert dynamic_row is None, "a rejected import must not leave its dynamic group behind"
+        assert static_row is None, "the deleter's winning delete must have removed the static group"
+    else:
+        assert static_row is not None, "the referenced static group must survive the rejected delete"
+        assert dynamic_row is not None, "the imported dynamic group must survive"
+        assert await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key) == [static_key], (
+            f"the imported dynamic group must still reference {static_key}"
+        )

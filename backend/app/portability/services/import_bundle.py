@@ -21,6 +21,7 @@ from app.core.locks import group_mutation_lock
 from app.devices.models import (
     Device,
     DeviceGroup,
+    DeviceGroupMemberOf,
     DeviceGroupMembership,
     DeviceOperationalState,
     GroupType,
@@ -51,7 +52,7 @@ from app.portability.services.hash import compute_bundle_hash
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -203,11 +204,15 @@ def _build_create_payload(device: ExportedDevice, target_host_id: uuid.UUID) -> 
 
 
 def _group_filters_payload(group: ExportedDeviceGroup) -> dict[str, Any] | None:
+    """The stored JSON column's value: native axes only, never ``member_of``.
+
+    References live in ``device_group_member_of`` from this phase on, so a
+    ``member_of``-only dynamic group persists ``filters IS NULL``.
+    """
     if group.filters is None:
         return None
     dumped = group.filters.model_dump(mode="json", exclude_none=True)
-    if not dumped.get("member_of"):
-        dumped.pop("member_of", None)
+    dumped.pop("member_of", None)
     return dumped or None
 
 
@@ -257,6 +262,28 @@ async def _load_existing_group_ids(session: AsyncSession, keys: set[str]) -> dic
         return {}
     result = await session.execute(select(DeviceGroup.key, DeviceGroup.id).where(DeviceGroup.key.in_(keys)))
     return {row[0]: row[1] for row in result.all()}
+
+
+async def _insert_member_of_references(
+    session: AsyncSession,
+    dynamic_groups: Sequence[ExportedDeviceGroup],
+    dynamic_ids: Mapping[str, uuid.UUID],
+    static_ids: Mapping[str, uuid.UUID],
+) -> None:
+    """Persist each dynamic group's ``member_of`` as ``device_group_member_of`` rows.
+
+    ``_validate_group_references`` already requires every ``member_of`` key to
+    name a static group defined in the same bundle, so ``static_ids`` (the map
+    ``_insert_group_definitions`` returns) resolves every target. It remains the
+    user-facing validation gate; the FK is the final race authority.
+    """
+    values = [
+        {"dynamic_group_id": dynamic_ids[group.key], "static_group_id": static_ids[target]}
+        for group in dynamic_groups
+        for target in sorted(set(group.filters.member_of if group.filters else []))
+    ]
+    if values:
+        await session.execute(pg_insert(DeviceGroupMemberOf).values(values))
 
 
 async def _lock_existing_device_ids(session: AsyncSession, device_ids: set[uuid.UUID]) -> set[uuid.UUID]:
@@ -390,7 +417,8 @@ class PortabilityImportService:
                 # Static and dynamic definitions commit atomically so member_of
                 # cannot reference a static deleted midway through the import.
                 group_id_by_key = await self._insert_group_definitions(session, static_groups)
-                await self._insert_dynamic_group_definitions(session, dynamic_groups)
+                dynamic_id_by_key = await self._insert_dynamic_group_definitions(session, dynamic_groups)
+                await _insert_member_of_references(session, dynamic_groups, dynamic_id_by_key, group_id_by_key)
                 await session.commit()
 
         by_index = {row.index: row for row in preview.rows}
@@ -519,16 +547,16 @@ class PortabilityImportService:
         self,
         session: AsyncSession,
         dynamic_groups: list[ExportedDeviceGroup],
-    ) -> None:
+    ) -> dict[str, uuid.UUID]:
         """Insert the bundle's dynamic group definitions.
 
-        Deliberately returns nothing. Dynamic groups have no membership rows —
-        their members are derived — so folding their ids into the static
-        ``group_id_by_key`` map would only let membership staging resolve a key
-        it must never resolve.
+        Returns the inserted ids keyed by group key. This map feeds relation
+        staging (``_insert_member_of_references``) only — dynamic groups have
+        no membership rows, so folding it into the static ``group_id_by_key``
+        map would let membership staging resolve a key it must never resolve.
         """
         if not dynamic_groups:
-            return
+            return {}
         groups = [
             DeviceGroup(
                 key=group_def.key,
@@ -541,6 +569,7 @@ class PortabilityImportService:
         ]
         session.add_all(groups)
         await _flush_groups_or_collide(session, [g.key for g in groups])
+        return {group.key: group.id for group in groups}
 
     async def _insert_row_with_savepoint(
         self,

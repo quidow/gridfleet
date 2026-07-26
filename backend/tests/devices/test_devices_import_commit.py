@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, GroupType
+from app.devices.models import Device, DeviceGroup, DeviceGroupMemberOf, DeviceGroupMembership, GroupType
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
@@ -21,7 +21,11 @@ from app.portability.schemas import (
 )
 from app.portability.services import import_bundle as import_bundle_module
 from app.portability.services.hash import compute_bundle_hash
-from app.portability.services.import_bundle import BundleHashMismatchError, PortabilityImportService
+from app.portability.services.import_bundle import (
+    BundleHashMismatchError,
+    PortabilityImportService,
+    UnknownGroupReferenceError,
+)
 from app.verification.services.service import VerificationService
 from tests.concurrency.group_lock_helpers import capture_statements
 from tests.helpers import seed_existing_device, seed_host_named
@@ -634,7 +638,56 @@ async def test_commit_persists_static_and_dynamic_groups(
     persisted = await _committed_group_keys(db_session_maker)
     assert set(persisted) == {"shelf-a", "rack-roll-up"}
     assert persisted["rack-roll-up"].group_type == GroupType.dynamic
-    assert persisted["rack-roll-up"].filters == {"member_of": ["shelf-a"]}
+    assert persisted["rack-roll-up"].filters is None
+    async with db_session_maker() as verify:
+        edges = (await verify.execute(select(DeviceGroupMemberOf))).scalars().all()
+    assert {(edge.dynamic_group_id, edge.static_group_id) for edge in edges} == {
+        (persisted["rack-roll-up"].id, persisted["shelf-a"].id)
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+@pytest.mark.parametrize(
+    ("groups", "unknown_key"),
+    [
+        pytest.param(
+            [_dynamic_group("rack-roll-up", member_of=["missing-shelf"])],
+            "missing-shelf",
+            id="key_not_in_bundle",
+        ),
+        pytest.param(
+            [
+                _dynamic_group("rack-a", member_of=[]),
+                _dynamic_group("rack-roll-up", member_of=["rack-a"]),
+            ],
+            "rack-a",
+            id="key_names_a_dynamic_group",
+        ),
+    ],
+)
+async def test_commit_rejects_unresolvable_member_of_before_writing_definitions(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+    groups: list[ExportedDeviceGroup],
+    unknown_key: str,
+) -> None:
+    """A ``member_of`` key that is unknown, or that names a dynamic (not static)
+    group in the bundle, must fail validation before any group definition row
+    is written — never surface as a partial insert or an FK violation."""
+    bundle = _bundle([], groups=groups)
+    request = ImportCommitRequest(
+        bundle=bundle,
+        bundle_hash=compute_bundle_hash(bundle),
+        mappings=[],
+    )
+    with pytest.raises(UnknownGroupReferenceError) as exc_info:
+        await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(db_session, request)
+    assert unknown_key in exc_info.value.keys
+
+    persisted = await _committed_group_keys(db_session_maker)
+    assert persisted == {}
 
 
 @pytest.mark.asyncio
