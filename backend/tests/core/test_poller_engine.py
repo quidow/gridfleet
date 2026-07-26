@@ -15,13 +15,20 @@ async def test_the_poller_engine_carries_a_command_timeout() -> None:
     """The bound is on the connection, not wrapped around each call.
 
     A wrapper is a guard someone must remember to apply to every new await on
-    the poll path. ``command_timeout`` cannot be forgotten.
+    the poll path. ``command_timeout`` cannot be forgotten. Introspects the
+    live asyncpg connection's own config rather than trusting the constructor
+    argument was actually threaded through -- ``connect_args`` is a plain dict
+    a future refactor could silently drop a key from.
     """
-    engine = build_poller_engine(command_timeout=1.5, database_url=TEST_DATABASE_URL)
+    command_timeout = 1.5
+    engine = build_poller_engine(command_timeout=command_timeout, database_url=TEST_DATABASE_URL)
     try:
         assert engine.dialect.__class__.__name__.startswith("PGDialect")
         assert engine.pool.size() == 1, "the poller needs one connection, not a share of the app pool"
         assert engine.url.render_as_string(hide_password=False) == TEST_DATABASE_URL
+        async with engine.connect() as conn:
+            raw = await conn.get_raw_connection()
+            assert raw.driver_connection._config.command_timeout == command_timeout
     finally:
         await engine.dispose()
 
