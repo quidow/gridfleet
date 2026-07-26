@@ -8,7 +8,7 @@ The Appium node is the most failure-prone object in GridFleet. It lives in two p
 
 | Component | Role |
 | --- | --- |
-| `reconciler_agent` (`backend/app/appium_nodes/services/reconciler_agent.py`) | `mark_node_started`/`mark_node_stopped` (observed-state writers) plus `ReconcilerAgentService` (`start_node`/`stop_node`/`restart_node`/`wait_for_node_running`) — these register desired-state intents only; none call the agent |
+| `reconciler_agent` (`backend/app/appium_nodes/services/reconciler_agent.py`) | `mark_node_started`/`mark_node_stopped` (observed-state writers) plus `ReconcilerAgentService` (`start_node`/`stop_node`/`restart_node`) — these register desired-state intents only; none call the agent |
 | Observe-only convergence (`backend/app/appium_nodes/services/reconciler.py`) | Per-host: matches the agent's latest pushed status report against desired rows (`decide_convergence_action`), writes DB-only observed facts, ingests start failures; issues no start/stop/restart |
 | `host_sweep` node-health fold (`backend/app/appium_nodes/services/node_health.py`) | Folds the pushed node-health section; at the failure window escalates through the shared remediation ladder — never calls the agent |
 | `poke_node_refresh` (`backend/app/agent_comm/node_poke.py`) | Fire-and-forget wake hint after every desired-state write — the only backend→agent node signal |
@@ -23,7 +23,7 @@ The five rules:
 1. The backend never starts or stops an Appium process. It writes desired state (row-locked, via `write_desired_state`) and sends a best-effort poke; the agent's `NodeStateLoop` pulls and applies locally.
 2. Observed-state writes are gated on the agent's pushed self-report (`POST /agent/hosts/status`), never assumed from the absence of an error.
 3. `mark_node_started` / `mark_node_stopped` fire only from the observe-only convergence match — never speculatively. A missing or stale report changes nothing; the DB stays put until a later sweep sees a confirming report.
-4. `DeviceHealthService.apply_node_state_transition` is the node-health writer inside that transaction, so health detail and `device.health_changed` land with the flip.
+4. `DeviceHealthService.apply_locked_node_state_transition` is the node-health writer inside that transaction, so health detail and `device.health_changed` land with the flip.
 5. Resource claims (ports + per-host capabilities) are keyed by `node_id` and are never released on stop: they live for the lifetime of the `AppiumNode` row (cascade-deleted with it), so a stopped node's ports can never be handed to a different node.
 
 ## Node state machine
@@ -43,7 +43,7 @@ Operator action writes the **desired** axis only. Health failure stops nothing b
 
 ## The four flows, compressed
 
-- **Operator start** (`ReconcilerAgentService.start_node`): readiness gate (`is_ready_for_use_async`), then registers the operator start intent (`operator_node.request_start` → `register_intents_and_reconcile`), which writes `desired_state=running` with a candidate `desired_port`, pokes, and returns — the process is not yet up. Callers that must block use `wait_for_node_running`, which polls `observed_running`. Port selection happens at desired-write time via `candidate_ports`; there is no agent-side port allocation call.
+- **Operator start** (`ReconcilerAgentService.start_node`): readiness gate (`is_ready_for_use_async`), then registers the operator start intent (`operator_node.request_start` → `register_intents_and_reconcile`), which writes `desired_state=running` with a candidate `desired_port`, pokes, and returns — the process is not yet up. `ReconcilerAgentService` itself has no blocking wait; a caller that must block polls `observed_running` itself, e.g. `VerificationExecutionService.wait_for_node_running` (`backend/app/verification/services/execution.py`), a per-poll fresh-session helper on that separate class. Port selection happens at desired-write time via `candidate_ports`; there is no agent-side port allocation call.
 - **Operator stop** (`ReconcilerAgentService.stop_node`): registers the operator stop intent, writes `desired_state=stopped`, pokes, returns. The observed flip waits for a push that no longer lists the process.
 - **Operator restart** (`ReconcilerAgentService.restart_node`): short-circuits to `start_node` when not `observed_running`; otherwise stamps the restart watermark and pokes.
 - **Auto-recovery:** the node-health fold detects the failure window and escalates via the shared remediation ladder (`escalate_device_remediation_failure` → `device_remediation_log`); the ladder's directive commissions the node-process action and its row timestamp is the restart watermark, so the do-once semantics need no extra state. Backoff, exhaustion, and review promotion all derive from the log — see `docs/reference/device-lifecycle.md`, "Shared remediation escalation ladder".
@@ -73,7 +73,7 @@ Claims are keyed by `node_id`, reserved via `appium_node_resource_service`, neve
 3. writers: observed (pid / active_connection_target via mark_node_started/mark_node_stopped);
    desired (desired_state / desired_port / restart_requested_at via write_desired_state);
    Device.operational_state_last_emitted / Device.lifecycle_policy_state
-4. DeviceHealthService(...).apply_node_state_transition(...)
+4. DeviceHealthService(...).apply_locked_node_state_transition(...)
 5. publisher.queue_for_session(...)
 6. db.commit()
 ```
@@ -87,7 +87,7 @@ For every new code path that touches node state, verify:
 - [ ] Observed-state writes are gated on the agent's pushed self-report, never assumed.
 - [ ] `mark_node_started` / `mark_node_stopped` fire only from the convergence match, never speculatively.
 - [ ] They run inside a transaction holding the device row lock (then the node lock).
-- [ ] `DeviceHealthService.apply_node_state_transition` is the node-health writer in that transaction.
+- [ ] `DeviceHealthService.apply_locked_node_state_transition` is the node-health writer in that transaction.
 - [ ] Resource claims are released only on node/device deletion, never on stop.
 - [ ] On an agent-reported `port_conflict`, `desired_port` is re-pinned; the agent converges on its next pull.
 - [ ] After any `mark_node_*`, the `node.state_changed` publish is queued before commit.
