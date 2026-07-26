@@ -58,10 +58,10 @@ def test_a_pack_with_no_releases_contributes_no_labels() -> None:
 async def test_catalog_labels_match_the_query_backed_map(db_session: AsyncSession) -> None:
     """Parity, pair for pair, with the three-statement map this replaces.
 
-    ``load_platform_label_map`` keeps five other callers with no catalog in hand,
-    so the two must not drift: the derived map is only a legal substitute at the
-    device-list call site while it answers every pair identically, including the
-    misses.
+    ``load_platform_label_map`` keeps callers with no catalog in hand, so the
+    two must not drift: the derived map is only a legal substitute where a
+    catalog is already loaded, and only while it answers every pair
+    identically, including the misses.
     """
     pairs = [
         (ANDROID_PACK, "android_mobile"),

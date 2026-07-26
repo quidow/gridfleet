@@ -33,7 +33,7 @@ from app.devices.services.group_membership import (
     load_static_group_keys_by_device_id,
 )
 from app.devices.services.intent import IntentService
-from app.devices.services.platform_label import load_platform_label_map
+from app.devices.services.platform_label import platform_labels_from_catalog
 from app.devices.services.readiness import (
     assess_device_with_pack,
     assess_devices_async,
@@ -61,6 +61,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
     from app.events.protocols import EventPublisher
+    from app.packs.services.catalog_view import PackView
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,23 +333,39 @@ def _device_matches_requirement_static(
     return readiness_lookup.get(device.id, False)
 
 
+@dataclass(frozen=True, slots=True)
+class _BatchSelection:
+    """What one candidate-selection pass produces.
+
+    ``pack_catalog`` crosses this boundary because the caller would otherwise
+    re-read the pack tables to build platform labels — the projection is
+    already in hand, already carries ``display_name``, and the requirement gate
+    in step 2 guarantees every surviving requirement's platform is in it.
+    """
+
+    devices_by_requirement: list[list[Device]]
+    pack_catalog: dict[str, PackView]
+
+
 async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     db: AsyncSession,
     requirements: list[DeviceRequirement],
     *,
     restart_window_sec: int,
-) -> list[list[Device]]:
+) -> _BatchSelection:
     """One batch pass: load every fact the run-allocator needs in a bounded number
     of reads, then select devices per requirement in request order excluding
     already-selected ids. Returns one device list per requirement (parallel to
-    ``requirements``).
+    ``requirements``) plus the projected pack catalog step 2 built, so the caller
+    derives platform labels from it instead of re-reading the pack tables.
 
     Read budget (candidate-selection phase, before the run INSERT):
 
     1. one group-definition batch — groups, their reference targets, and the
        reference map (only when any requirement pins groups),
     2. one batched pack-row lock + state check across all distinct pack_ids,
-    3. one batched stereotype-template / pack load for all (pack_id, platform_id) pairs,
+    3. no read of its own for the stereotype-template / pack load: step 2's
+       catalog already covers every (pack_id, platform_id) pair,
     4. one candidate-devices SELECT joined to host + appium_node across every
        requirement's (pack_id, platform_id) pair,
     5. one batched readiness assessment over the candidate set (reuses the pack
@@ -363,6 +380,11 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     reuses the batched pack catalog, and the locked recheck is a single id-list
     query whose length is bounded by ``count + min(count,
     _MAX_SPARE_CANDIDATES_PER_REQUIREMENT)`` per requirement.
+
+    The returned catalog is what keeps that budget honest past this function:
+    ``_attempt_create_run`` used to spend three more statements on
+    ``load_platform_label_map`` over these same tables, before the run INSERT,
+    for one string per platform this projection already carries.
     """
     # Step 1: validate group keys once, before any device lock. Raises
     # UnknownGroupKeysError -> HTTP 422 if any key is missing.
@@ -517,7 +539,7 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     # serialize DeviceGroupMembership edits).
     all_selected_ids = list(selected_ids)
     if not all_selected_ids:
-        return per_requirement_candidates
+        return _BatchSelection(devices_by_requirement=per_requirement_candidates, pack_catalog=pack_catalog)
     locked_stmt = (
         select(Device)
         .options(selectinload(Device.host), selectinload(Device.appium_node))
@@ -586,7 +608,7 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
             assert req.count is not None
             kept = kept[: req.count]
         reconciled.append(kept)
-    return reconciled
+    return _BatchSelection(devices_by_requirement=reconciled, pack_catalog=pack_catalog)
 
 
 class RunAllocatorService:
@@ -686,16 +708,13 @@ class RunAllocatorService:
             restart_window_sec=self._restart_window_sec(),
         )
         all_matched: list[Device] = []
-        for req, devices in zip(data.requirements, selection, strict=True):
+        for req, devices in zip(data.requirements, selection.devices_by_requirement, strict=True):
             required_count = _minimum_required_count(req)
             if len(devices) < required_count:
                 raise _UnmetRequirementError(req, len(devices))
             all_matched.extend(_select_matching_devices(req, devices))
 
-        label_map = await load_platform_label_map(
-            db,
-            ((device.pack_id, device.platform_id) for device in all_matched),
-        )
+        label_map = platform_labels_from_catalog(selection.pack_catalog)
 
         device_infos: list[ReservedDeviceInfo] = [
             _build_device_info(

@@ -50,6 +50,22 @@ def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
         event.remove(sync_engine, "before_cursor_execute", listener)
 
 
+def _pack_reads_before_run_insert(statements: list[str]) -> list[str]:
+    """Statements touching the pack tables in the candidate-selection phase.
+
+    The window closes at ``INSERT INTO test_runs`` — the run row write that ends
+    matching. Reads after it (the inline intent reconcile's own catalog read)
+    belong to other code paths and are not this budget's business.
+    """
+    reads: list[str] = []
+    for statement in statements:
+        if statement.lstrip().upper().startswith("INSERT INTO TEST_RUNS"):
+            break
+        if "driver_pack" in statement.lower():
+            reads.append(statement)
+    return reads
+
+
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_build_device_info_populates_tier1_fields(db_session: AsyncSession, default_host_id: str) -> None:
@@ -138,3 +154,45 @@ async def test_reservation_context_lookup_does_not_load_reserved_device_rows(
     assert entry is not None
     device_selects = [statement for statement in statements if "FROM devices" in statement]
     assert device_selects == []
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_run_creation_reads_the_pack_tables_once(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    """One walk of the pack tables per create attempt, and the label survives it.
+
+    ``_batch_select_devices`` locks and projects the requirement's pack rows in
+    its step 2 — a ``selectinload`` chain over packs, releases and platforms,
+    three statements, and the lock is the point of them. Run creation used to
+    walk those same three tables again through ``load_platform_label_map``, for
+    one string per platform that projection already carried, once per retry
+    attempt. The count is absolute, not a before/after shape: three statements,
+    all step 2's.
+
+    The label assertion is not decoration. A statement-count test alone passes
+    just as happily on a label map that returns nothing.
+    """
+    await create_device(
+        db_session,
+        host_id=default_host_id,
+        name="pack-read-budget",
+        operational_state="available",
+    )
+    payload = {
+        "name": "pack-read-budget",
+        "requirements": [{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
+    }
+
+    with _capture_statements(db_session) as statements:
+        response = await client.post("/api/runs", json=payload)
+
+    assert response.status_code == 201, response.text
+    pack_reads = _pack_reads_before_run_insert(statements)
+    assert len(pack_reads) == 3, (
+        f"run creation walked the pack tables {len(pack_reads)} times (a multiple of 3 may mean a retried "
+        "create_run attempt rather than a reintroduced second read):\n"
+        + "\n".join(" ".join(sql.split())[:160] for sql in pack_reads)
+    )
+    assert response.json()["devices"][0]["platform_label"] == "Android"

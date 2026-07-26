@@ -44,12 +44,12 @@ class PackPlatformView:
     nothing in the control plane mutates it, and deep-copying every manifest on
     every catalog read is the expensive half of the read.
 
-    ``display_name`` is carried for the device-list read alone, and it is here
-    because of what it removes: that path used to issue a separate three-
-    statement query (``load_platform_label_map``) over these same rows to get
-    this one string. Every field on this type is a field every consumer pays for
-    on every catalog read — the next one proposed here has to show the same kind
-    of removal, not a convenience.
+    ``display_name`` is carried for the device-list read and run creation, and
+    it is here because of what it removes: each of those paths used to issue a
+    separate three-statement query (``load_platform_label_map``) over these same
+    rows to get this one string. Every field on this type is a field every
+    consumer pays for on every catalog read — the next one proposed here has to
+    show the same kind of removal, not a convenience.
     """
 
     manifest_platform_id: str

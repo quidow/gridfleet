@@ -562,4 +562,4 @@ async def select_devices_for_requirement(
         [requirement],
         restart_window_sec=restart_window_sec,
     )
-    return selection[0]
+    return selection.devices_by_requirement[0]
