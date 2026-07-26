@@ -88,28 +88,29 @@ async def _wait(flag: asyncio.Event, *, label: str) -> None:
 
 
 def _signal_once_the_edge_is_staged(session: AsyncSession, static_id: uuid.UUID, staged: asyncio.Event) -> None:
-    """Set *staged* on the first ``flush`` that finds the edge row written.
+    """Set *staged* on the first ``execute`` that finds the edge row written.
 
-    Wrapped around ``session.flush`` rather than around SQL text: the seam is a
-    session state ("my edge row is written and holds ``FOR KEY SHARE`` on the
-    target"), which the writer's own transaction can be asked about directly.
-    Holds afterwards so the released peer reaches its ``DELETE`` and blocks
-    there instead of running after the commit.
+    Wrapped around ``session.execute`` rather than ``session.flush``: the edge
+    INSERT is a Core statement the writer issues directly, so the row exists in
+    this transaction as soon as that call returns — no flush is involved. The
+    probe reads inside the writer's own transaction, so it sees the uncommitted
+    row a peer cannot. Holds afterwards so the released peer reaches its
+    ``DELETE`` and blocks there instead of running after the commit.
     """
-    original_flush = session.flush
+    original_execute = session.execute
     fired = False
     stmt = select(func.count()).select_from(DeviceGroupMemberOf).where(DeviceGroupMemberOf.static_group_id == static_id)
 
     async def _intercepted(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         nonlocal fired
-        result = await original_flush(*args, **kwargs)
-        if not fired and int((await session.execute(stmt)).scalar_one()):
+        result = await original_execute(*args, **kwargs)
+        if not fired and int((await original_execute(stmt)).scalar_one()):
             fired = True
             staged.set()
             await asyncio.sleep(HANDOFF_SEC)
         return result
 
-    session.flush = _intercepted  # type: ignore[assignment, method-assign]
+    session.execute = _intercepted  # type: ignore[assignment, method-assign]
 
 
 async def _assert_consistent_end_state(

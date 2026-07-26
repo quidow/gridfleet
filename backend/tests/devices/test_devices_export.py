@@ -262,3 +262,21 @@ async def test_export_bundle_loads_member_of_references_in_one_batch(
 
     member_of_statements = [s for s in statements if "device_group_member_of" in s.lower()]
     assert len(member_of_statements) == 1, statements
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_export_bundle_dynamic_group_with_no_axes_exports_none_filters(db_session: AsyncSession) -> None:
+    """A dynamic group with no native filter axes and no ``member_of`` reference
+    rows must export ``filters=None``, matching the pre-branch exporter's wire
+    shape — not ``{}``, which would be a silent regression for any consumer."""
+    from app.devices.models import DeviceGroup, GroupType
+    from app.portability.services.export import PortabilityExportService
+
+    db_session.add(DeviceGroup(key="empty-dynamic", name="Empty Dynamic", group_type=GroupType.dynamic, filters=None))
+    await db_session.commit()
+
+    bundle = await PortabilityExportService().build_export_bundle(db_session)
+
+    assert len(bundle.groups) == 1
+    assert bundle.groups[0].filters is None

@@ -686,11 +686,12 @@ async def _replace_member_of(
     )
     try:
         async with db.begin_nested():
+            # Both foreign keys are NOT DEFERRABLE, so the RI check runs as an
+            # AFTER-ROW trigger that fires before this call returns — a target
+            # deleted between the resolve and now surfaces as a named FK
+            # violation right here, inside the savepoint this caller controls,
+            # rather than inside an unrelated commit.
             await db.execute(stmt)
-            # Inside the savepoint, so a target deleted between the resolve and
-            # now surfaces as a named FK violation at a point this caller still
-            # controls, rather than inside an unrelated commit.
-            await db.flush()
     except IntegrityError as exc:
         if constraint_name(exc) == "fk_device_group_member_of_static_group":
             raise UnknownMemberOfError(sorted(targets)) from exc

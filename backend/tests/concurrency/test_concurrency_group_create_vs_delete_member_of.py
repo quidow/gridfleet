@@ -57,9 +57,9 @@ pytestmark = [pytest.mark.db, pytest.mark.asyncio]
 HANDOFF_SEC = 0.5
 
 # A bound, not a race parameter. Every wait in this module is on an event a
-# specific seam sets; if a seam stops firing (renamed function, changed flush
-# count) an unbounded wait would hang the run, because ``pytest-timeout`` is
-# deliberately not a dependency here.
+# specific seam sets; if a seam stops firing (renamed function, changed
+# statement shape) an unbounded wait would hang the run, because
+# ``pytest-timeout`` is deliberately not a dependency here.
 EVENT_WAIT_TIMEOUT_SEC = 5.0
 
 # Ceiling for a whole two-writer gather. Generous relative to HANDOFF_SEC: it
@@ -85,36 +85,34 @@ async def _wait(flag: asyncio.Event, *, label: str) -> None:
         pytest.fail(f"{label}: the coordinating seam never fired within {EVENT_WAIT_TIMEOUT_SEC}s")
 
 
-async def _relation_count(session: AsyncSession, static_id: uuid.UUID) -> int:
-    stmt = select(func.count()).select_from(DeviceGroupMemberOf).where(DeviceGroupMemberOf.static_group_id == static_id)
-    return int((await session.execute(stmt)).scalar_one())
-
-
 def _signal_once_the_edge_is_staged(session: AsyncSession, session_id: uuid.UUID, staged: asyncio.Event) -> None:
-    """Set *staged* on the first ``flush`` that finds the edge row written.
+    """Set *staged* on the first ``execute`` that finds the edge row written.
 
-    Wrapped around ``session.flush``, not around SQL text: the seam is "the
-    relation row is in this transaction and its ``FOR KEY SHARE`` on the target
-    is held", which is a state the session can be asked about directly. The
-    probe reads inside the writer's own transaction, so it sees the uncommitted
-    row a peer cannot.
+    Wrapped around ``session.execute``, not ``session.flush``: the edge INSERT
+    is a Core statement the writer issues directly, so the row exists in this
+    transaction as soon as that call returns — no flush is involved. The probe
+    reads inside the writer's own transaction, so it sees the uncommitted row a
+    peer cannot.
 
     Holds for ``HANDOFF_SEC`` afterwards so the released peer reaches its own
     ``DELETE`` and blocks there rather than running after the commit.
     """
-    original_flush = session.flush
+    original_execute = session.execute
     fired = False
+    count_stmt = (
+        select(func.count()).select_from(DeviceGroupMemberOf).where(DeviceGroupMemberOf.static_group_id == session_id)
+    )
 
     async def _intercepted(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
         nonlocal fired
-        result = await original_flush(*args, **kwargs)
-        if not fired and await _relation_count(session, session_id):
+        result = await original_execute(*args, **kwargs)
+        if not fired and int((await original_execute(count_stmt)).scalar_one()):
             fired = True
             staged.set()
             await asyncio.sleep(HANDOFF_SEC)
         return result
 
-    session.flush = _intercepted  # type: ignore[assignment, method-assign]
+    session.execute = _intercepted  # type: ignore[assignment, method-assign]
 
 
 async def _assert_consistent_end_state(

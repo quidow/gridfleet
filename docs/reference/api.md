@@ -424,7 +424,7 @@ Supported dynamic group filters:
 
 Every pinned axis is ANDed, `member_of` included: a device is a member only if it matches every filter *and* belongs to every static group named in `member_of`. `member_of` may reference static groups only; a dynamic or unknown key is rejected with `422` on create and update. Deleting a static group still referenced by a dynamic group's `member_of` returns `409`. Static groups cannot define filters.
 
-The API normalizes two things on write: duplicate `member_of` keys collapse to a sorted unique list, and a group that pins no axis at all returns no `filters` key rather than an empty object. Both are storage normalizations surfacing at the boundary, not behavior changes — an empty `filters` never restricted anything.
+The API normalizes two things on write: every response sorts `member_of` into a unique, ascending list — unconditionally, not only when the request had duplicates, so `["west", "east"]` still comes back `["east", "west"]` — and a group that pins no axis at all returns no `filters` key rather than an empty object. Both are storage normalizations surfacing at the boundary, not behavior changes — an empty `filters` never restricted anything, but a client that depends on its request order surviving the round trip is affected either way.
 
 Dynamic membership is evaluated live on every read; it is never materialized into a membership table and never cached.
 

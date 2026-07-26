@@ -108,7 +108,11 @@ async def test_concurrent_reference_replacements_do_not_union(
         assert references in ([first], [second]), (
             f"attempt {attempt}: both replacements survived, so neither is the group's definition: {references}"
         )
-        # The winner's own payload has to agree with the row. A serialisation
-        # that produced the right table state but echoed the loser's set back to
-        # the operator would be a different bug with the same symptoms.
+        # ``payloads`` is always ``[[first], [second]]`` — each caller echoes only
+        # its own requested target and never re-reads — so once the assertion
+        # above holds, this one follows from it rather than checking anything
+        # independent. What it does still catch is either caller echoing a
+        # merged ``[first, second]`` back instead of its own single target. The
+        # loser echoing its own committed-then-superseded target is correct
+        # HTTP semantics, not a bug.
         assert references in payloads, f"attempt {attempt}: no caller was told what actually landed: {payloads}"
