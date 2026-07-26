@@ -17,7 +17,6 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
-from app.core.locks import group_mutation_lock
 from app.devices.models import (
     Device,
     DeviceGroup,
@@ -59,7 +58,7 @@ if TYPE_CHECKING:
     from app.portability.protocols import VerificationEnqueuer
 
 logger = logging.getLogger(__name__)
-MEMBERSHIP_BATCH_SIZE = 1000  # ponytail: bounds group-lock hold; tune only from measured import contention
+MEMBERSHIP_BATCH_SIZE = 1000  # ponytail: bounds one batch's row-lock hold; tune only from measured import contention
 
 
 class BundleHashMismatchError(ValueError):
@@ -70,10 +69,10 @@ class GroupKeyCollisionError(ValueError):
     """Raised when a bundle group key already exists in the target database.
 
     ``keys`` may be empty: the flush path re-reads to name the colliding keys
-    after its rollback has released the group-mutation lock, so a peer can
-    delete the row that won between the collision and the re-read. Report the
-    conflict without naming keys rather than guessing at them — the operator's
-    next step (re-validate and retry) is the same either way.
+    after its own rollback, so a peer can delete the row that won between the
+    collision and the re-read. Report the conflict without naming keys rather
+    than guessing at them — the operator's next step (re-validate and retry) is
+    the same either way.
     """
 
     def __init__(self, keys: list[str]) -> None:
@@ -234,11 +233,11 @@ async def _flush_groups_or_collide(session: AsyncSession, keys: list[str]) -> No
         # The transaction is gone, so re-read to name the keys that actually landed
         # rather than blaming every key the bundle carried.
         #
-        # No `or keys` fallback on an empty read. The rollback above released the
-        # group-mutation lock, so the winner's row can be deleted before this
-        # re-read runs; an empty result means the collision resolved itself, not
-        # that every key in the bundle collided. Naming them all would send the
-        # operator to edit groups that are fine.
+        # No `or keys` fallback on an empty read. Nothing holds the winner's row
+        # still, so it can be deleted before this re-read runs; an empty result
+        # means the collision resolved itself, not that every key in the bundle
+        # collided. Naming them all would send the operator to edit groups that
+        # are fine.
         collided = await _load_existing_group_keys(session, set(keys))
         raise GroupKeyCollisionError(sorted(collided)) from exc
 
@@ -256,7 +255,8 @@ async def _load_existing_group_ids(session: AsyncSession, keys: set[str]) -> dic
     Used by ``_stage_static_memberships`` to detect a delete+recreate: a static
     group deleted and recreated during the device loop keeps its key but gets a
     new row id, so a key-only re-check misses it and the cached id goes stale.
-    The enclosing advisory lock keeps application definition writers out.
+    Nothing excludes a peer definition writer from this window, so the id is the
+    only thing that answers "is this still the group the bundle meant?".
     """
     if not keys:
         return {}
@@ -391,8 +391,9 @@ class PortabilityImportService:
     async def commit_import(self, session: AsyncSession, request: ImportCommitRequest) -> ImportCommitResult:
         """Commit definitions, then per-row devices, then memberships.
 
-        Definitions and memberships use separate group-lock transactions so the
-        device loop does not hold the fleet-global lock.
+        Definitions and memberships commit in separate transactions; nothing is
+        held across the device loop, which is why membership staging re-checks
+        every group id it cached rather than trusting the definition pass.
 
         Raises:
             BundleHashMismatchError: if ``request.bundle_hash`` does not match the recomputed hash.
@@ -413,13 +414,22 @@ class PortabilityImportService:
 
         group_id_by_key: dict[str, uuid.UUID] = {}
         if static_groups or dynamic_groups:
-            async with group_mutation_lock(session):
-                # Static and dynamic definitions commit atomically so member_of
-                # cannot reference a static deleted midway through the import.
+            try:
+                # Static definitions, dynamic definitions, and the edges joining
+                # them commit atomically. Publishing a static group before its
+                # referring edge would let a concurrent delete_group see an
+                # unreferenced target and remove it, and the edge that follows
+                # would have nothing to point at.
                 group_id_by_key = await self._insert_group_definitions(session, static_groups)
                 dynamic_id_by_key = await self._insert_dynamic_group_definitions(session, dynamic_groups)
                 await _insert_member_of_references(session, dynamic_groups, dynamic_id_by_key, group_id_by_key)
                 await session.commit()
+            finally:
+                # A failure short of the commit leaves the staged rows in an open
+                # transaction the caller never ends. (The key-collision path has
+                # already rolled back, so this is a no-op there.)
+                if session.in_transaction():
+                    await session.rollback()
 
         by_index = {row.index: row for row in preview.rows}
         mappings_by_index = {m.index: m for m in request.mappings}
@@ -487,12 +497,15 @@ class PortabilityImportService:
             if (group_id := group_id_by_key.get(key)) is not None
         ]
         if not planned:
-            async with group_mutation_lock(session, when=False):
-                return []
+            # The caller's own reads (validation, the device loop) autobegan a
+            # transaction that nothing here will commit.
+            if session.in_transaction():
+                await session.rollback()
+            return []
 
         memberships_skipped: list[MembershipSkip] = []
-        for batch in batched(planned, MEMBERSHIP_BATCH_SIZE, strict=False):
-            async with group_mutation_lock(session):
+        try:
+            for batch in batched(planned, MEMBERSHIP_BATCH_SIZE, strict=False):
                 current_group_ids = await _load_existing_group_ids(session, {key for _, key, _, _ in batch})
                 existing_device_ids = await _lock_existing_device_ids(
                     session, {device_id for _, _, device_id, _ in batch}
@@ -522,6 +535,12 @@ class PortabilityImportService:
                         )
                     )
                 await session.commit()
+        finally:
+            # A failure mid-batch strands the ``FOR KEY SHARE`` locks
+            # ``_lock_existing_device_ids`` took, which block device deletes
+            # until the session closes.
+            if session.in_transaction():
+                await session.rollback()
         return memberships_skipped
 
     async def _insert_group_definitions(

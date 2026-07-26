@@ -540,10 +540,17 @@ async def test_commit_leaves_no_open_transaction_when_nothing_is_staged(
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_skips_membership_lock_when_the_plan_is_empty(
+async def test_commit_stages_no_memberships_when_the_plan_is_empty(
     db_session: AsyncSession,
     seeded_driver_packs: None,
 ) -> None:
+    """A device in no bundle group must cost membership staging nothing.
+
+    The bundle defines a static group and imports a device that does not belong
+    to it, so ``_stage_static_memberships`` plans no rows. It must issue no
+    membership INSERT and no per-batch device lock, and leave no transaction
+    behind for the caller.
+    """
     host = await seed_host_named(db_session, "lab-04")
     host_id = host.id
     # seed_host_named refreshes the row after committing, which opens a read
@@ -562,17 +569,28 @@ async def test_commit_skips_membership_lock_when_the_plan_is_empty(
         )
 
     assert len(result.created) == 1
-    lock_statements = [statement for statement in statements if "pg_advisory_xact_lock" in statement.lower()]
-    assert len(lock_statements) == 1, statements
+    assert not any("device_group_memberships" in statement.lower() for statement in statements), statements
+    assert not any(
+        "from devices" in statement.lower() and "for key share" in statement.lower() for statement in statements
+    ), statements
+    assert not db_session.in_transaction(), "an empty membership plan left the caller's read transaction open"
 
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_bounds_membership_lock_to_batches(
+async def test_commit_bounds_membership_locks_to_batches(
     db_session: AsyncSession,
     seeded_driver_packs: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Each membership batch locks only the device ids it is about to reference.
+
+    With ``MEMBERSHIP_BATCH_SIZE`` forced to 1, two devices produce two batches
+    and therefore two separate ``FOR KEY SHARE`` acquisitions, each committed
+    before the next begins — rather than one that holds every device in the
+    bundle until the last row lands. The ordering clause is what keeps two
+    concurrent imports from deadlocking against each other.
+    """
     host = await seed_host_named(db_session, "lab-04")
     host_id = host.id
     await db_session.rollback()
@@ -599,8 +617,6 @@ async def test_commit_bounds_membership_lock_to_batches(
         )
 
     assert len(result.created) == 2
-    lock_statements = [statement for statement in statements if "pg_advisory_xact_lock" in statement.lower()]
-    assert len(lock_statements) == 3, statements
     device_locks = [
         statement.lower()
         for statement in statements

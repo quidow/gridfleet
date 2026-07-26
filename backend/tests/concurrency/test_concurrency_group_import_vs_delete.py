@@ -1,12 +1,20 @@
 """A bundle import must not leave its dynamic groups referencing a static group
 a concurrent delete removed mid-import.
 
-``commit_import`` used to commit static group definitions before the device loop
-and insert the dynamic ones only after it. A ``delete_group`` landing in that gap
-removed a static group the import had already committed, and the dynamic group
-inserted afterwards dangled. The fix folds both inserts into one transaction
-under the group-mutation advisory lock, so the deleter either sees both rows
-(and is rejected) or neither.
+What this pins is the *ordering of the edge rows*: ``commit_import`` stages both
+group definitions **and** their ``device_group_member_of`` rows inside one
+transaction and commits them together. Any arrangement that publishes a static
+group before its referring edge — a second commit for the dynamic definitions, a
+separate membership-style pass for the edges — reopens a window in which a
+``delete_group`` sees an unreferenced target, removes it, and the edge inserted
+afterwards has nothing to point at. The restrictive foreign key would then fail
+the import's own INSERT rather than corrupting anything, but the operator gets a
+500 on a half-applied bundle instead of a bundle that either landed or did not.
+
+Because the edge is committed with the definitions, the deleter can never win
+this race: it is released on the import's first commit, and that commit already
+carries the reference. The test asserts that single terminal state rather than
+branching on an interleaving that cannot occur.
 """
 
 from __future__ import annotations
@@ -23,20 +31,25 @@ from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services.groups import GroupReferencedError
 from app.portability.schemas import ExportBundle, ExportedDeviceGroup, ImportCommitRequest, ImportCommitResult
 from app.portability.services.hash import compute_bundle_hash
-from app.portability.services.import_bundle import PortabilityImportService, UnknownGroupReferenceError
+from app.portability.services.import_bundle import PortabilityImportService
 from app.verification.services.service import VerificationService
-from tests.concurrency.group_lock_helpers import (
-    EVENT_WAIT_TIMEOUT_SEC,
-    HANDOFF_SEC,
-    build_groups_service,
-    fetch_group_rows,
-    fetch_member_of_keys,
-)
+from tests.concurrency.group_lock_helpers import build_groups_service, fetch_group_rows, fetch_member_of_keys
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.db, pytest.mark.asyncio]
+
+# Long enough for the released deleter to reach its own statements while the
+# import's first commit is still the most recent thing to have landed. Only
+# widens the window; the asserted outcome does not depend on the exact value.
+HANDOFF_SEC = 0.5
+
+# A bound, not a race parameter: comfortably above HANDOFF_SEC so it never trips
+# under normal timing, but it turns a seam that stopped firing into a legible
+# TimeoutError rather than a hung run (``pytest-timeout`` is deliberately not a
+# dependency here).
+EVENT_WAIT_TIMEOUT_SEC = 5.0
 
 
 def _groups_bundle(static_key: str, dynamic_key: str) -> ExportBundle:
@@ -60,9 +73,12 @@ def _groups_bundle(static_key: str, dynamic_key: str) -> ExportBundle:
 def _signal_after_first_commit(session: AsyncSession, committed: asyncio.Event) -> None:
     """Set *committed* once *session* has committed for the first time.
 
-    Before the fix that first commit carries only the static group definitions;
-    after it, both. Holding for ``HANDOFF_SEC`` gives the deleter time to run
-    against whatever state that commit made visible.
+    That first commit is ``commit_import``'s definition transaction: static
+    groups, dynamic groups, and the ``device_group_member_of`` rows joining
+    them. Holding for ``HANDOFF_SEC`` gives the deleter time to run against
+    exactly the state it published — which is the point, since an arrangement
+    that published the target without its edge would hand the deleter a
+    deletable row here.
     """
     original_commit = session.commit
     fired = False
@@ -103,6 +119,13 @@ async def _wait_for_import_commit(committed: asyncio.Event) -> None:
 async def test_delete_during_import_cannot_orphan_a_dynamic_group(
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
+    """A delete released on the import's first commit must find the edge already there.
+
+    The bundle carries one static group and one dynamic group whose ``member_of``
+    names it. ``commit_import`` inserts both definitions and the
+    ``device_group_member_of`` row joining them, then commits once; the deleter
+    is released on that commit and must be refused by name.
+    """
     suffix = uuid.uuid4().hex[:8]
     static_key = f"static-{suffix}"
     dynamic_key = f"dynamic-{suffix}"
@@ -128,29 +151,23 @@ async def test_delete_during_import_cannot_orphan_a_dynamic_group(
 
     import_result, delete_result = await asyncio.gather(run_import(), delete_static(), return_exceptions=True)
 
-    # The only two terminal states that keep the reference from dangling: the
-    # import's definitions (including the member_of edge) commit first and the
-    # deleter observes them and is rejected, or the delete somehow lands first
-    # and the import's own validation/FK rejects the now-missing target. Either
-    # is acceptable; anything else is a bug worth naming loudly rather than
-    # asserting past.
-    if isinstance(import_result, Exception):
-        assert isinstance(import_result, UnknownGroupReferenceError), (
-            f"import may only fail with the group-reference error, got {import_result!r}"
-        )
-        assert delete_result is True, f"deleter must have won when the import lost the race: {delete_result!r}"
-    else:
-        assert isinstance(delete_result, GroupReferencedError), (
-            f"deleter must observe the imported reference, got {delete_result!r}"
-        )
+    # One terminal state, not two. The deleter is released on the commit that
+    # publishes the edge, so it can only ever observe a referenced target. There
+    # is no "delete wins" branch to assert: an interleaving that produced one
+    # would mean the definitions and their device_group_member_of rows had been
+    # split across commits again, which is the regression this file exists to
+    # catch — so it has to fail here rather than be tolerated as an alternative.
+    assert not isinstance(import_result, Exception), f"the import must land intact, got {import_result!r}"
+    assert isinstance(delete_result, GroupReferencedError), (
+        f"deleter must observe the imported reference, got {delete_result!r}"
+    )
+    assert delete_result.dependents == [dynamic_key], (
+        f"the 409 must name the imported referrer, got {delete_result.dependents!r}"
+    )
 
     static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
-    if isinstance(import_result, Exception):
-        assert dynamic_row is None, "a rejected import must not leave its dynamic group behind"
-        assert static_row is None, "the deleter's winning delete must have removed the static group"
-    else:
-        assert static_row is not None, "the referenced static group must survive the rejected delete"
-        assert dynamic_row is not None, "the imported dynamic group must survive"
-        assert await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key) == [static_key], (
-            f"the imported dynamic group must still reference {static_key}"
-        )
+    assert static_row is not None, "the referenced static group must survive the rejected delete"
+    assert dynamic_row is not None, "the imported dynamic group must survive"
+    assert await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key) == [static_key], (
+        f"the imported dynamic group must still reference {static_key}"
+    )
