@@ -6,18 +6,14 @@ transaction. This module pins what ``converge_pushed_host`` actually executes at
 settlement, so a re-introduced N+1 or an extra transaction boundary fails here.
 
 The pinned constants are MEASURED, not derived. ``FORMULA_MAX`` is the Phase 8
-Global-Constraints ceiling (``8 + 8n``) and is asserted separately, directly
-against the raw statement count — no netting.
+Global-Constraints ceiling (``8 + 8n``), asserted in full: the cycle fits inside
+it with no exclusion and no netting.
 
-The driver-pack catalog read inside ``load_device_decision_snapshot`` (called
-with ``packs={}``, it falls back to
-``app.packs.services.catalog_view.load_pack_catalog``) used to cost three
-statements per device (``driver_packs`` plus two ``selectinload`` legs),
-putting one statement per device over the Phase 8 budgeted eight; the ceiling
-was asserted net of that single-statement exclusion. ``load_pack_catalog`` is
-now the one-statement joined-load catalog reader, so the per-device fallback
-costs one statement, not three, and the settlement fits the budgeted eight
-with no exclusion needed.
+The driver-pack catalog is read ONCE per host, before convergence, and carried
+into every per-device settlement as a value projection
+(``app.packs.services.catalog_view``). ``PACK_CATALOG_READS_PER_HOST`` pins that
+read as constant in fleet size — it is the entire reason the per-device cost is
+six statements and not nine.
 """
 
 from __future__ import annotations
@@ -53,7 +49,8 @@ FLEET_SIZES = (1, 10, 50)
 #   constant (6): 1 SELECT devices          (fetch_desired_rows_for_host)
 #                 1 SELECT device_remediation_log (load_ladders)
 #                 2 SELECT device_remediation_log (load_active_backoffs)
-#                 1 SELECT driver_packs     (load_pack_catalog, one joined statement for the whole host)
+#                 1 SELECT driver_packs     (converge_pushed_host's per-host
+#                                            catalog read, joinedload chain)
 #                 1 UPDATE appium_nodes     (the batched last_observed_at touch)
 #   per device (6): 1 SELECT devices FOR UPDATE       (lock_device_handle)
 #                   1 SELECT device_intents           (snapshot claims)
@@ -61,26 +58,18 @@ FLEET_SIZES = (1, 10, 50)
 #                   1 SELECT appium_nodes FOR UPDATE  (lock_appium_node_for_device)
 #                   1 UPDATE appium_nodes             (mark_node_started)
 #                   1 INSERT system_events            (node.state_changed)
-# => 6 + 6n statements and 1 + n commits. The driver-pack catalog read moved
-# from the per-device list to the constant list here: converge_pushed_host now
-# reads it once per host cycle and publishes it on the preloaded_pack_catalog
-# ContextVar (app.devices.services.readiness), so load_device_decision_snapshot's
-# per-device fallback never fires for this settlement. Lower these when a
-# reduction lands; never raise one without attaching the inventory that
-# explains the new statement.
+# => 6 + 6n statements and 1 + n commits. Lower these when a reduction lands;
+# never raise one without attaching the inventory that explains the new statement.
 RECONCILER_MAX = {1: 12, 10: 66, 50: 306}
 RECONCILER_COMMITS = {1: 2, 10: 11, 50: 51}
 
-# Phase 8 Global Constraints ceiling, asserted directly against the raw
-# statement count (no netting — the settlement now fits the budgeted eight
-# per device with the driver-pack catalog read amortized to one constant
-# statement for the whole host cycle, not billed against any device). A count
-# above it is a Task 2/3/4/5 defect, not a reason to raise the formula.
+# Phase 8 Global Constraints ceiling, asserted against the measurement in full.
+# A count above it is a convergence defect, not a reason to raise the formula.
 FORMULA_MAX = {n: 8 + 8 * n for n in FLEET_SIZES}
-PACK_CATALOG_SIGNATURES = ("SELECT driver_packs",)
-# Pinned exactly so a regression to a per-device (or multi-statement) fallback
-# is caught immediately: this must hold at n=1, n=10, AND n=50 alike, since a
-# per-device reader would scale with fleet size while this does not.
+PACK_CATALOG_SIGNATURES = ("SELECT driver_packs", "SELECT driver_pack_releases", "SELECT driver_pack_platforms")
+# The batched read: one statement for the whole host, at every fleet size. This
+# is the assertion that fails if anyone re-introduces a per-device catalog
+# resolve, whichever call site issues it.
 PACK_CATALOG_READS_PER_HOST = 1
 
 _WS = re.compile(r"\s+")

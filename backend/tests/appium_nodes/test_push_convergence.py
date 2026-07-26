@@ -126,9 +126,14 @@ async def test_converge_pushed_host_reads_the_pack_catalog_once(
     finally:
         event.remove(engine, "before_cursor_execute", listener)
 
-    # Proof the settlement path actually ran, so the catalog count below is not
-    # measuring a cycle that short-circuited at confirm_running.
-    assert len([sql for sql in statements if sql.lstrip().upper().startswith("UPDATE APPIUM_NODES")]) >= 3
+    # Proof the settlement path actually ran for all three devices, so the
+    # catalog count below is not measuring a cycle that short-circuited at
+    # confirm_running. The cycle's own batched last_observed_at touch is
+    # itself an UPDATE appium_nodes, so a bare >= 3 would still pass if only
+    # two of three devices settled (2 per-device mark_node_started + 1
+    # constant touch = 3): four is the floor that only holds when every
+    # device's own mark_node_started ran.
+    assert len([sql for sql in statements if sql.lstrip().upper().startswith("UPDATE APPIUM_NODES")]) >= 4
     catalog_reads = [sql for sql in statements if "driver_pack" in sql]
     assert len(catalog_reads) == 1, catalog_reads
 
