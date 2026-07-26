@@ -190,7 +190,9 @@ async def test_run_creation_reads_the_pack_tables_once(
 
     assert response.status_code == 201, response.text
     pack_reads = _pack_reads_before_run_insert(statements)
-    assert len(pack_reads) == 3, f"run creation walked the pack tables {len(pack_reads)} times:\n" + "\n".join(
-        " ".join(sql.split())[:160] for sql in pack_reads
+    assert len(pack_reads) == 3, (
+        f"run creation walked the pack tables {len(pack_reads)} times (a multiple of 3 may mean a retried "
+        "create_run attempt rather than a reintroduced second read):\n"
+        + "\n".join(" ".join(sql.split())[:160] for sql in pack_reads)
     )
     assert response.json()["devices"][0]["platform_label"] == "Android"

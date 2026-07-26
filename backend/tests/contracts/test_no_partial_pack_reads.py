@@ -131,8 +131,10 @@ def test_loader_options_name_their_model_readably() -> None:
     assert not unreadable, (
         "A load_only/defer option this scan cannot read: its arguments do not "
         "name a model as `Model.column`, so it cannot be told apart from a "
-        "partial read of the driver-pack models. Spell the columns out, or "
-        "extend _named_models to understand the new form — do not leave the "
+        "partial read of the driver-pack models. If this option has nothing to "
+        "do with the driver-pack models, naming its columns inline is what lets "
+        "the scan tell the difference. Spell the columns out, or extend "
+        "_named_models to understand the new form — do not leave the "
         "scan guessing:\n" + "\n".join(unreadable)
     )
 
@@ -160,3 +162,10 @@ def test_the_allowlisted_reader_is_exempt_from_the_pack_finding() -> None:
     source = "stmt.options(load_only(DriverPack.state))\n"
     partial_reads, _ = _scan_source(source, "app/packs/services/catalog_view.py")
     assert partial_reads == []
+
+
+def test_the_scan_reports_a_chained_partial_pack_read_outside_the_allowlist() -> None:
+    source = "stmt.options(joinedload(DriverPack.releases).load_only(DriverPackRelease.release))\n"
+    partial_reads, unreadable = _scan_source(source, "app/somewhere/new_reader.py")
+    assert partial_reads == ["  app/somewhere/new_reader.py:1: DriverPackRelease"]
+    assert unreadable == []
