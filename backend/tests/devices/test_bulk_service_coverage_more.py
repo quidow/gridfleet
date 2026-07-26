@@ -16,7 +16,7 @@ from app.lifecycle.services.operator_node import (
     operator_stop_intents,
     operator_stop_sources,
 )
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSessionFactory, FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -122,6 +122,9 @@ async def test_bulk_collection_operations_cover_errors(monkeypatch: pytest.Monke
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", MagicMock())
 
     delete_calls = {first.id: False, second.id: RuntimeError("delete boom")}
+    # bulk_delete now opens one transaction per device; hand it a factory that
+    # yields the same mock session instead of a real engine.
+    monkeypatch.setattr(bulk_service, "_session_factory_from_db", lambda _db: FakeSessionFactory(db))
 
     async def fake_delete(_db: object, device_id: uuid.UUID) -> bool:
         value = delete_calls[device_id]
@@ -132,7 +135,7 @@ async def test_bulk_collection_operations_cover_errors(monkeypatch: pytest.Monke
     publish = AsyncMock()
     mock_publisher = SimpleNamespace(publish=publish)
     mock_crud_del = AsyncMock()
-    mock_crud_del.delete_device = AsyncMock(side_effect=fake_delete)
+    mock_crud_del.delete_device_txn = AsyncMock(side_effect=fake_delete)
     _settings_del2 = FakeSettingsReader({})
     deleted = await BulkOperationsService(
         publisher=mock_publisher,  # type: ignore[arg-type]

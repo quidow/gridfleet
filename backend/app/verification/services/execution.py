@@ -434,7 +434,7 @@ class VerificationExecutionService:
             if effect.mode == "create":
                 cleanup_error = await _stop_verification_node_if_running(job, db, device, node)
                 # Device deletion cascades to DeviceIntent rows, so the lease dies with it.
-                await self._failure_finalizers.crud.delete_device(db, effect.device_id)
+                await self._failure_finalizers.crud.delete_device_txn(db, effect.device_id)
                 if cleanup_error is not None:
                     return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
                 return VerificationExecutionOutcome(status="failed", error=error, device_id=None)

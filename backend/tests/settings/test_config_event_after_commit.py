@@ -12,7 +12,7 @@ from tests.helpers import dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 CAPS_V7 = {"orchestration_contract_version": 7}
 
@@ -61,14 +61,16 @@ async def test_approve_host_queues_status_changed(
 
 async def test_merge_device_config_queues_config_updated(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     _, device = await seed_host_and_device(db_session, identity="config-merge-1")
     event_bus_capture.clear()
 
-    await SettingsConfigService(publisher=event_bus).merge_device_config(
-        db_session, device, {"wifi": {"ssid": "lab"}}, changed_by="tester"
-    )
+    async with db_session_maker() as command_db, command_db.begin():
+        await SettingsConfigService(publisher=event_bus).merge_device_config(
+            command_db, device.id, {"wifi": {"ssid": "lab"}}, changed_by="tester"
+        )
     await dispatch_committed_events()
 
     updated = [p for n, p in event_bus_capture if n == "config.updated"]

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
     from app.settings.service import SettingsService
     from app.settings.service_config import SettingsConfigService
 
@@ -14,3 +16,4 @@ if TYPE_CHECKING:
 class SettingsServices:
     service: SettingsService
     config: SettingsConfigService
+    session_factory: async_sessionmaker[AsyncSession]

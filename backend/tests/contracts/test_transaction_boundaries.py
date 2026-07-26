@@ -35,6 +35,11 @@ MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/hosts/router_agent.py",
     "app/hosts/service_resource_telemetry.py",
     "app/hosts/service_status_push.py",
+    # Phase 9 task 1: device persistence, test-data, and config writers.
+    "app/devices/services/write.py",
+    "app/devices/services/service.py",
+    "app/devices/services/test_data.py",
+    "app/settings/service_config.py",
 )
 
 # Phase-3 mixed modules: each carries a sanctioned commit boundary AND below-boundary

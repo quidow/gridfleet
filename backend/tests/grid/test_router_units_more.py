@@ -83,7 +83,7 @@ from app.settings.schemas import SettingsBulkUpdate, SettingUpdate
 from app.settings.services_container import SettingsServices
 from app.verification import router as devices_verification_router
 from tests.conftest import settings_service
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSessionFactory, FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -124,7 +124,7 @@ class MutatingSession(DummySession):
 def _mock_settings_svc(service: object | None = None) -> SettingsServices:
     """Build a SettingsServices with a mock or real service for unit-test route calls."""
     svc = service if service is not None else settings_service
-    return SettingsServices(service=svc, config=Mock())
+    return SettingsServices(service=svc, config=Mock(), session_factory=FakeSessionFactory(object()))
 
 
 async def test_settings_router_error_paths() -> None:
@@ -306,8 +306,12 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
     assert exc.value.status_code == 404
 
     mock_ds_update = SimpleNamespace(
-        crud=SimpleNamespace(update_device=AsyncMock(return_value=object())),
+        crud=SimpleNamespace(
+            update_device_txn=AsyncMock(return_value=True),
+            get_device=AsyncMock(return_value=SimpleNamespace(id=device_id)),
+        ),
         presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={"id": "ok"})),
+        session_factory=FakeSessionFactory(object()),
     )
     assert await devices_core.update_device(
         device_id,
@@ -687,18 +691,17 @@ async def test_devices_test_data_router_paths() -> None:
         replace_device_test_data=AsyncMock(return_value={"token": "abc"}),
         merge_device_test_data=AsyncMock(return_value={"merged": True}),
     )
-    fake_ds = SimpleNamespace(test_data=fake_test_data_svc, crud=AsyncMock())
-    with (
-        patch("app.devices.routers.test_data.get_device_or_404", new=AsyncMock(return_value=device)),
-        patch("app.devices.routers.test_data.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
-    ):
+    fake_ds = SimpleNamespace(
+        test_data=fake_test_data_svc, crud=AsyncMock(), session_factory=FakeSessionFactory(object())
+    )
+    with patch("app.devices.routers.test_data.get_device_or_404", new=AsyncMock(return_value=device)):
         assert await devices_test_data.get_test_data(device_id, db=object(), device_services=fake_ds) == {"a": 1}  # type: ignore[arg-type]
-        assert await devices_test_data.replace_test_data(device_id, payload, db=object(), device_services=fake_ds) == {
+        assert await devices_test_data.replace_test_data(device_id, payload, device_services=fake_ds) == {  # type: ignore[arg-type]
             "token": "abc"
-        }  # type: ignore[arg-type]
-        assert await devices_test_data.merge_test_data(device_id, payload, db=object(), device_services=fake_ds) == {
+        }
+        assert await devices_test_data.merge_test_data(device_id, payload, device_services=fake_ds) == {  # type: ignore[arg-type]
             "merged": True
-        }  # type: ignore[arg-type]
+        }
 
     audit_log = SimpleNamespace(
         id=uuid.uuid4(),
@@ -1154,10 +1157,7 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
             )
             == config
         )
-        assert (
-            await devices_control.merge_device_config(device_id, {"env": {}}, db=object(), settings_services=config_ss)
-            == config
-        )
+        assert await devices_control.merge_device_config(device_id, {"env": {}}, settings_services=config_ss) == config
 
     audit_log = SimpleNamespace(
         id=uuid.uuid4(),
@@ -2370,8 +2370,9 @@ async def test_devices_core_router_branches() -> None:
     assert listed == {"items": [serialized], "total": 1, "limit": 10, "offset": 0}
 
     mock_ds_update_none = SimpleNamespace(
-        crud=SimpleNamespace(update_device=AsyncMock(return_value=None)),
+        crud=SimpleNamespace(update_device_txn=AsyncMock(return_value=False)),
         presenter=SimpleNamespace(),
+        session_factory=FakeSessionFactory(object()),
     )
     with pytest.raises(HTTPException) as exc:
         await devices_core.update_device(
@@ -2382,9 +2383,12 @@ async def test_devices_core_router_branches() -> None:
         )
     assert exc.value.status_code == 404
 
-    mock_ds_delete = SimpleNamespace(crud=SimpleNamespace(delete_device=AsyncMock(return_value=False)))
+    mock_ds_delete = SimpleNamespace(
+        crud=SimpleNamespace(delete_device_txn=AsyncMock(return_value=False)),
+        session_factory=FakeSessionFactory(object()),
+    )
     with pytest.raises(HTTPException) as exc:
-        await devices_core.delete_device(device_id, db=object(), device_services=mock_ds_delete)
+        await devices_core.delete_device(device_id, device_services=mock_ds_delete)
     assert exc.value.status_code == 404
 
     mock_packs_cur_err = SimpleNamespace(

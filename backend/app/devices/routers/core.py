@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import STANDARD_ERROR_RESPONSES
-from app.core.http_errors import found_or_404
 from app.core.timeutil import now_utc
 from app.devices.dependencies import DeviceServicesDep
 
@@ -37,15 +37,53 @@ from app.devices.services import (
 from app.devices.services import (
     platform_label as platform_label_service,
 )
+
+# ``constraint_name`` is the shared IntegrityError cause-chain unwrapper; the
+# portability importer uses the same helper for its own key-collision check.
+from app.devices.services.groups import constraint_name
 from app.devices.services.read_projection import load_device_read_projections
 from app.devices.services.service import UnknownGroupKeysError
 from app.sessions.dependencies import SessionServicesDep
+
+if TYPE_CHECKING:
+    from app.devices.services_container import DeviceServices
 
 DeviceIdentityConflictError = identity_conflicts.DeviceIdentityConflictError
 
 DEVICE_CORE_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
 
+# The only unique indexes that mean "another device already owns this identity"
+# (app/devices/models/device.py). Every other constraint violation is a bug, not
+# a race, and keeps its 500.
+DEVICE_IDENTITY_UNIQUE_INDEXES = frozenset(
+    {
+        "uq_devices_identity_scheme_value_global",
+        "uq_devices_host_identity_scheme_value",
+    }
+)
+
 router = APIRouter(responses=DEVICE_CORE_ERROR_RESPONSES)
+
+
+async def _reject_lost_identity_race(
+    exc: IntegrityError,
+    device_id: uuid.UUID,
+    data: DevicePatch,
+    device_services: DeviceServices,
+) -> None:
+    """Translate a lost identity race into the same 409 the pre-insert gate raises.
+
+    A concurrent writer can claim the identity between the in-transaction gate and
+    the flush. Must be called only after the failed transaction has been exited:
+    the friendly detail needs a read, and it runs on a fresh short session.
+    """
+    if constraint_name(exc) not in DEVICE_IDENTITY_UNIQUE_INDEXES:
+        return
+    async with device_services.session_factory() as explain_db:
+        try:
+            await device_services.crud.recheck_device_identity(explain_db, device_id, data)
+        except DeviceIdentityConflictError as conflict:
+            raise HTTPException(status_code=409, detail=str(conflict)) from exc
 
 
 def build_device_query_filters(
@@ -161,18 +199,30 @@ async def update_device(
     device_id: uuid.UUID, data: DevicePatch, db: DbDep, device_services: DeviceServicesDep
 ) -> dict[str, Any]:
     try:
-        device = await device_services.crud.update_device(db, device_id, data)
+        async with device_services.session_factory.begin() as command_db:
+            updated = await device_services.crud.update_device_txn(command_db, device_id, data)
     except DeviceIdentityConflictError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
-    device = found_or_404(device, "Device not found")
+    except IntegrityError as e:
+        # The command's transaction is fully exited here, so the explanatory read
+        # below runs on a session that is not aborted.
+        await _reject_lost_identity_race(e, device_id, data, device_services)
+        raise
+    if not updated:
+        raise HTTPException(status_code=404, detail="Device not found")
+    # Post-commit re-serialization on the request session: serialize_device runs
+    # several read projections, and pulling them into the write transaction would
+    # hold the Device FOR UPDATE across all of them for no behavioral gain.
+    device = await get_device_or_404(device_id, db, device_services.crud)
     return await device_services.presenter.serialize_device(db, device)
 
 
 @router.delete("/{device_id}", status_code=204)
-async def delete_device(device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep) -> None:
-    deleted = await device_services.crud.delete_device(db, device_id)
+async def delete_device(device_id: uuid.UUID, device_services: DeviceServicesDep) -> None:
+    async with device_services.session_factory.begin() as command_db:
+        deleted = await device_services.crud.delete_device_txn(command_db, device_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Device not found")
 

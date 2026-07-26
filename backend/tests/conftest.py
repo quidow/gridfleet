@@ -339,9 +339,14 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         )
 
     def override_get_settings_services() -> SettingsServices:
+        assert db_session.bind is not None
+        settings_sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            db_session.bind, class_=AsyncSession, expire_on_commit=False
+        )
         return SettingsServices(
             service=settings_service,
             config=SettingsConfigService(publisher=test_event_bus),
+            session_factory=settings_sf,
         )
 
     def override_get_agent_comm_services() -> AgentCommServices:

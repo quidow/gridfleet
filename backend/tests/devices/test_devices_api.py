@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from sqlalchemy import event, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import raiseload, selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -21,9 +23,10 @@ from app.devices.models import (
     DeviceType,
     GroupType,
 )
+from app.devices.routers import core as devices_core
 from app.devices.schemas.device import DevicePatch, DeviceRead, DeviceVerificationCreate
 from app.devices.services import service as device_service
-from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.devices.services.identity_conflicts import DeviceIdentityConflictError, DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration, verification_intent_source
 from app.devices.services.presenter import DevicePresenterService
@@ -41,7 +44,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -972,10 +975,10 @@ async def test_update_device_acquires_row_lock(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
-    real_lock = device_service.device_locking.lock_device
+    real_lock = device_service.device_locking.lock_device_handle
     spy = AsyncMock(side_effect=real_lock)
 
-    with patch("app.devices.services.service.device_locking.lock_device", spy):
+    with patch("app.devices.services.service.device_locking.lock_device_handle", spy):
         resp = await client.patch(f"/api/devices/{device_id}", json={"name": "Locked Update"})
 
     assert resp.status_code == 200
@@ -985,18 +988,79 @@ async def test_update_device_acquires_row_lock(
 
 
 @pytest.mark.asyncio
-async def test_update_device_returns_none_when_device_missing(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_update_device_txn_reports_false_when_device_missing(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     import uuid
 
     missing_id = uuid.uuid4()
     crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
-    result = await crud.update_device(
+    result = await crud.update_device_txn(
         db_session,
         missing_id,
         DevicePatch(),
         enforce_patch_contract=False,
     )
-    assert result is None
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_update_device_missing_returns_404(client: AsyncClient) -> None:
+    resp = await client.patch("/api/devices/00000000-0000-0000-0000-000000000000", json={"name": "nope"})
+    assert resp.status_code == 404
+    assert resp.json()["error"]["message"] == "Device not found"
+
+
+class _FakeUniqueViolationError(Exception):
+    """Stand-in for the driver cause asyncpg attaches to an IntegrityError."""
+
+    def __init__(self, constraint_name: str) -> None:
+        super().__init__(constraint_name)
+        self.constraint_name = constraint_name
+
+
+@pytest.mark.asyncio
+async def test_update_device_only_re_explains_the_two_identity_indexes(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lost identity race becomes 409; any other constraint keeps its 500."""
+    loser = await _create_device(
+        db_session, default_host_id, identity_value="race-loser", connection_target="race-loser", name="Loser"
+    )
+    crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
+    services = SimpleNamespace(crud=crud, session_factory=db_session_maker)
+    patch_data = DevicePatch(name="renamed")
+
+    # An unrelated constraint reads no rows and raises nothing: the caller
+    # re-raises the original IntegrityError and the 500 handler sees it.
+    reads: list[object] = []
+    monkeypatch.setattr(DeviceCrudService, "recheck_device_identity", AsyncMock(side_effect=reads.append))
+    unrelated = IntegrityError("stmt", {}, _FakeUniqueViolationError("devices_pkey"))
+    assert (
+        await devices_core._reject_lost_identity_race(unrelated, loser.id, patch_data, services)  # type: ignore[arg-type]
+        is None
+    )
+    assert reads == [], "an unrelated constraint must not trigger an explanatory read"
+
+    # A device-identity index re-runs the gate on a fresh session and reports the
+    # gate's own detail verbatim. The gate raises the real domain error here: only
+    # the identity fields the PATCH contract does not expose could produce it live.
+    detail = "Host 'lab-1' already registered device 'race-winner' (host-scoped identity)"
+    monkeypatch.setattr(
+        DeviceCrudService,
+        "recheck_device_identity",
+        AsyncMock(side_effect=DeviceIdentityConflictError(detail)),
+    )
+    for index_name in devices_core.DEVICE_IDENTITY_UNIQUE_INDEXES:
+        with pytest.raises(HTTPException) as caught:
+            await devices_core._reject_lost_identity_race(  # type: ignore[arg-type]
+                IntegrityError("stmt", {}, _FakeUniqueViolationError(index_name)), loser.id, patch_data, services
+            )
+        assert caught.value.status_code == 409
+        assert caught.value.detail == detail
 
 
 @pytest.mark.asyncio

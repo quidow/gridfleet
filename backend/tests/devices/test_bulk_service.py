@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from tests.fakes import build_review_service
+from tests.fakes import FakeSessionFactory, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -203,8 +203,11 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
         "app.devices.services.bulk.device_locking.lock_device",
         AsyncMock(side_effect=lambda _db, device_id, **_: next(d for d in devices if d.id == device_id)),
     )
+    # bulk_delete now opens one transaction per device; hand it a factory that
+    # yields the same mock session instead of a real engine.
+    monkeypatch.setattr("app.devices.services.bulk._session_factory_from_db", lambda _db: FakeSessionFactory(db))
     mock_crud = AsyncMock()
-    mock_crud.delete_device = AsyncMock(side_effect=[True, False, RuntimeError("cannot delete")])
+    mock_crud.delete_device_txn = AsyncMock(side_effect=[True, False, RuntimeError("cannot delete")])
     mock_maintenance = MagicMock()
     mock_maintenance.enter_maintenance = AsyncMock(side_effect=[None, RuntimeError("boom")])
     mock_maintenance.exit_maintenance = AsyncMock(side_effect=[ValueError("bad state"), RuntimeError("boom")])

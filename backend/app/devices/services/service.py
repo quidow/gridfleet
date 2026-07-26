@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import Select, asc, case, desc, func, or_, select
-from sqlalchemy.exc import IntegrityError, NoResultFound
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import raiseload, selectinload
 
 from app.core.leader import state_store as control_plane_state_store
@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.devices.locking import LockedDevice
     from app.devices.schemas.filters import DeviceGroupFilters
     from app.devices.services.identity_conflicts import DeviceIdentityConflictService
     from app.events.protocols import EventPublisher
@@ -86,30 +87,27 @@ class DeviceCrudService:
     ) -> dict[str, Any]:
         return await device_write.prepare_device_update_payload_async(db, device, data)
 
-    async def create_device(
+    async def create_device_txn(
         self,
         db: AsyncSession,
         data: DeviceVerificationCreate,
         *,
         mark_verified: bool = False,
         initial_operational_state: DeviceOperationalState = DeviceOperationalState.offline,
-        commit: bool = True,
     ) -> Device:
+        """Stage a new device inside the caller's transaction and flush once.
+
+        Seeds the operational-state ledger with *initial_operational_state* so the
+        intent reconciler's edge detector has a baseline. An ``IntegrityError``
+        from the flush belongs to the caller: only it knows whether the losing
+        insert can be re-explained on a fresh session.
+        """
         payload = await self.prepare_device_create_payload(db, data)
         if mark_verified:
             payload["verified_at"] = now_utc()
         payload["operational_state_last_emitted"] = initial_operational_state
         await self._identity.ensure_device_payload_identity_available(db, payload)
-        if not commit:
-            device = device_write.stage_device_record(db, payload)
-            await db.flush()  # apply the uuid4 PK default and surface IntegrityError inside the caller's txn
-            return device
-        try:
-            return await device_write.create_device_record(db, payload)
-        except IntegrityError:
-            await db.rollback()
-            await self._identity.ensure_device_payload_identity_available(db, payload)
-            raise
+        return await device_write.create_device_record(db, payload)
 
     async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]:
         static_keys, dynamic_groups, member_of_keys = await self._partition_group_filters(db, filters)
@@ -267,18 +265,27 @@ class DeviceCrudService:
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def update_device(
+    async def update_device_txn(
         self,
         db: AsyncSession,
         device_id: uuid.UUID,
         data: DevicePatch | DeviceVerificationUpdate,
         *,
         enforce_patch_contract: bool = True,
-    ) -> Device | None:
+    ) -> bool:
+        """Apply *data* to the locked device inside the caller's transaction.
+
+        Returns ``False`` when the device does not exist so the caller can raise
+        its own 404. Returns no ORM row: the caller's transaction has not
+        committed yet, and the response is re-read on the request session once it
+        has (see ``devices/routers/core.py``).
+        """
         try:
-            device = await device_locking.lock_device(db, device_id)
+            locked = await device_locking.lock_device_handle(db, device_id)
         except NoResultFound:
-            return None
+            return False
+        locked.assert_active(db)
+        device = locked.device
 
         if enforce_patch_contract:
             if not isinstance(data, DevicePatch):
@@ -291,17 +298,31 @@ class DeviceCrudService:
             device.verified_at = None
 
         device_write.apply_device_payload(device, payload)
-        try:
-            return await device_write.persist_device_record(db, device)
-        except IntegrityError:
-            await db.rollback()
-            await self._identity.ensure_device_payload_identity_available(db, payload, exclude_device_id=device.id)
-            raise
+        await device_write.persist_device_record(db, device)
+        return True
 
-    async def delete_device(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
-        device = await _lock_device_for_delete(db, device_id)
+    async def recheck_device_identity(
+        self, db: AsyncSession, device_id: uuid.UUID, data: DevicePatch | DeviceVerificationUpdate
+    ) -> None:
+        """Re-run the identity gate on a read-only session after a lost insert race.
+
+        Raises :class:`DeviceIdentityConflictError` when the clashing row is now
+        visible, so the caller can report the same 409 detail the in-transaction
+        gate would have produced. Returns silently when the row is already gone —
+        the caller then re-raises the original ``IntegrityError``.
+        """
+        device = await self.get_device(db, device_id)
         if device is None:
+            return
+        payload = await self.prepare_device_update_payload(db, device, data)
+        await self._identity.ensure_device_payload_identity_available(db, payload, exclude_device_id=device.id)
+
+    async def delete_device_txn(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
+        locked = await _lock_device_for_delete(db, device_id)
+        if locked is None:
             return False
+        locked.assert_active(db)
+        device = locked.device
 
         # Deleting the device row cascade-removes its AppiumNode row. We do NOT
         # wait for the agent's Appium process to stop here: that stop is async
@@ -319,7 +340,7 @@ class DeviceCrudService:
         await link_repair.reset_repair_attempts(db, device.identity_value)
 
         await db.delete(device)
-        await db.commit()
+        await db.flush()
         return True
 
 
@@ -502,8 +523,8 @@ def _build_device_count_stmt(
     return stmt.where(*_static_group_conditions(static_group_keys))
 
 
-async def _lock_device_for_delete(db: AsyncSession, device_id: uuid.UUID) -> Device | None:
+async def _lock_device_for_delete(db: AsyncSession, device_id: uuid.UUID) -> LockedDevice | None:
     try:
-        return await device_locking.lock_device(db, device_id)
+        return await device_locking.lock_device_handle(db, device_id)
     except NoResultFound:
         return None

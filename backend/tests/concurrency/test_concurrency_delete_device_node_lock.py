@@ -64,8 +64,8 @@ async def test_delete_device_does_not_wait_for_running_node_to_stop(
     assert node.observed_running is True
 
     with patch.object(IntentService, "register_intents_and_reconcile", new=AsyncMock()):
-        async with db_session_maker() as db:
-            deleted = await asyncio.wait_for(_crud().delete_device(db, device_id), timeout=5.0)
+        async with db_session_maker() as db, db.begin():
+            deleted = await asyncio.wait_for(_crud().delete_device_txn(db, device_id), timeout=5.0)
     assert deleted is True
 
     async with db_session_maker() as verify:
@@ -104,8 +104,8 @@ async def test_delete_device_concurrent_with_node_start_is_consistent(
     device_id = device.id
 
     async def deleter() -> bool:
-        async with db_session_maker() as db:
-            return await _crud().delete_device(db, device_id)
+        async with db_session_maker() as db, db.begin():
+            return await _crud().delete_device_txn(db, device_id)
 
     async def starter() -> str:
         async with db_session_maker() as db:

@@ -14,6 +14,7 @@ from app.appium_nodes.services import reconciler_agent as node_manager
 from app.core.dependencies import DbDep
 from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.errors import AgentCallError
+from app.core.http_errors import convert_not_found
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.routers.helpers import (
     get_device_for_update_or_404,
@@ -88,11 +89,13 @@ async def get_device_config(
 async def merge_device_config(
     device_id: uuid.UUID,
     body: dict[str, Any],
-    db: DbDep,
     settings_services: SettingsServicesDep,
 ) -> dict[str, Any]:
-    device = await get_device_for_update_or_404(device_id, db)
-    return await settings_services.config.merge_device_config(db, device, body)
+    # No pre-lock on the request session: the command locks the same row from its
+    # own session, and holding both would deadlock until a statement timeout.
+    with convert_not_found("Device not found"):
+        async with settings_services.session_factory.begin() as db:
+            return await settings_services.config.merge_device_config(db, device_id, body)
 
 
 @router.get("/{device_id}/config/history", response_model=list[ConfigAuditEntryRead])

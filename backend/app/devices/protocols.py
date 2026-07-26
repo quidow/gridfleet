@@ -65,14 +65,13 @@ class DeviceCrudProtocol(Protocol):
     async def prepare_device_update_payload(
         self, db: AsyncSession, device: Device, data: DevicePatch | DeviceVerificationUpdate
     ) -> dict[str, Any]: ...
-    async def create_device(
+    async def create_device_txn(
         self,
         db: AsyncSession,
         data: DeviceVerificationCreate,
         *,
         mark_verified: bool = ...,
         initial_operational_state: DeviceOperationalState = ...,
-        commit: bool = ...,
     ) -> Device: ...
     async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]: ...
     async def list_devices_paginated(
@@ -80,15 +79,18 @@ class DeviceCrudProtocol(Protocol):
     ) -> tuple[list[Device], int]: ...
     async def count_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> int: ...
     async def get_device(self, db: AsyncSession, device_id: uuid.UUID) -> Device | None: ...
-    async def update_device(
+    async def update_device_txn(
         self,
         db: AsyncSession,
         device_id: uuid.UUID,
         data: DevicePatch | DeviceVerificationUpdate,
         *,
         enforce_patch_contract: bool = ...,
-    ) -> Device | None: ...
-    async def delete_device(self, db: AsyncSession, device_id: uuid.UUID) -> bool: ...
+    ) -> bool: ...
+    async def recheck_device_identity(
+        self, db: AsyncSession, device_id: uuid.UUID, data: DevicePatch | DeviceVerificationUpdate
+    ) -> None: ...
+    async def delete_device_txn(self, db: AsyncSession, device_id: uuid.UUID) -> bool: ...
 
 
 class SessionViabilityProbe(Protocol):

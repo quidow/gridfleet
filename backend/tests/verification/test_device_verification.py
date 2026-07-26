@@ -2240,7 +2240,7 @@ async def test_prepare_create_translates_concurrent_identity_integrity_error(
     monkeypatch.setattr(prep, "normalize_effect", _passthrough_normalize)
     # Simulate the DB rejecting the duplicate at flush (past the pre-insert gate).
     monkeypatch.setattr(
-        prep._crud, "create_device", AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("dup")))
+        prep._crud, "create_device_txn", AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("dup")))
     )
 
     effect, error = await prep.prepare_create(

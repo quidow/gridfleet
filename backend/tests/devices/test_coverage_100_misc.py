@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -582,18 +582,22 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         def add(self, _obj: object) -> None:
             return None
 
-        async def commit(self) -> None:
-            return None
-
-        async def refresh(self, _obj: object) -> None:
+        async def flush(self) -> None:
             return None
 
     test_data_db = TestDataDb()
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", Mock())
     device = SimpleNamespace(id=uuid.uuid4(), name="device", test_data={"a": 1})
-    assert await test_data_service.TestDataService(publisher=event_bus).replace_device_test_data(
-        test_data_db, device, {"b": 2}, changed_by="operator"
-    ) == {"b": 2}
+    locked = SimpleNamespace(device=device, assert_active=lambda _db: None)
+    # Scoped, not monkeypatch: ``device_locking`` is shared, and a test-long patch
+    # would hand this stub to every other locker in this function.
+    with patch(
+        "app.devices.services.test_data.device_locking.lock_device_handle",
+        AsyncMock(return_value=locked),
+    ):
+        assert await test_data_service.TestDataService(publisher=event_bus).replace_device_test_data(
+            test_data_db, device.id, {"b": 2}, changed_by="operator"
+        ) == {"b": 2}
 
     host_db = AsyncMock()
     host_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))

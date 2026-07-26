@@ -126,6 +126,7 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
     settings_services = SettingsServices(
         service=settings_svc,
         config=SettingsConfigService(publisher=bus),
+        session_factory=session_factory,
     )
     agent_comm_services = AgentCommServices(
         http_pool=http_pool,

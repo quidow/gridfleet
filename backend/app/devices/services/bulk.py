@@ -198,10 +198,15 @@ class BulkOperationsService:
         )
 
     async def bulk_delete(self, db: AsyncSession, device_ids: list[uuid.UUID]) -> dict[str, Any]:
+        # One transaction per device, as the node actions above already do: the
+        # command is transaction-local now, and a shared transaction would let one
+        # failure abort every other device's delete.
+        session_factory = _session_factory_from_db(db)
         errors: dict[str, str] = {}
         for device_id in device_ids:
             try:
-                deleted = await self._crud.delete_device(db, device_id)
+                async with session_factory.begin() as device_db:
+                    deleted = await self._crud.delete_device_txn(device_db, device_id)
                 if not deleted:
                     errors[str(device_id)] = "Device not found"
             except Exception as e:  # noqa: BLE001 — per-device error accumulation; bulk delete must continue past one failure
