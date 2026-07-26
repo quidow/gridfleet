@@ -8,18 +8,19 @@ from sqlalchemy.exc import NoResultFound
 
 from app.core.leader.state_store import presence_snapshot, snapshot_presence, transactional_presence_snapshot
 from app.devices import locking as device_locking
-from app.devices.services.readiness import load_packs_by_ids, preloaded_pack_catalog
+from app.devices.services.readiness import preloaded_pack_catalog
+from app.packs.services.catalog_view import load_pack_catalog
 from app.packs.services.platform_resolver import pack_platform_resolution_cache
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
+    from collections.abc import AsyncIterator, Collection, Iterable, Iterator, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.leader.state_store import PresenceSnapshot
     from app.devices.models import Device
-    from app.packs.models import DriverPack
+    from app.packs.services.catalog_view import PackView
 
 
 _LOCKED_DEVICE_TOKEN = object()
@@ -77,12 +78,12 @@ class LockedDeviceFold:
 
 
 class DeviceHealthFoldScope:
-    def __init__(self, packs: dict[str, DriverPack], presence: PresenceSnapshot) -> None:
+    def __init__(self, packs: dict[str, PackView], presence: PresenceSnapshot) -> None:
         self._packs = packs
         self._presence = presence
 
     @property
-    def packs(self) -> Mapping[str, DriverPack]:
+    def packs(self) -> Mapping[str, PackView]:
         return self._packs
 
     @classmethod
@@ -90,18 +91,16 @@ class DeviceHealthFoldScope:
         cls,
         db: AsyncSession,
         *,
-        pack_ids: Iterable[str],
+        pack_ids: Collection[str],
         presence_namespaces: Iterable[str],
         presence_keys: Iterable[str],
     ) -> DeviceHealthFoldScope:
-        packs = await load_packs_by_ids(db, pack_ids)
+        packs = await load_pack_catalog(db, pack_ids)
         presence = await snapshot_presence(
             db,
             namespaces=presence_namespaces,
             keys=presence_keys,
         )
-        for pack in packs.values():
-            db.expunge(pack)
         return cls(packs, presence)
 
     @contextlib.contextmanager

@@ -93,42 +93,44 @@ FORMULA_MAX = {n: 24 + 9 * n for n in FLEET_SIZES}
 # device this is the confirm-path's 3 (property fold: 1 SELECT devices,
 # 1 SELECT hosts selectinload, 1 UPDATE devices) PLUS the reconciler's own
 # per-device settlement cost measured standalone in
-# test_appium_reconciler_query_budget.py's RECONCILER_MAX (9, one of which is
-# that module's documented unbudgeted driver-pack catalog read):
+# test_appium_reconciler_query_budget.py's RECONCILER_MAX (7 — the
+# driver-pack catalog fallback there is now a single joined statement, not
+# the three-statement selectinload fallback this pin previously accounted
+# for; that module's own inventory documents the same drop):
 #   1 SELECT devices FOR UPDATE   (lock_device_handle)
 #   1 SELECT device_intents       (snapshot claims)
 #   1 SELECT device_remediation_log (snapshot ladder)
-#   3 SELECT driver_pack*         (load_packs_by_ids fallback — the surplus)
+#   1 SELECT driver_packs         (load_pack_catalog fallback, one joined statement)
 #   1 SELECT appium_nodes FOR UPDATE (lock_appium_node_for_device)
 #   1 UPDATE appium_nodes         (mark_node_started)
 #   1 INSERT system_events        (node.state_changed)
-# => 3 + 9 = 12 raw statements/device, exactly: constant stays 21 (unchanged —
+# => 3 + 7 = 10 raw statements/device, exactly: constant stays 21 (unchanged —
 # the batched last_observed_at touch and every other constant statement are
-# already per-push, not per-action), so raw = 21 + 12n exactly at all three
+# already per-push, not per-action), so raw = 21 + 10n exactly at all three
 # sizes. Commits/device: 1 (property fold) + 1 (the reconciler's own
 # session_factory.begin() per device in apply_observed_node_command) = 2, so
-# commits = 5 + 2n exactly. Lower these when a reduction lands; never raise one
-# without attaching the inventory that explains the new statement.
-STATUS_PUSH_SETTLE_MAX = {1: 33, 10: 141, 50: 621}
+# commits = 5 + 2n exactly (unchanged — the catalog-read reduction removed
+# SELECT statements only, no transaction boundary). Lower these when a
+# reduction lands; never raise one without attaching the inventory that
+# explains the new statement.
+#
+# INTERIM VALUES: a later task on this branch batches the driver-pack catalog
+# read to once per host (not once per device), which will move this pin again.
+STATUS_PUSH_SETTLE_MAX = {1: 31, 10: 121, 50: 521}
 STATUS_PUSH_SETTLE_COMMITS = {1: 7, 10: 25, 50: 105}
 
-# Same exclusion as test_appium_reconciler_query_budget.py's
-# UNBUDGETED_STATEMENTS_PER_DEVICE: one of the settlement's three driver-pack
-# catalog reads, netted out per device before comparing against FORMULA_MAX.
-UNBUDGETED_STATEMENTS_PER_DEVICE = 1
-
 # MEASURED GAP AGAINST THE CEILING (settle path only — the confirm path above
-# stays inside FORMULA_MAX with room to spare). Net of the single unbudgeted
-# statement per device, the settle path measures 21 + 11n statements
-# (STATUS_PUSH_SETTLE_MAX minus n), against the Phase 8 Global Constraints
-# ceiling of 24 + 9n: satisfied only at n=1 (32 <= 33); exceeded by 17 at n=10
-# (131 vs 114) and by 97 at n=50 (571 vs 474). This is NOT the catalog-read
-# surplus the exclusion above already accounts for — it is the reconciler's
-# per-device settlement (8 statements even net of that surplus) landing on top
-# of the property-refresh fold's own per-device 3, for 11 net per device
-# against a 9-per-device formula that has no headroom left once convergence
-# actually writes. A human needs to decide whether the formula, the
-# implementation, or the netting is wrong; this module does not assert
+# stays inside FORMULA_MAX with room to spare). The settle path measures
+# raw 21 + 10n statements against the Phase 8 Global Constraints ceiling of
+# 24 + 9n: satisfied at n=1 (31 <= 33); exceeded by 7 at n=10 (121 vs 114)
+# and by 47 at n=50 (521 vs 474). This is smaller than the previous gap
+# (17 at n=10, 97 at n=50) because the driver-pack catalog fallback dropped
+# from three statements to one per device, but it is not closed: the
+# reconciler's own per-device settlement (7, inside ITS OWN 8-per-device
+# budget) still lands on top of the property-refresh fold's own per-device 3,
+# for 10 per device against a 9-per-device formula that has no headroom left
+# once convergence actually writes. A human needs to decide whether the
+# formula or the implementation is wrong; this module does not assert
 # STATUS_PUSH_SETTLE_MAX against FORMULA_MAX and pins only the measured values.
 
 
@@ -401,15 +403,17 @@ async def test_status_push_settle_path_statement_and_commit_budget(
     settlement (``app.appium_nodes.services.reconciler.apply_observed_node_
     command``, measured standalone in ``test_appium_reconciler_query_budget.py``).
 
-    One statement per device here is the same unbudgeted driver-pack catalog
-    read that module's docstring attributes to ``load_packs_by_ids`` (outside
-    this phase's editable file list); netted out below for the same reason.
+    The driver-pack catalog read here is the reconciler's own per-device
+    fallback (measured standalone in ``test_appium_reconciler_query_budget.py``),
+    now a single joined statement instead of the former three-statement
+    selectinload fallback.
 
-    PLAN-CEILING CONFLICT: even net of that one statement, this measurement
-    does NOT satisfy the Phase 8 Global Constraints ceiling (``24 + 9n``) at
-    n=10 or n=50 — see the module-level comment above ``STATUS_PUSH_SETTLE_MAX``
-    for the numbers. This test therefore pins the measured values on their own
-    terms and does not assert them against ``FORMULA_MAX``.
+    PLAN-CEILING CONFLICT: this measurement does NOT satisfy the Phase 8
+    Global Constraints ceiling (``24 + 9n``) at n=10 or n=50, even though the
+    catalog-read reduction shrank the gap — see the module-level comment above
+    ``STATUS_PUSH_SETTLE_MAX`` for the numbers. This test therefore pins the
+    measured values on their own terms and does not assert them against
+    ``FORMULA_MAX``.
     """
     _install_push_wiring(db_session_maker)
     assert db_session.bind is not None
@@ -417,19 +421,17 @@ async def test_status_push_settle_path_statement_and_commit_budget(
     failures_before = _observation_failure_total()
 
     counts: dict[int, int] = {}
-    net_counts: dict[int, int] = {}
     commits: dict[int, int] = {}
     verbs: dict[int, Counter[str]] = {}
     for generation, size in enumerate(FLEET_SIZES):
         host, devices = await seed_fleet(db_session, HOMOGENEOUS_FLEET, size, generation=generation)
         tap, commit_tap = await _measure_push(client, engine, host, _settle_push_payload(devices))
         counts[size] = tap.total
-        net_counts[size] = tap.total - UNBUDGETED_STATEMENTS_PER_DEVICE * size
         commits[size] = commit_tap.count
         verbs[size] = _by_verb(tap)
         print(
-            f"\nstatus push (settle) n={size}: statements={tap.total} (net {net_counts[size]}, "
-            f"ceiling {FORMULA_MAX[size]}) commits={commit_tap.count} verbs={dict(verbs[size])}"
+            f"\nstatus push (settle) n={size}: statements={tap.total} (ceiling {FORMULA_MAX[size]}) "
+            f"commits={commit_tap.count} verbs={dict(verbs[size])}"
         )
         for signature, count in tap.counter.most_common():
             print(f"    {count:5d}  {signature}")
@@ -451,10 +453,10 @@ async def test_status_push_settle_path_statement_and_commit_budget(
 
     # Exact, not <=: this is the measured settle-path pin itself, not a formula
     # ceiling with slack under it. See the module-level comment above
-    # STATUS_PUSH_SETTLE_MAX — net of the one unbudgeted catalog read per
-    # device, this measurement EXCEEDS the Phase 8 Global Constraints ceiling
-    # (24 + 9n) at n=10 and n=50. That is a plan-ceiling conflict for a human
-    # to resolve, not something this test may silently widen or shrink.
+    # STATUS_PUSH_SETTLE_MAX — this measurement EXCEEDS the Phase 8 Global
+    # Constraints ceiling (24 + 9n) at n=10 and n=50. That is a plan-ceiling
+    # conflict for a human to resolve, not something this test may silently
+    # widen or shrink.
     assert counts == STATUS_PUSH_SETTLE_MAX, (
         f"settle-path status push statement counts {counts} moved off the measured pin "
         f"{STATUS_PUSH_SETTLE_MAX}: attach a captured statement inventory before updating this"

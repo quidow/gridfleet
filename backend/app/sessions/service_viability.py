@@ -19,7 +19,6 @@ from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_locked_device
 from app.devices.services.intent_types import verification_intent_source
-from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import derive_operational_state, evaluate_operational_state, is_available_sql
 from app.grid import appium_direct
 from app.grid.allocation import node_target
@@ -259,8 +258,7 @@ class SessionViabilityService:
         """
         async with self._session_factory.begin() as db:
             locked = await device_locking.lock_device_handle(db, device_id)
-            packs = await load_packs_by_ids(db, [locked.device.pack_id])
-            snapshot = await load_device_decision_snapshot(db, locked, packs=packs, now=now_utc())
+            snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
             state = evaluate_operational_state(snapshot.state_facts)
             reserved = snapshot.decision_facts.reservation_run_id is not None
             can_probe = (state == DeviceOperationalState.available and not reserved) or (

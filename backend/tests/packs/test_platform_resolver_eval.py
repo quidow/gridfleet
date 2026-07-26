@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
-from app.devices.services.readiness import load_packs_by_ids
 from app.packs.models import DriverPack, PackState
+from app.packs.services.catalog_view import load_pack_catalog
 from app.packs.services.platform_resolver import assert_runnable, evaluate_runnable
 from tests.packs.factories import seed_test_packs
 
@@ -69,7 +69,7 @@ async def test_evaluate_runnable_agrees_with_assert_runnable_across_all_states(
     pack_row.state = state
     await db_session.commit()
 
-    catalog = await load_packs_by_ids(db_session, {pack_id})
+    catalog = await load_pack_catalog(db_session, {pack_id})
     eval_code = evaluate_runnable(catalog.get(pack_id), platform_id=platform_id)
 
     assert_code: str | None = None

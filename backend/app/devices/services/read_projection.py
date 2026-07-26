@@ -19,12 +19,13 @@ from app.devices.services.group_membership import load_static_group_keys_by_devi
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.lifecycle_policy_summary import freeze_reservation_context
 from app.devices.services.platform_label import load_platform_label_map
-from app.devices.services.readiness import assess_devices_async, load_packs_by_ids
+from app.devices.services.readiness import assess_devices_async
 from app.devices.services.recovery_projection import recovery_availability_from_facts
 from app.devices.services.serialization_types import DeviceReadProjection
 from app.devices.services.state import WithdrawalFacts, derive_operational_states
 from app.lifecycle.services import remediation_log
 from app.packs.services import platform_resolver as pack_platform_resolver
+from app.packs.services.catalog_view import load_pack_catalog
 from app.runs.service_reservation import get_device_reservation_map, get_reservation_context_for_device
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
     from app.devices.services.readiness import DeviceReadiness
     from app.devices.services.serialization_types import ReservationReadFacts
     from app.lifecycle.services.remediation_log import LadderState
-    from app.packs.models import DriverPack
+    from app.packs.services.catalog_view import PackView
 
 
 async def load_device_read_projections(
@@ -53,7 +54,7 @@ async def load_device_read_projections(
     if not device_list:
         return {}
     device_ids = [device.id for device in device_list]
-    packs = await load_packs_by_ids(db, {device.pack_id for device in device_list if device.pack_id})
+    packs = await load_pack_catalog(db, {device.pack_id for device in device_list if device.pack_id})
     readiness = await assess_devices_async(db, device_list, packs=packs)
     states = await derive_operational_states(db, device_list, now=now, packs=packs)
     reservation_map = await get_device_reservation_map(db, device_ids)
@@ -111,7 +112,7 @@ def _build_device_read_projection(  # noqa: PLR0913 - one batch-loaded fact per 
     ladder: LadderState,
     intents: Sequence[DeviceIntent],
     live_session: bool,
-    pack: DriverPack | None,
+    pack: PackView | None,
     platform_label: str | None,
     static_group_keys: frozenset[str],
     now: datetime,

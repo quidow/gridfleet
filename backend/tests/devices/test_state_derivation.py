@@ -102,7 +102,7 @@ async def test_gather_facts_prefetched_packs_match_per_device(
 ) -> None:
     """A prefetched pack catalog (reconciler-loop batch path) must yield byte-identical
     facts to the per-device pack load, across ready and not-ready devices."""
-    from app.devices.services.readiness import load_packs_by_ids
+    from app.packs.services.catalog_view import load_pack_catalog
 
     await seed_test_packs(db_session)
     host = await create_host(client)
@@ -118,7 +118,7 @@ async def test_gather_facts_prefetched_packs_match_per_device(
         verified=True,
     )
     now = datetime.now(UTC)
-    catalog = await load_packs_by_ids(db_session, {ready.pack_id, unready.pack_id})
+    catalog = await load_pack_catalog(db_session, {ready.pack_id, unready.pack_id})
 
     for device in (ready, unready):
         baseline = await gather_device_state_facts(db_session, device, now=now)

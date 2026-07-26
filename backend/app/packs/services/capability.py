@@ -5,9 +5,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import selectinload
 
-from app.packs.models import DriverPack, DriverPackRelease
+from app.packs.models import DriverPack
+from app.packs.services.catalog_view import PackView, load_pack_catalog
 from app.packs.services.release_ordering import selected_release
 
 if TYPE_CHECKING:
@@ -51,57 +52,17 @@ class StereotypeTemplate:
         return rendered
 
 
-async def load_pack_catalog(session: AsyncSession, pack_ids: Collection[str]) -> dict[str, DriverPack]:
-    """One read: the named packs with their releases and platforms eager-loaded.
-
-    A single joined statement (unlike
-    ``app.devices.services.readiness.load_packs_by_ids``, whose ``selectinload``
-    costs three), which matters on the grid allocator's poll path where the
-    catalog load is the whole per-poll read budget for pack facts. The result
-    feeds both :func:`stereotype_templates_from_packs` and readiness assessment.
-
-    The two ``joinedload``s are a *chain* (pack -> releases -> platforms), not two
-    sibling collections, so they do not form a cartesian product: the statement
-    returns exactly one row per leaf platform, which is the minimum any strategy
-    must transfer. ``.unique()`` deduplicates the repeated parent columns, not
-    multiplied rows. Measured on a synthetic catalog (12 packs x 6 retained
-    releases x 8 platforms): 576 rows in 1 statement, against 660 rows in 3
-    statements for the ``selectinload(...).selectinload(...)`` equivalent — worse
-    on both axes. Row volume is linear and trivial; do not "fix" this to
-    ``selectinload``.
-    """
-    ids = sorted({pack_id for pack_id in pack_ids if pack_id})
-    if not ids:
-        return {}
-    packs = (
-        (
-            await session.scalars(
-                select(DriverPack)
-                .where(DriverPack.id.in_(ids))
-                .options(
-                    joinedload(DriverPack.releases),
-                    joinedload(DriverPack.releases).joinedload(DriverPackRelease.platforms),
-                )
-            )
-        )
-        .unique()
-        .all()
-    )
-    return {pack.id: pack for pack in packs}
-
-
 def stereotype_templates_from_packs(
-    packs: dict[str, DriverPack],
+    packs: dict[str, PackView],
     keys: Collection[tuple[str, str]],
 ) -> dict[tuple[str, str], StereotypeTemplate]:
     """Pure projection of an already-loaded pack catalog into stereotype templates.
 
-    The catalog must carry ``releases`` and their ``platforms`` eager-loaded (as
-    :func:`load_pack_catalog` and ``app.devices.services.readiness.load_packs_by_ids``
-    both produce). Lets a caller that needs the catalog for something else — the
-    grid allocator, which also assesses readiness against it — render templates
-    without paying a second read, while keeping the pack/release/platform walk in
-    one place.
+    The catalog must carry ``releases`` and their ``platforms`` (as
+    :func:`app.packs.services.catalog_view.load_pack_catalog` produces). Lets a
+    caller that needs the catalog for something else — the grid allocator, which
+    also assesses readiness against it — render templates without paying a
+    second read, while keeping the pack/release/platform walk in one place.
 
     Pairs whose pack has no selectable release, or whose platform is absent from
     that release, are simply missing from the result; callers translate a missing

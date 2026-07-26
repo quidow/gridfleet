@@ -5,36 +5,37 @@ import contextvars
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select as sa_select
-from sqlalchemy.orm import selectinload
-
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.models import Device
     from app.devices.readiness_types import ReadinessState
-from app.packs.models import DriverPack, DriverPackRelease
+    from app.packs.services.catalog_view import PackView
 from app.packs.services import release_ordering as pack_release_ordering
+from app.packs.services.catalog_view import load_pack_catalog
 
 selected_release = pack_release_ordering.selected_release
 
-# Fold-scoped pack catalog: a status-push fold preloads the catalog once and enters
-# this block so the per-device readiness assessment reuses it instead of issuing a
+# Fold-scoped pack catalog: a caller preloads the catalog once and enters this
+# block so per-device readiness assessment reuses it instead of issuing a
 # pack/release/platform load per device. Off by default (ContextVar None); the
 # missing-pack self-heal in ``assess_device_async`` still covers a stale snapshot.
-_preloaded_packs: contextvars.ContextVar[dict[str, DriverPack] | None] = contextvars.ContextVar(
+_preloaded_packs: contextvars.ContextVar[Mapping[str, PackView] | None] = contextvars.ContextVar(
     "readiness_preloaded_packs", default=None
 )
 
 
 @contextlib.contextmanager
-def preloaded_pack_catalog(packs: dict[str, DriverPack]) -> Iterator[None]:
-    """Reuse *packs* for readiness assessment within this block. The catalog is
-    fully eager-loaded (releases + platforms) and stays valid across the fold's
-    per-device commits because the control-plane session is ``expire_on_commit=False``."""
+def preloaded_pack_catalog(packs: Mapping[str, PackView]) -> Iterator[None]:
+    """Reuse *packs* for readiness assessment within this block.
+
+    The catalog is a value projection (``app.packs.services.catalog_view``), so
+    it stays valid across SESSION boundaries, not merely across one session's
+    commits: a caller may read it once per host and carry it through the short
+    per-device transactions that settle each device."""
     token = _preloaded_packs.set(packs)
     try:
         yield
@@ -138,20 +139,7 @@ class DeviceReadiness:
     missing_setup_fields: list[str]
 
 
-async def load_packs_by_ids(session: AsyncSession, pack_ids: Iterable[str]) -> dict[str, DriverPack]:
-    ids = {pid for pid in pack_ids if pid}
-    if not ids:
-        return {}
-    stmt = (
-        sa_select(DriverPack)
-        .where(DriverPack.id.in_(ids))
-        .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
-    )
-    result = await session.scalars(stmt)
-    return {pack.id: pack for pack in result.all()}
-
-
-def assess_device_with_pack(device: Device, pack: DriverPack | None) -> DeviceReadiness:
+def assess_device_with_pack(device: Device, pack: PackView | None) -> DeviceReadiness:
     pack_id: str | None = getattr(device, "pack_id", None)
     platform_id: str | None = getattr(device, "platform_id", None)
     if not pack_id or not platform_id:
@@ -188,7 +176,7 @@ def assess_device_with_pack(device: Device, pack: DriverPack | None) -> DeviceRe
 
 
 async def assess_device_async(
-    session: AsyncSession, device: Device, *, packs: dict[str, DriverPack] | None = None
+    session: AsyncSession, device: Device, *, packs: Mapping[str, PackView] | None = None
 ) -> DeviceReadiness:
     """Assess device readiness by querying the driver-pack catalog in the DB.
 
@@ -203,7 +191,7 @@ async def assess_device_async(
         packs = _preloaded_packs.get()
         caller_supplied = packs is not None
     if packs is None:
-        packs = await load_packs_by_ids(session, [pack_id])
+        packs = await load_pack_catalog(session, [pack_id])
     pack = packs.get(pack_id)
     if pack is None and caller_supplied:
         # The caller's prefetched catalog lacked this pack_id — e.g. the device's
@@ -211,7 +199,7 @@ async def assess_device_async(
         # per-device row lock refreshed the row. Fall back to a single-pack load so
         # the verdict matches the per-device path and self-heals, instead of wrongly
         # deriving setup_required (-> offline) from a stale prefetched snapshot.
-        pack = (await load_packs_by_ids(session, [pack_id])).get(pack_id)
+        pack = (await load_pack_catalog(session, [pack_id])).get(pack_id)
     return assess_device_with_pack(device, pack)
 
 
@@ -219,7 +207,7 @@ async def assess_devices_async(
     session: AsyncSession,
     devices: Iterable[Device],
     *,
-    packs: dict[str, DriverPack] | None = None,
+    packs: Mapping[str, PackView] | None = None,
 ) -> dict[uuid.UUID, DeviceReadiness]:
     """Batch-assess readiness for many devices with a single pack catalog query.
 
@@ -230,7 +218,7 @@ async def assess_devices_async(
     device_list = list(devices)
     if packs is None:
         pack_ids = {pid for pid in (getattr(d, "pack_id", None) for d in device_list) if pid}
-        packs = await load_packs_by_ids(session, pack_ids)
+        packs = await load_pack_catalog(session, pack_ids)
     result: dict[uuid.UUID, DeviceReadiness] = {}
     for device in device_list:
         pack_id: str | None = getattr(device, "pack_id", None)
@@ -240,7 +228,7 @@ async def assess_devices_async(
 
 
 async def is_ready_for_use_async(
-    session: AsyncSession, device: Device, *, packs: dict[str, DriverPack] | None = None
+    session: AsyncSession, device: Device, *, packs: Mapping[str, PackView] | None = None
 ) -> bool:
     return (await assess_device_async(session, device, packs=packs)).readiness_state == "verified"
 

@@ -37,11 +37,11 @@ from app.devices.services.platform_label import load_platform_label_map
 from app.devices.services.readiness import (
     assess_device_with_pack,
     assess_devices_async,
-    load_packs_by_ids,
 )
 from app.devices.services.service import UnknownGroupKeysError
 from app.devices.services.state import derive_operational_states, is_available_sql
 from app.packs.models import DriverPack, DriverPackRelease
+from app.packs.services.catalog_view import load_pack_catalog, project_pack
 from app.packs.services.platform_resolver import evaluate_runnable
 from app.runs.models import RunState, TestRun
 from app.runs.schemas import (
@@ -137,7 +137,7 @@ async def _classify_shortfall_gates(
     # One batch: operational states, readiness, group membership index (when
     # the requirement pins groups). The pack catalog is loaded once and reused
     # by both the operational-state batch and the readiness batch.
-    pack_catalog = await load_packs_by_ids(db, {device.pack_id for device in devices if device.pack_id})
+    pack_catalog = await load_pack_catalog(db, {device.pack_id for device in devices if device.pack_id})
     op_states = await derive_operational_states(db, devices, now=now, packs=pack_catalog)
     readiness_map = await assess_devices_async(db, devices, packs=pack_catalog)
 
@@ -391,7 +391,10 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         .scalars()
         .all()
     )
-    pack_by_id = {pack.id: pack for pack in pack_rows}
+    # Projected to values immediately: the FOR SHARE lock lives on the
+    # transaction, not on these rows, and every consumer below (evaluate_runnable,
+    # assess_devices_async, derive_operational_states) now takes the value shape.
+    pack_by_id = {pack.id: project_pack(pack) for pack in pack_rows}
     for req in requirements:
         # ``evaluate_runnable`` is the pure, no-DB equivalent of
         # ``assert_runnable``'s reachability checks — the same pack-state and

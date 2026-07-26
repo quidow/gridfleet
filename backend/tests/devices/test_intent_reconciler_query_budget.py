@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import event
 
 from app.devices.services.intent_reconciler import ReconcileCandidate, reconcile_device_command
-from app.devices.services.readiness import load_packs_by_ids
+from app.packs.services.catalog_view import load_pack_catalog
 from tests.helpers import seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 
@@ -51,9 +51,7 @@ async def test_steady_reconcile_has_three_reads(
     )
     await db_session.commit()
     async with db_session_maker() as catalog_db:
-        packs = await load_packs_by_ids(catalog_db, [device.pack_id])
-        for pack in packs.values():
-            catalog_db.expunge(pack)
+        packs = await load_pack_catalog(catalog_db, [device.pack_id])
 
     candidate = ReconcileCandidate(device.id, delete_expired_intents=False, clear_elapsed_cooldown=False)
     await reconcile_device_command(db_session_maker, candidate, publisher=event_bus, packs=packs)

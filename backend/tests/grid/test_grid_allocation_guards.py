@@ -16,14 +16,14 @@ if TYPE_CHECKING:
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.packs.models import DriverPack
     from app.packs.services.capability import StereotypeTemplate
+    from app.packs.services.catalog_view import PackView
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.intent import IntentService
 from app.grid.allocation import AllocationService, _EligibleRow
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
-from app.packs.services.capability import load_pack_catalog
+from app.packs.services.catalog_view import load_pack_catalog
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from tests.helpers import create_device_record, seed_host_and_device, seed_host_and_running_node
@@ -56,7 +56,7 @@ async def seeded_available_device(db_session: AsyncSession) -> Device:
     return device
 
 
-async def _pack_catalog(db: AsyncSession, device: Device) -> dict[str, DriverPack]:
+async def _pack_catalog(db: AsyncSession, device: Device) -> dict[str, PackView]:
     """The pack catalog ``try_allocate`` hands ``_claim`` — the claim path
     re-assesses readiness against it under the row lock without a new read."""
     return await load_pack_catalog(db, {device.pack_id})

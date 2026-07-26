@@ -12,8 +12,8 @@ from app.devices.models import DeviceIntent, DeviceReservation, ExclusionKind
 from app.devices.services.decision import parse_command
 from app.devices.services.decision_snapshot import IntentSnapshot, load_device_decision_snapshot
 from app.devices.services.intent_types import CommandKind
-from app.devices.services.readiness import load_packs_by_ids
 from app.lifecycle.services import remediation_log
+from app.packs.services.catalog_view import load_pack_catalog
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
 from tests.concurrency.group_lock_helpers import capture_statements
@@ -96,9 +96,7 @@ async def test_locked_snapshot_matches_current_facts_in_three_reads(
     await db_session.commit()
 
     async with db_session_maker() as catalog_db:
-        packs = await load_packs_by_ids(catalog_db, [device.pack_id])
-        for pack in packs.values():
-            catalog_db.expunge(pack)
+        packs = await load_pack_catalog(catalog_db, [device.pack_id])
     async with db_session_maker() as command_db, capture_statements(command_db) as statements, command_db.begin():
         locked = await device_locking.lock_device_handle(command_db, device.id)
         snapshot = await load_device_decision_snapshot(
@@ -161,9 +159,7 @@ async def test_locked_snapshot_preserves_terminal_reset_metadata(
     await db_session.rollback()
 
     async with db_session_maker() as catalog_db:
-        packs = await load_packs_by_ids(catalog_db, [pack_id])
-        for pack in packs.values():
-            catalog_db.expunge(pack)
+        packs = await load_pack_catalog(catalog_db, [pack_id])
     async with db_session_maker() as command_db, command_db.begin():
         locked = await device_locking.lock_device_handle(command_db, device_id)
         snapshot = await load_device_decision_snapshot(

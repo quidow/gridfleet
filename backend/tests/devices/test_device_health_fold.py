@@ -449,10 +449,10 @@ async def test_fold_preloads_pack_catalog_once_for_multiple_devices(
             for device_id in device_ids
         ],
     }
-    real_load = readiness_mod.load_packs_by_ids
+    real_load = readiness_mod.load_pack_catalog
     load_packs = AsyncMock(wraps=real_load)
-    monkeypatch.setattr(readiness_mod, "load_packs_by_ids", load_packs)
-    monkeypatch.setattr(fold_context, "load_packs_by_ids", load_packs)
+    monkeypatch.setattr(readiness_mod, "load_pack_catalog", load_packs)
+    monkeypatch.setattr(fold_context, "load_pack_catalog", load_packs)
 
     service = build_connectivity_service(db_session_maker)
     settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())

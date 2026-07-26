@@ -60,10 +60,10 @@ from app.grid.matching import (
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.packs.services.capability import (
     StereotypeTemplate,
-    load_pack_catalog,
     load_stereotype_template,
     stereotype_templates_from_packs,
 )
+from app.packs.services.catalog_view import load_pack_catalog
 from app.packs.services.start_shim import build_device_context, resolve_pack_for_device
 from app.runs.models import TERMINAL_STATES, TestRun
 from app.runs.service_reservation import reservation_gating_owner_sql
@@ -79,7 +79,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.devices.services.readiness import DeviceReadiness
     from app.events.protocols import EventPublisher
-    from app.packs.models import DriverPack
+    from app.packs.services.catalog_view import PackView
 
 logger = logging.getLogger(__name__)
 
@@ -847,7 +847,7 @@ class AllocationService:
         self,
         db: DbSession,
         rows: Sequence[_EligibleRow],
-    ) -> tuple[StereotypeTemplateCache, dict[uuid.UUID, DeviceGroupFacts], dict[str, DriverPack]]:
+    ) -> tuple[StereotypeTemplateCache, dict[uuid.UUID, DeviceGroupFacts], dict[str, PackView]]:
         """One read: the pack catalog for every eligible row's pack, projected into
         both the stereotype templates the matcher needs and the readiness verdicts
         the group evaluator needs.
@@ -1021,7 +1021,7 @@ class AllocationService:
         member_of_keys_by_dynamic_group_id: Mapping[uuid.UUID, frozenset[str]],
         candidate_group_keys: Collection[str],
         reservation_run_id: uuid.UUID | None,
-        pack_catalog: dict[str, DriverPack],
+        pack_catalog: dict[str, PackView],
     ) -> bool:
         """Re-evaluate the candidate's requested group keys against the locked row.
 
@@ -1063,7 +1063,7 @@ class AllocationService:
         exclude_device_ids: set[uuid.UUID] | None = None,
         groups: Sequence[DeviceGroup] = (),
         member_of_keys_by_dynamic_group_id: Mapping[uuid.UUID, frozenset[str]],
-        pack_catalog: dict[str, DriverPack],
+        pack_catalog: dict[str, PackView],
     ) -> AllocationResult | None:
         # Fold every SQL-expressible lock-time recheck into the lock query:
         # availability, node viability/acceptance, exclusion, and the

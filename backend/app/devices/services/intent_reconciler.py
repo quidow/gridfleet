@@ -45,13 +45,13 @@ from app.devices.services.decision import (
 from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.event import record_event
 from app.devices.services.intent_types import release_rollout_intent_source
-from app.devices.services.readiness import load_packs_by_ids
 from app.devices.services.state import (
     WithdrawalFacts,
     apply_operational_state_transition,
     evaluate_operational_state,
 )
 from app.lifecycle.services import remediation_log
+from app.packs.services.catalog_view import load_pack_catalog
 from app.runs.models import RunState, TestRun
 
 if TYPE_CHECKING:
@@ -70,7 +70,7 @@ if TYPE_CHECKING:
     from app.devices.services_container import DeviceServices
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.remediation_log import LadderState
-    from app.packs.models import DriverPack
+    from app.packs.services.catalog_view import PackView
 
 logger = get_logger(__name__)
 LOOP_NAME = "device_intent_reconciler"
@@ -122,7 +122,7 @@ async def reconcile_device_command(
     candidate: ReconcileCandidate,
     *,
     publisher: EventPublisher,
-    packs: dict[str, DriverPack],
+    packs: dict[str, PackView],
 ) -> ReconcileCommandResult:
     async with session_factory() as db, db.begin():
         try:
@@ -142,7 +142,7 @@ async def _reconcile_and_deliver(
     *,
     circuit_breaker: CircuitBreakerProtocol,
     publisher: EventPublisher,
-    packs: dict[str, DriverPack],
+    packs: dict[str, PackView],
     pool: AgentHttpPool | None = None,
 ) -> None:
     result = await reconcile_device_command(session_factory, candidate, publisher=publisher, packs=packs)
@@ -160,9 +160,7 @@ async def run_device_intent_reconciler_once(
 ) -> None:
     async with db.begin():
         candidates = await _load_reconcile_candidates(db, now=now_utc())
-        packs = await load_packs_by_ids(db, {candidate.pack_id for candidate in candidates if candidate.pack_id})
-        for pack in packs.values():
-            db.expunge(pack)
+        packs = await load_pack_catalog(db, {candidate.pack_id for candidate in candidates if candidate.pack_id})
 
     for candidate in candidates:
         await _reconcile_and_deliver(
@@ -329,7 +327,7 @@ async def reconcile_device(
     device_id: uuid.UUID,
     *,
     publisher: EventPublisher,
-    packs: dict[str, DriverPack] | None = None,
+    packs: dict[str, PackView] | None = None,
 ) -> bool:
     """Re-derive desired node state and operational_state for one device.
 
@@ -354,7 +352,7 @@ async def reconcile_locked_device(
     locked: LockedDevice,
     *,
     publisher: EventPublisher,
-    packs: dict[str, DriverPack] | None = None,
+    packs: dict[str, PackView] | None = None,
     snapshot: DeviceDecisionSnapshot | None = None,
 ) -> bool:
     metrics_recorders.INTENT_RECONCILER_EVALUATIONS.inc()
@@ -431,7 +429,7 @@ async def _reconcile_locked_device(
     locked: LockedDevice,
     *,
     publisher: EventPublisher,
-    packs: dict[str, DriverPack],
+    packs: dict[str, PackView],
     snapshot: DeviceDecisionSnapshot | None = None,
 ) -> bool:
     now = now_utc()
