@@ -641,10 +641,13 @@ async def test_txn_a_failure_rolls_back_liveness_snapshot_and_events(
 ) -> None:
     host = await _make_host(db_session, hostname="txn-a-rollback")
     before = host.last_heartbeat
+    called = False
 
     async def fail_pack_status(_self: object, db: AsyncSession, _payload: dict[str, Any]) -> None:
         # A real PostgreSQL error aborts the transaction; a Python side_effect
         # would leave it clean and would not exercise production recovery.
+        nonlocal called
+        called = True
         await db.execute(text("SELECT 1 / 0"))
 
     monkeypatch.setattr("app.packs.services.status.PackStatusService.apply_status", fail_pack_status)
@@ -656,6 +659,9 @@ async def test_txn_a_failure_rolls_back_liveness_snapshot_and_events(
         }
     )
 
+    # Proves the 500 came from the injected failure, not from some earlier,
+    # unrelated fault the assertions below would also happen to satisfy.
+    assert called, "fail_pack_status was never reached — the 500 came from somewhere else"
     assert response.status_code == 500
     await db_session.refresh(host)
     assert host.last_heartbeat == before
