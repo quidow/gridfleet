@@ -2,28 +2,21 @@
 
 from __future__ import annotations
 
-import asyncio
-import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
-    import uuid
     from datetime import datetime
 
     from app.appium_nodes.protocols import OperatorNodeManager
     from app.core.protocols import SettingsReader
 
 from sqlalchemy import inspect as sqlalchemy_inspect
-from sqlalchemy.exc import NoResultFound
 
 from app.appium_nodes.exceptions import NodeManagerError, NodePortConflictError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import (
     capability_keys as appium_capability_keys,
-)
-from app.appium_nodes.services import (
-    locking as appium_node_locking,
 )
 from app.appium_nodes.services import (
     resource_service as appium_node_resource_service,
@@ -32,7 +25,6 @@ from app.appium_nodes.services.common import (
     build_appium_driver_caps,
     node_state_severity,
 )
-from app.devices import locking as device_locking
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity import appium_connection_target
 from app.devices.services.readiness import is_ready_for_use_async, readiness_error_detail_async
@@ -56,7 +48,9 @@ if TYPE_CHECKING:
 
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
+    from app.devices.locking import LockedDevice
     from app.devices.models import Device
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.events.protocols import EventPublisher
     from app.hosts.models import Host
 
@@ -91,14 +85,6 @@ __all__ = [
 ]
 
 
-async def _hold_device_row_lock(db: AsyncSession, device_id: uuid.UUID) -> Device:
-    """Acquire and refresh the Device row used for node-state writes."""
-    try:
-        return await device_locking.lock_device(db, device_id)
-    except NoResultFound:
-        raise NodeManagerError(f"Device {device_id} no longer exists") from None
-
-
 def upsert_node(
     db: AsyncSession,
     device: Device,
@@ -125,21 +111,25 @@ def upsert_node(
     return node
 
 
-async def mark_node_started(
+async def mark_node_started(  # noqa: PLR0913 - lock proof, locked child, and snapshot all cross the boundary
     db: AsyncSession,
-    device: Device,
+    locked: LockedDevice,
+    locked_node: AppiumNode | None,
+    snapshot: DeviceDecisionSnapshot,
     *,
     port: int,
     pid: int | None,
-    details: NodeStartDetails | None = None,
+    details: NodeStartDetails,
     publisher: EventPublisher,
     settings: SettingsReader,
-) -> AppiumNode:
-    details = details or NodeStartDetails()
-    device = await _hold_device_row_lock(db, device.id)
-    await appium_node_locking.lock_appium_node_for_device(db, device.id)
-    active_connection_target = details.active_connection_target or appium_connection_target(device)
-    node = upsert_node(db, device, port, pid, active_connection_target, settings=settings)
+) -> DeviceDecisionSnapshot:
+    """Fold one observed node start under the caller's Device lock. Flush only."""
+    device = locked.device
+    active_target = details.active_connection_target or appium_connection_target(device)
+    node = locked_node or upsert_node(db, device, port, pid, active_target, settings=settings)
+    node.port = port
+    node.pid = pid
+    node.active_connection_target = active_target
     if details.started_at is not None:
         node.started_at = details.started_at
     if details.pack_release is not None:
@@ -156,19 +146,17 @@ async def mark_node_started(
             capability_key=key,
             value=value,
         )
-    # Device-axis restoration is owned by ``apply_node_state_transition``'s
-    # ``_restore_available_for_healthy_signal``, which transitions offline →
-    # available iff signals are stably healthy. A direct ``set_operational_state``
-    # with the readiness projection here would flap the
-    # device offline whenever transient signals (stale ``health_running``,
-    # ``device_checks_healthy``) lag the node-axis update — operators see
-    # spurious "Node started" → offline → "Health checks recovered" toasts.
-    await DeviceHealthService(publisher=publisher).apply_node_state_transition(
+    # Device-axis restoration stays owned by the health writer's
+    # _restore_available_for_healthy_signal; a direct set_operational_state here
+    # would flap the device offline whenever transient signals lag the node axis.
+    updated_snapshot = await DeviceHealthService(publisher=publisher).apply_locked_node_state_transition(
         db,
-        device,
+        locked,
+        node,
+        snapshot,
         mark_offline=False,
     )
-    await reset_reconciler_start_failure_if_needed(db, device)
+    await reset_reconciler_start_failure_if_needed(db, device, ladder=snapshot.ladder)
     # Pull re-applies drain/stop flags from the last pull on crash-restart (the
     # agent re-derives accepting_new_sessions/stop_pending from desired state
     # every launch), so the belt-and-suspenders outbox re-push that used to run
@@ -185,20 +173,30 @@ async def mark_node_started(
         },
         severity=node_state_severity("stopped", "running"),
     )
-    await db.commit()
-    await db.refresh(node)
-    return node
+    await db.flush()
+    return updated_snapshot
 
 
-async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: EventPublisher) -> AppiumNode:
-    device = await _hold_device_row_lock(db, device.id)
-    node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
-    assert node is not None
-    node.pid = None
-    node.active_connection_target = None
-    await DeviceHealthService(publisher=publisher).apply_node_state_transition(
+async def mark_node_stopped(
+    db: AsyncSession,
+    locked: LockedDevice,
+    locked_node: AppiumNode | None,
+    snapshot: DeviceDecisionSnapshot,
+    *,
+    publisher: EventPublisher,
+) -> DeviceDecisionSnapshot:
+    """Fold one observed node stop under the caller's Device lock. Flush only."""
+    if locked_node is None:
+        # The node row went away between the caller's inventory and its lock.
+        return snapshot
+    device = locked.device
+    locked_node.pid = None
+    locked_node.active_connection_target = None
+    updated_snapshot = await DeviceHealthService(publisher=publisher).apply_locked_node_state_transition(
         db,
-        device,
+        locked,
+        locked_node,
+        snapshot,
         mark_offline=False,
     )
     publisher.queue_for_session(
@@ -212,9 +210,8 @@ async def mark_node_stopped(db: AsyncSession, device: Device, *, publisher: Even
         },
         severity=node_state_severity("running", "stopped"),
     )
-    await db.commit()
-    await db.refresh(node)
-    return node
+    await db.flush()
+    return updated_snapshot
 
 
 def require_management_host(device: Device, *, action: str = "use remote management") -> Host:
@@ -458,19 +455,4 @@ class ReconcilerAgentService:
 
         node = await self._operator.request_restart(db, device, caller=caller, reason=f"{caller} restart requested")
         await db.commit()
-        await db.refresh(node)
         return node
-
-    async def wait_for_node_running(
-        self, db: AsyncSession, node_id: uuid.UUID, *, timeout_sec: int, poll_interval_sec: float = 0.5
-    ) -> AppiumNode | None:
-        """Poll until an AppiumNode reaches observed running state."""
-        deadline = time.monotonic() + timeout_sec
-        while time.monotonic() < deadline:
-            node = await db.get(AppiumNode, node_id)
-            if node is not None:
-                await db.refresh(node)
-                if node.observed_running:
-                    return node
-            await asyncio.sleep(poll_interval_sec)
-        return None

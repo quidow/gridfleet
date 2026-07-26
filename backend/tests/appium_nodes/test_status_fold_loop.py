@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from sqlalchemy import text
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import node_health as node_health_module
@@ -20,16 +23,24 @@ from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host
 from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.fakes import FakeSettingsReader
-from tests.helpers import seed_host_and_running_node, seed_host_with_devices
+from tests.helpers import seed_host_and_running_node, seed_host_named, seed_host_with_devices
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+    from contextlib import AbstractAsyncContextManager
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.devices.locking import LockedDevice
     from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+
+# The watermark race hands off on "the advance backend has reached its blocking
+# statement", which pg_stat_activity reports as a fact. This bound only decides
+# how long a genuinely-never-blocking run takes to fail.
+LOCK_WAIT_TIMEOUT_SEC = 10.0
 
 
 def _service() -> NodeHealthService:
@@ -77,6 +88,68 @@ def _entry(port: int, pid: int, target: str, *, running: bool) -> dict[str, Any]
         "running": running,
         "observed_at": now_utc().isoformat(),
     }
+
+
+class _TrackingSessionFactory:
+    """Records every session the loop opens, and each one's backend PID.
+
+    ``sessions`` proves which session the loop read its inventory through;
+    ``pids`` lets the watermark race wait on "that backend is blocked on a lock"
+    instead of a sleep. The PID is drawn inside ``begin()``'s transaction, so it
+    names the same backend the following locking statement runs on.
+    """
+
+    def __init__(self, real: async_sessionmaker[AsyncSession]) -> None:
+        self._real = real
+        self.sessions: list[AsyncSession] = []
+        self.pids: list[int] = []
+
+    def __call__(self) -> AsyncSession:
+        session = self._real()
+        self.sessions.append(session)
+        return session
+
+    def begin(self) -> AbstractAsyncContextManager[AsyncSession]:
+        return self._tracked_begin()
+
+    @asynccontextmanager
+    async def _tracked_begin(self) -> AsyncIterator[AsyncSession]:
+        async with self._real() as session:
+            self.sessions.append(session)
+            async with session.begin():
+                self.pids.append(int((await session.execute(text("SELECT pg_backend_pid()"))).scalar_one()))
+                yield session
+
+
+async def _wait_until_backend_blocks(
+    db_session_maker: async_sessionmaker[AsyncSession], pids: list[int], *, label: str
+) -> None:
+    """Return once the backend named by *pids* is waiting on a lock.
+
+    Keyed on one PID rather than "is anything blocked": an unrelated blocked
+    connection would satisfy an any-backend predicate and release the waiter
+    before the interleaving happened, greening the test vacuously. ``pids`` is a
+    list because the factory appends the PID after this call is scheduled.
+    """
+    stmt = text("SELECT count(*) FROM pg_stat_activity WHERE pid = :pid AND wait_event_type = 'Lock'")
+
+    async def _poll() -> None:
+        while True:
+            if pids:
+                async with db_session_maker() as watcher:
+                    blocked = int((await watcher.execute(stmt, {"pid": pids[0]})).scalar_one())
+                    await watcher.rollback()
+                if blocked:
+                    return
+            await asyncio.sleep(0.02)
+
+    try:
+        await asyncio.wait_for(_poll(), timeout=LOCK_WAIT_TIMEOUT_SEC)
+    except TimeoutError:
+        raise AssertionError(
+            f"{label}: backend {pids or '<never captured>'} did not block on a lock within "
+            f"{LOCK_WAIT_TIMEOUT_SEC}s, so the interleaving under test never happened"
+        ) from None
 
 
 async def test_loop_folds_pushed_node_health_and_advances_watermark(
@@ -187,6 +260,172 @@ async def test_loop_retryable_node_holds_watermark(
     assert host is not None
     assert host.observation_applied.get(FOLD_SECTION) is None  # watermark not advanced
     record_lag.assert_not_called()
+
+
+async def test_loop_closes_its_inventory_session_before_the_first_fold(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """The fold inventory reads in its own short session and closes before any
+    fold settles a device, and the BackgroundLoop-supplied ``db`` is never
+    touched at all — neither may hold a read transaction open across the
+    per-device commits below."""
+    _host, device, node = await seed_host_and_running_node(db_session, identity="fold-inventory")
+    revision = await next_observation_revision(db_session)
+    await _store_node_health_snapshot(
+        db_session,
+        device.host_id,
+        revision=revision,
+        nodes=[_entry(node.port, node.pid, node.active_connection_target, running=False)],
+    )
+    factory = _TrackingSessionFactory(db_session_maker)
+    observed: dict[str, Any] = {}
+
+    async def fold(
+        host_db: AsyncSession,
+        host_id: uuid.UUID,
+        section: dict[str, Any],
+        *,
+        boot_id: uuid.UUID | None = None,
+        deadline: float | None = None,
+    ) -> bool:
+        observed["supplied_in_transaction"] = db_session.in_transaction()
+        observed["opened"] = len(factory.sessions)
+        observed["others_in_transaction"] = [s.in_transaction() for s in factory.sessions if s is not host_db]
+        return True
+
+    loop = StatusFoldLoop(sections=(FoldSection(FOLD_SECTION, fold),), session_factory=factory)
+    await loop._run_cycle(db_session)
+
+    assert observed, "the fold never ran, so nothing about session state was observed"
+    # Inventory session + the fold's own session: the inventory read cannot have
+    # gone through the supplied ``db``.
+    assert observed["opened"] == 2
+    assert observed["supplied_in_transaction"] is False, "the BackgroundLoop-supplied db must stay clean"
+    assert observed["others_in_transaction"] == [False], "the inventory session was still in a transaction"
+
+
+async def test_loop_holds_watermark_then_replays_only_the_retryable_device(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """A retryable device holds the host watermark below the pushed revision
+    while its settled peer's receipt stays durable; the replay cycle skips the
+    peer by that receipt, settles the retryable device once, and only then
+    advances the watermark."""
+    host, devices = await seed_host_with_devices(db_session, count=2, identity_prefix="fold-replay")
+    settled_device, retryable_device = devices
+    nodes = [
+        AppiumNode(
+            device_id=device.id,
+            port=4750 + index,
+            pid=3000 + index,
+            active_connection_target=device.connection_target,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4750 + index,
+        )
+        for index, device in enumerate(devices)
+    ]
+    db_session.add_all(nodes)
+    await db_session.commit()
+    host_id = host.id
+    settled_device_id, retryable_device_id = settled_device.id, retryable_device.id
+    settled_node_id, retryable_node_id = nodes[0].id, nodes[1].id
+    revision = await next_observation_revision(db_session)
+    await _store_node_health_snapshot(
+        db_session,
+        host_id,
+        revision=revision,
+        nodes=[_entry(node.port, node.pid, node.active_connection_target, running=False) for node in nodes],
+    )
+
+    service = _service()
+    real_process = service._process_node_health
+    calls: list[uuid.UUID] = []
+    fail_once = {retryable_device_id}
+
+    async def fail_first_attempt(
+        db: AsyncSession,
+        node: AppiumNode,
+        locked_device: LockedDevice,
+        snapshot: DeviceDecisionSnapshot,
+        *,
+        observation: _NodeObservation,
+    ) -> NodeFoldOutcome:
+        device_id = locked_device.device.id
+        calls.append(device_id)
+        if device_id in fail_once:
+            fail_once.discard(device_id)
+            # A real failing statement, not a bare raise: the aborted
+            # transaction is the state the fold's rollback has to survive.
+            await db.execute(text("SELECT 1 / 0"))
+        return await real_process(db, node, locked_device, snapshot, observation=observation)
+
+    service._process_node_health = fail_first_attempt  # type: ignore[method-assign]
+    loop = _loop(service, db_session_maker)
+
+    await loop._run_cycle(db_session)
+
+    db_session.expire_all()
+    host_after_first = await db_session.get(Host, host_id)
+    assert host_after_first is not None
+    assert host_after_first.observation_applied.get(FOLD_SECTION) is None
+    settled_after_first = await db_session.get(AppiumNode, settled_node_id)
+    retryable_after_first = await db_session.get(AppiumNode, retryable_node_id)
+    assert settled_after_first is not None
+    assert retryable_after_first is not None
+    assert settled_after_first.health_fold_applied_revision == revision
+    assert retryable_after_first.health_fold_applied_revision < revision
+
+    await loop._run_cycle(db_session)
+
+    db_session.expire_all()
+    assert calls.count(settled_device_id) == 1, "the settled peer must be skipped by its receipt on replay"
+    assert calls.count(retryable_device_id) == 2, "the retryable device must be replayed exactly once"
+    host_after_replay = await db_session.get(Host, host_id)
+    assert host_after_replay is not None
+    assert host_after_replay.observation_applied.get(FOLD_SECTION) == revision
+    retryable_after_replay = await db_session.get(AppiumNode, retryable_node_id)
+    assert retryable_after_replay is not None
+    assert retryable_after_replay.health_fold_applied_revision == revision
+
+
+async def test_advance_applied_cannot_regress_a_concurrently_published_watermark(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """Revision 10's advance waits on the Host row lock a concurrent publisher
+    holds; when that publisher stamps revision 11 and commits, the older
+    revision must not overwrite it — and a genuinely newer revision still
+    advances."""
+    host = await seed_host_named(db_session, f"fold-watermark-{uuid.uuid4().hex[:8]}")
+    host_id = host.id
+    await db_session.commit()
+
+    factory = _TrackingSessionFactory(db_session_maker)
+    loop = StatusFoldLoop(
+        sections=(FoldSection(FOLD_SECTION, AsyncMock(return_value=True)),),
+        session_factory=factory,
+    )
+
+    async with db_session_maker() as publisher:
+        async with publisher.begin():
+            locked = await publisher.get(Host, host_id, with_for_update=True)
+            assert locked is not None
+            advance = asyncio.create_task(loop._advance_applied(host_id, FOLD_SECTION, 10))
+            await _wait_until_backend_blocks(db_session_maker, factory.pids, label="_advance_applied(10)")
+            locked.observation_applied = {FOLD_SECTION: 11}
+        # The publisher's commit releases the Host lock; the advance resumes and
+        # re-reads the watermark it was made to wait for.
+        assert await advance is True
+
+    async with db_session_maker() as verify:
+        raced = await verify.get(Host, host_id)
+        assert raced is not None
+        assert raced.observation_applied == {FOLD_SECTION: 11}, "revision 10 overwrote the newer revision 11"
+
+    assert await loop._advance_applied(host_id, FOLD_SECTION, 12) is True
+    async with db_session_maker() as verify:
+        advanced = await verify.get(Host, host_id)
+        assert advanced is not None
+        assert advanced.observation_applied == {FOLD_SECTION: 12}
 
 
 async def test_loop_contains_per_host_failure(

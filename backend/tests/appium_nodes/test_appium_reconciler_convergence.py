@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+import contextlib
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, Mock
 
 import pytest
+from sqlalchemy import delete, event, select, text
+from sqlalchemy.exc import DBAPIError
 
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.services import reconciler as appium_reconciler
+from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services.reconciler_agent import NodeStartDetails
 from app.appium_nodes.services.reconciler_convergence import (
     DesiredRow,
@@ -16,6 +24,20 @@ from app.appium_nodes.services.reconciler_convergence import (
     decide_convergence_action,
     match_observed_entry,
 )
+from app.devices import locking as device_locking
+from app.devices.models import Device, DeviceOperationalState
+from app.events.models import SystemEvent
+from tests.bench_instrumentation import QueryTap
+from tests.fakes import FakeSettingsReader
+from tests.helpers import create_device
+from tests.helpers import test_event_bus as event_bus
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.hosts.models import Host
 
 
 async def converge_host_rows(
@@ -454,3 +476,291 @@ async def test_converge_host_rows_noop_and_raise_errors_branch() -> None:
             reset_start_failure=AsyncMock(),
             raise_errors=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# Boundary regressions: one aggregate Device lock per observation, peers locked
+# in ascending UUID order, and per-device failure isolation.
+# ---------------------------------------------------------------------------
+
+
+class _OrderedQueryTap(QueryTap):
+    """Engine-scoped ``QueryTap`` that also keeps statements in execution order.
+
+    ``tests/concurrency/group_lock_helpers.py::capture_statements`` pins its
+    listener to a single session's connection, and ``apply_observed_node_command``
+    opens its own session from the factory — that helper records none of these
+    statements and every assertion below would pass vacuously.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.statements: list[str] = []
+
+    def __call__(
+        self,
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object = None,
+        context: object = None,
+        executemany: bool = False,
+    ) -> None:
+        super().__call__(conn, cursor, statement, parameters, context, executemany)
+        if self.armed:
+            self.statements.append(statement)
+
+
+@asynccontextmanager
+async def _capture_engine_statements(db_session: AsyncSession) -> AsyncIterator[_OrderedQueryTap]:
+    tap = _OrderedQueryTap()
+    engine = db_session.bind.sync_engine  # type: ignore[union-attr]
+    event.listen(engine, "before_cursor_execute", tap)
+    try:
+        yield tap
+    finally:
+        event.remove(engine, "before_cursor_execute", tap)
+
+
+async def _seed_device_with_node(
+    db: AsyncSession, host_id: uuid.UUID, *, name: str, port: int
+) -> tuple[Device, AppiumNode]:
+    device = await create_device(
+        db,
+        host_id=host_id,
+        name=name,
+        identity_value=name,
+        connection_target=name,
+        operational_state=DeviceOperationalState.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=port,
+        desired_state=AppiumDesiredState.running,
+        desired_port=port,
+    )
+    db.add(node)
+    await db.flush()
+    return device, node
+
+
+def _running_row(device: Device, node: AppiumNode, *, host_id: uuid.UUID) -> DesiredRow:
+    return DesiredRow(
+        device_id=device.id,
+        host_id=host_id,
+        node_id=node.id,
+        connection_target=device.connection_target or device.identity_value,
+        desired_state="running",
+        desired_port=node.port,
+        port=node.port,
+        pid=None,
+        active_connection_target=None,
+        stop_pending=False,
+    )
+
+
+def _reconciler(session_factory: async_sessionmaker[AsyncSession]) -> ReconcilerService:
+    return ReconcilerService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=session_factory,
+    )
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_observed_running_takes_one_device_lock_before_the_node(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """One observation settles under exactly one Device lock, taken before the
+    AppiumNode lock. The pre-boundary shape re-locked Device inside the health
+    writer after ``mark_node_started`` had already locked it."""
+    device, node = await _seed_device_with_node(db_session, db_host.id, name="obs-lock-single", port=4723)
+    await db_session.commit()
+
+    write_observed = _reconciler(db_session_maker)._write_observed_factory()
+    async with _capture_engine_statements(db_session) as tap:
+        await write_observed(
+            row=_running_row(device, node, host_id=db_host.id),
+            state="running",
+            port=4723,
+            pid=999,
+            details=NodeStartDetails(active_connection_target=device.connection_target),
+        )
+
+    statements = tap.statements
+    device_locks = [sql for sql in statements if "FROM devices" in sql and "FOR UPDATE" in sql]
+    node_locks = [sql for sql in statements if "FROM appium_nodes" in sql and "FOR UPDATE" in sql]
+    assert len(device_locks) == 1
+    assert len(node_locks) <= 1
+    if node_locks:
+        assert statements.index(device_locks[0]) < statements.index(node_locks[0])
+
+    async with db_session_maker() as verify:
+        stored = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
+        assert stored.pid == 999
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_peer_observations_lock_devices_in_ascending_uuid_order(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three desired rows handed over in reverse UUID order settle in ascending
+    UUID order, each under exactly one ``lock_device_handle``."""
+    seeded = [
+        await _seed_device_with_node(db_session, db_host.id, name=f"obs-order-{index}", port=4730 + index)
+        for index in range(3)
+    ]
+    await db_session.commit()
+
+    rows = [_running_row(device, node, host_id=db_host.id) for device, node in seeded]
+    ordered_ids = sorted((row.device_id for row in rows), key=str)
+
+    handle_locks: list[uuid.UUID] = []
+    plain_locks: list[uuid.UUID] = []
+    real_lock_device_handle = device_locking.lock_device_handle
+    real_lock_device = device_locking.lock_device
+
+    async def recording_lock_device_handle(db: AsyncSession, device_id: uuid.UUID, **kwargs: object) -> object:
+        handle_locks.append(device_id)
+        return await real_lock_device_handle(db, device_id, **kwargs)  # type: ignore[arg-type]
+
+    async def recording_lock_device(db: AsyncSession, device_id: uuid.UUID, **kwargs: object) -> object:
+        plain_locks.append(device_id)
+        return await real_lock_device(db, device_id, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(device_locking, "lock_device_handle", recording_lock_device_handle)
+    monkeypatch.setattr(device_locking, "lock_device", recording_lock_device)
+
+    payload = {
+        "appium_processes": {
+            "running_nodes": [
+                {
+                    "port": node.port,
+                    "pid": 5000 + node.port,
+                    "connection_target": device.connection_target,
+                    "platform_id": "android_mobile",
+                }
+                for device, node in seeded
+            ]
+        }
+    }
+
+    await _reconciler(db_session_maker).reconcile_host(
+        host_id=db_host.id,
+        host_ip=db_host.ip,
+        agent_port=db_host.agent_port,
+        rows=sorted(rows, key=lambda item: str(item.device_id), reverse=True),
+        backoff_until_by_device={},
+        payload=payload,
+    )
+
+    assert handle_locks == ordered_ids
+    assert plain_locks == []
+
+    async with db_session_maker() as verify:
+        stored = {
+            row.device_id: row
+            for row in (await verify.execute(select(AppiumNode).where(AppiumNode.device_id.in_(ordered_ids)))).scalars()
+        }
+    assert [stored[device_id].pid for device_id in ordered_ids] == [5000 + stored[d].port for d in ordered_ids]
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_failed_observation_rolls_back_only_its_own_device(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real aborted transaction in the middle command leaves the first and third
+    observed facts and their events durable, and the middle device unchanged."""
+    seeded = [
+        await _seed_device_with_node(db_session, db_host.id, name=f"obs-peer-{index}", port=4750 + index)
+        for index in range(3)
+    ]
+    await db_session.commit()
+
+    rows = sorted(
+        (_running_row(device, node, host_id=db_host.id) for device, node in seeded),
+        key=lambda item: str(item.device_id),
+    )
+
+    started_calls = 0
+    real_mark_node_started = appium_reconciler.mark_node_started
+
+    async def failing_middle_command(db: AsyncSession, *args: object, **kwargs: object) -> object:
+        nonlocal started_calls
+        started_calls += 1
+        result = await real_mark_node_started(db, *args, **kwargs)  # type: ignore[arg-type]
+        if started_calls == 2:
+            # A real aborted PostgreSQL transaction: a mocked side_effect would
+            # leave the session clean and exercise a different code path.
+            await db.execute(text("SELECT 1 / 0"))
+        return result
+
+    monkeypatch.setattr(appium_reconciler, "mark_node_started", failing_middle_command)
+
+    write_observed = _reconciler(db_session_maker)._write_observed_factory()
+    for row in rows:
+        # The convergence loop swallows one row's failure and continues.
+        with contextlib.suppress(DBAPIError):
+            await write_observed(
+                row=row,
+                state="running",
+                port=row.port,
+                pid=5000 + (row.port or 0),
+                details=NodeStartDetails(active_connection_target=row.connection_target),
+            )
+
+    ordered_ids = [row.device_id for row in rows]
+    rolled_back_id = ordered_ids[1]
+    async with db_session_maker() as verify:
+        stored = {
+            row.device_id: row
+            for row in (await verify.execute(select(AppiumNode).where(AppiumNode.device_id.in_(ordered_ids)))).scalars()
+        }
+        announced = {
+            row.data["device_id"]
+            for row in (
+                await verify.execute(select(SystemEvent).where(SystemEvent.type == "node.state_changed"))
+            ).scalars()
+        }
+
+    assert stored[ordered_ids[0]].pid == 5000 + stored[ordered_ids[0]].port
+    assert stored[ordered_ids[2]].pid == 5000 + stored[ordered_ids[2]].port
+    assert stored[rolled_back_id].pid is None
+    assert {str(ordered_ids[0]), str(ordered_ids[2])} <= announced
+    assert str(rolled_back_id) not in announced
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_observation_command_treats_a_deleted_device_as_a_noop(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A device deleted after the desired-row inventory is a logged no-op, not a
+    leaked ``NoResultFound``."""
+    device, node = await _seed_device_with_node(db_session, db_host.id, name="obs-deleted", port=4740)
+    await db_session.commit()
+    row = _running_row(device, node, host_id=db_host.id)
+
+    async with db_session_maker() as remover:
+        await remover.execute(delete(Device).where(Device.id == device.id))
+        await remover.commit()
+
+    write_observed = _reconciler(db_session_maker)._write_observed_factory()
+    await write_observed(row=row, state="running", port=4740, pid=1, details=NodeStartDetails())
+    await write_observed(row=row, state="stopped", port=None, pid=None, details=NodeStartDetails())
+
+    async with db_session_maker() as verify:
+        assert (
+            await verify.execute(select(AppiumNode).where(AppiumNode.device_id == row.device_id))
+        ).scalar_one_or_none() is None

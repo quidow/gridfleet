@@ -92,7 +92,7 @@ from app.devices.services.intent_types import CommandKind, verification_intent_s
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.state import derive_operational_state
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
-from app.hosts.service_status_push import HostStatusPushService, ObservationFold
+from app.hosts.service_status_push import HostStatusPushService, ObservationFold, StatusPushTarget
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.packs.services.discovery import PackDiscoveryService
@@ -570,7 +570,9 @@ async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
 
-async def test_bench_device_properties_fold(db_session: AsyncSession) -> None:
+async def test_bench_device_properties_fold(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
     discovery = PackDiscoveryService(
         agent_get_pack_devices=AsyncMock(),
         circuit_breaker=Mock(),
@@ -582,10 +584,12 @@ async def test_bench_device_properties_fold(db_session: AsyncSession) -> None:
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
     async def _seed(gen: int) -> tuple[Host, list[SeededDevice]]:
-        return await seed_fleet(db_session, FLEET, DEVICES, generation=gen)
+        host, devices = await seed_fleet(db_session, FLEET, DEVICES, generation=gen)
+        await db_session.commit()  # ensure the seed is visible to factory-opened sessions
+        return host, devices
 
     async def _run(host: Host, devices: list[SeededDevice]) -> None:
-        await service.fold_host_device_properties(db_session, host.id, _properties_section(devices, CHURN))
+        await service.fold_host_device_properties(db_session_maker, host.id, _properties_section(devices, CHURN))
 
     await _measure("fold_host_device_properties", seed=_seed, run=_run, tap=tap)
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
@@ -606,17 +610,20 @@ def _host_telemetry_sample(iteration: int) -> dict[str, object]:
     }
 
 
-async def test_bench_host_telemetry_fold(db_session: AsyncSession) -> None:
+async def test_bench_host_telemetry_fold(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
     service = HostResourceTelemetryService(settings=FakeSettingsReader({}))
     tap = QueryTap()
     event.listen(db_session.bind.sync_engine, "before_cursor_execute", tap)
     tap.armed = False  # exclude the one-time seed from the per-push query count
     host, _devices = await seed_fleet(db_session, FLEET, DEVICES)
+    await db_session.commit()  # ensure the seed is visible to factory-opened sessions
     wall_ms: list[float] = []
     for iteration in range(ITERS):
         tap.armed = True
         t0 = perf_counter()
-        await service.fold_host_telemetry(db_session, host.id, _host_telemetry_sample(iteration))
+        await service.fold_host_telemetry(db_session_maker, host.id, _host_telemetry_sample(iteration))
         wall_ms.append((perf_counter() - t0) * 1000)
         tap.armed = False
     _report("fold_host_telemetry", tap, wall_ms)
@@ -637,9 +644,10 @@ def _observation_failure_total() -> float:
 
     Catches STAGE-level failures only: restart ingest, convergence, and each fold that
     raises out of process_observations (including the dial-seam-bearing device_health
-    fold). It does NOT catch per-device errors that the telemetry/properties/host_telemetry
-    folds swallow internally via db.rollback() + logger.exception -- acceptable here
-    because those three folds have no agent-dial seams for a stubbing gap to break."""
+    fold). It does NOT catch per-device/per-section errors that the properties and
+    host_telemetry folds swallow internally within their own session boundaries +
+    logger.exception -- acceptable here because those two folds have no agent-dial
+    seams for a stubbing gap to break."""
     return sum(
         sample.value
         for metric in HOST_PUSH_OBSERVATION_FAILURES.collect()
@@ -650,13 +658,6 @@ def _observation_failure_total() -> float:
 
 def _build_push_service(session_factory: async_sessionmaker[AsyncSession]) -> HostStatusPushService:
     settings = FakeSettingsReader({})
-    node_health = NodeHealthService(
-        publisher=event_bus,
-        settings=settings,
-        recovery_control=AsyncMock(),
-        health=DeviceHealthService(publisher=event_bus),
-        incidents=AsyncMock(),
-    )
     discovery = PackDiscoveryService(
         agent_get_pack_devices=AsyncMock(), circuit_breaker=Mock(), serializer=Mock(), identity_guard=AsyncMock()
     )
@@ -671,8 +672,9 @@ def _build_push_service(session_factory: async_sessionmaker[AsyncSession]) -> Ho
     return HostStatusPushService(
         publisher=event_bus,
         session_factory=session_factory,
+        # node_health moved to the StatusFoldLoop; it is folded off the request
+        # path there, matching production wiring (app/composition.py).
         observation_folds=(
-            ObservationFold("node_health", node_health.fold_host_nodes),
             ObservationFold("device_properties", property_refresh.fold_host_device_properties),
             ObservationFold("host_telemetry", resource_telemetry.fold_host_telemetry),
         ),
@@ -811,9 +813,7 @@ async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: asyn
         tap.armed = True
         commits.armed = True
         t0 = perf_counter()
-        await service.process_observations(
-            host_id=host.id, host_ip=host.ip, agent_port=host.agent_port, payload=payload
-        )
+        await service.process_observations(target=StatusPushTarget(host.id, host.ip, host.agent_port), payload=payload)
         wall_ms.append((perf_counter() - t0) * 1000)
         tap.armed = False
         commits.armed = False

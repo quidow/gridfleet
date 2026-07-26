@@ -14,7 +14,9 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
+import httpx2 as httpx
 import pytest
+from sqlalchemy import text
 
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observation_revision import next_observation_revision
@@ -23,7 +25,14 @@ from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.observation_token import canonical_section_hash, extract_token
 from app.hosts.router_agent import status as status_endpoint
 from app.hosts.schemas import HostStatusPush
-from app.hosts.service_status_push import HOST_STATUS_NAMESPACE, BootFenceError, HostStatusPushService
+from app.hosts.service_status_push import (
+    HOST_STATUS_NAMESPACE,
+    BootFenceError,
+    HostStatusPushService,
+    PendingStatusPush,
+    StatusPushTarget,
+)
+from app.main import app
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient, Response
@@ -61,6 +70,18 @@ async def _post(
     if node_health is not None:
         body["node_health"] = node_health
     return await client.post("/agent/hosts/status", json=body)
+
+
+async def _post_returning_server_error(body: dict[str, Any]) -> Response:
+    """Post through a transport that keeps the 500 envelope.
+
+    Starlette's ``ServerErrorMiddleware`` re-raises after sending the response, so
+    the shared ``client`` fixture propagates the exception instead of returning it.
+    Callers still depend on ``client`` for the dependency overrides.
+    """
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as errors_client:
+        return await errors_client.post("/agent/hosts/status", json=body)
 
 
 async def _snapshot_section(db_session: AsyncSession, host_id: uuid.UUID, name: str) -> dict[str, Any] | None:
@@ -374,9 +395,7 @@ async def test_convergence_failure_leaves_guarded_snapshot_unstamped(
     await db_session.commit()
 
     converged = await svc.process_prepublication(
-        host_id=host.id,
-        host_ip=host.ip,
-        agent_port=host.agent_port,
+        target=StatusPushTarget(host.id, host.ip, host.agent_port),
         payload=pending.sections,
     )
 
@@ -459,21 +478,19 @@ async def test_concurrent_pushes_serialize_convergence_per_host(
         session_factory=db_session_maker,
         converge_host=_controlled_convergence,
     )
-    host_services = SimpleNamespace(status_push=svc)
+    host_services = SimpleNamespace(status_push=svc, session_factory=db_session_maker)
     pack_services = SimpleNamespace()
 
     async def _run_push(sequence: int) -> Response:
-        async with db_session_maker() as session:
-            return await status_endpoint(
-                db=session,
-                hosts=host_services,  # type: ignore[arg-type]
-                packs=pack_services,  # type: ignore[arg-type]
-                push=HostStatusPush(
-                    host_id=host.id,
-                    boot_id=boot,
-                    node_health=_node_section(sequence=sequence),
-                ),
-            )
+        return await status_endpoint(
+            hosts=host_services,  # type: ignore[arg-type]
+            packs=pack_services,  # type: ignore[arg-type]
+            push=HostStatusPush(
+                host_id=host.id,
+                boot_id=boot,
+                node_health=_node_section(sequence=sequence),
+            ),
+        )
 
     older = asyncio.create_task(_run_push(1))
     await asyncio.wait_for(first_started.wait(), timeout=2.0)
@@ -522,21 +539,19 @@ async def test_publication_slots_reserve_capacity_for_nested_convergence_session
         converge_host=_controlled_convergence,
         publication_concurrency=1,
     )
-    host_services = SimpleNamespace(status_push=svc)
+    host_services = SimpleNamespace(status_push=svc, session_factory=db_session_maker)
     pack_services = SimpleNamespace()
 
     async def _run_push(host: Host, boot_id: uuid.UUID) -> Response:
-        async with db_session_maker() as session:
-            return await status_endpoint(
-                db=session,
-                hosts=host_services,  # type: ignore[arg-type]
-                packs=pack_services,  # type: ignore[arg-type]
-                push=HostStatusPush(
-                    host_id=host.id,
-                    boot_id=boot_id,
-                    node_health=_node_section(sequence=1),
-                ),
-            )
+        return await status_endpoint(
+            hosts=host_services,  # type: ignore[arg-type]
+            packs=pack_services,  # type: ignore[arg-type]
+            push=HostStatusPush(
+                host_id=host.id,
+                boot_id=boot_id,
+                node_health=_node_section(sequence=1),
+            ),
+        )
 
     first = asyncio.create_task(_run_push(first_host, first_boot))
     await asyncio.wait_for(first_started.wait(), timeout=2.0)
@@ -612,3 +627,93 @@ def test_default_publication_slots_require_nested_pool_capacity(monkeypatch: pyt
 
     with pytest.raises(RuntimeError, match="at least two database connections"):
         HostStatusPushService(publisher=Mock())
+
+
+# --------------------------------------------------------------------------- #
+# Transaction rollback containment
+# --------------------------------------------------------------------------- #
+
+
+async def test_txn_a_failure_rolls_back_liveness_snapshot_and_events(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = await _make_host(db_session, hostname="txn-a-rollback")
+    before = host.last_heartbeat
+    called = False
+
+    async def fail_pack_status(_self: object, db: AsyncSession, _payload: dict[str, Any]) -> None:
+        # A real PostgreSQL error aborts the transaction; a Python side_effect
+        # would leave it clean and would not exercise production recovery.
+        nonlocal called
+        called = True
+        await db.execute(text("SELECT 1 / 0"))
+
+    monkeypatch.setattr("app.packs.services.status.PackStatusService.apply_status", fail_pack_status)
+    response = await _post_returning_server_error(
+        {
+            "host_id": str(host.id),
+            "packs": {"runtimes": [], "packs": [], "doctor": []},
+            "node_health": _node_section(sequence=1),
+        }
+    )
+
+    # Proves the 500 came from the injected failure, not from some earlier,
+    # unrelated fault the assertions below would also happen to satisfy.
+    assert called, "fail_pack_status was never reached — the 500 came from somewhere else"
+    assert response.status_code == 500
+    await db_session.refresh(host)
+    assert host.last_heartbeat == before
+    assert await _snapshot_section(db_session, host.id, "node_health") is None
+
+
+async def test_txn_b_failure_rolls_back_publication_and_keeps_txn_a_snapshot(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure after prepublication rolls back only the publication phase.
+
+    Txn A's unstamped snapshot stays durable, no guarded watermark advances,
+    and the next identical push converges and stamps exactly once.
+    """
+    boot = uuid.uuid4()
+    host = await _make_host(db_session, hostname="txn-b-rollback", boot_id=boot)
+    original_finalize = HostStatusPushService.finalize_status_push
+
+    async def failing_finalize(
+        self: HostStatusPushService,
+        db: AsyncSession,
+        locked_host: Host,
+        pending: PendingStatusPush,
+    ) -> dict[str, Any] | None:
+        # Stage the real cursor/snapshot writes first, then abort the way
+        # production does: a statement PostgreSQL refuses, not a side_effect.
+        result = await original_finalize(self, db, locked_host, pending)
+        await db.execute(text("SELECT 1 / 0"))
+        return result
+
+    monkeypatch.setattr(HostStatusPushService, "finalize_status_push", failing_finalize)
+    failed = await _post_returning_server_error(
+        {"host_id": str(host.id), "boot_id": str(boot), "node_health": _node_section(sequence=1)}
+    )
+
+    assert failed.status_code == 500
+    unstamped = await _snapshot_section(db_session, host.id, "node_health")
+    assert unstamped is not None  # Txn A's publication survives the Txn-B rollback
+    assert "observation_revision" not in unstamped
+    await db_session.refresh(host)
+    assert host.observation_cursors.get("node_health") is None
+
+    monkeypatch.undo()
+    retried = await _post(client, host.id, boot_id=boot, node_health=_node_section(sequence=1))
+
+    assert retried.status_code == 204
+    stamped = await _snapshot_section(db_session, host.id, "node_health")
+    assert stamped is not None
+    assert isinstance(stamped["observation_revision"], int)
+    await db_session.refresh(host)
+    cursor = host.observation_cursors["node_health"]
+    assert cursor["section_sequence"] == 1
+    assert cursor["revision"] == stamped["observation_revision"]

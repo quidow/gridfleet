@@ -7,9 +7,13 @@ import pytest
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
+from app.appium_nodes.services import locking as appium_node_locking
 from app.appium_nodes.services import reconciler_agent as node_agent
 from app.appium_nodes.services.reconciler_agent import NodeStartDetails
+from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.lifecycle.services import remediation_log
@@ -42,11 +46,9 @@ async def _loaded_device(db_session: AsyncSession, db_host: Host, identity: str)
     return loaded
 
 
-async def test_mark_node_started_rejects_hostless_device_after_lock(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_mark_node_started_rejects_hostless_device_after_lock() -> None:
     device = Device(
-        id=__import__("uuid").uuid4(),
+        id=uuid.uuid4(),
         pack_id="appium-uiautomator2",
         platform_id="android_mobile",
         identity_scheme="android_serial",
@@ -63,18 +65,13 @@ async def test_mark_node_started_rejects_hostless_device_after_lock(
     node = AppiumNode(device_id=device.id, port=4723)
     fake_db = MagicMock()
     fake_db.flush = AsyncMock()
-    monkeypatch.setattr(
-        "app.appium_nodes.services.reconciler_agent._hold_device_row_lock", AsyncMock(return_value=device)
-    )
-    monkeypatch.setattr(
-        "app.appium_nodes.services.reconciler_agent.appium_node_locking.lock_appium_node_for_device",
-        AsyncMock(return_value=node),
-    )
 
     with pytest.raises(NodeManagerError, match="no host assigned"):
         await node_agent.mark_node_started(
             fake_db,
-            device,
+            SimpleNamespace(device=device),  # type: ignore[arg-type]
+            node,
+            SimpleNamespace(ladder=None),  # type: ignore[arg-type]
             port=4723,
             pid=123,
             details=NodeStartDetails(allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"}),
@@ -124,34 +121,6 @@ async def test_start_stop_restart_node_guard_paths(
     assert restarted.restart_requested_at is not None
 
 
-async def test_wait_for_node_running(monkeypatch: pytest.MonkeyPatch) -> None:
-    _wait_settings = FakeSettingsReader({})
-    svc = node_agent.ReconcilerAgentService(
-        settings=_wait_settings,
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=_wait_settings, publisher=event_bus
-        ),
-    )
-    db = MagicMock()
-    db.refresh = AsyncMock()
-    db.commit = AsyncMock()
-    device_id = uuid.uuid4()
-
-    node_id = uuid.uuid4()
-    not_running = AppiumNode(device_id=device_id, port=4725)
-    running_node = AppiumNode(device_id=device_id, port=4725, pid=2, active_connection_target="dev")
-    db.refresh.reset_mock()
-    db.get = AsyncMock(side_effect=[not_running, running_node])
-    monkeypatch.setattr(node_agent.asyncio, "sleep", AsyncMock())
-    found = await svc.wait_for_node_running(db, node_id, timeout_sec=1, poll_interval_sec=0)
-    assert found is running_node
-    assert db.get.await_count == 2
-    assert db.refresh.await_count == 2
-
-    db.get = AsyncMock(return_value=None)
-    assert await svc.wait_for_node_running(db, node_id, timeout_sec=0, poll_interval_sec=0) is None
-
-
 async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pytest.MonkeyPatch) -> None:
     device = Device(
         id=uuid.uuid4(),
@@ -171,22 +140,17 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
     db = MagicMock()
     db.add = MagicMock()
     db.flush = AsyncMock()
-    db.commit = AsyncMock()
-    db.refresh = AsyncMock()
-    monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
-    monkeypatch.setattr(
-        node_agent.appium_node_locking,
-        "lock_appium_node_for_device",
-        AsyncMock(return_value=None),
-    )
     set_extra = AsyncMock()
     monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", set_extra)
-    monkeypatch.setattr(DeviceHealthService, "apply_node_state_transition", AsyncMock())
+    monkeypatch.setattr(DeviceHealthService, "apply_locked_node_state_transition", AsyncMock())
     monkeypatch.setattr(node_agent, "reset_reconciler_start_failure_if_needed", AsyncMock(return_value=False))
 
-    node = await node_agent.mark_node_started(
+    # locked_node None: the helper mints the row under the caller's Device lock.
+    await node_agent.mark_node_started(
         db,
-        device,
+        SimpleNamespace(device=device),  # type: ignore[arg-type]
+        None,
+        SimpleNamespace(ladder=None),  # type: ignore[arg-type]
         port=4723,
         pid=123,
         details=NodeStartDetails(allocated_caps={"appium:systemPort": 8200, "custom:flag": "yes"}),
@@ -194,7 +158,8 @@ async def test_mark_node_started_records_non_port_capabilities(monkeypatch: pyte
         publisher=Mock(),
     )
 
-    assert node is device.appium_node
+    node = device.appium_node
+    assert node is not None
     set_extra.assert_awaited_once_with(db, node_id=node.id, capability_key="custom:flag", value="yes")
 
 
@@ -210,28 +175,28 @@ async def test_mark_node_started_preserves_observed_pack_release_when_omitted(
         connection_target="mark-start-release",
         name="mark-start-release",
     )
-    db = MagicMock(flush=AsyncMock(), commit=AsyncMock(), refresh=AsyncMock())
-    monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
-    monkeypatch.setattr(
-        node_agent.appium_node_locking,
-        "lock_appium_node_for_device",
-        AsyncMock(return_value=node),
-    )
-    monkeypatch.setattr(DeviceHealthService, "apply_node_state_transition", AsyncMock())
+    db = MagicMock(flush=AsyncMock())
+    locked = SimpleNamespace(device=device)
+    snapshot = SimpleNamespace(ladder=None)
+    monkeypatch.setattr(DeviceHealthService, "apply_locked_node_state_transition", AsyncMock())
     monkeypatch.setattr(node_agent, "reset_reconciler_start_failure_if_needed", AsyncMock(return_value=False))
 
     await node_agent.mark_node_started(
         db,
-        device,
+        locked,  # type: ignore[arg-type]
+        node,
+        snapshot,  # type: ignore[arg-type]
         port=4723,
         pid=123,
         details=NodeStartDetails(pack_release="2026.07.2"),
         settings=FakeSettingsReader({}),
         publisher=Mock(),
     )
-    result = await node_agent.mark_node_started(
+    await node_agent.mark_node_started(
         db,
-        device,
+        locked,  # type: ignore[arg-type]
+        node,
+        snapshot,  # type: ignore[arg-type]
         port=4723,
         pid=123,
         details=NodeStartDetails(),
@@ -239,40 +204,37 @@ async def test_mark_node_started_preserves_observed_pack_release_when_omitted(
         publisher=Mock(),
     )
 
-    assert result.observed_pack_release == "2026.07.2"
+    assert node.observed_pack_release == "2026.07.2"
 
 
 @pytest.mark.usefixtures("seeded_driver_packs")
 async def test_mark_node_started_clears_stale_reconciler_failure(
     db_session: AsyncSession,
     db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The reconciler's start-failure ladder entry is reset from the snapshot's
+    ladder, without a second ladder query inside the same transaction."""
     device = await _loaded_device(db_session, db_host, "mark-start-clear")
     await remediation_log.append_failure(db_session, device.id, source="appium_reconciler", reason="http_error")
     await db_session.commit()
 
-    monkeypatch.setattr(node_agent, "_hold_device_row_lock", AsyncMock(return_value=device))
-    monkeypatch.setattr(
-        node_agent.appium_node_locking,
-        "lock_appium_node_for_device",
-        AsyncMock(return_value=None),
-    )
-    monkeypatch.setattr(node_agent.appium_node_resource_service, "set_node_extra_capability", AsyncMock())
-    monkeypatch.setattr(DeviceHealthService, "apply_node_state_transition", AsyncMock())
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    locked_node = await appium_node_locking.lock_appium_node_for_device(db_session, device.id)
 
     await node_agent.mark_node_started(
         db_session,
-        device,
+        locked,
+        locked_node,
+        snapshot,
         port=4723,
         pid=123,
+        details=NodeStartDetails(),
         settings=FakeSettingsReader({}),
         publisher=Mock(),
     )
 
-    reloaded = await db_session.get(Device, device.id)
-    assert reloaded is not None
-    ladder = await remediation_log.load_ladder(db_session, reloaded.id)
+    ladder = await remediation_log.load_ladder(db_session, device.id)
     assert ladder.last_failure_source is None
     assert ladder.last_failure_reason is None
 

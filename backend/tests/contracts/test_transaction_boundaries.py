@@ -27,6 +27,14 @@ MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/runs/service_lifecycle_failures.py",
     "app/runs/service_teardown.py",
     "app/verification/services/runner.py",
+    "app/appium_nodes/services/heartbeat.py",
+    "app/appium_nodes/services/host_sweep.py",
+    "app/appium_nodes/services/reconciler.py",
+    "app/appium_nodes/services/status_fold_loop.py",
+    "app/devices/services/property_refresh.py",
+    "app/hosts/router_agent.py",
+    "app/hosts/service_resource_telemetry.py",
+    "app/hosts/service_status_push.py",
 )
 
 # Phase-3 mixed modules: each carries a sanctioned commit boundary AND below-boundary
@@ -38,6 +46,9 @@ SANCTIONED_COMMIT_BOUNDARIES = {
     "app/lifecycle/services/actions.py": {"complete_auto_stop", "handle_node_crash"},
     "app/lifecycle/services/policy.py": {"handle_health_failure", "handle_session_finished"},
     "app/devices/services/health.py": set(),  # fully clean; no commit/rollback anywhere
+    # Phase 8: observation paths are transaction-local. These three operator
+    # commands keep their boundary until Phase 9 migrates their routers.
+    "app/appium_nodes/services/reconciler_agent.py": {"start_node", "stop_node", "restart_node"},
 }
 
 

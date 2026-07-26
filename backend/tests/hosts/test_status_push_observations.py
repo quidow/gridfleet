@@ -3,7 +3,7 @@
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
-from app.hosts.service_status_push import HostStatusPushService, ObservationFold
+from app.hosts.service_status_push import HostStatusPushService, ObservationFold, StatusPushTarget
 
 if TYPE_CHECKING:
     import uuid
@@ -36,10 +36,10 @@ async def test_process_observations_dispatches_sections_to_matching_folds(
 ) -> None:
     seen: list[tuple[str, str]] = []
 
-    async def fold_a(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def fold_a(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         seen.append(("a", section["reported_at"]))
 
-    async def fold_b(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def fold_b(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         seen.append(("b", section["reported_at"]))
 
     service = _service(
@@ -50,9 +50,7 @@ async def test_process_observations_dispatches_sections_to_matching_folds(
         ),
     )
     await service.process_observations(
-        host_id=db_host.id,
-        host_ip=db_host.ip,
-        agent_port=db_host.agent_port,
+        target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"node_health": {"reported_at": "t1"}, "device_health": None},
     )
 
@@ -64,10 +62,10 @@ async def test_process_observations_isolates_a_raising_fold(
 ) -> None:
     ran: list[bool] = []
 
-    async def bad(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def bad(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         raise RuntimeError("boom")
 
-    async def good(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def good(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         ran.append(True)
 
     service = _service(
@@ -78,9 +76,7 @@ async def test_process_observations_isolates_a_raising_fold(
         ),
     )
     await service.process_observations(
-        host_id=db_host.id,
-        host_ip=db_host.ip,
-        agent_port=db_host.agent_port,
+        target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"node_health": {"reported_at": "t"}, "device_health": {"reported_at": "t"}},
     )
 
@@ -99,7 +95,7 @@ async def test_process_observations_runs_restart_then_convergence_then_folds(
     async def converge(**kwargs: object) -> None:
         order.append("converge")
 
-    async def fold(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def fold(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         order.append("fold")
 
     service = _service(
@@ -109,9 +105,7 @@ async def test_process_observations_runs_restart_then_convergence_then_folds(
         observation_folds=(ObservationFold("node_health", fold),),
     )
     await service.process_observations(
-        host_id=db_host.id,
-        host_ip=db_host.ip,
-        agent_port=db_host.agent_port,
+        target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"appium_processes": {"running_nodes": []}, "node_health": {"reported_at": "t"}},
     )
 
@@ -126,7 +120,7 @@ async def test_process_observations_holds_folds_when_convergence_fails(
     async def converge(**kwargs: object) -> None:
         raise RuntimeError("boom")
 
-    async def fold(db: AsyncSession, host_id: uuid.UUID, section: dict[str, Any]) -> None:
+    async def fold(session_factory: SessionFactory, host_id: uuid.UUID, section: dict[str, Any]) -> None:
         ran.append(True)
 
     service = _service(
@@ -135,9 +129,7 @@ async def test_process_observations_holds_folds_when_convergence_fails(
         observation_folds=(ObservationFold("node_health", fold),),
     )
     await service.process_observations(
-        host_id=db_host.id,
-        host_ip=db_host.ip,
-        agent_port=db_host.agent_port,
+        target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"appium_processes": {}, "node_health": {"reported_at": "t"}},
     )
 
@@ -147,8 +139,29 @@ async def test_process_observations_holds_folds_when_convergence_fails(
 async def test_process_observations_without_wiring_is_a_noop(db_host: Host) -> None:
     service = HostStatusPushService(publisher=AsyncMock())
     await service.process_observations(
-        host_id=db_host.id,
-        host_ip=db_host.ip,
-        agent_port=db_host.agent_port,
+        target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"node_health": {"reported_at": "t"}},
     )
+
+
+async def test_convergence_stage_receives_values_not_a_session(
+    db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
+) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_converge_host(**kwargs: object) -> None:
+        seen.update(kwargs)
+        assert not {"db", "session"} & kwargs.keys()
+
+    service = _service(db_session_maker, converge_host=fake_converge_host)
+    await service.process_observations(
+        target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
+        payload={"appium_processes": {"running_nodes": []}},
+    )
+
+    assert seen == {
+        "host_id": db_host.id,
+        "host_ip": db_host.ip,
+        "agent_port": db_host.agent_port,
+        "payload": {"appium_processes": {"running_nodes": []}},
+    }

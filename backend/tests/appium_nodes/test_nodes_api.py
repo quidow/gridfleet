@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.appium_nodes.services.reconciler_convergence import DesiredRow
+
 DEVICE_PAYLOAD = {
     "identity_value": "emulator-5554",
     "connection_target": "emulator-5554",
@@ -60,11 +62,9 @@ async def seed_packs(db_session: AsyncSession) -> None:
 @pytest.fixture(autouse=True)
 def _stub_node_poke(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub the agent wake-hint poke so node-control/run-creation tests here
-    don't make a real network call. ``converge_device_now`` (restart route)
-    binds ``agent_nodes_refresh`` directly into the reconciler module, while
-    run creation reaches it via ``node_poke``'s ``agent_operations`` module
-    attribute — both call sites need patching independently."""
-    monkeypatch.setattr("app.appium_nodes.services.reconciler.agent_nodes_refresh", AsyncMock())
+    don't make a real network call. Both the restart route's
+    ``converge_device_now`` and run creation reach the agent through
+    ``node_poke``'s shared ``agent_operations.agent_nodes_refresh`` function."""
     monkeypatch.setattr("app.agent_comm.operations.agent_nodes_refresh", AsyncMock())
 
 
@@ -311,6 +311,75 @@ async def test_restart_node(
     data = resp.json()
     assert data["desired_state"] == AppiumDesiredState.running.value
     assert data["restart_requested_at"] is not None
+
+
+async def test_restart_node_closes_sessions_before_poke(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    remote_manager_client: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither the route's DbDep session nor converge_device_now's own read
+    session may still be in a transaction when the wake-hint poke fires.
+
+    Catches ReconcilerAgentService.restart_node's post-commit db.refresh(node),
+    which used to reopen an implicit transaction on the route's session ahead
+    of the poke (expire_on_commit=False already leaves the committed values
+    loaded, so that refresh was redundant)."""
+    from app.appium_nodes.services import reconciler as appium_reconciler
+
+    device = await _create_device(db_session, default_host_id)
+    device_id = device["id"]
+    host = await db_session.get(Host, uuid.UUID(default_host_id))
+    assert host is not None
+    host.status = HostStatus.online
+    db_session.add(
+        AppiumNode(
+            device_id=uuid.UUID(device_id),
+            port=4723,
+            pid=12345,
+            active_connection_target="emulator-5554",
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+        )
+    )
+    await db_session.commit()
+
+    captured_sessions: list[AsyncSession] = []
+    real_fetch_desired_row = appium_reconciler._fetch_desired_row
+
+    async def capturing_fetch_desired_row(fetch_db: AsyncSession, fetch_device_id: uuid.UUID) -> DesiredRow | None:
+        captured_sessions.append(fetch_db)
+        return await real_fetch_desired_row(fetch_db, fetch_device_id)
+
+    monkeypatch.setattr(appium_reconciler, "_fetch_desired_row", capturing_fetch_desired_row)
+
+    # Record state rather than asserting here: the router wraps
+    # converge_device_now in a best-effort try/except, which would silently
+    # swallow an AssertionError raised from inside this callback.
+    poke_observations: dict[str, bool] = {}
+
+    async def observing_poke(target: object, *, circuit_breaker: object, pool: object) -> None:
+        poke_observations["called"] = True
+        poke_observations["read_session_in_transaction"] = bool(
+            captured_sessions and captured_sessions[-1].in_transaction()
+        )
+        poke_observations["route_session_in_transaction"] = db_session.in_transaction()
+
+    monkeypatch.setattr(appium_reconciler, "poke_node_refresh_target", observing_poke)
+
+    resp = await client.post(f"/api/devices/{device_id}/node/restart")
+
+    assert resp.status_code == 200
+    assert poke_observations.get("called"), "expected converge_device_now to poke the agent"
+    assert captured_sessions, "converge_device_now must open its own read session"
+    assert not poke_observations["read_session_in_transaction"], (
+        "converge_device_now's read session must be closed before the poke"
+    )
+    assert not poke_observations["route_session_in_transaction"], (
+        "the route's DbDep session must be closed before the poke"
+    )
 
 
 async def test_restart_node_cold_start(

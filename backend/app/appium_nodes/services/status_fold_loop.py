@@ -87,11 +87,17 @@ class StatusFoldLoop(BackgroundLoop):
     async def _run_cycle(self, db: AsyncSession) -> None:
         cycle_started = perf_counter()
         cycle_deadline = cycle_started + STATUS_FOLD_CYCLE_BUDGET_SEC
-        snapshots = await control_plane_state_store.get_values(db, HOST_STATUS_NAMESPACE)
+        # Inventory in one short session that closes before the first fold
+        # settlement: the BackgroundLoop-supplied ``db`` is left untouched so no
+        # implicit read transaction spans the per-device fold commits or the
+        # Host-locked watermark advance below. Everything carried out of the
+        # block is plain JSON values, never a live ORM row.
+        async with self._session_factory() as inventory_db:
+            snapshots = await control_plane_state_store.get_values(inventory_db, HOST_STATUS_NAMESPACE)
+            applied = await self._load_applied(inventory_db, list(snapshots)) if snapshots else {}
         if not snapshots:
             record_status_fold_oldest_unapplied(0.0)
             return
-        applied = await self._load_applied(db, list(snapshots))
         self._record_oldest_unapplied(snapshots, applied)
         items = list(snapshots.items())
         if self._resume_after is not None:
@@ -217,7 +223,10 @@ class StatusFoldLoop(BackgroundLoop):
     async def _advance_applied(self, host_id: uuid.UUID, section_name: str, revision: int) -> bool:
         # Serializes on the same host-row lock the push endpoint takes, so the
         # loop's completion watermark cannot race the endpoint's cursor publish.
-        async with self._session_factory() as db:
+        # The comparison happens under that lock and only ever moves the
+        # watermark forward, so a slower cycle carrying an older revision cannot
+        # overwrite a newer one published while it waited.
+        async with self._session_factory.begin() as db:
             host = await db.get(Host, host_id, with_for_update=True)
             if host is None:
                 return False
@@ -226,5 +235,4 @@ class StatusFoldLoop(BackgroundLoop):
             if not isinstance(current, int) or current < revision:
                 applied[section_name] = revision
                 host.observation_applied = applied
-                await db.commit()
-            return True
+        return True

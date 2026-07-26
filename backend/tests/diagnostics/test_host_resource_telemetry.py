@@ -4,14 +4,14 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from app.hosts.models import HostResourceSample
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -51,8 +51,10 @@ async def test_apply_host_resource_sample_persists_partial_fields(
 
 async def test_fold_ingests_pushed_sample(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
+    await db_session.commit()  # make db_host visible to factory-opened sessions
     sample = {
         "recorded_at": "2026-04-16T09:30:00+00:00",
         "cpu_percent": 42.0,
@@ -63,21 +65,24 @@ async def test_fold_ingests_pushed_sample(
         "disk_percent": 10.0,
     }
 
-    await _make_service().fold_host_telemetry(db_session, db_host.id, sample)
+    await _make_service().fold_host_telemetry(db_session_maker, db_host.id, sample)
 
-    rows = (
-        (await db_session.execute(select(HostResourceSample).where(HostResourceSample.host_id == db_host.id)))
-        .scalars()
-        .all()
-    )
+    async with db_session_maker() as verify:
+        rows = (
+            (await verify.execute(select(HostResourceSample).where(HostResourceSample.host_id == db_host.id)))
+            .scalars()
+            .all()
+        )
     assert len(rows) == 1
     assert rows[0].cpu_percent == pytest.approx(42.0)
 
 
 async def test_fold_appends_sample_and_rate_limits(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
+    await db_session.commit()  # make db_host visible to factory-opened sessions
     base = datetime(2026, 4, 16, 9, 30, tzinfo=UTC)
     sample = {
         "recorded_at": base.isoformat(),
@@ -89,20 +94,98 @@ async def test_fold_appends_sample_and_rate_limits(
         "disk_percent": 10.0,
     }
     svc = _make_service()
-    await svc.fold_host_telemetry(db_session, db_host.id, sample)
+    await svc.fold_host_telemetry(db_session_maker, db_host.id, sample)
     # +10 s: skipped (< HOST_RESOURCE_SAMPLE_MIN_INTERVAL_SEC).
     await svc.fold_host_telemetry(
-        db_session, db_host.id, {**sample, "recorded_at": (base + timedelta(seconds=10)).isoformat()}
+        db_session_maker, db_host.id, {**sample, "recorded_at": (base + timedelta(seconds=10)).isoformat()}
     )
     # +70 s: appended.
     await svc.fold_host_telemetry(
-        db_session, db_host.id, {**sample, "recorded_at": (base + timedelta(seconds=70)).isoformat()}
+        db_session_maker, db_host.id, {**sample, "recorded_at": (base + timedelta(seconds=70)).isoformat()}
     )
 
-    count = await db_session.scalar(
-        select(func.count()).select_from(HostResourceSample).where(HostResourceSample.host_id == db_host.id)
-    )
+    async with db_session_maker() as verify:
+        count = await verify.scalar(
+            select(func.count()).select_from(HostResourceSample).where(HostResourceSample.host_id == db_host.id)
+        )
     assert count == 2
+
+
+async def test_fold_telemetry_rolls_back_only_its_own_section(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """A real aborted PostgreSQL transaction inside apply_host_resource_sample
+    rolls back only the failed section: no recovery read or rollback runs on the
+    failed session. The next fold call gets a fresh, usable session and persists
+    successfully, and the (host_id, recorded_at) conflict path stays idempotent
+    on replay."""
+    await db_session.commit()  # make db_host visible to factory-opened sessions
+    service = _make_service()
+    real_apply = service.apply_host_resource_sample
+    calls = 0
+
+    async def _apply_and_abort_once(db: AsyncSession, host: Host, sample: dict[str, object]) -> HostResourceSample:
+        nonlocal calls
+        calls += 1
+        row = await real_apply(db, host, sample)
+        if calls == 1:
+            # A real aborted PostgreSQL transaction: a mocked side_effect would
+            # leave the session clean and exercise a different code path.
+            await db.execute(text("SELECT 1 / 0"))
+        return row
+
+    service.apply_host_resource_sample = _apply_and_abort_once  # type: ignore[method-assign]
+
+    first_sample = {
+        "recorded_at": "2026-04-16T09:30:00+00:00",
+        "cpu_percent": 42.0,
+        "memory_used_mb": 1024,
+        "memory_total_mb": 2048,
+        "disk_used_gb": 10.0,
+        "disk_total_gb": 100.0,
+        "disk_percent": 10.0,
+    }
+    await service.fold_host_telemetry(db_session_maker, db_host.id, first_sample)
+
+    async with db_session_maker() as verify:
+        rolled_back_count = await verify.scalar(
+            select(func.count()).select_from(HostResourceSample).where(HostResourceSample.host_id == db_host.id)
+        )
+    assert rolled_back_count == 0, "the aborted transaction must not persist the sample"
+
+    # The next fold call must receive a fresh, usable session/transaction.
+    second_sample = {**first_sample, "recorded_at": "2026-04-16T09:35:00+00:00"}
+    await service.fold_host_telemetry(db_session_maker, db_host.id, second_sample)
+
+    async with db_session_maker() as verify:
+        rows = (
+            (await verify.execute(select(HostResourceSample).where(HostResourceSample.host_id == db_host.id)))
+            .scalars()
+            .all()
+        )
+    assert len(rows) == 1
+    assert rows[0].recorded_at == datetime(2026, 4, 16, 9, 35, tzinfo=UTC)
+    assert rows[0].cpu_percent == pytest.approx(42.0)
+
+    # Replay the same (host_id, recorded_at): ON CONFLICT DO NOTHING keeps
+    # first-write-wins, so a re-fold of an already-processed observation cannot
+    # duplicate or overwrite it, even directly against the persistence helper
+    # the fold delegates to.
+    async with db_session_maker() as replay_db:
+        replayed = await service.apply_host_resource_sample(replay_db, db_host, {**second_sample, "cpu_percent": 999.0})
+        await replay_db.commit()
+
+    async with db_session_maker() as verify:
+        replay_rows = (
+            (await verify.execute(select(HostResourceSample).where(HostResourceSample.host_id == db_host.id)))
+            .scalars()
+            .all()
+        )
+    assert len(replay_rows) == 1
+    assert replayed.id == replay_rows[0].id
+    assert replay_rows[0].cpu_percent == pytest.approx(42.0)
 
 
 async def test_apply_host_resource_sample_is_idempotent_on_replay(

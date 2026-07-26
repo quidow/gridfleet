@@ -6,9 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from app.appium_nodes.services.reconciler_agent import mark_node_started, mark_node_stopped
+from app.appium_nodes.services.locking import lock_appium_node_for_device
+from app.appium_nodes.services.reconciler_agent import NodeStartDetails, mark_node_started, mark_node_stopped
+from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from tests.fakes import FakeSettingsReader
 from tests.helpers import dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
@@ -30,8 +33,21 @@ async def test_mark_node_started_queues_state_changed_after_availability(
     )
     event_bus_capture.clear()
 
-    locked = await device_locking.lock_device(db_session, device.id)
-    await mark_node_started(db_session, locked, port=4730, pid=42, publisher=event_bus, settings=FakeSettingsReader({}))
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    locked_node = await lock_appium_node_for_device(db_session, device.id)
+    await mark_node_started(
+        db_session,
+        locked,
+        locked_node,
+        snapshot,
+        port=4730,
+        pid=42,
+        details=NodeStartDetails(),
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+    )
+    await db_session.commit()
     await dispatch_committed_events()
 
     types_in_order = [name for name, _ in event_bus_capture]
@@ -52,13 +68,29 @@ async def test_mark_node_stopped_queues_state_changed(
     _, device = await seed_host_and_device(db_session, identity="node-stop-1")
     event_bus_capture.clear()
 
-    locked = await device_locking.lock_device(db_session, device.id)
-    await mark_node_started(db_session, locked, port=4731, pid=43, publisher=event_bus, settings=FakeSettingsReader({}))
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    locked_node = await lock_appium_node_for_device(db_session, device.id)
+    snapshot = await mark_node_started(
+        db_session,
+        locked,
+        locked_node,
+        snapshot,
+        port=4731,
+        pid=43,
+        details=NodeStartDetails(),
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+    )
+    await db_session.commit()
     await dispatch_committed_events()
     event_bus_capture.clear()
 
-    locked = await device_locking.lock_device(db_session, device.id)
-    await mark_node_stopped(db_session, locked, publisher=event_bus)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    locked_node = await lock_appium_node_for_device(db_session, device.id)
+    await mark_node_stopped(db_session, locked, locked_node, snapshot, publisher=event_bus)
+    await db_session.commit()
     await dispatch_committed_events()
 
     node_events = [p for n, p in event_bus_capture if n == "node.state_changed"]

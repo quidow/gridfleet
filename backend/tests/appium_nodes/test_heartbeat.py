@@ -628,6 +628,76 @@ async def test_restart_succeeded_eager_fills_active_connection_target(db_session
     assert node.observed_running
 
 
+async def test_later_restart_events_apply_after_this_stage_moved_the_node(db_session: AsyncSession) -> None:
+    """The stale-observation check fires once, at lock acquisition. A write this
+    stage made for an earlier event must not make its own later events look stale."""
+    host = Host(
+        hostname="agent-host-seq", ip="10.0.0.11", os_type=OSType.linux, agent_port=5100, status=HostStatus.online
+    )
+    db_session.add(host)
+    await db_session.flush()
+
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-seq-1",
+        connection_target="dev-seq-1",
+        name="Sequenced Phone",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.available,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=None,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target=None,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    await _seed_snapshot(
+        db_session,
+        host,
+        {
+            "running_nodes": [],
+            "recent_restart_events": [
+                {"sequence": 1, "kind": "restart_succeeded", "port": 4723, "pid": 1111, "attempt": 1},
+                {"sequence": 2, "kind": "crash_detected", "port": 4723, "pid": 1111, "attempt": 2, "will_retry": True},
+                {"sequence": 3, "kind": "restart_succeeded", "port": 4723, "pid": 2222, "attempt": 2},
+            ],
+        },
+    )
+
+    svc = _hb_svc(db_session)
+    await _ingest_seeded_snapshot(db_session, svc, host)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.pid == 2222
+
+    events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(DeviceEvent.device_id == device.id).order_by(DeviceEvent.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [event.details["sequence"] for event in events if event.details is not None] == [1, 2, 3]
+
+
 @pytest.mark.usefixtures("seeded_driver_packs")
 async def test_restart_exhausted_keeps_backend_fallback_available(db_session: AsyncSession) -> None:
     host = Host(hostname="agent-host", ip="10.0.0.2", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)

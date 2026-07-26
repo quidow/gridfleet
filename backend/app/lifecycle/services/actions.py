@@ -560,9 +560,17 @@ async def escalate_device_remediation_failure(
     )
 
 
-async def reset_reconciler_start_failure_if_needed(db: AsyncSession, device: Device) -> bool:
-    """A successful node start supersedes only reconciler-sourced episodes."""
-    ladder = await remediation_log.load_ladder(db, device.id)
+async def reset_reconciler_start_failure_if_needed(
+    db: AsyncSession, device: Device, *, ladder: LadderState | None = None
+) -> bool:
+    """A successful node start supersedes only reconciler-sourced episodes.
+
+    *ladder* lets a caller that already holds a ``DeviceDecisionSnapshot`` skip a
+    second ladder query inside the same transaction, matching the optional-ladder
+    shape on ``escalate_device_remediation_failure``.
+    """
+    if ladder is None:
+        ladder = await remediation_log.load_ladder(db, device.id)
     if not (ladder.armed or ladder.last_failure_reason) or ladder.last_failure_source != "appium_reconciler":
         return False
     await remediation_log.append_reset(db, device.id, source="appium_reconciler", action="start_succeeded")

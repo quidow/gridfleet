@@ -26,6 +26,7 @@ from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceEventType
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.event import build_device_crashed_payload, record_event
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity import appium_connection_target
@@ -39,6 +40,8 @@ if TYPE_CHECKING:
     from app.agent_comm.http_pool import AgentHttpPool
     from app.agent_comm.protocols import CircuitBreakerProtocol
     from app.core.protocols import SettingsReader
+    from app.devices.locking import LockedDevice
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -174,19 +177,23 @@ def _restart_error_message(kind: str, exit_code: int | None) -> str:
     return f"Agent detected Appium exit{exit_detail}"
 
 
-def _restart_event_observation_changed(
-    locked: AppiumNode,
-    *,
-    observed_id: uuid.UUID,
-    observed_port: int,
-    observed_pid: int | None,
-    observed_active_connection_target: str | None,
-) -> bool:
+@dataclass(frozen=True, slots=True)
+class _RestartNodeObservation:
+    """Immutable pre-lock view of one node a restart event refers to."""
+
+    device_id: uuid.UUID
+    node_id: uuid.UUID
+    port: int
+    pid: int | None
+    active_connection_target: str | None
+
+
+def _restart_event_observation_changed(locked: AppiumNode, observed: _RestartNodeObservation) -> bool:
     return (
-        locked.id != observed_id
-        or locked.port != observed_port
-        or locked.pid != observed_pid
-        or locked.active_connection_target != observed_active_connection_target
+        locked.id != observed.node_id
+        or locked.port != observed.port
+        or locked.pid != observed.pid
+        or locked.active_connection_target != observed.active_connection_target
     )
 
 
@@ -241,17 +248,19 @@ def _build_restart_event_details(event: dict[str, Any], fields: _RestartEventFie
     return details
 
 
-async def _handle_restart_succeeded(
+async def _handle_restart_succeeded(  # noqa: PLR0913 - lock proof, locked child, and snapshot all cross the boundary
     db: AsyncSession,
-    device: Device,
+    locked: LockedDevice,
     locked_node: AppiumNode,
+    snapshot: DeviceDecisionSnapshot,
     *,
     process: str,
     pid: int | None,
     port: int,
     details: dict[str, Any],
     publisher: EventPublisher,
-) -> None:
+) -> DeviceDecisionSnapshot:
+    device = locked.device
     if process == "appium" and pid is not None:
         locked_node.pid = pid
         # Eager-fill the node-viability marker (I11/N15). A reconciler poll that
@@ -289,18 +298,22 @@ async def _handle_restart_succeeded(
             "recovered_from": "agent_auto_restart",
         },
     )
-    await DeviceHealthService(publisher=publisher).apply_node_state_transition(
+    return await DeviceHealthService(publisher=publisher).apply_locked_node_state_transition(
         db,
-        device,
+        locked,
+        locked_node,
+        snapshot,
         health_running=None,
         health_state=None,
         mark_offline=False,
     )
 
 
-async def _handle_restart_failure(
+async def _handle_restart_failure(  # noqa: PLR0913 - lock proof, locked child, and snapshot all cross the boundary
     db: AsyncSession,
-    device: Device,
+    locked: LockedDevice,
+    locked_node: AppiumNode,
+    snapshot: DeviceDecisionSnapshot,
     *,
     kind: str,
     exit_code: int | None,
@@ -308,7 +321,8 @@ async def _handle_restart_failure(
     will_retry: bool,
     details: dict[str, Any],
     publisher: EventPublisher,
-) -> None:
+) -> DeviceDecisionSnapshot:
+    device = locked.device
     error_message = _restart_error_message(kind, exit_code)
     publisher.queue_for_session(
         db,
@@ -345,12 +359,71 @@ async def _handle_restart_failure(
         },
     )
     degraded_state = "restart_exhausted" if kind == "restart_exhausted" else "restarting"
-    await DeviceHealthService(publisher=publisher).apply_node_state_transition(
+    return await DeviceHealthService(publisher=publisher).apply_locked_node_state_transition(
         db,
-        device,
+        locked,
+        locked_node,
+        snapshot,
         health_running=False,
         health_state=degraded_state,
         mark_offline=False,
+    )
+
+
+async def _apply_restart_event(
+    db: AsyncSession,
+    event: dict[str, Any],
+    *,
+    locked: LockedDevice,
+    locked_node: AppiumNode,
+    snapshot: DeviceDecisionSnapshot,
+    sequence: int,
+    port: int,
+    publisher: EventPublisher,
+) -> DeviceDecisionSnapshot:
+    """Parse one restart event and fold it into the already-locked graph."""
+    kind = str(event["kind"])
+    process = _restart_process(event.get("process"))
+    exit_code = _coerce_int(event.get("exit_code"))
+    pid = _coerce_int(event.get("pid"))
+    will_retry = bool(event.get("will_retry"))
+    details = _build_restart_event_details(
+        event,
+        _RestartEventFields(
+            sequence=sequence,
+            process=process,
+            kind=kind,
+            attempt=_coerce_int(event.get("attempt")) or 0,
+            port=port,
+            will_retry=will_retry,
+            delay_sec=_coerce_int(event.get("delay_sec")),
+            exit_code=exit_code,
+            pid=pid,
+        ),
+    )
+    if kind == "restart_succeeded":
+        return await _handle_restart_succeeded(
+            db,
+            locked,
+            locked_node,
+            snapshot,
+            process=process,
+            pid=pid,
+            port=port,
+            details=details,
+            publisher=publisher,
+        )
+    return await _handle_restart_failure(
+        db,
+        locked,
+        locked_node,
+        snapshot,
+        kind=kind,
+        exit_code=exit_code,
+        process=process,
+        will_retry=will_retry,
+        details=details,
+        publisher=publisher,
     )
 
 
@@ -384,7 +457,46 @@ async def _ingest_appium_restart_events(
         .options(selectinload(AppiumNode.device))
     )
     node_result = await db.execute(node_stmt)
-    nodes_by_port = {node.port: node for node in node_result.scalars().all()}
+    # Freeze the unlocked observation before taking any lock: everything below
+    # compares against these values, not against rows a peer may have moved
+    # while this stage waited for the Device lock.
+    observed_by_port = {
+        node.port: _RestartNodeObservation(
+            device_id=node.device.id,
+            node_id=node.id,
+            port=node.port,
+            pid=node.pid,
+            active_connection_target=node.active_connection_target,
+        )
+        for node in node_result.scalars().all()
+    }
+
+    # Aggregate lock pass: every affected Device row in ascending UUID order in
+    # one statement, then their device-owned AppiumNode rows. Events are still
+    # processed in agent sequence order below, so public event order and the
+    # restart cursor are unchanged.
+    observed_by_device = {observed.device_id: observed for observed in observed_by_port.values()}
+    locked_devices = {
+        handle.device.id: handle for handle in await device_locking.lock_device_handles(db, list(observed_by_device))
+    }
+    snapshots: dict[uuid.UUID, DeviceDecisionSnapshot] = {}
+    locked_nodes: dict[uuid.UUID, AppiumNode] = {}
+    # Staleness is decided once, at lock acquisition: a peer that moved the node
+    # between the unlocked read above and this lock invalidates every event for
+    # that device. Writes this stage makes afterwards are its own and must not
+    # invalidate a later event in the same ordered section.
+    stale_devices: set[uuid.UUID] = set()
+    for device_id in sorted(locked_devices):
+        snapshots[device_id] = await load_device_decision_snapshot(
+            db, locked_devices[device_id], packs={}, now=now_utc()
+        )
+        locked_node = await appium_node_locking.lock_appium_node_for_device(db, device_id)
+        if locked_node is None:
+            continue
+        if _restart_event_observation_changed(locked_node, observed_by_device[device_id]):
+            stale_devices.add(device_id)
+            continue
+        locked_nodes[device_id] = locked_node
 
     highest_sequence = last_sequence
     for event in candidate_events:
@@ -393,77 +505,28 @@ async def _ingest_appium_restart_events(
         if sequence is None or port is None:
             continue
         highest_sequence = max(highest_sequence, sequence)
-        node = nodes_by_port.get(port)
-        if node is None:
+        observed = observed_by_port.get(port)
+        if observed is None:
             continue
-        observed_id = node.id
-        observed_port = node.port
-        observed_pid = node.pid
-        observed_active_connection_target = node.active_connection_target
-        # Acquire Device → AppiumNode locks before mutating node state.
-        device_id = node.device.id
-        locked_device = await device_locking.lock_device(db, device_id)
-        locked_node = await appium_node_locking.lock_appium_node_for_device(db, device_id)
-        if locked_node is None:
-            continue
-        if _restart_event_observation_changed(
-            locked_node,
-            observed_id=observed_id,
-            observed_port=observed_port,
-            observed_pid=observed_pid,
-            observed_active_connection_target=observed_active_connection_target,
-        ):
+        if observed.device_id in stale_devices:
             logger.info(
                 "Skipping stale local restart event for host %s port %s after node changed",
                 host.hostname,
                 port,
             )
             continue
-        device = locked_device
-        kind = str(event["kind"])
-        process = _restart_process(event.get("process"))
-        attempt = _coerce_int(event.get("attempt")) or 0
-        delay_sec = _coerce_int(event.get("delay_sec"))
-        exit_code = _coerce_int(event.get("exit_code"))
-        pid = _coerce_int(event.get("pid"))
-        will_retry = bool(event.get("will_retry"))
-
-        details = _build_restart_event_details(
-            event,
-            _RestartEventFields(
-                sequence=sequence,
-                process=process,
-                kind=kind,
-                attempt=attempt,
-                port=port,
-                will_retry=will_retry,
-                delay_sec=delay_sec,
-                exit_code=exit_code,
-                pid=pid,
-            ),
-        )
-
-        if kind == "restart_succeeded":
-            await _handle_restart_succeeded(
-                db,
-                device,
-                locked_node,
-                process=process,
-                pid=pid,
-                port=port,
-                details=details,
-                publisher=publisher,
-            )
+        locked = locked_devices.get(observed.device_id)
+        locked_node = locked_nodes.get(observed.device_id)
+        if locked is None or locked_node is None:
             continue
-
-        await _handle_restart_failure(
+        snapshots[observed.device_id] = await _apply_restart_event(
             db,
-            device,
-            kind=kind,
-            exit_code=exit_code,
-            process=process,
-            will_retry=will_retry,
-            details=details,
+            event,
+            locked=locked,
+            locked_node=locked_node,
+            snapshot=snapshots[observed.device_id],
+            sequence=sequence,
+            port=port,
             publisher=publisher,
         )
 

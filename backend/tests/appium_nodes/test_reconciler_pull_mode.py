@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler as appium_reconciler
@@ -30,10 +32,10 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator
     from contextlib import AbstractAsyncContextManager
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -77,23 +79,30 @@ def _make_service(*, session_factory: object = None) -> ReconcilerService:
     )
 
 
-def _scope_for(db: AsyncSession) -> Callable[[], AbstractAsyncContextManager[AsyncSession]]:
+def _stub_locked_device(monkeypatch: pytest.MonkeyPatch, *, device: object, node: object | None) -> None:
+    """Short-circuit the locked graph ``apply_observed_node_command`` builds."""
+    monkeypatch.setattr(
+        appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=SimpleNamespace(device=device))
+    )
+    monkeypatch.setattr(appium_reconciler, "load_device_decision_snapshot", AsyncMock(return_value=object()))
+    monkeypatch.setattr(appium_reconciler, "lock_appium_node_for_device", AsyncMock(return_value=node))
+
+
+class _FakeSessionFactory:
+    """Minimal ``SessionFactory`` stand-in whose ``begin()`` yields a mock session."""
+
+    def __init__(self) -> None:
+        self.session = AsyncMock()
+
+    def __call__(self) -> AbstractAsyncContextManager[AsyncMock]:
+        return self._scope()
+
+    def begin(self) -> AbstractAsyncContextManager[AsyncMock]:
+        return self._scope()
+
     @asynccontextmanager
-    async def _scope() -> AsyncIterator[AsyncSession]:
-        yield db
-
-    return _scope
-
-
-class _DummySession:
-    async def __aenter__(self) -> _DummySession:
-        return self
-
-    async def __aexit__(self, *_args: object) -> None:
-        return None
-
-    async def commit(self) -> None:
-        return None
+    async def _scope(self) -> AsyncIterator[AsyncMock]:
+        yield self.session
 
 
 async def test_pull_host_running_desired_node_absent_skips_start_and_counts_it() -> None:
@@ -104,7 +113,7 @@ async def test_pull_host_running_desired_node_absent_skips_start_and_counts_it()
     svc = _make_service()
     before = APPIUM_PULL_MODE_SKIPPED_ACTIONS.labels(kind="start")._value.get()
 
-    await svc.converge_host_rows(None, [row], [], host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100)
+    await svc.converge_host_rows([row], [], host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100)
 
     after = APPIUM_PULL_MODE_SKIPPED_ACTIONS.labels(kind="start")._value.get()
     assert after == before + 1
@@ -140,12 +149,12 @@ async def test_pull_host_observed_running_writes_same_as_push_mode(monkeypatch: 
 
     node = SimpleNamespace(desired_state="running", desired_port=4723, restart_requested_at=None)
     device = SimpleNamespace(id=device_id, appium_node=node)
-    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
+    _stub_locked_device(monkeypatch, device=device, node=node)
     monkeypatch.setattr(appium_reconciler, "_touch_last_observed", AsyncMock())
     mark_started = AsyncMock()
     monkeypatch.setattr(appium_reconciler, "mark_node_started", mark_started)
 
-    svc = _make_service(session_factory=_DummySession)
+    svc = _make_service(session_factory=_FakeSessionFactory())
     await svc.reconcile_host(
         host_id=row.host_id,
         host_ip="10.0.0.1",
@@ -180,12 +189,12 @@ async def test_pull_host_stopped_desired_absent_from_payload_marks_observed_stop
     )
     node = SimpleNamespace(desired_state="stopped", desired_port=None, restart_requested_at=None)
     device = SimpleNamespace(id=device_id, appium_node=node)
-    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
+    _stub_locked_device(monkeypatch, device=device, node=node)
     mark_stopped = AsyncMock()
     monkeypatch.setattr(appium_reconciler, "mark_node_stopped", mark_stopped)
 
-    svc = _make_service()
-    await svc.converge_host_rows(_DummySession(), [row], [], host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100)
+    svc = _make_service(session_factory=_FakeSessionFactory())
+    await svc.converge_host_rows([row], [], host_id=uuid.uuid4(), host_ip="10.0.0.1", agent_port=5100)
 
     mark_stopped.assert_awaited_once()
 
@@ -230,6 +239,7 @@ async def test_pull_host_orphan_process_is_counted_not_stopped(monkeypatch: pyte
 
 @pytest.mark.db
 async def test_pull_host_port_conflict_repins_port_and_records_backoff_once(
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -272,7 +282,7 @@ async def test_pull_host_port_conflict_repins_port_and_records_backoff_once(
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
-        session_factory=_scope_for(db_session),
+        session_factory=db_session_maker,
     )
 
     await svc._ingest_start_failure_reports([row], [failure])
@@ -297,6 +307,7 @@ async def test_pull_host_port_conflict_repins_port_and_records_backoff_once(
 
 @pytest.mark.db
 async def test_pull_host_start_failure_uses_shared_exponential_backoff(
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -342,7 +353,7 @@ async def test_pull_host_start_failure_uses_shared_exponential_backoff(
         ),
         pool=Mock(),
         circuit_breaker=Mock(),
-        session_factory=_scope_for(db_session),
+        session_factory=db_session_maker,
     )
 
     t0 = datetime.now(UTC).isoformat()
@@ -374,6 +385,7 @@ async def test_pull_host_start_failure_uses_shared_exponential_backoff(
 
 @pytest.mark.db
 async def test_pull_host_spawn_failed_records_backoff_without_repin(
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -414,7 +426,7 @@ async def test_pull_host_spawn_failed_records_backoff_without_repin(
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
-        session_factory=_scope_for(db_session),
+        session_factory=db_session_maker,
     )
 
     await svc._ingest_start_failure_reports([row], [failure])
@@ -427,6 +439,7 @@ async def test_pull_host_spawn_failed_records_backoff_without_repin(
 
 @pytest.mark.db
 async def test_pull_host_port_conflict_repin_preserves_restart_watermark(
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -469,7 +482,7 @@ async def test_pull_host_port_conflict_repin_preserves_restart_watermark(
         settings=FakeSettingsReader({}),
         pool=Mock(),
         circuit_breaker=Mock(),
-        session_factory=_scope_for(db_session),
+        session_factory=db_session_maker,
     )
 
     await svc._ingest_start_failure_reports([row], [failure])
@@ -477,6 +490,102 @@ async def test_pull_host_port_conflict_repin_preserves_restart_watermark(
     await db_session.refresh(node)
     assert node.restart_requested_at == restart_requested_at
     assert node.desired_port != 4723
+
+
+@pytest.mark.db
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_port_conflict_report_replays_until_its_transaction_commits(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dedupe cursor must advance only after the failure transaction commits.
+
+    The first delivery aborts on a real failing PostgreSQL statement staged after
+    the remediation entry; the redelivered report must retry and leave exactly one
+    durable remediation entry and one re-pin.
+    """
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="pull-replay",
+        identity_value="pull-replay-001",
+        connection_target="pull-replay-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=None,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    row = _desired_row(
+        device_id=device.id,
+        host_id=db_host.id,
+        node_id=node.id,
+        connection_target=device.connection_target,
+        desired_state="running",
+        desired_port=4723,
+        port=None,
+        pid=None,
+        active_connection_target=None,
+    )
+    failure = _start_failure(port=4723, connection_target=device.connection_target, kind="port_conflict")
+
+    svc = ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=db_session_maker,
+    )
+
+    repin_attempts = 0
+    real_write_desired_state = appium_reconciler.write_desired_state
+
+    async def failing_first_repin(db: AsyncSession, **kwargs: object) -> None:
+        nonlocal repin_attempts
+        repin_attempts += 1
+        if repin_attempts == 1:
+            # Real aborted transaction: a mocked side_effect leaves the session
+            # clean and never exercises the rollback path production takes.
+            await db.execute(text("SELECT 1 / 0"))
+        await real_write_desired_state(db, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(appium_reconciler, "write_desired_state", failing_first_repin)
+
+    with pytest.raises(DBAPIError):
+        await svc._ingest_start_failure_reports([row], [failure])
+
+    async with db_session_maker() as verify:
+        assert (await remediation_log.load_ladder(verify, device.id)).attempts == 0
+        reloaded = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
+        assert reloaded.desired_port == 4723
+    assert device.id not in svc._last_seen_failure_at
+
+    await svc._ingest_start_failure_reports([row], [failure])
+
+    async with db_session_maker() as verify:
+        assert (await remediation_log.load_ladder(verify, device.id)).attempts == 1
+        reloaded = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
+    repinned_port = reloaded.desired_port
+    assert repinned_port is not None
+    assert repinned_port != 4723
+    assert svc._last_seen_failure_at[device.id] == failure["at"]
+
+    # The cursor has advanced now, so the same ring entry is deduped.
+    await svc._ingest_start_failure_reports([row], [failure])
+
+    async with db_session_maker() as verify:
+        assert (await remediation_log.load_ladder(verify, device.id)).attempts == 1
+        reloaded = (await verify.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
+    assert reloaded.desired_port == repinned_port
+    assert repin_attempts == 2
 
 
 async def test_pull_host_backoff_stale_pid_clear_uses_details_signature(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -503,12 +612,12 @@ async def test_pull_host_backoff_stale_pid_clear_uses_details_signature(monkeypa
     # No running nodes reported for this device.
     payload = {"appium_processes": {"running_nodes": []}}
     device = SimpleNamespace(id=device_id, appium_node=None)
-    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
+    _stub_locked_device(monkeypatch, device=device, node=None)
     monkeypatch.setattr(appium_reconciler, "_touch_last_observed", AsyncMock())
     mark_stopped = AsyncMock()
     monkeypatch.setattr(appium_reconciler, "mark_node_stopped", mark_stopped)
 
-    svc = _make_service(session_factory=_DummySession)
+    svc = _make_service(session_factory=_FakeSessionFactory())
     # Must not raise TypeError on the stale-clear _write call.
     await svc.reconcile_host(
         host_id=host_id,
