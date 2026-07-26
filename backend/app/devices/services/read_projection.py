@@ -18,7 +18,7 @@ from app.devices.services.decision import DecisionFacts, parse_command
 from app.devices.services.group_membership import load_static_group_keys_by_device_id
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.lifecycle_policy_summary import freeze_reservation_context
-from app.devices.services.platform_label import load_platform_label_map
+from app.devices.services.platform_label import platform_labels_from_catalog
 from app.devices.services.readiness import assess_devices_async
 from app.devices.services.recovery_projection import recovery_availability_from_facts
 from app.devices.services.serialization_types import DeviceReadProjection
@@ -59,7 +59,7 @@ async def load_device_read_projections(
     states = await derive_operational_states(db, device_list, now=now, packs=packs)
     reservation_map = await get_device_reservation_map(db, device_ids)
     ladders = await remediation_log.load_ladders(db, device_ids)
-    labels = await load_platform_label_map(db, ((d.pack_id, d.platform_id) for d in device_list))
+    labels = platform_labels_from_catalog(packs)
     static_keys = await load_static_group_keys_by_device_id(db, device_ids)
     intents = await _load_intents_by_device_id(db, device_ids)
     live_ids = await _load_live_session_device_ids(db, device_ids)

@@ -23,9 +23,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, load_only
 
-from app.packs.models import DriverPack, DriverPackRelease
+from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -43,9 +43,17 @@ class PackPlatformView:
     it is already a plain deserialized dict by the time SQLAlchemy returns it,
     nothing in the control plane mutates it, and deep-copying every manifest on
     every catalog read is the expensive half of the read.
+
+    ``display_name`` is carried for the device-list read alone, and it is here
+    because of what it removes: that path used to issue a separate three-
+    statement query (``load_platform_label_map``) over these same rows to get
+    this one string. Every field on this type is a field every consumer pays for
+    on every catalog read — the next one proposed here has to show the same kind
+    of removal, not a convenience.
     """
 
     manifest_platform_id: str
+    display_name: str
     automation_name: str
     appium_platform_name: str
     data: dict[str, Any]
@@ -86,6 +94,7 @@ def project_pack(pack: DriverPack) -> PackView:
                 platforms=tuple(
                     PackPlatformView(
                         manifest_platform_id=platform.manifest_platform_id,
+                        display_name=platform.display_name,
                         automation_name=platform.automation_name,
                         appium_platform_name=platform.appium_platform_name,
                         data=platform.data,
@@ -101,15 +110,29 @@ def project_pack(pack: DriverPack) -> PackView:
 async def load_pack_catalog(session: AsyncSession, pack_ids: Iterable[str]) -> dict[str, PackView]:
     """One read: the named packs with their releases and platforms, as values.
 
-    A single joined statement. The two ``joinedload``s are a *chain* (pack ->
-    releases -> platforms), not two sibling collections, so they do not form a
-    cartesian product: the statement returns exactly one row per leaf platform,
-    which is the minimum any strategy must transfer. ``.unique()`` deduplicates
-    the repeated parent columns, not multiplied rows. Measured on a synthetic
-    catalog (12 packs x 6 retained releases x 8 platforms): 576 rows in 1
-    statement, against 660 rows in 3 statements for a
-    ``selectinload(...).selectinload(...)`` equivalent — worse on both axes. Row
-    volume is linear and trivial; do not "fix" this to ``selectinload``.
+    A single joined statement, with both axes declared.
+
+    Rows: the two ``joinedload``s are a *chain* (pack -> releases -> platforms),
+    not two sibling collections, so they do not form a cartesian product: the
+    statement returns exactly one row per leaf platform, which is the minimum
+    any strategy must transfer. ``.unique()`` deduplicates the repeated parent
+    columns, not multiplied rows. Measured on a synthetic catalog (12 packs x 6
+    retained releases x 8 platforms): 576 rows in 1 statement, against 660 rows
+    in 3 statements for a ``selectinload(...).selectinload(...)`` equivalent —
+    worse on both axes. Row volume is linear and trivial; do not "fix" this to
+    ``selectinload``.
+
+    Columns: ``load_only`` names exactly the columns ``project_pack`` reads.
+    That matters more here than on an unjoined read, because a join repeats the
+    parent's columns on every child row — an undeclared read fetched
+    ``DriverPackRelease.manifest_json``, a large JSONB column nothing in the
+    control plane touches, once per *platform* rather than once per release.
+    Primary keys load regardless, which is why ``DriverPack.id`` is not named
+    and still keys the returned dict. Anything added to ``PackView`` must be
+    added here too, or ``project_pack`` raises on the deferred attribute.
+    These rows also enter the loading session's identity map with every
+    unnamed column deferred; every other pack read in ``app/`` selects the
+    full entity, which repopulates them.
 
     An empty or all-falsy *pack_ids* costs no statement at all, which is what
     keeps a host with no devices free.
@@ -123,8 +146,17 @@ async def load_pack_catalog(session: AsyncSession, pack_ids: Iterable[str]) -> d
                 select(DriverPack)
                 .where(DriverPack.id.in_(ids))
                 .options(
-                    joinedload(DriverPack.releases),
-                    joinedload(DriverPack.releases).joinedload(DriverPackRelease.platforms),
+                    load_only(DriverPack.state, DriverPack.current_release),
+                    joinedload(DriverPack.releases).load_only(DriverPackRelease.release),
+                    joinedload(DriverPack.releases)
+                    .joinedload(DriverPackRelease.platforms)
+                    .load_only(
+                        DriverPackPlatform.manifest_platform_id,
+                        DriverPackPlatform.display_name,
+                        DriverPackPlatform.automation_name,
+                        DriverPackPlatform.appium_platform_name,
+                        DriverPackPlatform.data,
+                    ),
                 )
             )
         )

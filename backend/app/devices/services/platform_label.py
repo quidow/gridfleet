@@ -11,9 +11,11 @@ from app.packs.services import release_ordering as pack_release_ordering
 selected_release = pack_release_ordering.selected_release
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.packs.services.catalog_view import PackView
 
 PackPlatformKey = tuple[str, str]
 
@@ -42,6 +44,29 @@ async def load_platform_label_map(
             if key in labels:
                 labels[key] = platform.display_name
 
+    return labels
+
+
+def platform_labels_from_catalog(packs: Mapping[str, PackView]) -> dict[PackPlatformKey, str]:
+    """The labels :func:`load_platform_label_map` returns, off a catalog already in hand.
+
+    Same release selection, same platform walk, same string — minus the three
+    statements, because the caller's ``load_pack_catalog`` read already carries
+    ``display_name``. Pairs with no pack or no platform are simply absent:
+    callers read this with ``.get``, which answers ``None`` for a miss exactly
+    as the query-backed map does.
+
+    :func:`load_platform_label_map` stays. Its remaining callers have no
+    catalog in hand, and this is a change to one caller, not to the label
+    service.
+    """
+    labels: dict[PackPlatformKey, str] = {}
+    for pack in packs.values():
+        release = selected_release(pack.releases, pack.current_release)
+        if release is None:
+            continue
+        for platform in release.platforms:
+            labels[(pack.id, platform.manifest_platform_id)] = platform.display_name
     return labels
 
 
