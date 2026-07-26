@@ -151,7 +151,7 @@ async def test_mark_node_helpers_take_no_lock_of_their_own(db_session: AsyncSess
     await db_session.commit()
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=now_utc())
     locked_node = await appium_node_locking.lock_appium_node_for_device(db_session, device.id)
 
     lock_device = AsyncMock(side_effect=AssertionError("mark_node_* must not lock Device"))
@@ -229,7 +229,7 @@ async def test_mark_node_stopped_returns_the_snapshot_when_the_node_row_is_gone(
     await db_session.commit()
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=now_utc())
     publisher = Mock()
 
     result = await node_agent.mark_node_stopped(db_session, locked, None, snapshot, publisher=publisher)
@@ -378,7 +378,7 @@ async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_h
     await db_session.commit()
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=now_utc())
     locked_node = await appium_node_locking.lock_appium_node_for_device(db_session, device.id)
 
     await node_agent.mark_node_started(

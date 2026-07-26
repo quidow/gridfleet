@@ -257,7 +257,7 @@ async def apply_observed_node_command(
         locked = await _lock_device_for_reconciler(db, row.device_id)
         if locked is None:
             return
-        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
         locked_node = await lock_appium_node_for_device(db, row.device_id)
         if mutation.state == "running":
             await mark_node_started(
@@ -324,7 +324,7 @@ async def _record_start_failure(
         locked = await _lock_device_for_reconciler(db, row.device_id)
         if locked is None:
             return
-        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
         await escalate_device_remediation_failure(
             db,
             locked.device,
@@ -347,7 +347,7 @@ async def _reset_start_failure(
         locked = await _lock_device_for_reconciler(db, row.device_id)
         if locked is None:
             return
-        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
         await reset_reconciler_start_failure_if_needed(db, locked.device, ladder=snapshot.ladder)
 
 

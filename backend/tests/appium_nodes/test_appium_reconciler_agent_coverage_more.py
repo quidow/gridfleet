@@ -219,7 +219,7 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
     await db_session.commit()
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=now_utc())
     locked_node = await appium_node_locking.lock_appium_node_for_device(db_session, device.id)
 
     await node_agent.mark_node_started(

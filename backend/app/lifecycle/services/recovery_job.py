@@ -146,7 +146,7 @@ class RecoveryJobService:
                         db, row, status=JOB_STATUS_FAILED, error=f"Device {device_id} could not be locked"
                     )
                 return ({"status": "lock_failed"}, None)
-            snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+            snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
             current = recovery_generation(locked.device)
             if current is not None and current != parsed_job_id:
                 if row is not None:
@@ -245,7 +245,7 @@ class RecoveryJobService:
     ) -> str:
         async with self._session_factory() as db:
             locked = await device_locking.lock_device_handle(db, device_id)
-            snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+            snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
             outcome = await self._lifecycle_policy.finalize_auto_recovery_locked(
                 db,
                 locked,

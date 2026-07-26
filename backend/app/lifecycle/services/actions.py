@@ -264,7 +264,7 @@ class LifecyclePolicyActionsService:
             if locked is None:
                 await health.update_device_checks(db, device, healthy=False, summary=reason)
             else:
-                snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+                snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
                 await health.update_device_checks_locked(db, locked, snapshot, healthy=False, summary=reason)
             return
 
@@ -285,7 +285,7 @@ class LifecyclePolicyActionsService:
             if locked is None:
                 await health.update_device_checks(db, device, healthy=False, summary=reason)
             else:
-                snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+                snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
                 await health.update_device_checks_locked(db, locked, snapshot, healthy=False, summary=reason)
 
     async def _reconcile(self, db: AsyncSession, device: Device, *, locked: LockedDevice | None) -> None:

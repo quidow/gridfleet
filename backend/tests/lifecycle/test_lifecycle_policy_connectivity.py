@@ -247,7 +247,6 @@ async def test_reconcile_self_heal_locked_clears_residue_and_restores_run(
     snapshot = await load_device_decision_snapshot(
         db_session,
         locked,
-        packs={},
         now=datetime.now(UTC),
     )
     result = await svc.reconcile_self_heal_locked(

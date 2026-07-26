@@ -258,7 +258,7 @@ class SessionViabilityService:
         """
         async with self._session_factory.begin() as db:
             locked = await device_locking.lock_device_handle(db, device_id)
-            snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+            snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
             state = evaluate_operational_state(snapshot.state_facts)
             reserved = snapshot.decision_facts.reservation_run_id is not None
             can_probe = (state == DeviceOperationalState.available and not reserved) or (

@@ -204,7 +204,7 @@ async def test_failed_recovery_restops_and_backs_off(
 
     svc = _policy_service(viability=AsyncMock())
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     outcome = await svc.finalize_auto_recovery_locked(
         db_session,
         locked,

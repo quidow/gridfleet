@@ -107,7 +107,7 @@ class DeviceHealthService:
         locked = await _lock_handle(db, device)
         if locked is None:
             return False
-        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
         updated = await self.update_device_checks_locked(
             db,
             locked,
@@ -253,7 +253,7 @@ class DeviceHealthService:
         if locked is None:
             return
 
-        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
 
         locked_node = await appium_node_locking.lock_appium_node_for_device(db, locked.device.id)
         if locked_node is None:

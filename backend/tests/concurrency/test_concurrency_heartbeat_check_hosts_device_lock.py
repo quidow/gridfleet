@@ -68,7 +68,7 @@ async def test_host_sweep_locks_device_rows_before_offline_write(
         db: AsyncSession,
         locked: LockedDevice,
         *,
-        packs: Mapping[str, DriverPack],
+        packs: Mapping[str, DriverPack] | None = None,
         now: datetime,
     ) -> DeviceDecisionSnapshot:
         if locked.device.id == device_id:

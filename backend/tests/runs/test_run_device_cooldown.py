@@ -651,7 +651,7 @@ async def test_active_cooldown_blocks_auto_recovery(db_session: AsyncSession, de
         node_manager=AsyncMock(),
     )
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=datetime.now(UTC))
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=datetime.now(UTC))
     recovered = await svc.prepare_auto_recovery_locked(
         db_session,
         locked,

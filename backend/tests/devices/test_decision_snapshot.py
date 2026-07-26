@@ -12,6 +12,7 @@ from app.devices.models import DeviceIntent, DeviceReservation, ExclusionKind
 from app.devices.services.decision import parse_command
 from app.devices.services.decision_snapshot import IntentSnapshot, load_device_decision_snapshot
 from app.devices.services.intent_types import CommandKind
+from app.devices.services.readiness import preloaded_pack_catalog
 from app.lifecycle.services import remediation_log
 from app.packs.services.catalog_view import load_pack_catalog
 from app.runs.models import RunState, TestRun
@@ -173,3 +174,67 @@ async def test_locked_snapshot_preserves_terminal_reset_metadata(
     assert snapshot.ladder.last_action == "operator_reset"
     assert snapshot.ladder.last_action_at == reset_at
     assert snapshot.ladder.episode_active is False
+
+
+async def test_snapshot_without_a_catalog_reads_one_pack_statement(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    _host, device, _node = await seed_host_and_running_node(
+        db_session, identity=f"snapshot-solo-{uuid.uuid4().hex[:8]}"
+    )
+    await db_session.commit()
+    device_id = device.id
+
+    async with db_session_maker() as command_db, capture_statements(command_db) as statements, command_db.begin():
+        locked = await device_locking.lock_device_handle(command_db, device_id)
+        snapshot = await load_device_decision_snapshot(command_db, locked, now=datetime.now(UTC))
+
+    assert len([sql for sql in statements if "driver_pack" in sql]) == 1
+    assert snapshot.is_ready_for_use is True
+
+
+async def test_snapshot_reuses_a_preloaded_catalog(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The batching contract: a catalog read in one session serves a snapshot
+    taken in a different one, with no pack statement of its own."""
+    _host, device, _node = await seed_host_and_running_node(
+        db_session, identity=f"snapshot-preload-{uuid.uuid4().hex[:8]}"
+    )
+    await db_session.commit()
+    device_id = device.id
+    pack_id = device.pack_id
+
+    async with db_session_maker() as catalog_db:
+        catalog = await load_pack_catalog(catalog_db, [pack_id])
+
+    async with db_session_maker() as command_db, capture_statements(command_db) as statements, command_db.begin():
+        locked = await device_locking.lock_device_handle(command_db, device_id)
+        with preloaded_pack_catalog(catalog):
+            snapshot = await load_device_decision_snapshot(command_db, locked, now=datetime.now(UTC))
+
+    assert [sql for sql in statements if "driver_pack" in sql] == []
+    assert snapshot.is_ready_for_use is True
+
+
+async def test_snapshot_self_heals_when_the_preloaded_catalog_lacks_the_pack(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A device whose pack_id changed after the batch prefetch must not be
+    judged setup_required from a stale snapshot — it re-reads its own pack."""
+    _host, device, _node = await seed_host_and_running_node(
+        db_session, identity=f"snapshot-stale-{uuid.uuid4().hex[:8]}"
+    )
+    await db_session.commit()
+    device_id = device.id
+
+    async with db_session_maker() as command_db, capture_statements(command_db) as statements, command_db.begin():
+        locked = await device_locking.lock_device_handle(command_db, device_id)
+        with preloaded_pack_catalog({}):
+            snapshot = await load_device_decision_snapshot(command_db, locked, now=datetime.now(UTC))
+
+    assert len([sql for sql in statements if "driver_pack" in sql]) == 1
+    assert snapshot.is_ready_for_use is True

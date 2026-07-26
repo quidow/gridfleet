@@ -129,7 +129,7 @@ async def test_probe_failure_threshold_writes_restart_intent(
     from app.devices.services.health import DeviceHealthService
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    snapshot = await load_device_decision_snapshot(db_session, locked, now=now_utc())
     await NodeHealthService(
         publisher=Mock(),
         settings=FakeSettingsReader(
