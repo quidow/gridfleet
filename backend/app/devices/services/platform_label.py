@@ -51,8 +51,8 @@ def platform_labels_from_catalog(packs: Mapping[str, PackView]) -> dict[PackPlat
     """The labels :func:`load_platform_label_map` returns, off a catalog already in hand.
 
     Same release selection, same platform walk, same string — minus the three
-    statements, because the caller's ``load_pack_catalog`` read already carries
-    ``display_name``. Pairs with no pack or no platform are simply absent:
+    statements, because the caller's catalog already carries ``display_name``.
+    Pairs with no pack or no platform are simply absent:
     callers read this with ``.get``, which answers ``None`` for a miss exactly
     as the query-backed map does.
 

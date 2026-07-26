@@ -70,8 +70,11 @@ def _named_models(call: ast.Call) -> tuple[frozenset[str], bool]:
 
     ``load_only(DriverPack.state)`` names its model as the ``X`` of an
     ``X.column`` attribute access. Anything else — a bare name, a star-arg, a
-    string column name, an ``aliased()`` handle — cannot be read from the
-    source, and the scan reports it rather than passing over it.
+    string column name — cannot be read from the source, and the scan reports
+    it rather than passing over it. Two forms it does not catch at all: an
+    ``aliased()`` handle, whose variable name the scan mistakes for the model,
+    and an aliased import of the option itself (``from sqlalchemy.orm import
+    load_only as lo``), which the call-name match never sees.
     """
     models: set[str] = set()
     unreadable = False
