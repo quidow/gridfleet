@@ -34,6 +34,31 @@ def build_engine(*, database_url: str | None = None) -> AsyncEngine:
     )
 
 
+def build_poller_engine(*, command_timeout: float, database_url: str | None = None) -> AsyncEngine:
+    """A one-connection engine whose every statement is bounded.
+
+    The outbox poller uses this and nothing else does. ``command_timeout`` is an
+    asyncpg connection setting, so it bounds each statement without any caller
+    remembering to wrap an await -- which is why it is here rather than an
+    ``asyncio.timeout`` around ``db.execute``. Putting it on ``build_engine``
+    instead would bound every query in the backend, including the status-push
+    folds, off one value that cannot be right for all of them.
+
+    ``command_timeout`` is a parameter rather than an import because the value
+    and its derivation live at ``app.events.event_bus.POLL_STATEMENT_TIMEOUT_SEC``,
+    and ``app.events.models`` imports ``Base`` from this module.
+    """
+    return create_async_engine(
+        database_url or settings.database_url,
+        echo=False,
+        pool_size=1,
+        max_overflow=0,
+        pool_recycle=3600,
+        pool_pre_ping=True,
+        connect_args={"command_timeout": command_timeout},
+    )
+
+
 engine = build_engine()
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 

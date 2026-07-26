@@ -16,7 +16,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.metrics import register_gauge_refresher
-from app.core.metrics_recorders import ACTIVE_SSE_CONNECTIONS, record_event_published, record_outbox_gaps_retired
+from app.core.metrics_recorders import (
+    ACTIVE_SSE_CONNECTIONS,
+    OUTBOX_PENDING_GAPS,
+    OUTBOX_POLL_AGE_SECONDS,
+    record_event_published,
+    record_outbox_gaps_retired,
+)
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.events.catalog import (
@@ -46,9 +52,49 @@ LISTENER_RECONNECT_DELAY_SEC = 1.0
 # report(t=2) -- window doubles to 4s -- suppress(t=3), suppress(t=4), ... .
 LISTENER_LOG_BACKOFF_INITIAL_SEC = 2.0
 LISTENER_LOG_BACKOFF_MAX_SEC = 60.0
+# The poll loop's own backoff. Separate constants from the listener's because
+# the loops have different cadences: the poller sleeps LISTENER_POLL_INTERVAL_SEC
+# (5s) between attempts, not LISTENER_RECONNECT_DELAY_SEC (1s), so the initial
+# window has to outlast one poll cycle rather than one reconnect cycle for the
+# same reason -- a failure landing exactly on the deadline would otherwise open
+# every outage with two tracebacks instead of one.
+POLL_LOG_BACKOFF_INITIAL_SEC = float(LISTENER_POLL_INTERVAL_SEC) * 2
+POLL_LOG_BACKOFF_MAX_SEC = 60.0
 LISTENER_READY_TIMEOUT_SEC = 5.0
 HANDLER_DRAIN_TIMEOUT_SEC = 5.0
 POLL_SCAN_CHUNK_SIZE = 500
+
+# Bounds one statement on the poll path, applied as asyncpg's ``command_timeout``
+# on the poller's own connection (``app.core.database.build_poller_engine``).
+#
+# The measured quantity is one ``LIMIT POLL_SCAN_CHUNK_SIZE`` page plus its
+# hydration -- both indexed reads -- not a whole scan. A scan is deliberately
+# unbounded: ``_scan_window`` walks the entire interval above the frontier in
+# one iteration so a backlog drains in one poll rather than one page per poll.
+# That is exactly why the bound is per statement. An iteration-level timeout
+# shorter than a recovery scan would discard the page cursor, restart from the
+# same frontier, and time out again forever -- a livelock, arriving precisely
+# when the poller matters most, because the outage that wedges a poller is the
+# one that builds the backlog.
+#
+# Measured max over 30 samples against a 4-page table on the dev stack: 0.0154s.
+# The measurement is biased low on three axes it did not vary: every sample
+# re-read the same page, so the buffer cache stayed warm; the rows carried
+# ``'{}'::jsonb`` payloads, understating real hydration transfer; and the
+# table itself had only four pages, so the index lookup never had to go
+# deeper. Set to roughly 100x that measurement anyway (1.5s / 0.0154s ~= 97x).
+# The multiple biases high: timing out early costs one retried poll and
+# nothing else -- the dedupe map blocks re-delivery, ``_pending_gaps`` is
+# untouched, and the frontier has not moved -- while timing out late leaves a
+# wedge open longer. Unlike a per-iteration value, "high" here is anchored to
+# a finite measurable quantity -- one measured under kinder conditions than a
+# live poller sees, which the multiple is what has to absorb.
+#
+# When this fires, asyncpg raises a bare ``TimeoutError`` -- not a
+# ``SQLAlchemyError`` subclass -- and SQLAlchemy does not wrap it, because
+# ``should_wrap`` in its exception handler is false once an execution context
+# exists. Any handler added on the poll path later must catch both.
+POLL_STATEMENT_TIMEOUT_SEC = 1.5
 
 # The ``idle_in_transaction_session_timeout`` both compose files set on the
 # postgres service. Mirrored here, not read from the database, so the derivation
@@ -174,6 +220,10 @@ class EventBus:
         self._max_queue_size = max_queue_size
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._engine: AsyncEngine | None = None
+        # The poll path's own session source. Production points this at an
+        # engine whose connections carry ``command_timeout``; see
+        # ``POLL_STATEMENT_TIMEOUT_SEC``.
+        self._poller_session_factory: async_sessionmaker[AsyncSession] | None = None
         self._handlers: list[EventHandler] = []
         self._listener_task: asyncio.Task[None] | None = None
         self._poller_task: asyncio.Task[None] | None = None
@@ -193,6 +243,16 @@ class EventBus:
         # silently lose dedupe. Bounded by ``DEDUPE_GRACE_SEC`` instead.
         self._dispatched_row_ids: dict[int, float] = {}
         self._dispatch_lock = asyncio.Lock()
+        # Monotonic time of the last poll that completed without raising.
+        # ``start()`` seeds this to its own call time before the poller task's
+        # first iteration runs, so a poller that fails every iteration from
+        # process start still shows a growing age instead of pinning at zero.
+        # Stays ``None`` only for a bus that is never started -- e.g. the
+        # dispatch-body tests below, which call ``_dispatch_missed_events``
+        # directly without going through ``start()``. Exported as
+        # ``outbox_poll_age_seconds``: the statement bound stops a wedge, but a
+        # poller that fails every iteration is only visible here.
+        self._last_successful_poll_at: float | None = None
         self._started = False
 
     def configure(
@@ -200,9 +260,11 @@ class EventBus:
         *,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
         engine: AsyncEngine | None = None,
+        poller_session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._engine = engine
+        self._poller_session_factory = poller_session_factory
 
     async def start(self) -> None:
         """Register LISTEN before seeding the frontier, then start the poller.
@@ -230,6 +292,14 @@ class EventBus:
                     LISTENER_READY_TIMEOUT_SEC,
                 )
             self._last_seen_system_event_id = await self._read_latest_row_id()
+            # Bound the dedupe map across a shutdown/restart within one process.
+            # shutdown() sets _started = False but deliberately does not clear
+            # _dispatched_row_ids, so this call is what enforces the grace period
+            # on restart. Clearing the map in shutdown() instead would let a fast
+            # restart re-deliver rows the previous incarnation already handled --
+            # tolerable under at-least-once, bought for nothing. Otherwise
+            # redundant with the next poll's prune, which runs immediately and
+            # every 5s thereafter.
             self._prune_dispatched_row_ids()
         except BaseException:
             # Never orphan the listener: ``_started`` stays False on this path,
@@ -238,7 +308,12 @@ class EventBus:
             await asyncio.gather(listener_task, return_exceptions=True)
             self._listener_task = None
             raise
-        self._poller_task = asyncio.create_task(self._poll_for_missed_events())
+        # Seeded here, not in ``__init__``: a bus that is constructed and never
+        # started has no poller whose age would mean anything. Set before the
+        # task's first iteration so a poller that fails from its very first
+        # poll still ages from this point instead of pinning at zero.
+        self._last_successful_poll_at = time.monotonic()
+        self._poller_task = asyncio.create_task(self._poll_for_missed_events(), name="system_event_poller")
         self._started = True
 
     async def shutdown(self) -> None:
@@ -651,6 +726,17 @@ class EventBus:
             if len(page) < POLL_SCAN_CHUNK_SIZE:
                 return pending, observed, cursor
 
+    @property
+    def _poll_session_factory(self) -> async_sessionmaker[AsyncSession] | None:
+        """The session source for the poll body only.
+
+        Falls back to the shared factory so a bus configured without a poller
+        engine keeps polling: every test that builds a bus directly does that,
+        and so does the in-memory fallback deployment. The listener path
+        deliberately does not use this -- Track A supervises the poller.
+        """
+        return self._poller_session_factory or self._session_factory
+
     async def _dispatch_missed_events(self) -> None:
         """Resolve gaps, scan forward, record new gaps, promote the frontier.
 
@@ -679,19 +765,28 @@ class EventBus:
         one scan per tick rather than one per caller. Pinned by
         ``tests/events/test_event_bus_gaps.py::test_the_lock_keeps_the_frontier_monotonic``.
         """
-        if self._session_factory is None:
+        if self._poll_session_factory is None:
             return
         async with self._dispatch_lock:
             await self._dispatch_and_promote()
 
     async def _dispatch_and_promote(self) -> None:
         """The serialised body of ``_dispatch_missed_events``; never call it directly."""
-        if self._session_factory is None:
+        poll_session_factory = self._poll_session_factory
+        if poll_session_factory is None:
             return
-        async with self._session_factory() as db:
+        async with poll_session_factory() as db:
             try:
                 gap_rows = await self._resolve_pending_gaps(db)
-            except SQLAlchemyError as exc:
+            except (SQLAlchemyError, TimeoutError) as exc:
+                # TimeoutError alongside SQLAlchemyError: a command_timeout cutoff
+                # (POLL_STATEMENT_TIMEOUT_SEC) surfaces from asyncpg as a bare
+                # TimeoutError, which SQLAlchemy does not wrap once an execution
+                # context exists -- see the comment at POLL_STATEMENT_TIMEOUT_SEC.
+                # Catching only SQLAlchemyError let a timed-out gap lookup take
+                # the withdrawn ``return`` path below by accident, aborting the
+                # whole poll instead of just the gap dispatch.
+                #
                 # Skip only the gap-row dispatch this tick, then carry on. This
                 # first shipped as ``return``, which quietly made one statement a
                 # precondition for all delivery: a deterministically failing
@@ -720,6 +815,7 @@ class EventBus:
         self._record_new_gaps(observed, frontier)
         self._last_seen_system_event_id = frontier
         self._prune_dispatched_row_ids()
+        self._last_successful_poll_at = time.monotonic()
 
     async def _listen_for_notifications(self) -> None:
         # The unconfigured-bus return stays outside the loop: inside it, a bus
@@ -802,24 +898,61 @@ class EventBus:
                     await driver_conn.remove_listener(NOTIFY_CHANNEL, callback)
 
     async def _poll_for_missed_events(self) -> None:
+        log_interval = POLL_LOG_BACKOFF_INITIAL_SEC
+        next_log_at = 0.0
+        # The last report's own timestamp, not the deadline it set -- same
+        # reasoning as the listener loop's, which see.
+        last_report_at = float("-inf")
+        suppressed = 0
         while True:
             try:
                 await self._dispatch_missed_events()
+            except asyncio.CancelledError:
+                raise
             except Exception:
-                logger.exception("System event poller failed")
+                now = time.monotonic()
+                if now < next_log_at:
+                    suppressed += 1
+                else:
+                    if now - last_report_at >= POLL_LOG_BACKOFF_MAX_SEC:
+                        log_interval = POLL_LOG_BACKOFF_INITIAL_SEC
+                    logger.exception(
+                        "System event poller failed (%d further failure(s) suppressed since the last report)",
+                        suppressed,
+                    )
+                    suppressed = 0
+                    last_report_at = now
+                    next_log_at = now + log_interval
+                    log_interval = min(log_interval * 2, POLL_LOG_BACKOFF_MAX_SEC)
             await asyncio.sleep(LISTENER_POLL_INTERVAL_SEC)
 
 
+def refresh_outbox_gauges(bus: EventBus) -> None:
+    """Set the poller gauges from ``bus``. Separate so tests can call it directly."""
+    OUTBOX_PENDING_GAPS.set(len(bus._pending_gaps))
+    last_poll = bus._last_successful_poll_at
+    OUTBOX_POLL_AGE_SECONDS.set(0.0 if last_poll is None else time.monotonic() - last_poll)
+
+
 def register_events_gauge_refresher(bus: EventBus) -> None:
-    """Register a gauge refresher that reads subscriber_count from the given bus.
+    """Register a gauge refresher that reads live counters from the given bus.
 
     Called once at startup — the closure captures the bus instance, avoiding
     module-level mutable state.
+
+    Every gauge set here is per-process, on a single-process prometheus
+    registry. ``/metrics`` is port-mapped only on the ``backend`` service, so
+    the ``backend-scheduler`` process's poller is scraped at
+    ``backend-scheduler:8000/metrics`` on the internal network; and with
+    ``GRIDFLEET_UVICORN_WORKERS`` above 1 an API scrape samples one arbitrary
+    worker. The statement bound, not the gauge, is the mitigation. See
+    docs/runbooks/slow-system.md.
     """
 
     async def _refresh(db: object) -> None:
         del db
         ACTIVE_SSE_CONNECTIONS.set(bus.subscriber_count)
+        refresh_outbox_gauges(bus)
 
     register_gauge_refresher(_refresh)
 

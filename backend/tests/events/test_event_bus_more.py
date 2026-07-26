@@ -521,7 +521,13 @@ async def test_listener_reconnect_logging_backs_off_during_an_outage(caplog: pyt
 
     reports = [record for record in caplog.records if "listener connection failed" in record.getMessage()]
     assert len(reports) == 1, f"expected one report for a burst of 5 failures, got {len(reports)}"
-    assert "suppressed" in reports[0].getMessage()
+    # The onset report fires before anything has been suppressed, so 0 is the
+    # only correct value -- do not "fix" this to the burst length. structlog
+    # does not %-interpolate positional args, so the count is unreachable from
+    # getMessage() and has to be read from the event dict.
+    assert reports[0].msg["positional_args"] == (0,), (
+        f"expected the onset report to carry a suppressed count of 0, got: {reports[0].msg}"
+    )
 
 
 async def test_listener_reconnect_logging_does_not_report_twice_at_onset(
@@ -590,18 +596,27 @@ async def test_listener_reconnect_logging_resets_after_a_long_quiet_period(
 
     This isolates Finding 2 specifically: ``LISTENER_LOG_BACKOFF_INITIAL_SEC`` is
     held at its post-fix value (2.0) throughout, and only the reset formula
-    varies. It does **not** discriminate the two-bug pre-fix commit (``INITIAL =
-    1.0`` and the reset measured from ``next_log_at``) from the fully-fixed code
-    -- both give 4 reports for the first four points below, verified by
-    simulation: the narrower pre-fix window puts the t=2 report's deadline at
-    4.0 instead of 6.0, so the pre-fix formula's own comparison at t=64
+    varies. Over the first four points below, it does **not** discriminate the
+    two-bug pre-fix commit (``INITIAL = 1.0`` and the reset measured from
+    ``next_log_at``) from the fully-fixed code -- both give 4 reports
+    (simulation: ``first 4 points -> pre-fix=4 fixed=4``): the narrower
+    pre-fix window puts the t=2 report's deadline at 4.0 instead of 6.0, so
+    the pre-fix formula's own comparison at t=64
     (``64 - next_log_at(4.0) = 60.0 >= 60``) coincidentally also resets, for a
     reason unrelated to which formula is correct. The fixed formula's comparison
     at the same point is ``64 - last_report_at(2.0) = 62.0 >= 60`` -- also a
     reset, for the intended reason. Two changes, two different arithmetic paths,
-    same boundary crossed. ``test_listener_reconnect_logging_does_not_report_twice_at_onset``
-    is the test that discriminates the pre-fix commit; it isolates Finding 1
-    instead, holding the reset formula fixed.
+    same boundary crossed. The fifth point is where the two part ways
+    (simulation: ``first 5 points -> pre-fix=5 fixed=4``): the pre-fix formula
+    reports t=70 too, for 5/5, while the fixed formula suppresses it, for
+    4/5 -- so it is this trailing point, not the first four, that lets this
+    test's own five-point assertion tell the two apart.
+    ``test_listener_reconnect_logging_does_not_report_twice_at_onset`` also
+    discriminates the two-bug pre-fix commit from the fixed code, but
+    isolates Finding 1 instead: over its own two time points the reset
+    formula makes no difference (simulation: ``INITIAL=1.0`` -> 2 reports
+    under either reset reference, ``INITIAL=2.0`` -> 1 report under either),
+    so it is varying ``INITIAL`` alone that tells the two apart there.
 
     A fake ``time.monotonic()`` clock (real time never passes -- ``asyncio.sleep``
     stays mocked out) drives five failures at t=0, 2, 64, 68, 70:
@@ -658,3 +673,53 @@ async def test_listener_reconnect_logging_resets_after_a_long_quiet_period(
         f"expected the first four failures (t=0, 2, 64, 68) to report and the t=70 failure to be "
         f"suppressed (5 failures, 4 reports), got {len(reports)} report(s)."
     )
+
+
+async def test_poll_failure_logging_backs_off_during_an_outage(caplog: pytest.LogCaptureFixture) -> None:
+    """The poller and the listener fail together; they must log alike.
+
+    Before this, one outage produced a capped listener burst and an uncapped
+    poller burst -- one traceback every 5s per worker, forever.
+
+    The outage is real: the bus polls an unreachable port, so each iteration
+    raises the driver's own connection error through the same path production
+    would. Patching ``_dispatch_missed_events`` would have tested the loop
+    against an exception type of the test's choosing. The patched sleep is a
+    clock, not a stand-in for the failure.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    dead_engine = create_async_engine("postgresql+asyncpg://gridfleet:gridfleet@127.0.0.1:1/gridfleet")
+    dead_maker = async_sessionmaker(dead_engine, expire_on_commit=False)
+    bus = EventBus()
+    bus.configure(session_factory=dead_maker, poller_session_factory=dead_maker)
+
+    slept = 0
+
+    async def counting_sleep(_seconds: float) -> None:
+        nonlocal slept
+        slept += 1
+        if slept > 5:
+            raise asyncio.CancelledError
+
+    try:
+        with (
+            patch("app.events.event_bus.asyncio.sleep", new=counting_sleep),
+            caplog.at_level(logging.ERROR),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await bus._poll_for_missed_events()
+    finally:
+        await dead_engine.dispose()
+
+    reports = [record for record in caplog.records if "poller failed" in record.getMessage()]
+    assert len(reports) == 1, f"expected one report for a burst of 5 failures, got {len(reports)}"
+    # This project's structlog config never formats %-style positional args into
+    # the text ``caplog`` captures (no ``PositionalArgumentsFormatter`` in the
+    # processor chain) -- ``record.msg`` is the raw structlog event dict, and the
+    # real count lands under its ``positional_args`` key rather than interpolated
+    # into the message text. ``0`` is the only correct value here, not a stand-in
+    # for the brief's ``4``: the onset report fires on the very first failure,
+    # before anything has been suppressed, so a future reader must not "fix"
+    # this to 4.
+    assert reports[0].msg["positional_args"] == (0,)
