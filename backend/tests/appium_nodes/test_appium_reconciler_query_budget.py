@@ -8,17 +8,24 @@ settlement, so a re-introduced N+1 or an extra transaction boundary fails here.
 The pinned constants are MEASURED, not derived. ``FORMULA_MAX`` is the Phase 8
 Global-Constraints ceiling (``8 + 8n``) and is asserted separately.
 
-MEASURED GAP AGAINST THE CEILING. A device settlement costs nine statements, one
-more than the ceiling's eight-per-device term. The surplus is the driver-pack
-catalog read inside ``load_device_decision_snapshot``: with ``packs={}`` it falls
-back to ``app.devices.services.readiness.load_packs_by_ids``, which issues three
-statements (``driver_packs`` plus two ``selectinload`` legs) rather than the one
-the ceiling budgeted. That fallback is unchanged from ``main`` — Phase 8 cut this
-path from roughly fifteen statements per device to nine — and both
-``decision_snapshot.py`` and ``readiness.py`` are outside this phase's production
-scope, so it cannot be batched here. The ceiling is therefore asserted against
-the count net of that measured catalog read, never against a raised formula.
-Delete the exclusion (and this paragraph) when the catalog read is batched.
+MEASURED GAP AGAINST THE CEILING. A device settlement costs nine statements
+against the ceiling's budgeted eight, so exactly one statement per device is
+unbudgeted. That surplus is attributable to the driver-pack catalog read inside
+``load_device_decision_snapshot``: called with ``packs={}`` it falls back to
+``app.devices.services.readiness.load_packs_by_ids``, which issues three
+statements (``driver_packs`` plus two ``selectinload`` legs). That fallback is
+unchanged from ``main``, and both ``decision_snapshot.py`` and ``readiness.py``
+are outside this phase's production file list, so it cannot be batched here.
+
+The ceiling is therefore asserted against the count net of
+``UNBUDGETED_STATEMENTS_PER_DEVICE`` — one per device, the minimal form the
+measurement supports — never against a raised formula. The exclusion is
+deliberately smaller than the three catalog statements observed: netting all
+three would leave the ceiling check unable to fire until roughly two further
+statements per device had been added. The resulting growth assertions sit
+exactly on their boundaries, which is intended: this budget is meant to fail on
+the next statement anyone adds. A follow-up spec tracks batching the catalog
+read; delete the exclusion (and this paragraph) when that lands.
 """
 
 from __future__ import annotations
@@ -68,11 +75,20 @@ RECONCILER_MAX = {1: 14, 10: 95, 50: 455}
 RECONCILER_COMMITS = {1: 2, 10: 11, 50: 51}
 
 # Phase 8 Global Constraints ceiling. Asserted separately from the measurement,
-# against the count net of the out-of-scope driver-pack catalog read documented in
-# the module docstring. A count above it that is NOT that catalog read is a
+# against the count net of UNBUDGETED_STATEMENTS_PER_DEVICE (see the module
+# docstring). A count above it beyond that single per-device surplus is a
 # Task 2/3/5 defect, not a reason to raise the formula.
 FORMULA_MAX = {n: 8 + 8 * n for n in FLEET_SIZES}
+# Nine measured statements per device against eight budgeted. Every unbudgeted
+# statement is a SELECT (the catalog read), so the verb-growth netting below
+# subtracts this from the SELECT category and from nothing else. One source for
+# both nettings: tightening this tightens every ceiling assertion at once.
+UNBUDGETED_STATEMENTS_PER_DEVICE = 1
+UNBUDGETED_VERB = "SELECT"
 PACK_CATALOG_SIGNATURES = ("SELECT driver_packs", "SELECT driver_pack_releases", "SELECT driver_pack_platforms")
+# The observation the surplus is attributed to, pinned exactly so the exclusion
+# can never silently start absorbing an unrelated statement.
+PACK_CATALOG_READS_PER_DEVICE = 3
 
 _WS = re.compile(r"\s+")
 
@@ -220,10 +236,13 @@ async def test_reconciler_cycle_statement_commit_and_lock_budget(
             tap.callsite_counter[("app.devices.services.readiness.load_packs_by_ids", signature)]
             for signature in PACK_CATALOG_SIGNATURES
         )
-        # Measured, never assumed: the exclusion is only ever as large as the
-        # catalog statements the profiler actually attributed to that loader.
-        assert catalog_reads == 3 * size, f"unexpected driver-pack catalog reads at {size} devices: {catalog_reads}"
-        net_counts[size] = tap.total - catalog_reads
+        # Pins the observation the surplus is attributed to. The ceiling exclusion
+        # below is deliberately smaller than this: it nets out one statement per
+        # device, not all three the loader issues.
+        assert catalog_reads == PACK_CATALOG_READS_PER_DEVICE * size, (
+            f"unexpected driver-pack catalog reads at {size} devices: {catalog_reads}"
+        )
+        net_counts[size] = tap.total - UNBUDGETED_STATEMENTS_PER_DEVICE * size
         commits[size] = commit_tap.count
         verbs[size] = _by_verb(tap)
         inventory[size] = {
@@ -238,8 +257,8 @@ async def test_reconciler_cycle_statement_commit_and_lock_budget(
             ],
         }
         print(
-            f"\nreconciler n={size}: statements={tap.total} (net of pack catalog: {net_counts[size]}) "
-            f"commits={commit_tap.count} verbs={dict(verbs[size])}"
+            f"\nreconciler n={size}: statements={tap.total} (net of unbudgeted: {net_counts[size]}, "
+            f"ceiling {FORMULA_MAX[size]}) commits={commit_tap.count} verbs={dict(verbs[size])}"
         )
         print(f"    inventory={inventory[size]}")
         for signature, count in tap.counter.most_common():
@@ -284,12 +303,12 @@ async def test_reconciler_cycle_statement_commit_and_lock_budget(
             f"reconciler cycle at {size} devices issued {counts[size]} statements, above the pinned "
             f"{RECONCILER_MAX[size]}: attach a captured statement inventory before raising this"
         )
-        # See the module docstring: the ceiling is asserted net of the
-        # out-of-scope driver-pack catalog read, never against a raised formula.
+        # See the module docstring: the ceiling is asserted net of the single
+        # unbudgeted per-device statement, never against a raised formula.
         assert net_counts[size] <= FORMULA_MAX[size], (
-            f"reconciler cycle at {size} devices issued {net_counts[size]} statements outside the driver-pack "
-            f"catalog read, above the Phase 8 ceiling {FORMULA_MAX[size]} — fix the implementation, "
-            f"do not raise the formula"
+            f"reconciler cycle at {size} devices issued {net_counts[size]} statements net of the one "
+            f"unbudgeted statement per device, above the Phase 8 ceiling {FORMULA_MAX[size]} — "
+            f"fix the implementation, do not raise the formula"
         )
     assert net_counts[10] - net_counts[1] <= 9 * 8
     assert net_counts[50] - net_counts[10] <= 40 * 8
@@ -300,9 +319,10 @@ async def test_reconciler_cycle_statement_commit_and_lock_budget(
         assert commits[size] == 1 + size
 
     # No statement category may grow faster than the eight-per-device term. The
-    # catalog read the ceiling could not budget is all SELECTs, so it is netted
-    # out of that one category exactly as it is out of the totals above.
+    # unbudgeted per-device statement is a SELECT, so it is netted out of that one
+    # category using the same constant as the totals above.
     for verb in set(verbs[1]) | set(verbs[10]) | set(verbs[50]):
-        net = {size: verbs[size][verb] - (3 * size if verb == "SELECT" else 0) for size in FLEET_SIZES}
+        unbudgeted = UNBUDGETED_STATEMENTS_PER_DEVICE if verb == UNBUDGETED_VERB else 0
+        net = {size: verbs[size][verb] - unbudgeted * size for size in FLEET_SIZES}
         assert net[10] - net[1] <= 9 * 8, f"{verb} grew faster than 8/device between 1 and 10 devices"
         assert net[50] - net[10] <= 40 * 8, f"{verb} grew faster than 8/device between 10 and 50 devices"
