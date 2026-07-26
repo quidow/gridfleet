@@ -152,3 +152,32 @@ async def test_process_observations_without_wiring_is_a_noop(db_host: Host) -> N
         agent_port=db_host.agent_port,
         payload={"node_health": {"reported_at": "t"}},
     )
+
+
+async def test_convergence_stage_receives_values_not_a_session(
+    db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
+) -> None:
+    # StatusPushTarget does not exist on this branch's base; Task 2 introduces it
+    # in app/hosts/service_status_push.py. Import it inside the test body so this
+    # single test fails at runtime rather than an ImportError killing collection
+    # of the whole module (and hiding the other, currently-passing tests here).
+    from app.hosts.service_status_push import StatusPushTarget
+
+    seen: dict[str, object] = {}
+
+    async def fake_converge_host(**kwargs: object) -> None:
+        seen.update(kwargs)
+        assert not {"db", "session"} & kwargs.keys()
+
+    service = _service(db_session_maker, converge_host=fake_converge_host)
+    await service.process_observations(
+        target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
+        payload={"appium_processes": {"running_nodes": []}},
+    )
+
+    assert seen == {
+        "host_id": db_host.id,
+        "host_ip": db_host.ip,
+        "agent_port": db_host.agent_port,
+        "payload": {"appium_processes": {"running_nodes": []}},
+    }
