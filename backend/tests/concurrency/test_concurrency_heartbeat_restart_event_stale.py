@@ -13,10 +13,11 @@ from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.devices.models import Device
+    from app.devices.locking import LockedDevice
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -41,20 +42,21 @@ async def test_ingest_appium_restart_events_skips_when_node_changes_before_lock(
 
     about_to_lock = asyncio.Event()
     allow_lock = asyncio.Event()
-    original_lock_device = device_locking.lock_device
+    original_lock_device_handles = device_locking.lock_device_handles
 
-    async def gated_lock_device(
+    async def gated_lock_device_handles(
         session: AsyncSession,
-        target_device_id: uuid.UUID,
+        target_device_ids: Sequence[uuid.UUID],
         *,
         load_sessions: bool = False,
-    ) -> Device:
-        if target_device_id == device_id:
+    ) -> list[LockedDevice]:
+        target_device_ids = list(target_device_ids)
+        if device_id in target_device_ids:
             about_to_lock.set()
             await asyncio.wait_for(allow_lock.wait(), timeout=2.0)
-        return await original_lock_device(session, target_device_id, load_sessions=load_sessions)
+        return await original_lock_device_handles(session, target_device_ids, load_sessions=load_sessions)
 
-    monkeypatch.setattr(device_locking, "lock_device", gated_lock_device)
+    monkeypatch.setattr(device_locking, "lock_device_handles", gated_lock_device_handles)
 
     health_payload = {
         "appium_processes": {

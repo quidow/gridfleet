@@ -4,15 +4,16 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.appium_nodes.exceptions import NodeManagerError
-from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.appium_nodes.models import AppiumDesiredState
 from app.appium_nodes.services import reconciler_agent as node_agent
 from app.appium_nodes.services.reconciler_agent import (
+    NodeStartDetails,
     ReconcilerAgentService,
     require_management_host,
 )
+from app.core.timeutil import now_utc
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
@@ -24,6 +25,7 @@ from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 _crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
 
@@ -114,8 +116,12 @@ async def test_start_node_with_verification_caller_skips_readiness(
     assert node.desired_state is AppiumDesiredState.running
 
 
-async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSession) -> None:
-    from app.appium_nodes.services import reconciler_agent as node_service
+async def test_mark_node_helpers_take_no_lock_of_their_own(db_session: AsyncSession) -> None:
+    """The aggregate-lock contract: the caller locks Device once and passes the
+    proof plus the locked child; the helpers must not re-lock either row."""
+    from app.appium_nodes.services import locking as appium_node_locking
+    from app.devices import locking as device_locking
+    from app.devices.services.decision_snapshot import load_device_decision_snapshot
 
     host = Host(
         hostname="lock-host",
@@ -143,77 +149,58 @@ async def test_mark_node_started_acquires_device_row_lock(db_session: AsyncSessi
     )
     db_session.add(device)
     await db_session.commit()
-    loaded = await _crud.get_device(db_session, device.id)
-    assert loaded is not None
 
-    real = node_service._hold_device_row_lock
-    spy = AsyncMock(side_effect=real)
-    with patch("app.appium_nodes.services.reconciler_agent._hold_device_row_lock", spy):
-        await node_agent.mark_node_started(
-            db_session, loaded, port=4723, pid=12345, settings=FakeSettingsReader({}), publisher=Mock()
-        )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    locked_node = await appium_node_locking.lock_appium_node_for_device(db_session, device.id)
 
-    spy.assert_awaited_once()
-    assert spy.await_args.args[1] == loaded.id
-
-
-async def test_mark_node_started_raises_when_device_already_deleted(db_session: AsyncSession) -> None:
-    from sqlalchemy import delete as sa_delete
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-
-    from app.appium_nodes.exceptions import NodeManagerError
-    from tests.helpers import test_event_bus as event_bus
-
-    host = Host(
-        hostname="lock-host-3",
-        ip="192.168.1.53",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.online,
-    )
-    db_session.add(host)
-    await db_session.flush()
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="lock-deleted-mid-flight",
-        connection_target="lock-deleted-mid-flight",
-        name="Deleted Mid Flight",
-        os_version="14",
-        host_id=host.id,
-        operational_state=DeviceOperationalState.offline,
-        verified_at=datetime.now(UTC),
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
-    db_session.add(device)
-    await db_session.commit()
-    loaded = await _crud.get_device(db_session, device.id)
-    assert loaded is not None
-    deleted_id = loaded.id
-
-    # Simulate concurrent delete in another transaction.
-    other_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
-    async with other_factory() as other_db:
-        await other_db.execute(sa_delete(Device).where(Device.id == deleted_id))
-        await other_db.commit()
-
-    publish_spy = AsyncMock()
+    lock_device = AsyncMock(side_effect=AssertionError("mark_node_* must not lock Device"))
+    lock_device_handle = AsyncMock(side_effect=AssertionError("mark_node_* must not lock Device"))
+    lock_node = AsyncMock(side_effect=AssertionError("mark_node_* must not lock AppiumNode"))
     with (
-        patch.object(event_bus, "publish", publish_spy),
-        pytest.raises(NodeManagerError, match="no longer exists"),
+        patch.object(device_locking, "lock_device", lock_device),
+        patch.object(device_locking, "lock_device_handle", lock_device_handle),
+        patch.object(appium_node_locking, "lock_appium_node_for_device", lock_node),
     ):
-        await node_agent.mark_node_started(
-            db_session, loaded, port=4723, pid=12345, settings=FakeSettingsReader({}), publisher=Mock()
+        snapshot = await node_agent.mark_node_started(
+            db_session,
+            locked,
+            locked_node,
+            snapshot,
+            port=4723,
+            pid=12345,
+            details=NodeStartDetails(),
+            settings=FakeSettingsReader({}),
+            publisher=Mock(),
         )
 
-    publish_spy.assert_not_awaited()
+    await db_session.refresh(device, attribute_names=["appium_node"])
+    assert device.appium_node is not None
+    assert device.appium_node.observed_running
+
+    with (
+        patch.object(device_locking, "lock_device", lock_device),
+        patch.object(device_locking, "lock_device_handle", lock_device_handle),
+        patch.object(appium_node_locking, "lock_appium_node_for_device", lock_node),
+    ):
+        await node_agent.mark_node_stopped(
+            db_session,
+            locked,
+            device.appium_node,
+            snapshot,
+            publisher=Mock(),
+        )
+
+    await db_session.refresh(device.appium_node)
+    assert device.appium_node.pid is None
+    assert device.appium_node.active_connection_target is None
 
 
-async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSession) -> None:
-    from app.appium_nodes.services import reconciler_agent as node_service
+async def test_mark_node_stopped_returns_the_snapshot_when_the_node_row_is_gone(db_session: AsyncSession) -> None:
+    """A node deleted between the caller's inventory and its lock is a no-op, not
+    an attribute error on ``None``."""
+    from app.devices import locking as device_locking
+    from app.devices.services.decision_snapshot import load_device_decision_snapshot
 
     host = Host(
         hostname="lock-host-2",
@@ -239,28 +226,16 @@ async def test_mark_node_stopped_acquires_device_row_lock(db_session: AsyncSessi
         connection_type=ConnectionType.usb,
     )
     db_session.add(device)
-    await db_session.flush()
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        pid=9876,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        active_connection_target="",
-    )
-    db_session.add(node)
-    device.appium_node = node
     await db_session.commit()
-    loaded = await _crud.get_device(db_session, device.id)
-    assert loaded is not None
 
-    real = node_service._hold_device_row_lock
-    spy = AsyncMock(side_effect=real)
-    with patch("app.appium_nodes.services.reconciler_agent._hold_device_row_lock", spy):
-        await node_agent.mark_node_stopped(db_session, loaded, publisher=Mock())
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    publisher = Mock()
 
-    spy.assert_awaited_once()
-    assert spy.await_args.args[1] == loaded.id
+    result = await node_agent.mark_node_stopped(db_session, locked, None, snapshot, publisher=publisher)
+
+    assert result is snapshot
+    publisher.queue_for_session.assert_not_called()
 
 
 async def test_legacy_hostless_device_fails_fast_for_remote_management() -> None:
@@ -387,7 +362,10 @@ async def test_build_node_launch_payload_renders_stereotype_once(
 
 
 async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_host: Host) -> None:
+    from app.appium_nodes.services import locking as appium_node_locking
+    from app.devices import locking as device_locking
     from app.devices.services import health as device_health
+    from app.devices.services.decision_snapshot import load_device_decision_snapshot
 
     device = await create_device_record(
         db_session,
@@ -398,13 +376,24 @@ async def test_mark_node_started_updates_node_row(db_session: AsyncSession, db_h
         operational_state="available",
     )
     await db_session.commit()
-    loaded = await _crud.get_device(db_session, device.id)
-    assert loaded is not None
+
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    snapshot = await load_device_decision_snapshot(db_session, locked, packs={}, now=now_utc())
+    locked_node = await appium_node_locking.lock_appium_node_for_device(db_session, device.id)
 
     await node_agent.mark_node_started(
-        db_session, loaded, port=4725, pid=999, settings=FakeSettingsReader({}), publisher=Mock()
+        db_session,
+        locked,
+        locked_node,
+        snapshot,
+        port=4725,
+        pid=999,
+        details=NodeStartDetails(),
+        settings=FakeSettingsReader({}),
+        publisher=Mock(),
     )
 
+    loaded = locked.device
     await db_session.refresh(loaded, attribute_names=["appium_node"])
     assert loaded.appium_node is not None
     assert loaded.appium_node.observed_running

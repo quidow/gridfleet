@@ -17,6 +17,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Select, func, select, update
@@ -28,6 +29,7 @@ from app.agent_comm.snapshot import parse_running_nodes
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
+from app.appium_nodes.services.locking import lock_appium_node_for_device
 from app.appium_nodes.services.reconciler_agent import (
     NodeStartDetails,
     mark_node_started,
@@ -54,6 +56,7 @@ from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import Device
+from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.hosts.liveness import host_online
 from app.hosts.models import Host
 from app.lifecycle.services import remediation_log
@@ -74,6 +77,7 @@ if TYPE_CHECKING:
     from app.appium_nodes.protocols import ReconcilerProtocol
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
+    from app.devices.locking import LockedDevice
     from app.events.protocols import EventPublisher
 
 logger = get_logger(__name__)
@@ -195,12 +199,12 @@ async def _load_device_for_reconciler(db: AsyncSession, device_id: uuid.UUID) ->
     return result.scalar_one_or_none()
 
 
-async def _lock_device_for_reconciler(db: AsyncSession, device_id: uuid.UUID) -> Device | None:
+async def _lock_device_for_reconciler(db: AsyncSession, device_id: uuid.UUID) -> LockedDevice | None:
     # The device row can be deleted between a start attempt and the failure
     # write (e.g. verification cleanup removing a candidate device). Treat
     # that as "nothing to record" — every caller already handles None.
     try:
-        return await device_locking.lock_device(db, device_id)
+        return await device_locking.lock_device_handle(db, device_id)
     except NoResultFound:
         logger.info("reconciler_lock_device_missing", extra={"device_id": str(device_id)})
         return None
@@ -225,10 +229,10 @@ def _running_rows_by_target(rows: list[DesiredRow]) -> dict[str, DesiredRow]:
 async def _repin_desired_port(
     db: AsyncSession, row: DesiredRow, *, conflict_port: int, settings: SettingsReader
 ) -> None:
-    device = await _lock_device_for_reconciler(db, row.device_id)
-    if device is None or device.appium_node is None:
+    """Re-pin ``desired_port`` inside the caller's Device-locked transaction."""
+    node = await lock_appium_node_for_device(db, row.device_id)
+    if node is None:
         return
-    node = device.appium_node
     try:
         ports = await candidate_ports(db, host_id=row.host_id, exclude_ports={conflict_port}, settings=settings)
     except NodeManagerError:
@@ -251,11 +255,74 @@ async def _repin_desired_port(
             restart_requested_at=node.restart_requested_at,
         ),
     )
-    await db.commit()
+
+
+@dataclass(frozen=True, slots=True)
+class ObservedNodeMutation:
+    """One agent-observed node fact, detached from the session that read it."""
+
+    state: str
+    port: int | None
+    pid: int | None
+    details: NodeStartDetails
+    clear_desired_port: bool
+
+
+async def apply_observed_node_command(
+    session_factory: SessionFactory,
+    row: DesiredRow,
+    mutation: ObservedNodeMutation,
+    *,
+    publisher: EventPublisher,
+    settings: SettingsReader,
+) -> None:
+    """Settle one device's observed node state in its own short transaction.
+
+    One Device lock, then the device-owned AppiumNode row; every nested helper
+    only stages or flushes, so a failure rolls back this device alone and leaves
+    successful peers durable.
+    """
+    async with session_factory.begin() as db:
+        locked = await _lock_device_for_reconciler(db, row.device_id)
+        if locked is None:
+            return
+        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        locked_node = await lock_appium_node_for_device(db, row.device_id)
+        if mutation.state == "running":
+            await mark_node_started(
+                db,
+                locked,
+                locked_node,
+                snapshot,
+                port=mutation.port or row.port or 0,
+                pid=mutation.pid,
+                details=mutation.details,
+                publisher=publisher,
+                settings=settings,
+            )
+        else:
+            await mark_node_stopped(
+                db,
+                locked,
+                locked_node,
+                snapshot,
+                publisher=publisher,
+            )
+        if mutation.clear_desired_port and locked_node is not None:
+            await write_desired_state(
+                db,
+                node=locked_node,
+                caller="appium_reconciler",
+                write=DesiredStateWrite(
+                    target=locked_node.desired_state,
+                    desired_port=None,
+                    restart_requested_at=locked_node.restart_requested_at,
+                ),
+            )
 
 
 async def _touch_last_observed(
-    rows: list[DesiredRow], *, settings: SettingsReader, session_factory: async_sessionmaker[AsyncSession]
+    rows: list[DesiredRow], *, settings: SettingsReader, session_factory: SessionFactory
 ) -> None:
     if not rows:
         return
@@ -267,44 +334,51 @@ async def _touch_last_observed(
     # contention for nothing. TRIPWIRE: if any loop/allocator/reaper ever starts
     # reading last_observed_at to make a decision, revisit this ruling and WI-2
     # (the guard cannot see this Core write either).
-    async with session_factory() as db:
+    async with session_factory.begin() as db:
         node_ids = [row.node_id for row in rows]
         await db.execute(update(AppiumNode).where(AppiumNode.id.in_(node_ids)).values(last_observed_at=now_utc()))
-        await db.commit()
 
 
 async def _record_start_failure(
     row: DesiredRow,
     *,
     reason: str,
-    session_scope: SessionScope | None = None,
+    conflict_port: int | None = None,
+    session_factory: SessionFactory,
     settings: SettingsReader,
 ) -> None:
-    resolved_session_scope = session_scope or async_session
-    async with resolved_session_scope() as db:
-        device = await _lock_device_for_reconciler(db, row.device_id)
-        if device is None:
+    """Escalate one agent-reported start failure, re-pinning the port in the same
+    Device-first transaction when the agent reported a port conflict."""
+    async with session_factory.begin() as db:
+        locked = await _lock_device_for_reconciler(db, row.device_id)
+        if locked is None:
             return
+        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
         await escalate_device_remediation_failure(
-            db, device, settings=settings, source="appium_reconciler", reason=reason
+            db,
+            locked.device,
+            settings=settings,
+            source="appium_reconciler",
+            reason=reason,
+            ladder=snapshot.ladder,
         )
-        await db.commit()
+        if conflict_port is not None:
+            await _repin_desired_port(db, row, conflict_port=conflict_port, settings=settings)
 
 
 async def _reset_start_failure(
     row: DesiredRow,
     *,
-    session_scope: SessionScope | None = None,
+    session_factory: SessionFactory,
     settings: SettingsReader,
 ) -> None:
-    resolved_session_scope = session_scope or async_session
-    async with resolved_session_scope() as db:
-        device = await _lock_device_for_reconciler(db, row.device_id)
-        if device is None:
+    _ = settings
+    async with session_factory.begin() as db:
+        locked = await _lock_device_for_reconciler(db, row.device_id)
+        if locked is None:
             return
-        if not await reset_reconciler_start_failure_if_needed(db, device):
-            return
-        await db.commit()
+        snapshot = await load_device_decision_snapshot(db, locked, packs={}, now=now_utc())
+        await reset_reconciler_start_failure_if_needed(db, locked.device, ladder=snapshot.ladder)
 
 
 class ReconcilerService:
@@ -396,7 +470,7 @@ class ReconcilerService:
             stale_rows = rows_needing_stale_clear(backoff_rows, observed, now=now)
             if stale_rows:
                 clear_observed = self._write_observed_factory()
-                for row in stale_rows:
+                for row in sorted(stale_rows, key=lambda item: str(item.device_id)):
                     await clear_observed(row=row, state="stopped", port=None, pid=None, details=NodeStartDetails())
             active_rows = [
                 row
@@ -415,7 +489,6 @@ class ReconcilerService:
             # (backoff-excluded rows never converge this cycle anyway).
             await self._ingest_start_failure_reports(active_rows, raw_start_failures)
             await self.converge_host_rows(
-                None,
                 active_rows,
                 observed,
                 host_id=host_id,
@@ -427,7 +500,6 @@ class ReconcilerService:
 
     async def converge_host_rows(
         self,
-        db: AsyncSession | None,
         desired_rows: list[DesiredRow],
         observed: list[ObservedEntry],
         *,
@@ -436,10 +508,9 @@ class ReconcilerService:
         agent_port: int,
         raise_errors: bool = False,
     ) -> None:
-        """Drive convergence for one host."""
-        session_scope = _session_scope(db)
-        write_observed = self._write_observed_factory(session_scope=session_scope)
-        reset_start_failure = self._make_reset_start_failure(session_scope=session_scope)
+        """Drive convergence for one host, one short transaction per device."""
+        write_observed = self._write_observed_factory()
+        reset_start_failure = self._make_reset_start_failure()
         observed_by_target = {entry.connection_target: entry for entry in observed}
         observed_by_port = {entry.port: entry for entry in observed}
         for row in sorted(desired_rows, key=lambda item: str(item.device_id)):
@@ -483,11 +554,15 @@ class ReconcilerService:
 
     def _match_new_start_failure(
         self, failure: dict[str, Any], running_by_target: dict[str, DesiredRow]
-    ) -> tuple[DesiredRow, str, object] | None:
-        """Resolve one raw ``start_failures`` entry to ``(row, kind, port)`` if it
-        matches a desired-running row and is newer than the dedupe cursor for
-        that device — updating the cursor as a side effect. Returns ``None``
-        for anything unmatched, malformed, or already-seen (level-style dedupe).
+    ) -> tuple[DesiredRow, str, object, str] | None:
+        """Resolve one raw ``start_failures`` entry to ``(row, kind, port, at)``
+        if it matches a desired-running row and is newer than the dedupe cursor
+        for that device. Returns ``None`` for anything unmatched, malformed, or
+        already-seen (level-style dedupe).
+
+        Pure: the caller advances ``_last_seen_failure_at`` only once the entry's
+        transaction has committed, so a failed command is redelivered instead of
+        being silently swallowed.
         """
         if not isinstance(failure, dict):
             return None
@@ -501,8 +576,7 @@ class ReconcilerService:
             return None
         if at <= self._last_seen_failure_at.get(row.device_id, ""):
             return None
-        self._last_seen_failure_at[row.device_id] = at
-        return row, kind, failure.get("port")
+        return row, kind, failure.get("port"), at
 
     async def _ingest_start_failures(self, rows: list[DesiredRow], start_failures: list[dict[str, Any]]) -> None:
         """Ingest agent-reported ``start_failures`` (D3): a ``port_conflict`` re-pins
@@ -523,26 +597,25 @@ class ReconcilerService:
             matched = self._match_new_start_failure(failure, running_by_target)
             if matched is None:
                 continue
-            row, kind, port = matched
+            row, kind, port, at = matched
             if kind == "port_conflict":
                 await _record_start_failure(
-                    row, reason="port_conflict", session_scope=self._session_factory, settings=self._settings
+                    row,
+                    reason="port_conflict",
+                    conflict_port=port if isinstance(port, int) else None,
+                    session_factory=self._session_factory,
+                    settings=self._settings,
                 )
-                if isinstance(port, int):
-                    async with self._session_factory() as db:
-                        await _repin_desired_port(db, row, conflict_port=port, settings=self._settings)
             elif kind == "spawn_failed":
                 await _record_start_failure(
-                    row, reason="spawn_failed", session_scope=self._session_factory, settings=self._settings
+                    row, reason="spawn_failed", session_factory=self._session_factory, settings=self._settings
                 )
+            # Cursor advances only here, after the command's transaction context
+            # exited successfully: a raised command leaves it behind so the same
+            # ring entry is retried on the next push.
+            self._last_seen_failure_at[row.device_id] = at
 
-    def _write_observed_factory(
-        self,
-        *,
-        session_scope: SessionScope | None = None,
-    ) -> Callable[..., Awaitable[None]]:
-        resolved_session_scope = session_scope or self._session_factory
-
+    def _write_observed_factory(self) -> Callable[..., Awaitable[None]]:
         async def _write(
             *,
             row: DesiredRow,
@@ -552,48 +625,25 @@ class ReconcilerService:
             details: NodeStartDetails | None = None,
             clear_desired_port: bool = False,
         ) -> None:
-            async with resolved_session_scope() as db:
-                device = await _load_device_for_reconciler(db, row.device_id)
-                if device is None:
-                    return
-                if state == "running":
-                    await mark_node_started(
-                        db,
-                        device,
-                        port=port or row.port or 0,
-                        pid=pid,
-                        details=details or NodeStartDetails(),
-                        publisher=self._publisher,
-                        settings=self._settings,
-                    )
-                else:
-                    await mark_node_stopped(db, device, publisher=self._publisher)
-                if clear_desired_port:
-                    device = await _lock_device_for_reconciler(db, row.device_id)
-                    if device is None or device.appium_node is None:
-                        return
-                    node = device.appium_node
-                    await write_desired_state(
-                        db,
-                        node=node,
-                        caller="appium_reconciler",
-                        write=DesiredStateWrite(
-                            target=node.desired_state,
-                            desired_port=None if clear_desired_port else node.desired_port,
-                            restart_requested_at=node.restart_requested_at,
-                        ),
-                    )
-                    await db.commit()
+            await apply_observed_node_command(
+                self._session_factory,
+                row,
+                ObservedNodeMutation(
+                    state=state,
+                    port=port,
+                    pid=pid,
+                    details=details or NodeStartDetails(),
+                    clear_desired_port=clear_desired_port,
+                ),
+                publisher=self._publisher,
+                settings=self._settings,
+            )
 
         return _write
 
-    def _make_reset_start_failure(
-        self,
-        *,
-        session_scope: SessionScope | None = None,
-    ) -> Callable[..., Awaitable[None]]:
+    def _make_reset_start_failure(self) -> Callable[..., Awaitable[None]]:
         async def _reset(*, row: DesiredRow) -> None:
-            await _reset_start_failure(row, session_scope=session_scope, settings=self._settings)
+            await _reset_start_failure(row, session_factory=self._session_factory, settings=self._settings)
 
         return _reset
 

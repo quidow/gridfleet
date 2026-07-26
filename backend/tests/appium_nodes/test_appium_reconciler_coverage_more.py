@@ -18,7 +18,7 @@ from tests.helpers import create_device
 
 if TYPE_CHECKING:
     import pytest
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 def _desired_row(**overrides: object) -> DesiredRow:
@@ -43,7 +43,7 @@ async def test_lock_device_for_reconciler_returns_none_when_row_deleted(
 ) -> None:
     monkeypatch.setattr(
         appium_reconciler.device_locking,
-        "lock_device",
+        "lock_device_handle",
         AsyncMock(side_effect=NoResultFound),
     )
     result = await appium_reconciler._lock_device_for_reconciler(AsyncMock(), uuid.uuid4())
@@ -142,11 +142,12 @@ async def test_reconcile_host_filters_backoff_rows_from_explicit_health_payload(
 
     touch.assert_awaited_once()
     converge.assert_awaited_once()
-    # desired_rows (active_rows) is 2nd positional arg to converge_host_rows(None, active_rows, observed, ...)
-    assert converge.call_args.args[1] == [active]
+    # desired_rows (active_rows) is the 1st positional arg to converge_host_rows(active_rows, observed, ...)
+    assert converge.call_args.args[0] == [active]
 
 
 async def test_record_and_reset_start_failure_state(
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -160,14 +161,10 @@ async def test_record_and_reset_start_failure_state(
     )
     row = _desired_row(device_id=device.id)
 
-    @asynccontextmanager
-    async def _scope() -> AsyncSession:
-        yield db_session
-
     await appium_reconciler._record_start_failure(
         row,
         reason="timeout",
-        session_scope=_scope,
+        session_factory=db_session_maker,
         settings=FakeSettingsReader({}),
     )
     await db_session.refresh(device)
@@ -177,7 +174,7 @@ async def test_record_and_reset_start_failure_state(
     assert ladder.last_failure_source == "appium_reconciler"
     assert ladder.last_failure_reason == "timeout"
 
-    await appium_reconciler._reset_start_failure(row, session_scope=_scope, settings=FakeSettingsReader({}))
+    await appium_reconciler._reset_start_failure(row, session_factory=db_session_maker, settings=FakeSettingsReader({}))
     await db_session.refresh(device)
     ladder = await remediation_log.load_ladder(db_session, device.id)
     assert ladder.attempts == 0
@@ -190,12 +187,13 @@ async def test_record_and_reset_start_failure_state(
     await appium_reconciler._record_start_failure(
         _desired_row(device_id=uuid.uuid4()),
         reason="timeout",
-        session_scope=_scope,
+        session_factory=db_session_maker,
         settings=FakeSettingsReader({}),
     )
 
 
 async def test_reset_start_failure_noop_for_non_reconciler_source(
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -212,11 +210,7 @@ async def test_reset_start_failure_noop_for_non_reconciler_source(
 
     row = _desired_row(device_id=device.id)
 
-    @asynccontextmanager
-    async def _scope() -> AsyncSession:
-        yield db_session
-
-    await appium_reconciler._reset_start_failure(row, session_scope=_scope, settings=FakeSettingsReader({}))
+    await appium_reconciler._reset_start_failure(row, session_factory=db_session_maker, settings=FakeSettingsReader({}))
     await db_session.refresh(device)
     ladder = await remediation_log.load_ladder(db_session, device.id)
     assert ladder.last_failure_source == "connectivity"
@@ -224,6 +218,7 @@ async def test_reset_start_failure_noop_for_non_reconciler_source(
 
 
 async def test_reset_start_failure_ignores_missing_log_episode(
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -239,11 +234,7 @@ async def test_reset_start_failure_ignores_missing_log_episode(
 
     row = _desired_row(device_id=device.id)
 
-    @asynccontextmanager
-    async def _scope() -> AsyncSession:
-        yield db_session
-
-    await appium_reconciler._reset_start_failure(row, session_scope=_scope, settings=FakeSettingsReader({}))
+    await appium_reconciler._reset_start_failure(row, session_factory=db_session_maker, settings=FakeSettingsReader({}))
     await db_session.refresh(device)
     ladder = await remediation_log.load_ladder(db_session, device.id)
     assert ladder.attempts == 0
@@ -251,6 +242,7 @@ async def test_reset_start_failure_ignores_missing_log_episode(
 
 
 async def test_confirm_running_skips_lock_when_no_failure_residue(
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -266,17 +258,13 @@ async def test_confirm_running_skips_lock_when_no_failure_residue(
     lock_mock = AsyncMock(return_value=device)
     monkeypatch.setattr("app.appium_nodes.services.reconciler._lock_device_for_reconciler", lock_mock)
 
-    @asynccontextmanager
-    async def _scope() -> AsyncSession:
-        yield db_session
-
     reset_fn = appium_reconciler.ReconcilerService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         pool=None,
         circuit_breaker=Mock(),
-        session_factory=_scope,
-    )._make_reset_start_failure(session_scope=_scope)
+        session_factory=db_session_maker,
+    )._make_reset_start_failure()
 
     # Row with no failure residue in lifecycle_policy_state
     row = _desired_row(device_id=device.id, lifecycle_policy_state={})
@@ -293,6 +281,7 @@ async def test_confirm_running_skips_lock_when_no_failure_residue(
 
 
 async def test_confirm_running_acquires_lock_when_failure_residue_present(
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -313,17 +302,13 @@ async def test_confirm_running_acquires_lock_when_failure_residue_present(
     }
     await db_session.commit()
 
-    @asynccontextmanager
-    async def _scope() -> AsyncSession:
-        yield db_session
-
     reset_fn = appium_reconciler.ReconcilerService(
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         pool=None,
         circuit_breaker=Mock(),
-        session_factory=_scope,
-    )._make_reset_start_failure(session_scope=_scope)
+        session_factory=db_session_maker,
+    )._make_reset_start_failure()
 
     # Row carries the same residue state lock-free
     await remediation_log.append_attempt(

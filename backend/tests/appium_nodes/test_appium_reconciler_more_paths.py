@@ -13,6 +13,8 @@ from app.hosts.models import HostStatus
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     import pytest
 
 
@@ -75,20 +77,25 @@ async def test_converge_device_now_pokes_agent_without_agent_io(monkeypatch: pyt
     db.refresh.assert_awaited_once_with(node)
 
 
-async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Session:
-        async def __aenter__(self) -> Session:
-            return self
+class _FakeSessionFactory:
+    """Minimal ``SessionFactory`` stand-in whose ``begin()`` yields a mock session."""
 
-        async def __aexit__(self, *args: object) -> None:
-            return None
+    def __init__(self) -> None:
+        self.session = AsyncMock()
 
-        async def commit(self) -> None:
-            return None
+    def __call__(self) -> object:
+        return self._scope()
 
-    db = Session()
-    device_id = uuid.uuid4()
-    row = DesiredRow(
+    def begin(self) -> object:
+        return self._scope()
+
+    @asynccontextmanager
+    async def _scope(self) -> AsyncIterator[AsyncMock]:
+        yield self.session
+
+
+def _observed_row(device_id: uuid.UUID) -> DesiredRow:
+    return DesiredRow(
         device_id=device_id,
         host_id=uuid.uuid4(),
         node_id=uuid.uuid4(),
@@ -100,22 +107,34 @@ async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatc
         active_connection_target=None,
         stop_pending=False,
     )
+
+
+def _service(session_factory: object) -> ReconcilerService:
+    return ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=session_factory,  # type: ignore[arg-type]
+    )
+
+
+async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    device_id = uuid.uuid4()
+    row = _observed_row(device_id)
     node = SimpleNamespace(desired_state="running", desired_port=4723, restart_requested_at=None)
     device = SimpleNamespace(id=device_id, appium_node=node)
-    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
-    monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=SimpleNamespace(device=device))
+    )
+    monkeypatch.setattr(appium_reconciler, "load_device_decision_snapshot", AsyncMock(return_value=object()))
+    monkeypatch.setattr(appium_reconciler, "lock_appium_node_for_device", AsyncMock(return_value=node))
     monkeypatch.setattr(appium_reconciler, "mark_node_started", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "mark_node_stopped", AsyncMock())
     write = AsyncMock()
     monkeypatch.setattr(appium_reconciler, "write_desired_state", write)
 
-    observed = ReconcilerService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        session_factory=Mock(),
-    )._write_observed_factory(session_scope=lambda: db)
+    observed = _service(_FakeSessionFactory())._write_observed_factory()
     await observed(
         row=row,
         state="running",
@@ -140,45 +159,26 @@ async def test_write_observed_factory_running_and_stopped_clear_paths(monkeypatc
 
 
 async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    class Session:
-        async def __aenter__(self) -> Session:
-            return self
-
-        async def __aexit__(self, *args: object) -> None:
-            return None
-
-        async def commit(self) -> None:
-            return None
-
-    db = Session()
-    row = DesiredRow(
-        device_id=uuid.uuid4(),
-        host_id=uuid.uuid4(),
-        node_id=uuid.uuid4(),
-        connection_target="dev",
-        desired_state="running",
-        desired_port=4723,
-        port=4723,
-        pid=None,
-        active_connection_target=None,
-        stop_pending=False,
-    )
-    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=None))
+    row = _observed_row(uuid.uuid4())
+    monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=None))
+    monkeypatch.setattr(appium_reconciler, "load_device_decision_snapshot", AsyncMock(return_value=object()))
     monkeypatch.setattr(appium_reconciler, "mark_node_started", AsyncMock())
     monkeypatch.setattr(appium_reconciler, "mark_node_stopped", AsyncMock())
-    _reconciler_svc = ReconcilerService(
-        publisher=Mock(),
-        settings=FakeSettingsReader({}),
-        pool=Mock(),
-        circuit_breaker=Mock(),
-        session_factory=Mock(),
-    )
-    observed = _reconciler_svc._write_observed_factory(session_scope=lambda: db)
-    await observed(row=row, state="running", port=4723, pid=1, details=NodeStartDetails(active_connection_target="dev"))
+    write = AsyncMock()
+    monkeypatch.setattr(appium_reconciler, "write_desired_state", write)
 
+    observed = _service(_FakeSessionFactory())._write_observed_factory()
+    # Deleted device: the command declines before locking the node.
+    await observed(row=row, state="running", port=4723, pid=1, details=NodeStartDetails(active_connection_target="dev"))
+    appium_reconciler.mark_node_started.assert_not_awaited()
+
+    # Device present but its node row went away: mark_* runs with locked_node None
+    # and the desired-port clear is skipped rather than raising.
     device = SimpleNamespace(id=row.device_id, appium_node=None)
-    monkeypatch.setattr(appium_reconciler, "_load_device_for_reconciler", AsyncMock(return_value=device))
-    monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=device))
+    monkeypatch.setattr(
+        appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=SimpleNamespace(device=device))
+    )
+    monkeypatch.setattr(appium_reconciler, "lock_appium_node_for_device", AsyncMock(return_value=None))
     await observed(
         row=row,
         state="running",
@@ -187,9 +187,12 @@ async def test_write_observed_and_clear_factories_handle_missing_rows(monkeypatc
         details=NodeStartDetails(active_connection_target="dev"),
         clear_desired_port=True,
     )
+    appium_reconciler.mark_node_started.assert_awaited_once()
+    write.assert_not_awaited()
 
-    monkeypatch.setattr(appium_reconciler, "_lock_device_for_reconciler", AsyncMock(return_value=None))
-    await observed(row=row, state="stopped", port=None, pid=None)
+    await observed(row=row, state="stopped", port=None, pid=None, clear_desired_port=True)
+    appium_reconciler.mark_node_stopped.assert_awaited_once()
+    write.assert_not_awaited()
 
 
 async def test_session_scope_reuses_existing_db() -> None:

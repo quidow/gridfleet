@@ -1,20 +1,57 @@
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import event, select, update
 
 from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import heartbeat
 from app.hosts.models import Host
+from tests.bench_instrumentation import QueryTap
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.events.models import SystemEvent
+
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
+
+
+class _OrderedQueryTap(QueryTap):
+    """Engine-scoped ``QueryTap`` that also keeps statements in execution order."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.statements: list[str] = []
+
+    def __call__(
+        self,
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object = None,
+        context: object = None,
+        executemany: bool = False,
+    ) -> None:
+        super().__call__(conn, cursor, statement, parameters, context, executemany)
+        if self.armed:
+            self.statements.append(statement)
+
+
+class _RecordingPublisher:
+    """Records the public event order while still staging the real rows."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    def queue_for_session(
+        self, db: object, event_type: str, data: dict[str, Any], *, severity: str | None = None
+    ) -> SystemEvent | None:
+        self.events.append((event_type, data))
+        return event_bus.queue_for_session(db, event_type, data, severity=severity)  # type: ignore[arg-type]
 
 
 async def test_ingest_appium_restart_events_locks_device_and_node(
@@ -91,3 +128,62 @@ async def test_ingest_appium_restart_events_locks_device_and_node(
         "_ingest_appium_restart_events overwrote the concurrent error write "
         "(missing AppiumNode lock)"
     )
+
+
+async def test_restart_ingest_locks_devices_once_in_uuid_order_before_nodes(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Restart ingest pre-acquires every affected Device in ascending UUID order
+    in one pass before touching an AppiumNode, while public events keep the
+    agent's sequence order (here the reverse of UUID order)."""
+    first = await create_device(db_session, host_id=db_host.id, name="hb-order-a", verified=True)
+    second = await create_device(db_session, host_id=db_host.id, name="hb-order-b", verified=True)
+    port_by_device = {first.id: 4801, second.id: 4802}
+    for device_id, port in port_by_device.items():
+        db_session.add(AppiumNode(device_id=device_id, port=port, pid=port, active_connection_target=str(device_id)))
+    await db_session.commit()
+
+    lowest, highest = sorted((first, second), key=lambda device: str(device.id))
+    payload = {
+        "appium_processes": {
+            "recent_restart_events": [
+                {
+                    "sequence": 1,
+                    "process": "appium",
+                    "kind": "restart_exhausted",
+                    "port": port_by_device[highest.id],
+                    "attempt": 3,
+                    "exit_code": 9,
+                },
+                {
+                    "sequence": 2,
+                    "process": "appium",
+                    "kind": "restart_exhausted",
+                    "port": port_by_device[lowest.id],
+                    "attempt": 3,
+                    "exit_code": 9,
+                },
+            ]
+        }
+    }
+
+    publisher = _RecordingPublisher()
+    tap = _OrderedQueryTap()
+    engine = db_session.bind.sync_engine  # type: ignore[union-attr]
+    event.listen(engine, "before_cursor_execute", tap)
+    try:
+        await heartbeat._ingest_appium_restart_events(db_session, db_host, payload, publisher=publisher)
+    finally:
+        event.remove(engine, "before_cursor_execute", tap)
+    await db_session.commit()
+
+    device_locks = [sql for sql in tap.statements if "FROM devices" in sql and "FOR UPDATE" in sql]
+    node_locks = [sql for sql in tap.statements if "FROM appium_nodes" in sql and "FOR UPDATE" in sql]
+    assert len(device_locks) == 1, f"expected one aggregate Device lock pass, got {len(device_locks)}"
+    assert "ORDER BY devices.id" in device_locks[0]
+    assert node_locks
+    assert tap.statements.index(device_locks[0]) < tap.statements.index(node_locks[0])
+
+    crashed = [data["device_id"] for name, data in publisher.events if name == "device.crashed"]
+    assert crashed == [str(highest.id), str(lowest.id)]
