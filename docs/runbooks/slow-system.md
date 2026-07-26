@@ -60,12 +60,29 @@ missed. A large value that does not fall is not.
 **These gauges are per-process, and one poller is not on this port.** Every
 process runs its own poller, and the registry is single-process:
 
-- `backend-scheduler` runs a second poller and has no host port mapping. Scrape
-  it from inside the network:
-  `docker compose exec backend curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://backend-scheduler:8000/metrics`
+- `backend-scheduler` runs a second poller and has no host port mapping, and it
+  only exists in the prod compose file. Scrape it from inside the network — the
+  backend image has neither `curl` nor `wget`, so this shells out to the
+  `backend` container's own Python instead, and reads the machine-auth
+  credentials from its environment rather than the host's, since `docker
+  compose exec` does not forward host environment variables into the container:
 - With `GRIDFLEET_UVICORN_WORKERS` above 1, a scrape of `localhost:8000` lands on
   one arbitrary worker, so a single wedged poller shows up in 1/N of scrapes.
   Read the gauge as "the process that answered", not "the backend".
+
+```bash
+cd docker
+docker compose --env-file .env -f docker-compose.prod.yml exec backend python -c "
+import base64, os, urllib.request
+c = base64.b64encode(f\"{os.environ['GRIDFLEET_MACHINE_AUTH_USERNAME']}:{os.environ['GRIDFLEET_MACHINE_AUTH_PASSWORD']}\".encode()).decode()
+r = urllib.request.Request('http://backend-scheduler:8000/metrics', headers={'Authorization': f'Basic {c}'})
+print(urllib.request.urlopen(r, timeout=5).read().decode())" | grep -E '^outbox_'
+```
+
+With auth disabled and no machine credentials configured,
+`GRIDFLEET_MACHINE_AUTH_USERNAME`/`_PASSWORD` are empty in the container's
+environment and the request above still goes through — `backend-scheduler`
+does not check the header when auth is off.
 
 The per-statement timeout, not these gauges, is what stops a wedged poller from
 being permanent. The gauges are how you find out it happened.
