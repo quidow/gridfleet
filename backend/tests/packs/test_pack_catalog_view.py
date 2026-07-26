@@ -45,6 +45,26 @@ async def test_load_pack_catalog_reads_nothing_for_an_empty_id_set(
     assert statements == []
 
 
+async def test_load_pack_catalog_reads_nothing_for_an_all_falsy_id_set(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A non-empty collection of only falsy ids must also short-circuit.
+
+    Distinct from the empty-list case above: this exercises the truthiness
+    filter itself (an empty-string ``pack_id`` is the realistic production
+    shape — a device row with no pack assigned), not just the `not ids`
+    fast path that an empty list hits before the filter ever runs.
+    """
+    await db_session.commit()
+
+    async with db_session_maker() as catalog_db, capture_statements(catalog_db) as statements:
+        catalog = await load_pack_catalog(catalog_db, [""])
+
+    assert catalog == {}
+    assert statements == []
+
+
 async def test_catalog_survives_the_session_that_loaded_it(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
