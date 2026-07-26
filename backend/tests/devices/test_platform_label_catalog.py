@@ -70,8 +70,8 @@ async def test_catalog_labels_match_the_query_backed_map(db_session: AsyncSessio
         (ROKU_PACK, "roku_network"),
         ("ghost-pack", "android_mobile"),
     ]
-    expected = await load_platform_label_map(db_session, pairs)
     catalog = await load_pack_catalog(db_session, [ANDROID_PACK, ROKU_PACK, "ghost-pack"])
+    expected = await load_platform_label_map(db_session, pairs)
 
     derived = platform_labels_from_catalog(catalog)
 

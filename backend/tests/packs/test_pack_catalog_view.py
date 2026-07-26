@@ -19,7 +19,7 @@ pytestmark = [pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
 PACK_ID = "appium-uiautomator2"
 PLATFORM_ID = "android_mobile"
 
-# The select list load_pack_catalog is allowed to fetch: the eight scalars
+# The select list load_pack_catalog is allowed to fetch: the nine scalars
 # project_pack reads, plus the primary keys SQLAlchemy always loads (they key
 # the returned dict and identify the joined child rows).
 CATALOG_COLUMNS = frozenset(
@@ -120,6 +120,7 @@ async def test_catalog_survives_the_session_that_loaded_it(
     platform = next(p for p in platforms if p.manifest_platform_id == PLATFORM_ID)
     assert platform.automation_name
     assert platform.appium_platform_name
+    assert platform.display_name
     assert isinstance(platform.data, dict)
 
 
@@ -142,8 +143,11 @@ async def test_catalog_read_fetches_only_the_projected_columns(
     transferred once per platform rather than once per release. The negative
     half of this assertion (nothing extra) is that guard. The positive half
     (nothing missing) is guarded twice: a column dropped from the ``load_only``
-    set but still read by ``project_pack`` raises ``MissingGreenlet`` in
-    ``test_catalog_survives_the_session_that_loaded_it`` below.
+    set but still read by ``project_pack`` raises ``MissingGreenlet`` inside
+    ``load_pack_catalog`` itself, during projection, while the session is
+    still live — every ``db``-marked test that reads a catalog fails, not just
+    the post-session attribute reads in
+    ``test_catalog_survives_the_session_that_loaded_it`` above.
     """
     await db_session.commit()
 
@@ -159,10 +163,12 @@ async def test_deferred_columns_still_load_for_a_later_full_read(
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     """A catalog read leaves its ORM rows in the session's identity map with every
-    undeclared column deferred. Any later full read of those same rows on that
-    same session — ``load_platform_label_map``, ``platform_resolver`` — must
-    populate them, not hand back a row that raises ``MissingGreenlet`` on
-    ``manifest_json``.
+    undeclared column deferred. Any later full-entity ``select()`` of those same
+    rows on that same session — ``load_platform_label_map``, ``platform_resolver``
+    — must populate them, not hand back a row that raises ``MissingGreenlet`` on
+    ``manifest_json``. ``Session.get()`` / ``AsyncSession.get()`` is the
+    exception: it returns the identity-map instance with no SQL at all, so the
+    deferrals stay in place.
 
     SQLAlchemy populates the *unloaded* attributes of an instance it already
     holds, which is what makes the ``load_only`` above safe for sessions that do
