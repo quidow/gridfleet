@@ -13,7 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceGroup, GroupType
-from app.devices.services.group_membership import load_static_group_keys_by_device_id
+from app.devices.services.group_membership import load_member_of_keys, load_static_group_keys_by_device_id
 from app.portability.schemas import (
     SCHEMA_VERSION,
     ExportBundle,
@@ -35,7 +35,11 @@ class PortabilityExportService:
         groups_stmt = select(DeviceGroup).order_by(DeviceGroup.key.asc())
         groups_result = await db.execute(groups_stmt)
         groups = list(groups_result.scalars().all())
-        exported_groups = [_exported_group(g) for g in groups]
+        dynamic_group_ids = [g.id for g in groups if g.group_type == GroupType.dynamic]
+        member_of_keys_by_dynamic_group_id = await load_member_of_keys(db, dynamic_group_ids)
+        exported_groups = [
+            _exported_group(g, member_of_keys_by_dynamic_group_id.get(g.id, frozenset())) for g in groups
+        ]
 
         device_ids = [d.id for d in devices]
         static_keys_by_device = await load_static_group_keys_by_device_id(db, device_ids)
@@ -50,12 +54,24 @@ class PortabilityExportService:
         )
 
 
-def _exported_group(group: DeviceGroup) -> ExportedDeviceGroup:
+def _exported_group(group: DeviceGroup, member_of_keys: frozenset[str]) -> ExportedDeviceGroup:
+    """Build the public group definition from the stored native JSON plus the relation.
+
+    ``group.filters`` never carries ``member_of`` from the member-of-FK phase on, but
+    a stray legacy key is dropped defensively rather than echoed back — the relation
+    is the only source of truth for references.
+    """
     filters = None
-    if group.group_type == GroupType.dynamic and group.filters:
+    if group.group_type == GroupType.dynamic:
         from app.devices.schemas.filters import DeviceGroupFilters  # noqa: PLC0415
 
-        filters = DeviceGroupFilters.model_validate(group.filters)
+        native = dict(group.filters or {})
+        native.pop("member_of", None)
+        keys = sorted(member_of_keys)
+        if keys:
+            native["member_of"] = keys
+        if native:
+            filters = DeviceGroupFilters.model_validate(native)
     return ExportedDeviceGroup(
         key=group.key,
         name=group.name,

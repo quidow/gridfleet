@@ -6,7 +6,7 @@ from app.devices.models.device import (
     device_search_vector_expression,
 )
 from app.devices.models.event import DeviceEvent, DeviceEventType
-from app.devices.models.group import DeviceGroup, DeviceGroupMembership, GroupType
+from app.devices.models.group import DeviceGroup, DeviceGroupMemberOf, DeviceGroupMembership, GroupType
 from app.devices.models.intent import DeviceIntent
 from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.models.reservation import DeviceReservation, ExclusionKind
@@ -18,6 +18,7 @@ __all__ = [
     "DeviceEvent",
     "DeviceEventType",
     "DeviceGroup",
+    "DeviceGroupMemberOf",
     "DeviceGroupMembership",
     "DeviceIntent",
     "DeviceOperationalState",

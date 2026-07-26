@@ -13,6 +13,7 @@ from app.devices.group_keys import is_valid_group_key
 from app.devices.models import (
     Device,
     DeviceGroup,
+    DeviceGroupMemberOf,
     DeviceGroupMembership,
     DeviceOperationalState,
     GroupType,
@@ -22,10 +23,12 @@ from app.devices.services.group_membership import (
     DeviceGroupFacts,
     build_device_group_facts,
     evaluate_group_memberships,
+    load_group_definition_batch,
     load_group_membership_index,
 )
 from app.devices.services.read_projection import load_device_read_projections
 from app.devices.services.service import device_scope_conditions
+from tests.concurrency.group_lock_helpers import capture_statements
 from tests.helpers import create_device_record, create_reserved_run
 
 if TYPE_CHECKING:
@@ -48,19 +51,26 @@ def _dynamic(
     *,
     name: str | None = None,
     filters: dict[str, Any] | None = None,
-    member_of: list[str] | None = None,
 ) -> DeviceGroup:
-    payload: dict[str, Any] = dict(filters or {})
-    if member_of is not None:
-        payload["member_of"] = member_of
     group = DeviceGroup(
         key=key,
         name=name or key,
         group_type=GroupType.dynamic,
-        filters=payload or None,
+        filters=dict(filters or {}) or None,
     )
     group.id = uuid.uuid4()
     return group
+
+
+def _member_of(*edges: tuple[DeviceGroup, list[str]]) -> dict[uuid.UUID, frozenset[str]]:
+    """The relation-backed reference map the pure evaluator consumes.
+
+    Keyed by *source group id*, exactly like the map
+    ``load_group_definition_batch`` builds from ``device_group_member_of`` rows.
+    A dynamic group's references are no longer readable from its ``filters``, so
+    every pure-evaluator test states them here instead.
+    """
+    return {group.id: frozenset(keys) for group, keys in edges}
 
 
 def _device(
@@ -117,11 +127,7 @@ def _facts_map(devices: list[Device], **per_device: set[str]) -> dict[uuid.UUID,
 def test_member_of_and_native_filters_are_anded() -> None:
     east = _static("east")
     tv = _static("tv")
-    east_tvs = _dynamic(
-        "east-tvs",
-        member_of=["east", "tv"],
-        filters={"platform_id": "tv"},
-    )
+    east_tvs = _dynamic("east-tvs", filters={"platform_id": "tv"})
     east_tv = _device("east-tv", platform_id="tv")
     east_phone = _device("east-phone", platform_id="android_mobile")
 
@@ -131,7 +137,12 @@ def test_member_of_and_native_filters_are_anded() -> None:
         east_tv.id: _facts(static_group_keys={"east", "tv"}),
         east_phone.id: _facts(static_group_keys={"east"}),
     }
-    index = evaluate_group_memberships(groups=groups, devices=devices, facts_by_device_id=facts)
+    index = evaluate_group_memberships(
+        groups=groups,
+        devices=devices,
+        facts_by_device_id=facts,
+        member_of_keys_by_dynamic_group_id=_member_of((east_tvs, ["east", "tv"])),
+    )
 
     assert index.device_ids("east") == {east_tv.id, east_phone.id}
     assert index.device_ids("tv") == {east_tv.id}
@@ -139,28 +150,30 @@ def test_member_of_and_native_filters_are_anded() -> None:
 
 
 def test_unknown_member_of_keys_resolve_to_empty_membership() -> None:
-    group = _dynamic("missing", member_of=["does-not-exist"])
+    group = _dynamic("missing")
     device = _device("d1")
     index = evaluate_group_memberships(
         groups=[group],
         devices=[device],
         facts_by_device_id={device.id: _facts(static_group_keys=set())},
+        member_of_keys_by_dynamic_group_id=_member_of((group, ["does-not-exist"])),
     )
     assert index.device_ids("missing") == set()
 
 
 def test_dynamic_to_dynamic_member_of_is_ignored() -> None:
     static_a = _static("a")
-    dyn_b = _dynamic("b", member_of=["a"])
-    dyn_c = _dynamic("c", member_of=["b"])  # references a dynamic group
+    dyn_b = _dynamic("b")
+    dyn_c = _dynamic("c")  # references a dynamic group
     device = _device("d1")
 
     index = evaluate_group_memberships(
         groups=[static_a, dyn_b, dyn_c],
         devices=[device],
         facts_by_device_id={device.id: _facts(static_group_keys={"a"})},
+        member_of_keys_by_dynamic_group_id=_member_of((dyn_b, ["a"]), (dyn_c, ["b"])),
     )
-    # b matches (member_of=[a], no native filters)
+    # b matches (references [a], no native filters)
     assert device.id in index.device_ids("b")
     # c references a dynamic group (b); membership must be empty
     assert index.device_ids("c") == set()
@@ -168,12 +181,13 @@ def test_dynamic_to_dynamic_member_of_is_ignored() -> None:
 
 def test_duplicate_member_of_references_normalized_once() -> None:
     static_a = _static("a")
-    group = _dynamic("g", member_of=["a", "a"])
+    group = _dynamic("g")
     device = _device("d1")
     index = evaluate_group_memberships(
         groups=[static_a, group],
         devices=[device],
         facts_by_device_id={device.id: _facts(static_group_keys={"a"})},
+        member_of_keys_by_dynamic_group_id=_member_of((group, ["a", "a"])),
     )
     assert device.id in index.device_ids("g")
 
@@ -186,6 +200,7 @@ def test_matches_all_helper() -> None:
         groups=[static_a, static_b],
         devices=[device],
         facts_by_device_id={device.id: _facts(static_group_keys={"a", "b"})},
+        member_of_keys_by_dynamic_group_id={},
     )
     assert index.matches_all(device.id, ["a", "b"]) is True
     assert index.matches_all(device.id, ["a", "missing"]) is False
@@ -212,8 +227,134 @@ def test_evaluate_group_memberships_performs_no_database_io(
         groups=[static_a],
         devices=[device],
         facts_by_device_id={device.id: _facts(static_group_keys={"a"})},
+        member_of_keys_by_dynamic_group_id={},
     )
     assert index.device_ids("a") == {device.id}
+
+
+def test_raw_json_member_of_is_inert_for_the_evaluator() -> None:
+    """A ``filters.member_of`` array with no matching relation row buys nothing.
+
+    ``member_of`` moved out of ``filters`` into ``device_group_member_of``. The
+    evaluator reads only the relation-derived map, so a group whose JSON still
+    carries the old key restricts nothing — the outsider device, which belongs
+    to no static group at all, is a member.
+    """
+    east = _static("east")
+    legacy = _dynamic("east-only", filters={"member_of": ["east"]})
+    outsider = _device("outsider")
+
+    index = evaluate_group_memberships(
+        groups=[east, legacy],
+        devices=[outsider],
+        facts_by_device_id={outsider.id: _facts(static_group_keys=set())},
+        member_of_keys_by_dynamic_group_id={},
+    )
+    assert index.device_ids("east-only") == frozenset({outsider.id})
+
+
+async def _seed_relation_pair(db_session: AsyncSession) -> tuple[DeviceGroup, DeviceGroup]:
+    """One static group and one dynamic group joined by a relation row.
+
+    The dynamic key sorts after the static key so the loader's ``ORDER BY key``
+    is observable rather than accidentally matching insertion order.
+    """
+    static = DeviceGroup(key=f"a-pool-{uuid.uuid4().hex[:8]}", name="pool", group_type=GroupType.static)
+    dynamic = DeviceGroup(
+        key=f"z-real-{uuid.uuid4().hex[:8]}",
+        name="real",
+        group_type=GroupType.dynamic,
+        filters={"device_type": "real_device"},
+    )
+    db_session.add_all([static, dynamic])
+    await db_session.flush()
+    db_session.add(DeviceGroupMemberOf(dynamic_group_id=dynamic.id, static_group_id=static.id))
+    await db_session.commit()
+    return static, dynamic
+
+
+@pytest.mark.db
+async def test_load_group_definition_batch_returns_targets_and_reference_map(db_session: AsyncSession) -> None:
+    """The batch loader answers both halves the evaluator needs: the requested
+    group *and* the static target its relation row names, plus the per-source
+    key map. The device is in-memory — the evaluator is pure."""
+    static, dynamic = await _seed_relation_pair(db_session)
+    device = _device("relation-member")
+
+    batch = await load_group_definition_batch(db_session, [dynamic.key])
+
+    assert {group.key for group in batch.groups} == {dynamic.key, static.key}
+    assert [group.key for group in batch.groups] == sorted({dynamic.key, static.key})
+    assert batch.member_of_keys_by_dynamic_group_id == {dynamic.id: frozenset({static.key})}
+
+    index = evaluate_group_memberships(
+        groups=batch.groups,
+        devices=[device],
+        facts_by_device_id={device.id: _facts(static_group_keys={static.key})},
+        member_of_keys_by_dynamic_group_id=batch.member_of_keys_by_dynamic_group_id,
+    )
+    assert index.device_ids(dynamic.key) == frozenset({device.id})
+
+    outsider = _device("relation-outsider")
+    outside_index = evaluate_group_memberships(
+        groups=batch.groups,
+        devices=[outsider],
+        facts_by_device_id={outsider.id: _facts(static_group_keys=set())},
+        member_of_keys_by_dynamic_group_id=batch.member_of_keys_by_dynamic_group_id,
+    )
+    assert outside_index.device_ids(dynamic.key) == frozenset()
+
+
+@pytest.mark.db
+async def test_load_group_definition_batch_ignores_persisted_json_member_of(db_session: AsyncSession) -> None:
+    """A dynamic row whose ``filters`` still carries the legacy JSON key, with no
+    relation row, contributes no references — the map is empty and the group
+    matches on its native axes alone."""
+    static = DeviceGroup(key=f"a-legacy-{uuid.uuid4().hex[:8]}", name="legacy", group_type=GroupType.static)
+    db_session.add(static)
+    await db_session.flush()
+    dynamic = DeviceGroup(
+        key=f"z-legacy-{uuid.uuid4().hex[:8]}",
+        name="legacy dyn",
+        group_type=GroupType.dynamic,
+        filters={"member_of": [static.key], "device_type": "real_device"},
+    )
+    db_session.add(dynamic)
+    await db_session.commit()
+
+    batch = await load_group_definition_batch(db_session, [dynamic.key])
+
+    assert {group.key for group in batch.groups} == {dynamic.key}
+    assert batch.member_of_keys_by_dynamic_group_id == {}
+
+    outsider = _device("legacy-outsider")
+    index = evaluate_group_memberships(
+        groups=batch.groups,
+        devices=[outsider],
+        facts_by_device_id={outsider.id: _facts(static_group_keys=set())},
+        member_of_keys_by_dynamic_group_id=batch.member_of_keys_by_dynamic_group_id,
+    )
+    assert index.device_ids(dynamic.key) == frozenset({outsider.id})
+
+
+@pytest.mark.db
+async def test_load_group_definition_batch_is_one_statement_at_any_width(db_session: AsyncSession) -> None:
+    """One key or twenty, the loader costs exactly one read. Widening the request
+    must not turn the reference resolution into a per-group follow-up."""
+    pairs = [await _seed_relation_pair(db_session) for _ in range(20)]
+    dynamic_keys = [dynamic.key for _static_group, dynamic in pairs]
+
+    async with capture_statements(db_session) as statements:
+        one = await load_group_definition_batch(db_session, dynamic_keys[:1])
+    assert _count_reads(statements) == 1, statements
+    assert len(one.groups) == 2
+    await db_session.rollback()
+
+    async with capture_statements(db_session) as statements:
+        many = await load_group_definition_batch(db_session, dynamic_keys)
+    assert _count_reads(statements) == 1, statements
+    assert len(many.groups) == 40
+    assert len(many.member_of_keys_by_dynamic_group_id) == 20
 
 
 @contextlib.contextmanager
@@ -252,18 +393,21 @@ async def _seed_groups_and_devices(
     host_id: uuid.UUID,
 ) -> None:
     """Seed ``dynamic_groups`` dynamic groups and ``devices`` devices."""
-    # One static group referenced by every dynamic group; ensures member_of joins
-    # are exercised rather than a trivial empty-filter dynamic group.
+    # One static group referenced by every dynamic group; ensures the member_of
+    # relation join is exercised rather than a trivial empty-filter dynamic group.
     static = DeviceGroup(key=f"static-ref-{uuid.uuid4().hex[:6]}", name="static ref", group_type=GroupType.static)
     db_session.add(static)
+    await db_session.flush()
     for i in range(dynamic_groups):
         dg = DeviceGroup(
             key=f"dyn-{uuid.uuid4().hex[:6]}",
             name=f"Dyn {i}",
             group_type=GroupType.dynamic,
-            filters={"member_of": [static.key], "device_type": "real_device"},
+            filters={"device_type": "real_device"},
         )
         db_session.add(dg)
+        await db_session.flush()
+        db_session.add(DeviceGroupMemberOf(dynamic_group_id=dg.id, static_group_id=static.id))
     for j in range(devices):
         device = Device(
             pack_id="appium-uiautomator2",
@@ -626,17 +770,22 @@ async def test_narrow_group_scopes_stay_bounded_and_unbounded_ones_are_reported(
     await db_session.commit()
 
     narrow = _dynamic("narrow-real", filters={"device_type": "real_device"})
-    loaded = await _load_devices_in_scope(db_session, [narrow])
+    loaded = await _load_devices_in_scope(db_session, [narrow], {})
     ids = {d.id for d in loaded}
     assert in_scope.id in ids
     assert out_of_scope.id not in ids, "a narrow group's batch loaded a device outside its scope"
 
     # A group filtered only on an excluded axis pins nothing a query can narrow on.
     unbounded = _dynamic("unbounded-status", filters={"status": "available"})
-    assert device_scope_conditions(DeviceGroupFilters.model_validate(unbounded.filters)) == []
+    unbounded_filters = DeviceGroupFilters.model_validate(unbounded.filters)
+    assert device_scope_conditions(unbounded_filters, member_of_keys=[]) == []
+    # ...but a reference is a narrowable axis, and it now arrives as an argument
+    # rather than being read off the (inert) stored filters.
+    assert len(device_scope_conditions(unbounded_filters, member_of_keys=["east"])) == 1
+    assert device_scope_conditions(DeviceGroupFilters.model_validate({"member_of": ["east"]}), member_of_keys=[]) == []
 
     with caplog.at_level("WARNING", logger="app.devices.services.groups"):
-        await _load_devices_in_scope(db_session, [narrow, unbounded])
+        await _load_devices_in_scope(db_session, [narrow, unbounded], {})
     assert any(
         "device_group_scope_unbounded" in r.message and "unbounded-status" in str(r.args) for r in caplog.records
     )
@@ -765,9 +914,11 @@ async def test_group_detail_dynamic_membership_projection_matches_reserved_and_m
         key=f"east-reserved-{uuid.uuid4().hex[:8]}",
         name="east reserved",
         group_type=GroupType.dynamic,
-        filters={"member_of": [east.key], "reserved": True, "needs_attention": False},
+        filters={"reserved": True, "needs_attention": False},
     )
     db_session.add(dynamic)
+    await db_session.flush()
+    db_session.add(DeviceGroupMemberOf(dynamic_group_id=dynamic.id, static_group_id=east.id))
     await db_session.commit()
 
     detail = (await client.get(f"/api/device-groups/{dynamic.key}")).json()
@@ -786,9 +937,10 @@ async def test_load_group_membership_index_reuses_injected_projection_facts(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """When every fact mapping is injected, the loader must issue no pack,
-    reservation, static-membership, or operational-state query — it evaluates
-    purely off the supplied projection facts."""
+    """When every fact mapping is injected — the ``member_of`` reference map
+    included — the loader must issue no pack, reservation, static-membership,
+    reference, or operational-state query: it evaluates purely off the supplied
+    projection facts."""
     east = DeviceGroup(key=f"east-inj-{uuid.uuid4().hex[:8]}", name="east inj", group_type=GroupType.static)
     db_session.add(east)
     await db_session.flush()
@@ -825,9 +977,11 @@ async def test_load_group_membership_index_reuses_injected_projection_facts(
         key=f"east-real-{uuid.uuid4().hex[:8]}",
         name="east real",
         group_type=GroupType.dynamic,
-        filters={"member_of": [east.key], "device_type": "real_device"},
+        filters={"device_type": "real_device"},
     )
     db_session.add(dynamic_group)
+    await db_session.flush()
+    db_session.add(DeviceGroupMemberOf(dynamic_group_id=dynamic_group.id, static_group_id=east.id))
     await db_session.commit()
 
     devices = await _load_with_declared_graph(db_session, [member.id, non_member.id])
@@ -847,10 +1001,11 @@ async def test_load_group_membership_index_reuses_injected_projection_facts(
                 device.id: bool(projection.reservation and projection.reservation.blocks_allocation)
                 for device, projection in pairs
             },
+            member_of_keys_by_dynamic_group_id={dynamic_group.id: frozenset({east.key})},
         )
 
     assert index.device_ids(dynamic_group.key) == frozenset({member.id})
     assert _count_reads(statements) == 0, statements
     lowered = "\n".join(statements).lower()
-    for table in ("driver_packs", "device_reservations", "device_group_memberships"):
+    for table in ("driver_packs", "device_reservations", "device_group_memberships", "device_group_member_of"):
         assert table not in lowered, f"injected-facts path issued a {table} query: {statements}"

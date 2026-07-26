@@ -10,9 +10,10 @@ Membership semantics:
 - A static group's members are the devices whose static-group-key set contains
   the group's key (sourced from ``DeviceGroupMembership`` rows).
 - A dynamic group's members are the devices that satisfy the group's native
-  :class:`DeviceGroupFilters` AND belong to every static group listed in the
-  filter's ``member_of``. References to dynamic or unknown keys contribute no
-  devices (the AND short-circuits to empty).
+  :class:`DeviceGroupFilters` AND belong to every static group its
+  ``device_group_member_of`` rows reference. References are supplied to the
+  evaluator as a map of source group id -> target group keys; a device missing
+  any of them is not a member (the AND short-circuits to empty).
 """
 
 from __future__ import annotations
@@ -20,12 +21,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select, true
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, union
+from sqlalchemy.orm import aliased, selectinload
 
 from app.core.timeutil import now_utc
-from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, DeviceOperationalState, GroupType
+from app.devices.models import (
+    Device,
+    DeviceGroup,
+    DeviceGroupMemberOf,
+    DeviceGroupMembership,
+    DeviceOperationalState,
+    GroupType,
+)
 from app.devices.schemas.filters import DeviceGroupFilters
 from app.devices.services import attention as device_attention
 from app.devices.services import readiness as device_readiness
@@ -47,50 +55,72 @@ if TYPE_CHECKING:
     from app.packs.models import DriverPack
 
 
-async def load_groups_by_keys(db: AsyncSession, group_keys: Collection[str]) -> list[DeviceGroup]:
-    """One read: the requested groups plus the static groups their JSON
-    ``member_of`` arrays reference, so the pure evaluator can resolve dynamic
-    groups that reference static groups by key. Direct keys of any type are
-    returned verbatim; only static groups are pulled from ``member_of``
-    (dynamic-to-dynamic references resolve to empty membership by contract).
+@dataclass(frozen=True, slots=True)
+class GroupDefinitionBatch:
+    """Everything one group-aware read path needs about a set of group keys."""
 
-    Implemented as a single recursive CTE. Postgres requires the recursive
-    ``group_closure`` reference to appear in the FROM clause of the recursive
-    arm (it may not live in a subquery), so the arm joins the closure to the
-    set-returning ``jsonb_array_elements_text(filters->'member_of')`` and then
-    to ``device_groups`` on the resulting key. Static groups have no
-    ``member_of`` (and dynamic groups are not valid ``member_of`` targets),
-    so the recursion terminates at static groups; ``jsonb_array_elements_text``
-    on a NULL/missing ``member_of`` yields zero rows, also terminating the
-    recursion for groups without a ``member_of`` reference.
+    groups: tuple[DeviceGroup, ...]
+    member_of_keys_by_dynamic_group_id: Mapping[uuid.UUID, frozenset[str]]
+
+
+async def load_group_definition_batch(db: AsyncSession, group_keys: Collection[str]) -> GroupDefinitionBatch:
+    """One statement: the requested groups, the static groups their relation rows
+    reference, and the per-source key map the pure evaluator consumes.
+
+    The reference edges live in ``device_group_member_of``, whose two composite
+    foreign keys already pin a source to a dynamic group and a target to a
+    static one, so resolving them is a plain join — no recursion, and no
+    termination argument to make. Direct keys of any type come back verbatim;
+    the referenced static targets are unioned in so the evaluator can resolve a
+    dynamic group whose caller never named its targets. Ordered by
+    ``DeviceGroup.key`` so callers see a stable sequence.
     """
     keys = sorted({key for key in group_keys if key})
     if not keys:
-        return []
-    seed = select(DeviceGroup.key, DeviceGroup.filters).where(DeviceGroup.key.in_(keys))
-    closure = seed.cte("group_closure", recursive=True)
-    closure_alias = closure.alias()
-    member_of_keys = (
-        func.jsonb_array_elements_text(closure_alias.c.filters["member_of"])
-        .table_valued("member_of_key")
-        .render_derived()
+        return GroupDefinitionBatch(groups=(), member_of_keys_by_dynamic_group_id={})
+    direct = select(DeviceGroup.id).where(DeviceGroup.key.in_(keys)).cte("direct_groups")
+    wanted = union(
+        select(direct.c.id.label("id")),
+        select(DeviceGroupMemberOf.static_group_id.label("id")).where(
+            DeviceGroupMemberOf.dynamic_group_id.in_(select(direct.c.id))
+        ),
+    ).cte("wanted_groups")
+    target = aliased(DeviceGroup, name="member_of_target")
+    stmt = (
+        select(DeviceGroup, target.key)
+        .join(wanted, wanted.c.id == DeviceGroup.id)
+        .outerjoin(DeviceGroupMemberOf, DeviceGroupMemberOf.dynamic_group_id == DeviceGroup.id)
+        .outerjoin(target, target.id == DeviceGroupMemberOf.static_group_id)
+        .order_by(DeviceGroup.key)
     )
-    arm = (
-        select(DeviceGroup.key, DeviceGroup.filters)
-        .select_from(closure_alias)
-        .join(member_of_keys, true())
-        .join(DeviceGroup, DeviceGroup.key == member_of_keys.c.member_of_key)
-        .where(DeviceGroup.group_type == GroupType.static)
+    groups: dict[uuid.UUID, DeviceGroup] = {}
+    references: dict[uuid.UUID, set[str]] = {}
+    for group, target_key in (await db.execute(stmt)).all():
+        groups.setdefault(group.id, group)
+        if target_key is not None:
+            references.setdefault(group.id, set()).add(str(target_key))
+    return GroupDefinitionBatch(
+        groups=tuple(groups.values()),
+        member_of_keys_by_dynamic_group_id={gid: frozenset(found) for gid, found in references.items()},
     )
-    # ``union`` (not ``union_all``): termination must be structural, not an
-    # assumption about the data. Static groups are not supposed to carry a
-    # ``member_of``, but nothing enforces that — the tag migration rewrote
-    # ``filters`` for any group with a ``tags`` key regardless of type — so a
-    # static group carrying one could cycle a UNION ALL recursion forever.
-    # Deduplicating rows makes the recursion terminate on any graph.
-    closure = closure.union(arm)
-    stmt = select(DeviceGroup).where(DeviceGroup.key.in_(select(closure.c.key)))
-    return list((await db.execute(stmt)).scalars().all())
+
+
+async def load_member_of_keys(
+    db: AsyncSession, dynamic_group_ids: Collection[uuid.UUID]
+) -> dict[uuid.UUID, frozenset[str]]:
+    """One joined read: relation rows -> target keys, aggregated per source id."""
+    ids = sorted(set(dynamic_group_ids))
+    if not ids:
+        return {}
+    stmt = (
+        select(DeviceGroupMemberOf.dynamic_group_id, DeviceGroup.key)
+        .join(DeviceGroup, DeviceGroup.id == DeviceGroupMemberOf.static_group_id)
+        .where(DeviceGroupMemberOf.dynamic_group_id.in_(ids))
+    )
+    bucket: dict[uuid.UUID, set[str]] = {}
+    for source_id, key in (await db.execute(stmt)).all():
+        bucket.setdefault(source_id, set()).add(key)
+    return {source_id: frozenset(keys) for source_id, keys in bucket.items()}
 
 
 def static_group_membership_exists(group_key: str) -> ColumnElement[bool]:
@@ -174,8 +204,13 @@ class GroupMembershipIndex:
         return all(device_id in self.device_ids(key) for key in group_keys)
 
 
-def _device_matches_dynamic_filters(device: Device, facts: DeviceGroupFacts, filters: DeviceGroupFilters) -> bool:
-    """Native filter predicates ANDed with ``member_of`` (static references only).
+def _device_matches_dynamic_filters(
+    device: Device,
+    facts: DeviceGroupFacts,
+    filters: DeviceGroupFilters,
+    member_of_keys: frozenset[str],
+) -> bool:
+    """Native filter predicates ANDed with the group's references (static only).
 
     Mirrors the column-level SQL predicates in
     :mod:`app.devices.services.service` for the axes the group contract exposes,
@@ -207,10 +242,10 @@ def _device_matches_dynamic_filters(device: Device, facts: DeviceGroupFacts, fil
             return False
     if filters.needs_attention is not None and facts.needs_attention != filters.needs_attention:
         return False
-    # member_of: AND over static-group keys. Dynamic or unknown keys contribute
-    # no devices (set membership fails), matching the spec's "references to
-    # static groups only" contract.
-    return not (filters.member_of and not set(filters.member_of) <= facts.static_group_keys)
+    # References: AND over static-group keys, supplied by the caller from
+    # ``device_group_member_of``. ``filters.member_of`` is never consulted — a
+    # row whose JSON still carries the key restricts nothing.
+    return member_of_keys <= facts.static_group_keys
 
 
 def evaluate_group_memberships(
@@ -218,12 +253,18 @@ def evaluate_group_memberships(
     groups: Sequence[DeviceGroup],
     devices: Sequence[Device],
     facts_by_device_id: Mapping[uuid.UUID, DeviceGroupFacts],
+    member_of_keys_by_dynamic_group_id: Mapping[uuid.UUID, frozenset[str]],
 ) -> GroupMembershipIndex:
     """Pure batch evaluator. Performs no database IO.
 
     ``facts_by_device_id`` must contain an entry for every device in ``devices``;
     entries for devices not in the sequence are ignored. The evaluator reads
     only the supplied facts and group definitions.
+
+    ``member_of_keys_by_dynamic_group_id`` is required, not defaulted: this
+    function cannot load it, and an empty default would silently widen every
+    dynamic group that references a static one at any call site that forgot to
+    pass it. Absent ids legitimately mean "this group references nothing".
     """
     memberships: dict[str, frozenset[uuid.UUID]] = {}
     for group in groups:
@@ -233,10 +274,11 @@ def evaluate_group_memberships(
             )
             continue
         filters = DeviceGroupFilters.model_validate(group.filters or {})
+        member_of_keys = member_of_keys_by_dynamic_group_id.get(group.id, frozenset())
         memberships[group.key] = frozenset(
             device.id
             for device in devices
-            if _device_matches_dynamic_filters(device, facts_by_device_id[device.id], filters)
+            if _device_matches_dynamic_filters(device, facts_by_device_id[device.id], filters, member_of_keys)
         )
     return GroupMembershipIndex(by_key=memberships)
 
@@ -262,7 +304,7 @@ async def load_static_group_keys_by_device_id(
     return {device_id: frozenset(keys) for device_id, keys in bucket.items()}
 
 
-async def load_group_membership_index(
+async def load_group_membership_index(  # noqa: PLR0913 - one optional injected fact batch per parameter
     db: AsyncSession,
     *,
     groups: Sequence[DeviceGroup],
@@ -272,6 +314,7 @@ async def load_group_membership_index(
     static_group_keys_by_device_id: Mapping[uuid.UUID, frozenset[str]] | None = None,
     readiness_by_device_id: Mapping[uuid.UUID, DeviceReadiness] | None = None,
     reserved_by_device_id: Mapping[uuid.UUID, bool] | None = None,
+    member_of_keys_by_dynamic_group_id: Mapping[uuid.UUID, frozenset[str]] | None = None,
 ) -> GroupMembershipIndex:
     """Fixed-count loader: gather every fact the pure evaluator needs in a
     bounded number of reads, then delegate to :func:`evaluate_group_memberships`.
@@ -293,14 +336,30 @@ async def load_group_membership_index(
       is absent),
     - one batch readiness assessment (only when ``readiness_by_device_id`` is absent),
     - one joined static-membership read (only when
-      ``static_group_keys_by_device_id`` is absent).
+      ``static_group_keys_by_device_id`` is absent),
+    - one joined ``device_group_member_of`` read over the dynamic ids in
+      ``groups`` (only when ``member_of_keys_by_dynamic_group_id`` is absent).
+      Callers that already loaded the definitions through
+      :func:`load_group_definition_batch` carry its map here and skip it.
     """
     device_list = list(devices)
     device_ids = [d.id for d in device_list]
     if not device_list:
-        return evaluate_group_memberships(groups=groups, devices=device_list, facts_by_device_id={})
+        # Every group is empty with no devices to place in it, so the reference
+        # map cannot change the answer — do not buy a read for it.
+        return evaluate_group_memberships(
+            groups=groups, devices=device_list, facts_by_device_id={}, member_of_keys_by_dynamic_group_id={}
+        )
 
     needs_native_facts = any(g.group_type == GroupType.dynamic for g in groups)
+    references: Mapping[uuid.UUID, frozenset[str]]
+    if member_of_keys_by_dynamic_group_id is not None:
+        references = member_of_keys_by_dynamic_group_id
+    elif needs_native_facts:
+        references = await load_member_of_keys(db, [g.id for g in groups if g.group_type == GroupType.dynamic])
+    else:
+        references = {}
+
     packs = pack_catalog
     # The catalog only feeds derive_operational_states and assess_devices_async.
     # If both operational state and readiness are injected, neither runs, so a
@@ -379,4 +438,9 @@ async def load_group_membership_index(
             static_group_keys=static_keys_map.get(device.id, frozenset()),
         )
 
-    return evaluate_group_memberships(groups=groups, devices=device_list, facts_by_device_id=facts_by_device_id)
+    return evaluate_group_memberships(
+        groups=groups,
+        devices=device_list,
+        facts_by_device_id=facts_by_device_id,
+        member_of_keys_by_dynamic_group_id=references,
+    )

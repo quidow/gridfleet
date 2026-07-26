@@ -172,7 +172,7 @@ async def test_export_endpoint_returns_bundle(client: AsyncClient, db_session: A
 async def test_v2_round_trip_preserves_groups(
     client: AsyncClient, db_session: AsyncSession, seeded_driver_packs: None
 ) -> None:
-    from app.devices.models import DeviceGroup, DeviceGroupMembership, GroupType
+    from app.devices.models import DeviceGroup, DeviceGroupMemberOf, DeviceGroupMembership, GroupType
     from tests.helpers import seed_host_and_device
 
     _host, device = await seed_host_and_device(db_session, identity="EXPORT-1")
@@ -183,12 +183,20 @@ async def test_v2_round_trip_preserves_groups(
         name="East TVs",
         description=None,
         group_type=GroupType.dynamic,
-        filters={"member_of": ["east"], "device_type": "real_device"},
+        filters={"device_type": "real_device"},
     )
     db_session.add_all([g_east, g_east_tvs])
     await db_session.flush()
 
     db_session.add(DeviceGroupMembership(device_id=device.id, group_id=g_east.id))
+    db_session.add(
+        DeviceGroupMemberOf(
+            dynamic_group_id=g_east_tvs.id,
+            dynamic_group_type=GroupType.dynamic,
+            static_group_id=g_east.id,
+            static_group_type=GroupType.static,
+        )
+    )
     await db_session.commit()
 
     bundle = (await client.get("/api/portability/export")).json()
@@ -206,3 +214,69 @@ async def test_v2_round_trip_preserves_groups(
     assert bundle["devices"][0]["static_groups"] == ["east"]
     assert "tags" not in bundle["devices"][0]
     assert "id" not in bundle["groups"][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+@pytest.mark.parametrize("dynamic_group_count", [1, 20])
+async def test_export_bundle_loads_member_of_references_in_one_batch(
+    db_session: AsyncSession, dynamic_group_count: int
+) -> None:
+    """``load_member_of_keys`` is one statement regardless of how many dynamic
+    groups reference the static group — never one query per group."""
+    from app.devices.models import DeviceGroup, DeviceGroupMemberOf, GroupType
+    from app.portability.services.export import PortabilityExportService
+    from tests.concurrency.group_lock_helpers import capture_statements
+
+    static = DeviceGroup(key="static-shared", name="static-shared", description=None, group_type=GroupType.static)
+    db_session.add(static)
+    await db_session.flush()
+
+    dynamic_groups = [
+        DeviceGroup(key=f"dynamic-{i}", name=f"dynamic-{i}", description=None, group_type=GroupType.dynamic)
+        for i in range(dynamic_group_count)
+    ]
+    db_session.add_all(dynamic_groups)
+    await db_session.flush()
+    db_session.add_all(
+        [
+            DeviceGroupMemberOf(
+                dynamic_group_id=group.id,
+                dynamic_group_type=GroupType.dynamic,
+                static_group_id=static.id,
+                static_group_type=GroupType.static,
+            )
+            for group in dynamic_groups
+        ]
+    )
+    await db_session.commit()
+
+    async with capture_statements(db_session) as statements:
+        bundle = await PortabilityExportService().build_export_bundle(db_session)
+
+    assert len(bundle.groups) == 1 + dynamic_group_count
+    for group in bundle.groups:
+        if group.group_type == GroupType.dynamic:
+            assert group.filters is not None
+            assert group.filters.member_of == ["static-shared"]
+
+    member_of_statements = [s for s in statements if "device_group_member_of" in s.lower()]
+    assert len(member_of_statements) == 1, statements
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_export_bundle_dynamic_group_with_no_axes_exports_none_filters(db_session: AsyncSession) -> None:
+    """A dynamic group with no native filter axes and no ``member_of`` reference
+    rows must export ``filters=None``, matching the pre-branch exporter's wire
+    shape — not ``{}``, which would be a silent regression for any consumer."""
+    from app.devices.models import DeviceGroup, GroupType
+    from app.portability.services.export import PortabilityExportService
+
+    db_session.add(DeviceGroup(key="empty-dynamic", name="Empty Dynamic", group_type=GroupType.dynamic, filters=None))
+    await db_session.commit()
+
+    bundle = await PortabilityExportService().build_export_bundle(db_session)
+
+    assert len(bundle.groups) == 1
+    assert bundle.groups[0].filters is None

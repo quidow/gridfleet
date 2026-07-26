@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import update
 
 from app.devices.models import Device, DeviceGroup, GroupType
-from app.devices.services.group_membership import load_group_membership_index, load_groups_by_keys
+from app.devices.services.group_membership import load_group_definition_batch, load_group_membership_index
 from app.devices.services.intent import IntentService
 from app.grid.allocation import AllocationService
 from app.grid.models import GridSessionQueueTicket
@@ -95,8 +95,13 @@ async def test_setup_required_device_evaluates_identically_in_both_paths(db_sess
     )
     db_session.add(group)
     await db_session.flush()
-    groups = await load_groups_by_keys(db_session, [group.key])
-    index = await load_group_membership_index(db_session, groups=groups, devices=[device])
+    definitions = await load_group_definition_batch(db_session, [group.key])
+    index = await load_group_membership_index(
+        db_session,
+        groups=definitions.groups,
+        devices=[device],
+        member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
+    )
 
     assert grid_facts[device.id].readiness_state == "setup_required"
     assert grid_facts[device.id].needs_attention is True
@@ -121,8 +126,13 @@ async def test_needs_attention_group_matches_but_readiness_gate_declines(db_sess
     key = f"attn-route-{uuid.uuid4().hex[:8]}"
     db_session.add(DeviceGroup(key=key, name=key, group_type=GroupType.dynamic, filters={"needs_attention": True}))
     await db_session.flush()
-    groups = await load_groups_by_keys(db_session, [key])
-    index = await load_group_membership_index(db_session, groups=groups, devices=[device])
+    definitions = await load_group_definition_batch(db_session, [key])
+    index = await load_group_membership_index(
+        db_session,
+        groups=definitions.groups,
+        devices=[device],
+        member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
+    )
     assert device.id in index.device_ids(key), "the group must still match the device"
 
     ticket = GridSessionQueueTicket(

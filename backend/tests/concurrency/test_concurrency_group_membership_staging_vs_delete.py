@@ -1,15 +1,16 @@
 """Static membership rows staged by an import must not violate the membership
 FK when a concurrent delete removes the static group mid-import.
 
-``commit_import`` commits group definitions under the group-mutation lock, then
-runs the device loop (per-row commits, no lock), then stages and commits
+``commit_import`` commits group definitions in one transaction, then runs the
+device loop (per-row commits), then stages and commits
 ``device_group_memberships`` rows for each created device's bundle static
-groups. The definition lock is released before the device loop, so a
-``delete_group`` landing between the device-loop commits and the membership
-write removes a static group the membership rows are about to reference — and
-that write violates ``device_group_memberships_group_id_fkey``, surfacing as a
-500 with the device rows already committed. (The violation lands on the INSERT,
-not the commit: these FKs are non-deferrable.)
+groups. Nothing holds the definitions across the device loop — nor could it, in
+a fleet-wide import — so a ``delete_group`` landing between the device-loop
+commits and the membership write removes a static group the membership rows are
+about to reference, and that write violates
+``device_group_memberships_group_id_fkey``, surfacing as a 500 with the device
+rows already committed. (The violation lands on the INSERT, not the commit:
+these FKs are non-deferrable.)
 
 The bundle here carries a single static group listed in the device's
 ``static_groups`` and NO dynamic group referencing it, so the concurrent
@@ -18,14 +19,16 @@ hits the FK violation. (A dynamic group with ``member_of=[static_key]`` would
 make ``delete_group`` raise ``GroupReferencedError`` and the race would be
 unreachable; see the task-4 brief's "failing the right way" note.)
 
-The fix re-acquires the group-mutation lock around the membership write and
-re-checks that each static group still exists, skipping memberships for any
-group deleted in the window. These tests pin that behaviour: the import must
-succeed (device rows committed, memberships reported as skipped) rather than
-500 — and must report *which* memberships it dropped, not merely survive.
+The fix re-checks, inside each batch's own transaction, that every static group
+still exists with the id the definition pass minted, skipping memberships for
+any group deleted (or deleted and recreated) in the window. These tests pin that
+behaviour: the import must succeed (device rows committed, memberships reported
+as skipped) rather than 500 — and must report *which* memberships it dropped,
+not merely survive.
 
-The device-deleted case is the residual the lock cannot close, since nothing
-serialises a device delete against an import; it is covered here too.
+The device-deleted case is the same shape with a different peer: nothing
+serialises a device delete against an import either, so the batch locks the
+device ids it is about to reference and drops the ones that vanished.
 """
 
 from __future__ import annotations
@@ -54,18 +57,24 @@ from app.portability.schemas import (
 from app.portability.services.hash import compute_bundle_hash
 from app.portability.services.import_bundle import PortabilityImportService
 from app.verification.services.service import VerificationService
-from tests.concurrency.group_lock_helpers import (
-    EVENT_WAIT_TIMEOUT_SEC,
-    HANDOFF_SEC,
-    build_groups_service,
-    fetch_group_rows,
-)
+from tests.concurrency.group_lock_helpers import build_groups_service, fetch_group_rows
 from tests.helpers import seed_host_named
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.db, pytest.mark.asyncio]
+
+# Long enough for the released peer to reach and commit its own statements
+# before membership staging runs. Only widens the window; correctness does not
+# depend on the exact value.
+HANDOFF_SEC = 0.5
+
+# A bound, not a race parameter: comfortably above HANDOFF_SEC so it never trips
+# under normal timing, but it turns a seam that stopped firing into a legible
+# TimeoutError rather than a hung run (``pytest-timeout`` is deliberately not a
+# dependency here).
+EVENT_WAIT_TIMEOUT_SEC = 5.0
 
 
 def _device(identity_value: str, hostname: str, host_id: uuid.UUID, static_groups: list[str]) -> ExportedDevice:
@@ -207,10 +216,11 @@ async def test_delete_during_membership_staging_does_not_500(
         f"during membership staging; got {import_result!r}"
     )
     # The deleter always wins here, and deliberately so: `_bundle_with_device`
-    # gives the dynamic group `member_of=[]`, which `_group_filters_payload`
-    # collapses to `filters=None`, so `delete_group`'s `has_key("member_of")`
-    # scan finds no referrer. A `GroupReferencedError` branch would be dead
-    # code — the reference case belongs to the tests that seed one.
+    # gives the dynamic group `member_of=[]`, so the import stages no
+    # `device_group_member_of` row and neither `delete_group`'s dependent join
+    # nor the restrictive foreign key has a referrer to find. A
+    # `GroupReferencedError` branch would be dead code — the reference case
+    # belongs to the tests that seed one.
     assert delete_result is True, f"deleter must succeed against an unreferenced static group; got {delete_result!r}"
 
     static_row, _dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)

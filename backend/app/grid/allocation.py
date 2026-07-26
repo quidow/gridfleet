@@ -37,10 +37,11 @@ from app.devices.models import (
 from app.devices.services.claims import live_session_exists
 from app.devices.services.group_membership import (
     DeviceGroupFacts,
+    GroupDefinitionBatch,
     GroupMembershipIndex,
     build_device_group_facts,
     evaluate_group_memberships,
-    load_groups_by_keys,
+    load_group_definition_batch,
     load_static_group_keys_by_device_id,
 )
 from app.devices.services.intent import IntentService
@@ -650,9 +651,15 @@ class AllocationService:
         older_candidate_sets = await self._older_waiter_candidate_sets(db, ticket)
         group_keys = _union_group_keys(current_group_keys, older_candidate_sets)
         # The group-definition load returns direct requested groups plus the static
-        # groups named by their JSON ``member_of`` arrays in one CTE/query so the
-        # evaluator can resolve dynamic groups that reference static groups by key.
-        groups = await self._load_groups_by_key(db, group_keys) if group_keys else []
+        # groups their ``device_group_member_of`` rows name, and the per-source key
+        # map, in one query so the evaluator can resolve dynamic groups without a
+        # follow-up read.
+        definitions = (
+            await self._load_group_definitions(db, group_keys)
+            if group_keys
+            else GroupDefinitionBatch(groups=(), member_of_keys_by_dynamic_group_id={})
+        )
+        groups = definitions.groups
         loaded_group_keys = {group.key for group in groups}
         # Reject the current ticket loudly when any of its direct group keys does
         # not exist (the missing-key/unknown-key rejection Task 3 deferred). A
@@ -698,6 +705,7 @@ class AllocationService:
             groups=groups,
             devices=[row.device for row in eligible_rows],
             facts_by_device_id=facts_by_device_id,
+            member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
         )
         # Pre-populate the template cache so device_match_surface finds every
         # needed template without issuing an extra per-key read.
@@ -735,6 +743,7 @@ class AllocationService:
                     run_id=ticket.run_id,
                     exclude_device_ids=exclude_device_ids,
                     groups=groups,
+                    member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
                     pack_catalog=pack_catalog,
                 )
                 if result is not None:
@@ -780,18 +789,16 @@ class AllocationService:
         target = resolve_router_target(row)
         return None if target is None else InterruptedSessionEffect(row.id, row.session_id, target)
 
-    async def _load_groups_by_key(self, db: DbSession, group_keys: Collection[str]) -> list[DeviceGroup]:
-        """One read: the requested groups plus the static groups their JSON
-        ``member_of`` arrays reference, so the pure evaluator can resolve dynamic
-        groups that reference static groups by key. Direct keys of any type are
-        returned verbatim; only static groups are pulled from ``member_of``
-        (dynamic-to-dynamic references resolve to empty membership by contract).
+    async def _load_group_definitions(self, db: DbSession, group_keys: Collection[str]) -> GroupDefinitionBatch:
+        """One read: the requested groups, the static groups their
+        ``device_group_member_of`` rows reference, and the per-source key map the
+        pure evaluator consumes. Direct keys of any type are returned verbatim.
 
-        Delegates to the shared recursive-CTE helper in
-        :mod:`app.devices.services.group_membership` so the closure logic lives
-        in one place.
+        Delegates to the shared batch loader in
+        :mod:`app.devices.services.group_membership` so the resolution lives in
+        one place.
         """
-        return await load_groups_by_keys(db, group_keys)
+        return await load_group_definition_batch(db, group_keys)
 
     async def _eligible_devices_with_facts(
         self,
@@ -1011,6 +1018,7 @@ class AllocationService:
         *,
         locked_device: Device,
         groups: Sequence[DeviceGroup],
+        member_of_keys_by_dynamic_group_id: Mapping[uuid.UUID, frozenset[str]],
         candidate_group_keys: Collection[str],
         reservation_run_id: uuid.UUID | None,
         pack_catalog: dict[str, DriverPack],
@@ -1040,10 +1048,11 @@ class AllocationService:
             groups=groups,
             devices=[locked_device],
             facts_by_device_id=_facts_from_eligible_rows([row], readiness),
+            member_of_keys_by_dynamic_group_id=member_of_keys_by_dynamic_group_id,
         )
         return membership.matches_all(locked_device.id, candidate_group_keys)
 
-    async def _claim(
+    async def _claim(  # noqa: PLR0913 - one pre-loaded batch fact per parameter, none derivable here
         self,
         db: DbSession,
         *,
@@ -1053,6 +1062,7 @@ class AllocationService:
         run_id: uuid.UUID | None,
         exclude_device_ids: set[uuid.UUID] | None = None,
         groups: Sequence[DeviceGroup] = (),
+        member_of_keys_by_dynamic_group_id: Mapping[uuid.UUID, frozenset[str]],
         pack_catalog: dict[str, DriverPack],
     ) -> AllocationResult | None:
         # Fold every SQL-expressible lock-time recheck into the lock query:
@@ -1088,6 +1098,7 @@ class AllocationService:
             db,
             locked_device=locked.device,
             groups=groups,
+            member_of_keys_by_dynamic_group_id=member_of_keys_by_dynamic_group_id,
             candidate_group_keys=requested_group_keys([candidate]),
             reservation_run_id=reservation_run_id,
             pack_catalog=pack_catalog,

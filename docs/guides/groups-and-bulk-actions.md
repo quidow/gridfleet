@@ -208,7 +208,7 @@ A valid key that currently matches no free device is **not** an error — the ti
 Group routing does not scale with fleet or group count. A free group-routed allocation poll issues a fixed four database reads before a claim, regardless of how many devices, groups, or platforms exist:
 
 1. older waiting tickets' candidate sets (the FIFO veto)
-2. the referenced group definitions plus their `member_of` static targets, folded into one recursive CTE
+2. the referenced group definitions plus the static groups their `device_group_member_of` rows point at, folded into one query
 3. eligible devices joined with their per-device group and reservation facts
 4. the batched pack-template load
 

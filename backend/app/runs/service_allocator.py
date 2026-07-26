@@ -28,8 +28,8 @@ from app.devices.services.group_membership import (
     GroupMembershipIndex,
     build_device_group_facts,
     evaluate_group_memberships,
+    load_group_definition_batch,
     load_group_membership_index,
-    load_groups_by_keys,
     load_static_group_keys_by_device_id,
 )
 from app.devices.services.intent import IntentService
@@ -149,13 +149,14 @@ async def _classify_shortfall_gates(
     # here, on the device list, and in the grid allocator.
     group_index: GroupMembershipIndex | None = None
     if requirement.groups:
-        groups = await load_groups_by_keys(db, requirement.groups)
+        definitions = await load_group_definition_batch(db, requirement.groups)
         group_index = await load_group_membership_index(
             db,
-            groups=groups,
+            groups=definitions.groups,
             devices=devices,
             pack_catalog=pack_catalog,
             operational_states=op_states,
+            member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
         )
 
     for device in devices:
@@ -344,7 +345,8 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
 
     Read budget (candidate-selection phase, before the run INSERT):
 
-    1. recursive CTE load of group definitions (only when any requirement pins groups),
+    1. one group-definition batch — groups, their reference targets, and the
+       reference map (only when any requirement pins groups),
     2. one batched pack-row lock + state check across all distinct pack_ids,
     3. one batched stereotype-template / pack load for all (pack_id, platform_id) pairs,
     4. one candidate-devices SELECT joined to host + appium_node across every
@@ -367,7 +369,8 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     all_group_keys: set[str] = set()
     for req in requirements:
         all_group_keys.update(req.groups)
-    groups = await load_groups_by_keys(db, all_group_keys) if all_group_keys else []
+    definitions = await load_group_definition_batch(db, all_group_keys)
+    groups = definitions.groups
     loaded_group_keys = {group.key for group in groups}
     missing_groups = sorted(all_group_keys - loaded_group_keys)
     if missing_groups:
@@ -440,7 +443,11 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     group_index: GroupMembershipIndex | None = None
     if groups:
         group_index = await load_group_membership_index(
-            db, groups=groups, devices=candidates, pack_catalog=pack_catalog
+            db,
+            groups=groups,
+            devices=candidates,
+            pack_catalog=pack_catalog,
+            member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
         )
 
     # Step 7a: in-memory selection per requirement in request order, excluding
@@ -542,7 +549,10 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
                 review_required=False,
             )
         locked_group_index = evaluate_group_memberships(
-            groups=groups, devices=locked_devices_list, facts_by_device_id=locked_facts
+            groups=groups,
+            devices=locked_devices_list,
+            facts_by_device_id=locked_facts,
+            member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
         )
     locked_ready: dict[uuid.UUID, Device] = {}
     for device in locked_rows.values():

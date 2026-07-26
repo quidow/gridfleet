@@ -3,7 +3,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
+from sqlalchemy.orm import aliased
 
+from app.devices.models import DeviceGroup, DeviceGroupMemberOf, GroupType
+from tests.concurrency.group_lock_helpers import capture_statements
 from tests.helpers import create_device_record, create_host
 from tests.packs.factories import seed_test_packs
 
@@ -70,6 +74,28 @@ async def _create_device(
         ip_address=payload.get("ip_address"),
     )
     return {"id": str(device.id)}
+
+
+async def _relation_targets(db_session: AsyncSession, dynamic_key: str) -> list[str]:
+    """The static-group keys a dynamic group's ``device_group_member_of`` rows name.
+
+    Reads the relation rather than the JSON column on purpose: from this phase on
+    the two can disagree, and only the relation restricts membership.
+    """
+    source = aliased(DeviceGroup, name="source")
+    stmt = (
+        select(DeviceGroup.key)
+        .join(DeviceGroupMemberOf, DeviceGroupMemberOf.static_group_id == DeviceGroup.id)
+        .join(source, source.id == DeviceGroupMemberOf.dynamic_group_id)
+        .where(source.key == dynamic_key)
+    )
+    return sorted((await db_session.execute(stmt)).scalars().all())
+
+
+async def _stored_filters(db_session: AsyncSession, group_key: str) -> Any:  # noqa: ANN401 - raw JSONB value
+    """The group's ``filters`` column exactly as stored, bypassing the identity map."""
+    stmt = select(DeviceGroup.filters).where(DeviceGroup.key == group_key)
+    return (await db_session.execute(stmt)).scalar_one()
 
 
 async def _create_group(client: AsyncClient, **overrides: object) -> dict[str, Any]:
@@ -474,7 +500,207 @@ async def test_dynamic_group_member_of_anded_with_native_filters(
 
 
 @pytest.mark.db
-async def test_dynamic_group_member_of_unknown_key_rejected(client: AsyncClient) -> None:
+async def test_dynamic_group_member_of_is_stored_as_relation_rows_not_json(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The wire shape is unchanged; the storage is not.
+
+    ``filters.member_of`` still round-trips through create, read and list, but
+    the reference lives in ``device_group_member_of`` and the JSON column keeps
+    only the native axes.
+    """
+    await client.post("/api/device-groups", json={"key": "east", "name": "East", "group_type": "static"})
+    wire_filters = {"member_of": ["east"], "device_type": "real_device"}
+
+    created = await client.post(
+        "/api/device-groups",
+        json={"key": "east-real", "name": "East real", "group_type": "dynamic", "filters": wire_filters},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["filters"] == wire_filters
+
+    fetched = await client.get("/api/device-groups/east-real")
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["filters"] == wire_filters
+
+    listed = await client.get("/api/device-groups")
+    assert {group["key"]: group.get("filters") for group in listed.json()}["east-real"] == wire_filters
+
+    assert await _stored_filters(db_session, "east-real") == {"device_type": "real_device"}
+    assert await _relation_targets(db_session, "east-real") == ["east"]
+
+
+@pytest.mark.db
+async def test_update_group_replaces_then_clears_member_of_relations(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await client.post("/api/device-groups", json={"key": "east", "name": "East", "group_type": "static"})
+    await client.post("/api/device-groups", json={"key": "west", "name": "West", "group_type": "static"})
+    await client.post(
+        "/api/device-groups",
+        json={
+            "key": "east-real",
+            "name": "East real",
+            "group_type": "dynamic",
+            "filters": {"member_of": ["east"], "device_type": "real_device"},
+        },
+    )
+    assert await _relation_targets(db_session, "east-real") == ["east"]
+
+    swapped = await client.patch(
+        "/api/device-groups/east-real",
+        json={"filters": {"member_of": ["west"], "device_type": "real_device"}},
+    )
+    assert swapped.status_code == 200, swapped.text
+    assert swapped.json()["filters"] == {"member_of": ["west"], "device_type": "real_device"}
+    assert await _relation_targets(db_session, "east-real") == ["west"]
+
+    cleared = await client.patch(
+        "/api/device-groups/east-real",
+        json={"filters": {"member_of": [], "device_type": "real_device"}},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["filters"] == {"device_type": "real_device"}
+    assert await _relation_targets(db_session, "east-real") == []
+    assert await _stored_filters(db_session, "east-real") == {"device_type": "real_device"}
+
+    dropped = await client.patch("/api/device-groups/east-real", json={"filters": None})
+    assert dropped.status_code == 200, dropped.text
+    assert "filters" not in dropped.json()
+    assert await _stored_filters(db_session, "east-real") is None
+    assert await _relation_targets(db_session, "east-real") == []
+
+
+@pytest.mark.db
+async def test_update_group_without_a_filters_key_keeps_its_member_of_relations(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """A rename must not silently drop the group's references."""
+    await client.post("/api/device-groups", json={"key": "east", "name": "East", "group_type": "static"})
+    await client.post(
+        "/api/device-groups",
+        json={"key": "east-real", "name": "East real", "group_type": "dynamic", "filters": {"member_of": ["east"]}},
+    )
+
+    renamed = await client.patch("/api/device-groups/east-real", json={"name": "Renamed"})
+
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["filters"] == {"member_of": ["east"]}
+    assert await _relation_targets(db_session, "east-real") == ["east"]
+
+
+@pytest.mark.db
+async def test_create_dynamic_group_normalizes_duplicate_member_of_keys(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """Duplicates collapse to a sorted set — the one intended wire change.
+
+    The relation's composite primary key makes a repeated reference
+    unrepresentable, and the evaluator has always read ``member_of`` as a set, so
+    normalising on write loses nothing a caller could have depended on.
+    """
+    await client.post("/api/device-groups", json={"key": "east", "name": "East", "group_type": "static"})
+    await client.post("/api/device-groups", json={"key": "west", "name": "West", "group_type": "static"})
+
+    created = await client.post(
+        "/api/device-groups",
+        json={
+            "key": "dupes",
+            "name": "Dupes",
+            "group_type": "dynamic",
+            "filters": {"member_of": ["west", "east", "east"]},
+        },
+    )
+
+    assert created.status_code == 201, created.text
+    assert created.json()["filters"] == {"member_of": ["east", "west"]}
+    assert await _relation_targets(db_session, "dupes") == ["east", "west"]
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("sent", [{}, {"member_of": []}])
+async def test_empty_filters_normalize_to_an_absent_filters_key(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    sent: dict[str, Any],
+) -> None:
+    """The second wire change this phase makes, pinned rather than incidental.
+
+    A dynamic group whose filters pin nothing used to store ``{}`` and answer
+    ``"filters": {}``; it now stores SQL ``NULL`` and omits the key. ``{}`` and
+    absent both mean "pins nothing", so collapsing them keeps one shape for one
+    fact — which matters here because ``member_of`` is no longer part of that
+    JSON, so ``{"member_of": [...]}`` reduces to the same empty payload.
+
+    Migrated rows land on the same shape: revision ``6d8c3b5042b5`` leaves
+    ``filters = {}`` on any dynamic group whose only axis was ``member_of``.
+    """
+    created = await client.post(
+        "/api/device-groups",
+        json={"key": "pins-nothing", "name": "Pins nothing", "group_type": "dynamic", "filters": sent},
+    )
+    assert created.status_code == 201, created.text
+    assert "filters" not in created.json()
+    assert await _stored_filters(db_session, "pins-nothing") is None
+
+    fetched = await client.get("/api/device-groups/pins-nothing")
+    assert fetched.status_code == 200, fetched.text
+    assert "filters" not in fetched.json()
+
+    patched = await client.patch("/api/device-groups/pins-nothing", json={"filters": sent})
+    assert patched.status_code == 200, patched.text
+    assert "filters" not in patched.json()
+    assert await _stored_filters(db_session, "pins-nothing") is None
+
+    # A row the migration left holding a literal ``{}`` reads the same way.
+    db_session.add(DeviceGroup(key="migrated", name="Migrated", group_type=GroupType.dynamic, filters={}))
+    await db_session.commit()
+    migrated = await client.get("/api/device-groups/migrated")
+    assert migrated.status_code == 200, migrated.text
+    assert "filters" not in migrated.json()
+
+
+@pytest.mark.db
+async def test_legacy_json_member_of_is_never_echoed_back(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """The migration deliberately leaves a static group's stored ``member_of`` alone.
+
+    That JSON restricts nothing, so the serializer must drop it rather than
+    advertise a reference the relation table does not carry.
+    """
+    await client.post("/api/device-groups", json={"key": "east", "name": "East", "group_type": "static"})
+    db_session.add(
+        DeviceGroup(
+            key="legacy-static",
+            name="Legacy",
+            group_type=GroupType.static,
+            filters={"member_of": ["east"], "device_type": "real_device"},
+        )
+    )
+    await db_session.commit()
+
+    fetched = await client.get("/api/device-groups/legacy-static")
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["filters"] == {"device_type": "real_device"}
+
+    listed = await client.get("/api/device-groups")
+    assert {group["key"]: group.get("filters") for group in listed.json()}["legacy-static"] == {
+        "device_type": "real_device"
+    }
+    assert await _relation_targets(db_session, "legacy-static") == []
+
+
+@pytest.mark.db
+async def test_dynamic_group_member_of_unknown_key_rejected(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
     resp = await client.post(
         "/api/device-groups",
         json={
@@ -485,10 +711,17 @@ async def test_dynamic_group_member_of_unknown_key_rejected(client: AsyncClient)
         },
     )
     assert resp.status_code == 422
+    assert "missing" in resp.json()["error"]["message"]
+    # Neither half of the write may survive a rejected reference.
+    assert (await client.get("/api/device-groups/bad")).status_code == 404
+    assert await _relation_targets(db_session, "bad") == []
 
 
 @pytest.mark.db
-async def test_dynamic_group_member_of_dynamic_key_rejected(client: AsyncClient) -> None:
+async def test_dynamic_group_member_of_dynamic_key_rejected(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
     await client.post(
         "/api/device-groups",
         json={
@@ -508,6 +741,9 @@ async def test_dynamic_group_member_of_dynamic_key_rejected(client: AsyncClient)
         },
     )
     assert resp.status_code == 422
+    assert "dyn-a" in resp.json()["error"]["message"]
+    assert (await client.get("/api/device-groups/dyn-b")).status_code == 404
+    assert await _relation_targets(db_session, "dyn-b") == []
 
 
 @pytest.mark.db
@@ -562,60 +798,88 @@ async def test_delete_static_group_referenced_by_dynamic_returns_409(
 
 
 @pytest.mark.db
-async def test_delete_unrelated_group_not_blocked_by_malformed_member_of_row(
+async def test_delete_static_group_referenced_only_by_relation_rows_returns_409(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """A malformed stored ``member_of`` that does not name the target must not
-    block an unrelated delete.
+    """The migrated shape: dependents exist as relation rows and nothing else.
 
-    The old scan validated every candidate through ``DeviceGroupFilters``
-    (``extra="forbid"``), so one bare-string ``member_of`` row anywhere in the
-    fleet 422'd every unrelated delete. The raw-dict check skips rows whose
-    ``member_of`` cannot reference the target; the malformed row still surfaces
-    later when ``get_group``/``list_groups`` serialize it.
+    Revision ``6d8c3b5042b5`` emptied every dynamic group's ``filters.member_of``,
+    so a dependent scan over the JSON column sees no referrer and lets the
+    ``DELETE`` reach the RESTRICT foreign key as an untranslated
+    ``IntegrityError`` — a 500 where the contract promises 409. Fixtures that
+    build their groups through the API do not reproduce this; only rows shaped
+    the way the migration leaves them do.
     """
-    from app.devices.models.group import DeviceGroup, GroupType
-
-    await client.post("/api/device-groups", json={"key": "unrelated", "name": "Unrelated", "group_type": "static"})
-    db_session.add(
-        DeviceGroup(
-            key="malformed-dyn",
-            name="Malformed",
-            group_type=GroupType.dynamic,
-            filters={"member_of": "other-group"},  # bare string, does not name "unrelated"
-        )
+    east = DeviceGroup(key="east", name="East", group_type=GroupType.static)
+    zulu = DeviceGroup(
+        key="zulu-dyn", name="Zulu", group_type=GroupType.dynamic, filters={"device_type": "real_device"}
+    )
+    alpha = DeviceGroup(key="alpha-dyn", name="Alpha", group_type=GroupType.dynamic, filters=None)
+    db_session.add_all([east, zulu, alpha])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            DeviceGroupMemberOf(dynamic_group_id=zulu.id, static_group_id=east.id),
+            DeviceGroupMemberOf(dynamic_group_id=alpha.id, static_group_id=east.id),
+        ]
     )
     await db_session.commit()
-    resp = await client.delete("/api/device-groups/unrelated")
-    assert resp.status_code == 204, resp.text
+
+    resp = await client.delete("/api/device-groups/east")
+
+    assert resp.status_code == 409, resp.text
+    # Dependents stay ordered, so the operator-facing message is deterministic.
+    assert resp.json()["error"]["message"].endswith("alpha-dyn, zulu-dyn")
+    assert (await client.get("/api/device-groups/east")).status_code == 200
 
 
 @pytest.mark.db
-async def test_delete_group_referenced_by_bare_string_member_of_returns_409(
+async def test_delete_dynamic_group_cascades_its_relation_rows_in_postgres(
     client: AsyncClient,
     db_session: AsyncSession,
 ) -> None:
-    """A legacy bare-string ``member_of`` naming the target still blocks the delete.
-
-    The raw-dict check matches both the list form and the bare-string form, so a
-    malformed referencer cannot silently leave a dangling ``member_of`` when its
-    target is deleted.
-    """
-    from app.devices.models.group import DeviceGroup, GroupType
-
-    await client.post("/api/device-groups", json={"key": "target", "name": "Target", "group_type": "static"})
-    db_session.add(
-        DeviceGroup(
-            key="bare-dyn",
-            name="Bare",
-            group_type=GroupType.dynamic,
-            filters={"member_of": "target"},  # bare string naming the target
-        )
+    """The source side is ``ON DELETE CASCADE``; the service issues no cleanup."""
+    await client.post("/api/device-groups", json={"key": "east", "name": "East", "group_type": "static"})
+    await client.post(
+        "/api/device-groups",
+        json={"key": "east-real", "name": "East real", "group_type": "dynamic", "filters": {"member_of": ["east"]}},
     )
+    assert await _relation_targets(db_session, "east-real") == ["east"]
+    await db_session.rollback()
+
+    async with capture_statements(db_session) as statements:
+        resp = await client.delete("/api/device-groups/east-real")
+
+    assert resp.status_code == 204, resp.text
+    assert await _relation_targets(db_session, "east-real") == []
+    normalized = [" ".join(statement.lower().split()) for statement in statements]
+    assert not [s for s in normalized if "delete from device_group_member_of" in s], statements
+    # Only the source's outgoing edges went away: the target is now deletable.
+    assert (await client.delete("/api/device-groups/east")).status_code == 204
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("stored", [{"member_of": ["target"]}, {"member_of": "target"}])
+async def test_delete_is_not_blocked_by_inert_json_member_of(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    stored: dict[str, Any],
+) -> None:
+    """Stored JSON is not a reference from this phase on.
+
+    Membership reads ``device_group_member_of``, so a dynamic row whose
+    ``filters`` still names the target restricts nothing and must not block the
+    target's deletion. Both shapes the old raw-dict scan matched — the list form
+    and the legacy bare string — are equally inert now.
+    """
+    await client.post("/api/device-groups", json={"key": "target", "name": "Target", "group_type": "static"})
+    db_session.add(DeviceGroup(key="legacy-dyn", name="Legacy", group_type=GroupType.dynamic, filters=stored))
     await db_session.commit()
+
     resp = await client.delete("/api/device-groups/target")
-    assert resp.status_code == 409, resp.text
+
+    assert resp.status_code == 204, resp.text
 
 
 @pytest.mark.db
