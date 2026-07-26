@@ -95,26 +95,21 @@ cd docker
 docker compose --env-file .env -f docker-compose.prod.yml logs --tail=200 backend
 ```
 
-### Audit for dangling `member_of` references
+### `member_of` references are foreign keys
 
-A race between deleting a static group and adding the first `member_of` reference
-to it could leave a dynamic group pointing at a key that no longer exists. The
-race is fixed, but a reference written before the fix is not repaired by it, and
-it fails **silently**: the group resolves to zero members rather than erroring, so
-sessions and runs targeting it queue until timeout with no diagnostic.
+As of this release, dynamic-group `member_of` references live in
+`device_group_member_of` rather than inside JSON `filters`, so the race this
+section used to audit for is unrepresentable: the target foreign key is `ON
+DELETE RESTRICT`, and a `member_of` insert naming a deleted or unknown static
+group fails at write time with `fk_device_group_member_of_static_group`
+(`422` to the caller) instead of silently resolving to zero members. There is
+nothing left to audit for on a database already on this migration.
 
-Run once after upgrading:
-
-```sql
-SELECT d.key AS dynamic_group, missing.key AS missing_reference
-FROM device_groups d
-CROSS JOIN LATERAL jsonb_array_elements_text(d.filters -> 'member_of') AS missing(key)
-WHERE d.filters ? 'member_of'
-  AND NOT EXISTS (SELECT 1 FROM device_groups s WHERE s.key = missing.key);
-```
-
-Any row is a dynamic group that can never match. Repair by editing the group's
-filters to drop or repoint the missing key.
+The pre-migration form of this check — the
+`jsonb_array_elements_text(d.filters -> 'member_of')` query this section used
+to publish — is preserved in this release's rollout checklist for anyone
+upgrading a database that predates the migration; the migration performs the
+same validation itself and aborts on any row that query would find.
 
 ## 4. Roll back application code without restoring the database
 

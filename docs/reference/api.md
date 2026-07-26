@@ -424,6 +424,8 @@ Supported dynamic group filters:
 
 Every pinned axis is ANDed, `member_of` included: a device is a member only if it matches every filter *and* belongs to every static group named in `member_of`. `member_of` may reference static groups only; a dynamic or unknown key is rejected with `422` on create and update. Deleting a static group still referenced by a dynamic group's `member_of` returns `409`. Static groups cannot define filters.
 
+The API normalizes two things on write: duplicate `member_of` keys collapse to a sorted unique list, and a group that pins no axis at all returns no `filters` key rather than an empty object. Both are storage normalizations surfacing at the boundary, not behavior changes — an empty `filters` never restricted anything.
+
 Dynamic membership is evaluated live on every read; it is never materialized into a membership table and never cached.
 
 A bulk action on a group that **exists but resolves to no devices** returns `200` with a zero-count `BulkOperationResult` (`{"total": 0, ...}`) — an empty group is a valid group with nothing to act on, not a missing one. `404` on a bulk route means the group key names no group at all.
