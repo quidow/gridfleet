@@ -130,6 +130,9 @@ async def load_pack_catalog(session: AsyncSession, pack_ids: Iterable[str]) -> d
     Primary keys load regardless, which is why ``DriverPack.id`` is not named
     and still keys the returned dict. Anything added to ``PackView`` must be
     added here too, or ``project_pack`` raises on the deferred attribute.
+    These rows also enter the loading session's identity map with every
+    unnamed column deferred; every other pack read in ``app/`` selects the
+    full entity, which repopulates them.
 
     An empty or all-falsy *pack_ids* costs no statement at all, which is what
     keeps a host with no devices free.

@@ -56,17 +56,17 @@ def platform_labels_from_catalog(packs: Mapping[str, PackView]) -> dict[PackPlat
     callers read this with ``.get``, which answers ``None`` for a miss exactly
     as the query-backed map does.
 
-    :func:`load_platform_label_map` stays. Five of its six callers have no
-    catalog to derive from, and this is a change to one caller, not to the
-    label service.
+    :func:`load_platform_label_map` stays. Its remaining callers have no
+    catalog in hand, and this is a change to one caller, not to the label
+    service.
     """
     labels: dict[PackPlatformKey, str] = {}
-    for pack_id, pack in packs.items():
+    for pack in packs.values():
         release = selected_release(pack.releases, pack.current_release)
         if release is None:
             continue
         for platform in release.platforms:
-            labels[(pack_id, platform.manifest_platform_id)] = platform.display_name
+            labels[(pack.id, platform.manifest_platform_id)] = platform.display_name
     return labels
 
 
