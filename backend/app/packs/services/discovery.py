@@ -41,6 +41,17 @@ class PackDevicesFetcher(Protocol):
     ) -> dict[str, object]: ...
 
 
+class StaleHostGenerationError(Exception):
+    """The host's agent restarted between the discovery dial and the write.
+
+    Deliberately *not* ``NoResultFound``: the Host row is still there, so this is
+    not a missing host. Its ``current_boot_id`` has rotated, which means the
+    candidate list describes an agent generation that no longer exists. The route
+    reports it as a conflict the operator recovers from by re-running intake,
+    never as a 404 that reads like the host was deleted.
+    """
+
+
 IdentityKey = tuple[str, str, str]
 # (identity_scheme, identity_value, host_scoped) — the tuple the intake route
 # matches a candidate against, with the host/non-host scope split folded in as
@@ -197,15 +208,19 @@ class PackDiscoveryService:
         """Take the aggregate root lock and revalidate the prepared target.
 
         ``target`` was copied before the agent dial, so between the copy and here
-        the host may have been deleted or a restarted agent may have registered a
-        new boot. Either way the candidate list describes a host generation that
-        is no longer current, and the confirmation declines exactly as it does
-        for a host that is simply gone.
+        the host may have been deleted *or* a restarted agent may have registered
+        a new boot. Those are different answers to the operator and the two
+        outcomes stay separable: a vanished row raises ``NoResultFound`` (404), a
+        rotated boot raises :class:`StaleHostGenerationError` (409).
         """
         stmt = select(Host).where(Host.id == target.host_id).with_for_update()
         host = (await db.execute(stmt)).scalar_one_or_none()
-        if host is None or host.current_boot_id != target.current_boot_id:
+        if host is None:
             raise NoResultFound
+        if host.current_boot_id != target.current_boot_id:
+            raise StaleHostGenerationError(
+                f"Host {host.hostname!r} restarted since discovery ran; re-run intake and confirm again"
+            )
         return host
 
     async def confirm_discovery(

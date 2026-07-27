@@ -43,6 +43,7 @@ from app.hosts.schemas import (
 from app.hosts.service import HostTarget
 from app.packs import schemas as pack_schemas
 from app.packs.dependencies import PackServicesDep
+from app.packs.services.discovery import StaleHostGenerationError
 from app.settings.dependencies import SettingsServicesDep
 
 if TYPE_CHECKING:
@@ -128,31 +129,28 @@ async def _online_host_target(
     settings_services: SettingsServices,
     host_id: uuid.UUID,
     *,
+    missing_detail: str,
     offline_status: int,
     offline_detail: str,
 ) -> HostTarget:
-    """The liveness-gated variant, for routes that refuse to dial an offline host."""
+    """The liveness-gated variant, for routes that refuse to dial an offline host.
+
+    Both details are parameters because the two callers disagree on each of
+    them: the doctor route's missing-host body is lowercase and its offline
+    status is 409; tool status uses sentence case and 400. Those are the bodies
+    their clients already see, so neither is normalised here.
+    """
     offline_after = settings_services.service.get_float("general.host_offline_after_sec")
     online = False
     async with host_services.session_factory() as db:
         host = await db.get(Host, host_id)
-        target = None if host is None else _host_target(host)
+        target = None if host is None else HostTarget.from_host(host)
         if host is not None:
             online = host_online(host, offline_after_sec=offline_after)
-    resolved = found_or_404(target, "Host not found")
+    resolved = found_or_404(target, missing_detail)
     if not online:
         raise HTTPException(status_code=offline_status, detail=offline_detail)
     return resolved
-
-
-def _host_target(host: Host) -> HostTarget:
-    return HostTarget(
-        host_id=host.id,
-        hostname=host.hostname,
-        ip=host.ip,
-        agent_port=host.agent_port,
-        current_boot_id=host.current_boot_id,
-    )
 
 
 async def _auto_discover(
@@ -208,6 +206,10 @@ async def register_host(
     pack_services: PackServicesDep,
 ) -> dict[str, Any]:
     try:
+        # Hoisted ahead of the attempt so the orchestration-contract gate visibly
+        # precedes *both* transactions: the fallback below reapplies the same
+        # payload and does not re-validate it.
+        host_service.validate_orchestration_contract(data.capabilities, host_label=data.hostname)
         host, is_new = await _register_host_txn(host_services, data)
     except ValueError as exc:
         raise HTTPException(status_code=426, detail=str(exc)) from None
@@ -373,6 +375,7 @@ async def trigger_driver_doctor(
         host_services,
         settings_services,
         host_id,
+        missing_detail="host not found",
         offline_status=409,
         offline_detail="host must be online to run doctor checks",
     )
@@ -440,6 +443,7 @@ async def get_host_tool_status(
         host_services,
         settings_services,
         host_id,
+        missing_detail="Host not found",
         offline_status=400,
         offline_detail="Host must be online to fetch tool status",
     )
@@ -504,6 +508,9 @@ async def confirm_discovery(
     # transaction below opens only once the network call has returned.
     target, candidates = await _fetch_candidates(host_services, pack_services, host_id)
     try:
+        # Only a genuinely absent Host row becomes a 404 here. A boot rotation is
+        # a recoverable conflict on a host that still exists, so it keeps the 409
+        # lane alongside the identity conflict rather than reading as a deletion.
         with convert_missing_row("Host not found"):
             async with pack_services.session_factory.begin() as db:
                 return await pack_services.discovery.confirm_discovery(
@@ -513,7 +520,7 @@ async def confirm_discovery(
                     data.add_identity_values,
                     data.remove_identity_values,
                 )
-    except DeviceIdentityConflictError as exc:
+    except (StaleHostGenerationError, DeviceIdentityConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

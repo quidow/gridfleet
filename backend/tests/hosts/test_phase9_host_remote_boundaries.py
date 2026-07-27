@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import DBAPIError, IntegrityError, NoResultFound
 
 from app.core.errors import AgentUnreachableError
@@ -40,7 +40,7 @@ from app.main import app
 from app.packs.dependencies import get_pack_services
 from app.packs.models import HostPackDoctorResult
 from app.packs.models.pack import DriverPack
-from app.packs.services.discovery import PackDiscoveryService
+from app.packs.services.discovery import PackDiscoveryService, StaleHostGenerationError
 from tests.concurrency.group_lock_helpers import capture_statements, pin_statement_listener
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, dispatch_committed_events, recent_events
@@ -586,13 +586,93 @@ async def test_confirm_declines_a_rotated_boot_without_touching_devices(
 
     svc = _discovery_service()
     async with db_session_maker() as db, db.begin():
-        with pytest.raises(NoResultFound):
+        # Not NoResultFound: the Host row is still there. Conflating the two would
+        # tell the operator the host was deleted.
+        with pytest.raises(StaleHostGenerationError) as caught:
             await svc.confirm_discovery(db, target, candidates, [], ["STALE-1"])
+    assert host.hostname in str(caught.value)
+    assert "re-run intake" in str(caught.value)
 
     async with db_session_maker() as verify:
         survivor = await verify.get(Device, device.id)
     assert survivor is not None, "a stale-boot confirmation deleted a Device row"
     assert survivor.os_version == "17.0"
+
+
+@pytest.mark.db
+async def test_confirm_declines_a_vanished_host_as_not_found(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """The sibling outcome, kept distinguishable: a deleted host is still 404 fodder."""
+    boot_id = uuid.uuid4()
+    host, device = await _seed_host_and_device(
+        db_session, hostname=f"gone-{uuid.uuid4().hex[:6]}", boot_id=boot_id, identity_value="GONE-1"
+    )
+    target = _target(host, boot_id)
+
+    async with db_session_maker() as peer:
+        await peer.execute(delete(Device).where(Device.id == device.id))
+        await peer.execute(delete(Host).where(Host.id == host.id))
+        await peer.commit()
+
+    svc = _discovery_service()
+    async with db_session_maker() as db, db.begin():
+        with pytest.raises(NoResultFound):
+            await svc.confirm_discovery(db, target, (), [], [])
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("condition", ["rotated_boot", "deleted_host"])
+async def test_confirm_route_separates_a_rotated_boot_from_a_deleted_host(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    recorder: RecordingSessionFactory,
+    condition: str,
+) -> None:
+    """A client must be able to tell "re-run intake" from "the host is gone".
+
+    Both conditions are provoked *inside* the window the ``HostTarget`` hand-off
+    opens — after the route's prepare read, before its write transaction — by
+    committing the peer change from the recording factory's statement hook. That
+    is the only window where the write phase's own recheck can be the thing that
+    answers, rather than the prepare read short-circuiting to 404.
+    """
+    boot_a, boot_b = uuid.uuid4(), uuid.uuid4()
+    host, device = await _seed_host_and_device(
+        db_session, hostname=f"route-{uuid.uuid4().hex[:6]}", boot_id=boot_a, identity_value="ROUTE-1"
+    )
+    fired = asyncio.Event()
+
+    async def _change_host_after_prepare(session: AsyncSession, statement: str) -> None:
+        if fired.is_set() or "from hosts" not in statement or "select" not in statement:
+            return
+        fired.set()
+        async with db_session_maker() as peer:
+            if condition == "rotated_boot":
+                await peer.execute(update(Host).where(Host.id == host.id).values(current_boot_id=boot_b))
+            else:
+                await peer.execute(delete(Device).where(Device.id == device.id))
+                await peer.execute(delete(Host).where(Host.id == host.id))
+            await peer.commit()
+
+    recorder.hook = _change_host_after_prepare
+    with patch("app.agent_comm.operations.get_pack_devices", new=AsyncMock(return_value={"candidates": []})):
+        resp = await client.post(
+            f"/api/hosts/{host.id}/discover/confirm",
+            json={"add_identity_values": [], "remove_identity_values": []},
+        )
+    recorder.hook = None
+
+    assert fired.is_set(), "the peer change never landed; the hand-off window was not exercised"
+    detail = resp.json()["error"]["message"]
+    if condition == "rotated_boot":
+        assert resp.status_code == 409, resp.text
+        assert host.hostname in detail
+        assert "re-run intake" in detail
+    else:
+        assert resp.status_code == 404, resp.text
+        assert detail == "Host not found"
 
 
 @pytest.mark.db

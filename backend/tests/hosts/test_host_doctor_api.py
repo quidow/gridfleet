@@ -53,6 +53,9 @@ async def _create_offline_host(db_session: AsyncSession) -> Host:
 async def test_trigger_doctor_returns_404_for_unknown_host(client: AsyncClient) -> None:
     resp = await client.post("/api/hosts/00000000-0000-0000-0000-000000000000/driver-packs/appium-uiautomator2/doctor")
     assert resp.status_code == 404
+    # Lowercase, matching this route's sibling GET /{host_id}/driver-packs. The
+    # detail is part of the response contract, so pin it rather than the code alone.
+    assert resp.json()["error"]["message"] == "host not found"
 
 
 @pytest.mark.db

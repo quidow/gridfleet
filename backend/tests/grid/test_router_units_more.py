@@ -894,12 +894,16 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     def _host_services(**crud: object) -> SimpleNamespace:
         return SimpleNamespace(crud=SimpleNamespace(**crud), session_factory=FakeSessionFactory(DummySession()))
 
+    # The route runs the orchestration-contract gate itself now, ahead of both
+    # transactions, so the payload has to carry the two fields it reads.
+    register_payload = SimpleNamespace(hostname="host-1", capabilities={"orchestration_contract_version": 7})
+
     # An IntegrityError that is not the hostname unique index is not a lost race:
     # it propagates out of the attempt and the route reports the conflict.
     fake_hs_reg_err = _host_services(register_host=AsyncMock(side_effect=IntegrityError("", {}, None)))
     with pytest.raises(HTTPException) as exc:
         await hosts.register_host(  # type: ignore[arg-type]
-            object(),
+            register_payload,
             response,
             host_services=fake_hs_reg_err,
             event_services=mock_event_services,
@@ -918,7 +922,7 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     )
     with pytest.raises(HTTPException) as exc:
         await hosts.register_host(  # type: ignore[arg-type]
-            object(),
+            register_payload,
             response,
             host_services=fake_hs_reg_gone,
             event_services=mock_event_services,
@@ -934,7 +938,7 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     )
     with patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})):
         result = await hosts.register_host(  # type: ignore[arg-type]
-            object(),
+            register_payload,
             response,
             host_services=fake_hs_reg_fallback,
             event_services=mock_event_services,
@@ -953,7 +957,7 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
         patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
     ):
         result = await hosts.register_host(  # type: ignore[arg-type]
-            object(),
+            register_payload,
             response,
             host_services=fake_hs_reg_ok,
             event_services=mock_event_services,

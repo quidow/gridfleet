@@ -88,6 +88,16 @@ class HostTarget:
     agent_port: int
     current_boot_id: uuid.UUID | None
 
+    @classmethod
+    def from_host(cls, host: Host) -> HostTarget:
+        return cls(
+            host_id=host.id,
+            hostname=host.hostname,
+            ip=host.ip,
+            agent_port=host.agent_port,
+            current_boot_id=host.current_boot_id,
+        )
+
 
 def _apply_host_info(host: Host, host_info: HostHardwareInfo | None) -> None:
     if host_info is None:
@@ -195,15 +205,7 @@ class HostCrudService:
     async def load_host_target(self, db: AsyncSession, host_id: uuid.UUID) -> HostTarget | None:
         """Copy the scalars a remote call needs, so the session can close first."""
         host = (await db.execute(select(Host).where(Host.id == host_id))).scalar_one_or_none()
-        if host is None:
-            return None
-        return HostTarget(
-            host_id=host.id,
-            hostname=host.hostname,
-            ip=host.ip,
-            agent_port=host.agent_port,
-            current_boot_id=host.current_boot_id,
-        )
+        return None if host is None else HostTarget.from_host(host)
 
     async def delete_host(self, db: AsyncSession, host_id: uuid.UUID) -> bool:
         # Lock before the dependent read so a device cannot be attached between
@@ -293,6 +295,13 @@ class HostCrudService:
         transaction was fully rolled back and closed. The lock is retaken here:
         nothing carries over from the failed attempt. ``None`` means the winner
         has since disappeared, which the caller reports as the same conflict.
+
+        PRECONDITION: *data* has already passed
+        :func:`validate_orchestration_contract`. This method does not re-run the
+        426 gate — it is only reachable after an attempt on the same payload
+        cleared it, and ``hosts/router.py`` runs the gate before either
+        transaction so that ordering is visible at the call site rather than
+        implied here.
         """
         stmt = select(Host).where(Host.hostname == data.hostname).with_for_update()
         host = (await db.execute(stmt)).scalar_one_or_none()

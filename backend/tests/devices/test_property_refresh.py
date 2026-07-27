@@ -247,17 +247,23 @@ async def test_fold_persists_nothing_when_the_transaction_aborts_after_the_mutat
     device = await create_device_record(
         db_session, host_id=host.id, identity_value="fold-abort", connection_target="fold-abort", name="Fold Abort"
     )
+    # Whatever the row started at, not a literal the helper's default owns.
+    baseline_os_version = device.os_version
+    refreshed_os_version = "15.7"
+    assert baseline_os_version != refreshed_os_version, "the fold would be a no-op; the test could not fail"
 
     failing = _FailAfterApply(_discovery_service())
     svc = PropertyRefreshService(discovery=failing)  # type: ignore[arg-type]
     session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
-    await svc.fold_host_device_properties(session_factory, host.id, _os_version_section("fold-abort", "15.7"))
+    await svc.fold_host_device_properties(
+        session_factory, host.id, _os_version_section("fold-abort", refreshed_os_version)
+    )
 
-    assert failing.mutated == ["15.7"], "the fold never reached the mutation this test is pinning"
+    assert failing.mutated == [refreshed_os_version], "the fold never reached the mutation this test is pinning"
     async with session_factory() as verify:
         refreshed = await verify.get(Device, device.id)
     assert refreshed is not None
-    assert refreshed.os_version == "14", "a partially applied refresh was committed anyway"
+    assert refreshed.os_version == baseline_os_version, "a partially applied refresh was committed anyway"
 
 
 def _roku_device(**overrides: object) -> SimpleNamespace:
