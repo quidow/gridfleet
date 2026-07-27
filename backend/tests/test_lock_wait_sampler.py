@@ -15,6 +15,7 @@ import json
 import subprocess
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -139,6 +140,87 @@ def test_lock_sampler_default_output_dir_is_local_only(sampler: ModuleType) -> N
     assert default.is_absolute()
 
 
+@dataclass(frozen=True)
+class _StubDevice:
+    """The attribute shape of ``gridfleet_testkit.device.Device``.
+
+    A stub rather than the real class: testkit is not installed in the backend
+    venv, and importing it here would couple this suite to a sibling component.
+    Only the three fields ``churnable_combos`` reads are modelled; the real class
+    is a frozen dataclass with no mapping protocol, which is the whole point.
+    """
+
+    pack_id: str
+    platform_id: str
+    operational_state: str
+
+
+def test_churnable_combos_selects_only_available_devices() -> None:
+    """``list_devices()`` returns objects, not dicts.
+
+    The promoted script (and the throwaway it came from) read them with
+    ``device["pack_id"]`` / ``device.get(...)``, which raises ``AttributeError``
+    against the real client and killed the Step 9 measurement run on its first
+    cycle. ``--help`` exits long before ``churnable_combos`` is reached, so no
+    smoke test could ever have caught it.
+    """
+    churn = _load(CHURN_PATH)
+
+    combos = churn.churnable_combos(
+        [
+            _StubDevice("appium-uiautomator2", "android", "available"),
+            _StubDevice("appium-xcuitest", "ios", "available"),
+            # Not allocatable right now: a 409 for these would be "no device",
+            # not "lost a race", so they must not be churned.
+            _StubDevice("appium-uiautomator2", "android-tv", "busy"),
+            _StubDevice("appium-xcuitest", "tvos", "offline"),
+            _StubDevice("appium-uiautomator2", "android-auto", "maintenance"),
+            # An unpacked device cannot be matched by (pack_id, platform_id).
+            _StubDevice("", "android", "available"),
+        ]
+    )
+
+    assert combos == [("appium-uiautomator2", "android"), ("appium-xcuitest", "ios")]
+
+
+def test_churnable_combos_deduplicates_and_sorts() -> None:
+    """Many devices per combo is the normal case; the driver rotates over combos."""
+    churn = _load(CHURN_PATH)
+
+    combos = churn.churnable_combos(
+        [
+            _StubDevice("pack-z", "platform-b", "available"),
+            _StubDevice("pack-a", "platform-b", "available"),
+            _StubDevice("pack-z", "platform-a", "available"),
+            _StubDevice("pack-a", "platform-b", "available"),
+            _StubDevice("pack-a", "platform-b", "available"),
+        ]
+    )
+
+    assert combos == [("pack-a", "platform-b"), ("pack-z", "platform-a"), ("pack-z", "platform-b")]
+
+
+def test_churnable_combos_is_empty_when_nothing_is_available() -> None:
+    """``main()`` turns this into a ``SystemExit`` instead of churning nothing."""
+    churn = _load(CHURN_PATH)
+
+    assert churn.churnable_combos([_StubDevice("pack-a", "platform-a", "busy")]) == []
+    assert churn.churnable_combos([]) == []
+
+
+def test_churnable_combos_rejects_dicts_loudly() -> None:
+    """A mapping must raise, not silently yield no combos.
+
+    Silence is the dangerous failure: an empty combo list makes ``main()`` exit
+    with "no available devices found", which reads like a lab state problem
+    rather than a shape bug, and that is how the original defect hid.
+    """
+    churn = _load(CHURN_PATH)
+
+    with pytest.raises(AttributeError):
+        churn.churnable_combos([{"pack_id": "pack-a", "platform_id": "android", "operational_state": "available"}])
+
+
 def test_churn_summary_is_written_atomically(tmp_path: Path) -> None:
     churn = _load(CHURN_PATH)
     target = tmp_path / "nested" / "churn-summary.json"
@@ -203,14 +285,64 @@ def test_load_tool_help_runs_on_the_python_floor(script: Path, expected_flag: st
     assert expected_flag in result.stdout
 
 
+def _callee_name(func: ast.expr) -> str | None:
+    """Last segment of a call target: ``contextlib.suppress`` -> ``"suppress"``."""
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    if isinstance(func, ast.Name):
+        return func.id
+    return None
+
+
+def _bare_timeout_error_handlers(tree: ast.Module, name: str) -> list[str]:
+    """``except TimeoutError:`` written as a bare builtin — an ``ast.Name``, not an attribute.
+
+    On 3.10 ``asyncio.wait_for`` raises ``asyncio.TimeoutError``, which is
+    ``concurrent.futures.TimeoutError`` and a *different class* from the builtin;
+    they were only unified in 3.11. So UP041's rewrite silently stops catching
+    the timeout on the floor interpreter — the loop crashes instead of looping.
+    ``contextlib.suppress(TimeoutError)`` has the same defect, so both forms are
+    checked.
+    """
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ExceptHandler) and node.type is not None:
+            caught = node.type.elts if isinstance(node.type, ast.Tuple) else [node.type]
+            found.extend(
+                f"{name}:{node.lineno} `except TimeoutError` — the builtin is only asyncio's on 3.11+; "
+                "use asyncio.TimeoutError"
+                for handler in caught
+                if isinstance(handler, ast.Name) and handler.id == "TimeoutError"
+            )
+        elif isinstance(node, ast.Call) and _callee_name(node.func) == "suppress":
+            found.extend(
+                f"{name}:{node.lineno} `suppress(TimeoutError)` — the builtin is only asyncio's on 3.11+; "
+                "use asyncio.TimeoutError"
+                for argument in node.args
+                if isinstance(argument, ast.Name) and argument.id == "TimeoutError"
+            )
+    return found
+
+
 @pytest.mark.parametrize("script", [SAMPLER_PATH, CHURN_PATH])
 def test_promoted_scripts_hold_the_python_floor(script: Path) -> None:
-    """No 3.11+-only symbol, whatever interpreter happens to be available.
+    """No 3.11+-only construct, whatever interpreter happens to be available.
 
-    ``ruff --fix`` rewrites ``datetime.timezone.utc`` into ``datetime.UTC``
-    (UP017) and ``asyncio.TimeoutError`` into the builtin (UP041) without knowing
-    these files target 3.10. The ``# noqa`` markers in the scripts are what stop
-    that; this test is what notices if one is removed.
+    Two classes of ``ruff --fix`` rewrite can silently raise these files above
+    their 3.10 floor, and each needs its own check because they are different AST
+    shapes:
+
+    * UP017 turns ``datetime.timezone.utc`` into ``datetime.UTC`` — an imported
+      name or an attribute, covered by ``PY311_ONLY_SYMBOLS`` below;
+    * UP041 turns ``asyncio.TimeoutError`` into the bare builtin — an
+      ``ast.Name`` in an ``except`` clause or a ``suppress()`` argument, covered
+      by ``_bare_timeout_error_handlers``.
+
+    The file-level ``# ruff: noqa`` markers in the scripts are what stop the
+    rewrites; this test is what notices if one is removed. An earlier version of
+    this docstring claimed to cover UP041 while the scan checked only import
+    symbols — the re-reviewer caught that, and the scan was widened rather than
+    the claim narrowed.
     """
     tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
     found: list[str] = []
@@ -223,6 +355,7 @@ def test_promoted_scripts_hold_the_python_floor(script: Path) -> None:
             )
         elif isinstance(node, ast.Attribute) and node.attr in PY311_ONLY_SYMBOLS:
             found.append(f"{script.name}:{node.lineno} uses .{node.attr} — {PY311_ONLY_SYMBOLS[node.attr]}")
+    found.extend(_bare_timeout_error_handlers(tree, script.name))
 
     assert found == [], (
         f"{script.name} must stay importable on Python {'.'.join(map(str, PYTHON_FLOOR))} "

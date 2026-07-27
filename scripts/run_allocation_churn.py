@@ -31,9 +31,8 @@ lazily so ``--help`` works from any environment.
 
 # ruff: noqa: UP017
 # ^ pinned to the Python floor below, file-wide rather than per line: UP017
-#   rewrites `timezone.utc` to `datetime.UTC` (3.11+) and UP041 rewrites
-#   `asyncio.TimeoutError` to the builtin (only the same object on 3.11+).
-#   Both are wrong here. A per-line noqa drifts as lines move.
+#   rewrites `timezone.utc` to `datetime.UTC`, which is 3.11+ and wrong here.
+#   A per-line noqa drifts as lines move.
 
 from __future__ import annotations
 
@@ -45,22 +44,25 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from types import FrameType, ModuleType
 
     from gridfleet_testkit import GridFleetClient
+    from gridfleet_testkit.device import Device
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HTTP_CONFLICT = 409
 # The plan runs this from ``testkit/``, whose pyproject floor is >=3.10 and whose
 # resolved interpreter is 3.10. Nothing here may use a 3.11+ construct:
-# ``datetime.UTC``, the unified builtin ``TimeoutError``, ``tomllib``,
-# ``except*``/``TaskGroup``, ``Self``, ``StrEnum``. ``ruff --fix`` will happily
-# rewrite the first two into 3.11+ forms; the noqa above and
+# ``datetime.UTC``, ``tomllib``, ``except*``/``TaskGroup``, ``Self``,
+# ``StrEnum``. ``ruff --fix`` will happily rewrite ``timezone.utc`` into the
+# first of those; the file-level noqa above and
 # tests/test_lock_wait_sampler.py::test_promoted_scripts_hold_the_python_floor
-# are what stop that.
+# are what stop that. (This file has no asyncio, so UP041 does not apply here —
+# lock_wait_sampler.py is the one that pins it.)
 PYTHON_FLOOR = (3, 10)
 
 
@@ -99,17 +101,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def churnable_combos(devices: list[dict[str, Any]]) -> list[tuple[str, str]]:
+def churnable_combos(devices: Sequence[Device]) -> list[tuple[str, str]]:
     """Only combos with a currently-available device.
 
     A 409 should mean "lost a race", not "that platform has no allocatable
     device to begin with".
+
+    *devices* are ``gridfleet_testkit.device.Device`` objects — a frozen
+    dataclass, not a mapping. ``GridFleetClient`` genuinely mixes both shapes and
+    this script has to follow it: ``list_devices() -> list[Device]`` (attributes)
+    while ``reserve_devices() -> JsonObject`` (subscripts). Attribute access here
+    is what makes a dict fail loudly instead of silently yielding no combos.
     """
     return sorted(
         {
-            (device["pack_id"], device["platform_id"])
+            (device.pack_id, device.platform_id)
             for device in devices
-            if device.get("pack_id") and device.get("operational_state") == "available"
+            if device.pack_id and device.operational_state == "available"
         }
     )
 
