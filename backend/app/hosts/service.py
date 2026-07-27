@@ -249,6 +249,11 @@ class HostCrudService:
         same hostname; that ``IntegrityError`` leaves the caller's transaction
         unusable, so it propagates and the caller retries through
         :meth:`reregister_host` on a *fresh* transaction.
+
+        ``hosts/router.py`` also calls :func:`validate_orchestration_contract`
+        ahead of both this attempt and the conflict fallback — deliberately, as
+        defence-in-depth for direct callers of this method. Neither copy guards
+        the other; do not delete one on the assumption that it does.
         """
         validate_orchestration_contract(data.capabilities, host_label=data.hostname)
         # FOR UPDATE: the boot-fence write below must serialize against a

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import io
-import logging
 import tarfile
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select, text
@@ -23,6 +23,7 @@ from app.packs.models import (
     HostPackDoctorResult,
     HostPackInstallation,
 )
+from app.packs.services import service as pack_service
 from app.packs.services.ingest import MAX_PACK_TARBALL_BYTES
 
 if TYPE_CHECKING:
@@ -513,7 +514,6 @@ async def test_failed_artifact_deletion_is_logged_and_still_reports_success(
     client: AsyncClient,
     db_session_maker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The unlink is post-commit, so its failure is logged rather than surfaced.
 
@@ -521,6 +521,15 @@ async def test_failed_artifact_deletion_is_logged_and_still_reports_success(
     report a rollback that did not happen and send the operator looking for a
     pack that is gone. Read the durability half from a peer session — the request
     session would show the deletion whether or not it was ever committed.
+
+    NOTE: spy on ``logger.warning`` directly instead of going through ``caplog``.
+    ``unlink_pack_artifact`` logs through structlog's stdlib bridge, so the record
+    has to survive stdlib filtering and propagate to the root handler ``caplog``
+    installs, and other tests running in the same xdist worker can leave that
+    state in a configuration where the WARNING record never reaches handlers —
+    which has produced a flake on CI (see
+    ``tests/devices/test_maintenance_service_exit.py``). Spying on the call site
+    bypasses the pipeline entirely and verifies the contract directly.
     """
     await _upload(client, "0.1.0")
 
@@ -528,12 +537,16 @@ async def test_failed_artifact_deletion_is_logged_and_still_reports_success(
         raise PermissionError(f"cannot remove {self}")
 
     monkeypatch.setattr(Path, "unlink", _explode)
-    with caplog.at_level(logging.WARNING):
+    with patch.object(pack_service.logger, "warning") as warning_spy:
         res = await client.delete("/api/driver-packs/vendor-foo")
     monkeypatch.undo()
 
     assert res.status_code == 204, "a failing unlink must not turn a committed delete into an error"
-    assert "pack_artifact_unlink_failed" in caplog.text, "the orphaned artifact was not reported anywhere"
+    assert warning_spy.called, "the orphaned artifact was not reported anywhere"
+    warning_args, _ = warning_spy.call_args
+    assert warning_args[0] == "pack_artifact_unlink_failed", (
+        f"warning message must mention pack_artifact_unlink_failed (got: {warning_args[0]!r})"
+    )
     async with db_session_maker() as peer:
         assert await peer.get(DriverPack, "vendor-foo") is None, (
             "metadata deletion committed before the unlink and must stay committed"

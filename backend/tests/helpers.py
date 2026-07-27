@@ -265,7 +265,7 @@ def record_device_lock_proofs(monkeypatch: pytest.MonkeyPatch) -> list[uuid.UUID
     proofs: list[uuid.UUID] = []
     real_lock = device_locking.lock_device_handle
 
-    async def spy(db: AsyncSession, device_id: uuid.UUID, **kwargs: bool) -> LockedDevice:
+    async def spy(db: AsyncSession, device_id: uuid.UUID, **kwargs: Any) -> LockedDevice:  # noqa: ANN401
         locked = await real_lock(db, device_id, **kwargs)
         locked.assert_active(db)
         proofs.append(locked.device.id)

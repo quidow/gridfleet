@@ -63,6 +63,7 @@ REMOTE_CALLS: dict[str, frozenset[str]] = {
     "app/hosts/router.py": frozenset({"pack_doctor", "get_agent_tool_status", "fetch_pack_candidates"}),
     "app/packs/services/discovery.py": frozenset({"_agent_get_pack_devices"}),
     "app/devices/services/bulk.py": frozenset({"pack_device_lifecycle_action"}),
+    "app/appium_nodes/routers/nodes.py": frozenset({"converge_device_now"}),
 }
 
 

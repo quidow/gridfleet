@@ -42,7 +42,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.db, pytest.mark.usefixtures("seed
 FLEET_SIZES = (1, 10, 50)
 
 
-class RecordingSessionFactory:
+class StatementRecordingFactory:
     """A ``SessionFactory`` that records every statement its sessions issue.
 
     ``capture_statements`` pins its listener to one session's connection, which
@@ -148,7 +148,7 @@ async def test_bulk_enter_maintenance_statement_count_stays_linear(
     for size in FLEET_SIZES:
         devices = await _seed_fleet(db_session, db_host, count=size, prefix=f"q-maint-{size}")
         statements: list[str] = []
-        service = _bulk_service(RecordingSessionFactory(command_session_factory, statements))
+        service = _bulk_service(StatementRecordingFactory(command_session_factory, statements))
         result = await service.bulk_enter_maintenance([device.id for device in devices])
         assert result["succeeded"] == size, result
         counts[size] = len(statements)
@@ -165,7 +165,7 @@ async def test_bulk_start_nodes_statement_count_stays_linear(
     for size in FLEET_SIZES:
         devices = await _seed_fleet(db_session, db_host, count=size, prefix=f"q-start-{size}")
         statements: list[str] = []
-        service = _bulk_service(RecordingSessionFactory(command_session_factory, statements))
+        service = _bulk_service(StatementRecordingFactory(command_session_factory, statements))
         result = await service.bulk_start_nodes([device.id for device in devices])
         assert result["succeeded"] == size, result
         counts[size] = len(statements)

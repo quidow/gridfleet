@@ -266,19 +266,21 @@ class BulkOperationsService:
 
         async def _one(device_id: uuid.UUID) -> BulkItemResult:
             try:
-                async with sem, self._session_factory.begin() as db:
-                    locked = await device_locking.lock_device_handle(db, device_id)
-                    recovery = await self._maintenance.exit_maintenance_locked(db, locked)
+                async with sem:
+                    async with self._session_factory.begin() as db:
+                        locked = await device_locking.lock_device_handle(db, device_id)
+                        recovery = await self._maintenance.exit_maintenance_locked(db, locked)
+                    if recovery is not None:
+                        # After this device's own transaction committed: create_job owns its
+                        # commit, so it must not run inside the state mutation. No guard
+                        # here — schedule_device_recovery is contractually best-effort and
+                        # swallows its own failures. Still inside the semaphore, so an
+                        # N-device exit does not burst past the intended concurrency.
+                        await self._maintenance.schedule_device_recovery(recovery.device_id)
             except NoResultFound:
                 return BulkItemResult(device_id, "Device not found")
             except Exception as exc:  # noqa: BLE001 — per-device error accumulation; bulk exit_maintenance must continue past one failure
                 return BulkItemResult(device_id, str(exc))
-            if recovery is not None:
-                # After this device's own transaction committed: create_job owns its
-                # commit, so it must not run inside the state mutation. No guard
-                # here — schedule_device_recovery is contractually best-effort and
-                # swallows its own failures.
-                await self._maintenance.schedule_device_recovery(recovery.device_id)
             return BulkItemResult(device_id, None)
 
         results = await asyncio.gather(*[_one(device_id) for device_id in existing_device_ids])
