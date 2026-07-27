@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import uuid
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, AsyncMock, patch
 
@@ -42,77 +41,17 @@ from app.packs.models import HostPackDoctorResult
 from app.packs.models.pack import DriverPack
 from app.packs.services.discovery import PackDiscoveryService, StaleHostGenerationError
 from tests.concurrency.group_lock_helpers import capture_statements, pin_statement_listener
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, RecordingSessionFactory
 from tests.helpers import create_device_record, dispatch_committed_events, recent_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
+    from collections.abc import Iterator, Sequence
 
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 CAPS_V7 = {"orchestration_contract_version": 7}
-
-type ExecuteHook = Callable[[AsyncSession, str], Awaitable[None]]
-
-
-class RecordingSessionFactory:
-    """An ``async_sessionmaker`` stand-in that keeps every session it hands out.
-
-    Supports both shapes a Phase 9 command uses — ``factory()`` for a short read
-    and ``factory.begin()`` for the single write boundary — and optionally runs
-    *hook* after each statement so a test can commit a racing peer at an exact
-    point in the command's statement sequence.
-    """
-
-    def __init__(self, inner: async_sessionmaker[AsyncSession]) -> None:
-        self._inner = inner
-        self._detach: list[Callable[[], None]] = []
-        self.sessions: list[AsyncSession] = []
-        self.statements: list[list[str]] = []
-        self.hook: ExecuteHook | None = None
-
-    def _track(self, session: AsyncSession) -> AsyncSession:
-        self.sessions.append(session)
-        # Real SQL, through the same pinned listener ``capture_statements`` uses:
-        # an ORM flush issues its UPDATE on the connection, never through
-        # ``session.execute``, so a wrapper alone cannot see the writes.
-        sink: list[str] = []
-        self.statements.append(sink)
-        self._detach.append(pin_statement_listener(session, sink))
-        original = session.execute
-
-        async def spy(statement: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-            result = await original(statement, *args, **kwargs)
-            if self.hook is not None:
-                await self.hook(session, str(statement).lower())
-            return result
-
-        session.execute = spy  # type: ignore[method-assign]
-        return session
-
-    def __call__(self) -> AsyncSession:
-        return self._track(self._inner())
-
-    @asynccontextmanager
-    async def begin(self) -> AsyncIterator[AsyncSession]:
-        async with self._inner() as session:
-            self._track(session)
-            async with session.begin():
-                yield session
-
-    def close(self) -> None:
-        for detach in self._detach:
-            detach()
-        self._detach.clear()
-
-    def open_transactions(self) -> list[int]:
-        """Indexes of recorded sessions still inside a transaction, right now."""
-        return [index for index, session in enumerate(self.sessions) if session.in_transaction()]
-
-    def statements_for(self, index: int) -> list[str]:
-        return [" ".join(statement.lower().split()) for statement in self.statements[index]]
 
 
 @pytest.fixture
@@ -125,11 +64,15 @@ def recorder(client: AsyncClient) -> Iterator[RecordingSessionFactory]:
     binds ``agent_operations.get_pack_devices`` when it is built, so a container
     built once at fixture time would capture the real dialler and ignore a
     per-test patch.
+
+    ``statement_pinner`` is what makes ``statements_for`` see an ORM flush: the
+    lock-order assertions below read UPDATE statements that never pass through
+    ``session.execute``.
     """
     _ = client
     build_hosts = app.dependency_overrides[get_host_services]
     build_packs = app.dependency_overrides[get_pack_services]
-    recording = RecordingSessionFactory(build_hosts().session_factory)
+    recording = RecordingSessionFactory(build_hosts().session_factory, statement_pinner=pin_statement_listener)
     app.dependency_overrides[get_host_services] = lambda: dataclasses.replace(
         build_hosts(),
         session_factory=recording,  # type: ignore[arg-type]

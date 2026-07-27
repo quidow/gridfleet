@@ -19,7 +19,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -31,65 +30,19 @@ from app.events.models import SystemEvent
 from app.settings.models import Setting
 from app.settings.registry import SETTINGS_REGISTRY
 from app.settings.service import SettingsService
+from tests.fakes import RecordingSessionFactory
 from tests.helpers import dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+    from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from tests.fakes.session_factory import ExecuteHook
+
 KEY = "general.session_viability_timeout_sec"
 OTHER_KEY = "general.node_fail_window_sec"
-
-type AfterExecute = Callable[[AsyncSession, str], Awaitable[None]]
-
-
-class RecordingSettingsSessions:
-    """An ``async_sessionmaker`` stand-in that records, and can pause, the service.
-
-    ``SettingsService`` uses both factory shapes — ``factory()`` for
-    ``refresh_from_store`` and ``factory.begin()`` for the mutation boundary — so
-    both are supported. The sessions are real sessions on the real test schema:
-    every failure a test injects through ``after_execute`` is a real database
-    failure on a real transaction, not a patched method leaving a clean session
-    behind.
-
-    ``after_execute`` is deliberately hung off ``session.execute`` rather than the
-    engine's cursor events. Nothing here asserts on statement *counts* (that is
-    ``capture_statements``' job), and a hook has to be able to await, which a
-    ``before_cursor_execute`` listener cannot.
-    """
-
-    def __init__(self, inner: async_sessionmaker[AsyncSession]) -> None:
-        self._inner = inner
-        self.sessions: list[AsyncSession] = []
-        self.begun = 0
-        self.after_execute: AfterExecute | None = None
-
-    def _track(self, session: AsyncSession) -> AsyncSession:
-        self.sessions.append(session)
-        original = session.execute
-
-        async def spy(statement: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-            result = await original(statement, *args, **kwargs)
-            if self.after_execute is not None:
-                await self.after_execute(session, " ".join(str(statement).lower().split()))
-            return result
-
-        session.execute = spy  # type: ignore[method-assign]
-        return session
-
-    def __call__(self) -> AsyncSession:
-        return self._track(self._inner())
-
-    @asynccontextmanager
-    async def begin(self) -> AsyncIterator[AsyncSession]:
-        async with self._inner() as session:
-            self._track(session)
-            self.begun += 1
-            async with session.begin():
-                yield session
 
 
 class UnwritableCache(dict[str, Any]):
@@ -126,13 +79,13 @@ class ContentionAnnouncingLock(asyncio.Lock):
 
 
 @pytest.fixture
-def recorder(db_session_maker: async_sessionmaker[AsyncSession]) -> RecordingSettingsSessions:
-    return RecordingSettingsSessions(db_session_maker)
+def recorder(db_session_maker: async_sessionmaker[AsyncSession]) -> RecordingSessionFactory:
+    return RecordingSessionFactory(db_session_maker)
 
 
 @pytest_asyncio.fixture
 async def service(
-    db_session_maker: async_sessionmaker[AsyncSession], recorder: RecordingSettingsSessions
+    db_session_maker: async_sessionmaker[AsyncSession], recorder: RecordingSessionFactory
 ) -> AsyncGenerator[SettingsService]:
     """A service of its own, so nothing here perturbs the shared conftest instance.
 
@@ -150,11 +103,11 @@ async def service(
 async def _settle(*tasks: asyncio.Task[Any]) -> None:
     """Let *tasks* run out and swallow their outcomes.
 
-    A paused ``after_execute`` hook holds a real transaction on a real
-    connection, so a test that aborts on an assertion must still release its
-    tasks: the per-test schema fixture ends in ``DROP SCHEMA CASCADE``, which
-    blocks behind any lock an abandoned transaction still holds. Without this a
-    failed assertion hangs the run instead of reporting itself.
+    A paused ``hook`` holds a real transaction on a real connection, so a test
+    that aborts on an assertion must still release its tasks: the per-test schema
+    fixture ends in ``DROP SCHEMA CASCADE``, which blocks behind any lock an
+    abandoned transaction still holds. Without this a failed assertion hangs the
+    run instead of reporting itself.
     """
     await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -174,7 +127,7 @@ async def _staged_events(db_session_maker: async_sessionmaker[AsyncSession]) -> 
 
 def _peer_insert_hook(
     db_session_maker: async_sessionmaker[AsyncSession], landed: asyncio.Event, *, key: str, value: int
-) -> AfterExecute:
+) -> ExecuteHook:
     """Commit a competing row for *key* right after the command reads it.
 
     The command's ``SELECT`` has already returned ``None``, so it goes on to
@@ -202,18 +155,18 @@ def _peer_insert_hook(
 
 async def test_a_failed_commit_changes_no_row_no_cache_and_no_event(
     service: SettingsService,
-    recorder: RecordingSettingsSessions,
+    recorder: RecordingSessionFactory,
     db_session_maker: async_sessionmaker[AsyncSession],
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
     cache_before = dict(service._cache)
     overrides_before = dict(service._overrides)
     landed = asyncio.Event()
-    recorder.after_execute = _peer_insert_hook(db_session_maker, landed, key=KEY, value=99)
+    recorder.hook = _peer_insert_hook(db_session_maker, landed, key=KEY, value=99)
 
     with pytest.raises(IntegrityError):
         await service.update(KEY, 111, publisher=event_bus)
-    recorder.after_execute = None
+    recorder.hook = None
 
     assert landed.is_set(), "the competing row never landed; the unique violation was not exercised"
     assert service._cache == cache_before, "a rolled-back mutation still moved the settings cache"
@@ -236,12 +189,39 @@ async def test_a_cache_failure_after_commit_keeps_the_write_and_repairs_the_cach
     service: SettingsService,
     db_session_maker: async_sessionmaker[AsyncSession],
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The repair runs, and it runs with ``_refresh_lock`` already released.
+
+    The lock state at the call is the second of the brief's two load-bearing
+    orderings, and the only one whose regression mode is silent: because
+    ``refresh_from_store`` acquires the same non-reentrant lock, repairing from
+    inside the lock deadlocks rather than fails. The spy records ``locked()`` and
+    declines to call through when it is held, which turns that deadlock into the
+    named assertion below — the same trick the cancellation test uses on
+    ``_refresh_lock.locked()``. Observation only: the injected failure is still
+    the real ``UnwritableCache`` write, and the correct path calls through.
+    """
     service._cache = UnwritableCache(service._cache)
+    repair_saw_lock_held: list[bool] = []
+    real_refresh = service.refresh_from_store
+
+    async def _spy_refresh_from_store() -> None:
+        held = service._refresh_lock.locked()
+        repair_saw_lock_held.append(held)
+        if held:
+            return
+        await real_refresh()
+
+    monkeypatch.setattr(service, "refresh_from_store", _spy_refresh_from_store)
 
     with caplog.at_level(logging.ERROR, logger="app.settings.service"):
         response = await service.update(KEY, 121, publisher=event_bus)
 
+    assert repair_saw_lock_held == [False], (
+        "the post-commit repair called refresh_from_store while _refresh_lock was still held; that lock is not "
+        "re-entrant, so in production the repair would block forever instead of failing"
+    )
     assert await _stored(db_session_maker, KEY) == 121, "the committed row was rolled back by a cache failure"
     assert await _staged_events(db_session_maker) == 1, "the committed outbox row was rolled back by a cache failure"
     assert [record.message for record in caplog.records if record.levelno >= logging.ERROR], (
@@ -251,8 +231,10 @@ async def test_a_cache_failure_after_commit_keeps_the_write_and_repairs_the_cach
     assert response["value"] == 121, "the response was built from the unrepaired cache"
     assert response["is_overridden"] is True
 
-    # Idempotent: the repair already happened, so an explicit refresh changes nothing.
-    await service.refresh_from_store()
+    # Idempotent: the repair already happened, so an explicit refresh changes
+    # nothing. Straight to the real method — the spy exists only to watch the
+    # call production makes.
+    await real_refresh()
     assert service.get(KEY) == 121
 
 
@@ -262,7 +244,7 @@ async def test_a_cache_failure_after_commit_keeps_the_write_and_repairs_the_cach
 
 
 async def test_no_transaction_opens_until_the_stale_refresh_is_cancelled(
-    service: SettingsService, recorder: RecordingSettingsSessions
+    service: SettingsService, recorder: RecordingSessionFactory
 ) -> None:
     """The command must be parked in the cancellation, holding nothing.
 
@@ -319,7 +301,7 @@ async def test_no_transaction_opens_until_the_stale_refresh_is_cancelled(
 
 async def test_a_racing_refresh_cannot_overwrite_a_committed_write(
     service: SettingsService,
-    recorder: RecordingSettingsSessions,
+    recorder: RecordingSessionFactory,
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
     """The one interleaving where a lockless writer loses its update.
@@ -342,14 +324,14 @@ async def test_a_racing_refresh_cannot_overwrite_a_committed_write(
         read_done.set()
         await resume.wait()
 
-    recorder.after_execute = _pause_after_the_refresh_reads
+    recorder.hook = _pause_after_the_refresh_reads
     refresh = asyncio.create_task(service.refresh_from_store())
     write: asyncio.Task[dict[str, Any]] | None = None
     contended: asyncio.Task[bool] | None = None
     try:
         await read_done.wait()
         # The in-flight hook keeps its own reference; the writer must not be paused.
-        recorder.after_execute = None
+        recorder.hook = None
 
         write = asyncio.create_task(service.update(KEY, 151, publisher=event_bus))
         contended = asyncio.create_task(lock.contended.wait())
@@ -398,7 +380,7 @@ async def _do_reset_all(settings: SettingsService) -> None:
 )
 async def test_each_mutation_uses_one_transaction_and_stages_one_event(
     service: SettingsService,
-    recorder: RecordingSettingsSessions,
+    recorder: RecordingSessionFactory,
     db_session_maker: async_sessionmaker[AsyncSession],
     mutate: Callable[[SettingsService], Awaitable[None]],
 ) -> None:
@@ -414,25 +396,32 @@ async def test_each_mutation_uses_one_transaction_and_stages_one_event(
 
 
 # ---------------------------------------------------------------------------
-# 6. A failed session is closed and never reused
+# 6. A session whose transaction failed is never reused
 # ---------------------------------------------------------------------------
 
 
-async def test_a_failed_session_is_closed_and_the_next_command_opens_a_new_one(
+async def test_a_failed_command_never_reuses_its_session(
     service: SettingsService,
-    recorder: RecordingSettingsSessions,
+    recorder: RecordingSessionFactory,
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
+    """The next command works on a new session, and the retry really succeeds.
+
+    Deliberately no assertion that the failed session is *closed*: the recorder's
+    own ``begin()`` closes it on the way out, mirroring
+    ``async_sessionmaker.begin()``, so such an assertion would hold for any
+    implementation of ``_run_mutation`` and prove nothing. What production decides
+    is whether the next command reaches for a fresh session or the poisoned one,
+    and whether a write can still land afterwards.
+    """
     landed = asyncio.Event()
-    recorder.after_execute = _peer_insert_hook(db_session_maker, landed, key=KEY, value=99)
+    recorder.hook = _peer_insert_hook(db_session_maker, landed, key=KEY, value=99)
 
     with pytest.raises(IntegrityError):
         await service.update(KEY, 111, publisher=event_bus)
-    recorder.after_execute = None
+    recorder.hook = None
     assert landed.is_set()
-
     failed = recorder.sessions[-1]
-    assert not failed.in_transaction(), "the failed begin() context was still open when it returned to the caller"
 
     # The same command again: the row the peer left is now found and updated.
     response = await service.update(KEY, 211, publisher=event_bus)
