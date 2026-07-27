@@ -4,7 +4,6 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from app.core.dependencies import DbDep
 from app.core.http_errors import convert_not_found
 from app.events.dependencies import EventServicesDep
 from app.settings.dependencies import SettingsServicesDep
@@ -21,12 +20,11 @@ async def list_settings(settings_services: SettingsServicesDep) -> list[dict[str
 @router.put("/bulk", response_model=list[SettingRead])
 async def bulk_update_settings(
     body: SettingsBulkUpdate,
-    db: DbDep,
     settings_services: SettingsServicesDep,
     events: EventServicesDep,
 ) -> list[dict[str, Any]]:
     try:
-        return await settings_services.service.bulk_update(db, body.settings, publisher=events.publisher)
+        return await settings_services.service.bulk_update(body.settings, publisher=events.publisher)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
@@ -34,10 +32,8 @@ async def bulk_update_settings(
 
 
 @router.post("/reset-all")
-async def reset_all_settings(
-    db: DbDep, settings_services: SettingsServicesDep, events: EventServicesDep
-) -> dict[str, str]:
-    await settings_services.service.reset_all(db, publisher=events.publisher)
+async def reset_all_settings(settings_services: SettingsServicesDep, events: EventServicesDep) -> dict[str, str]:
+    await settings_services.service.reset_all(publisher=events.publisher)
     return {"status": "all settings reset to defaults"}
 
 
@@ -51,12 +47,11 @@ async def get_setting(key: str, settings_services: SettingsServicesDep) -> dict[
 async def update_setting(
     key: str,
     body: SettingUpdate,
-    db: DbDep,
     settings_services: SettingsServicesDep,
     events: EventServicesDep,
 ) -> dict[str, Any]:
     try:
-        return await settings_services.service.update(db, key, body.value, publisher=events.publisher)
+        return await settings_services.service.update(key, body.value, publisher=events.publisher)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
@@ -66,12 +61,11 @@ async def update_setting(
 @router.post("/reset/{key:path}", response_model=SettingRead)
 async def reset_setting(
     key: str,
-    db: DbDep,
     settings_services: SettingsServicesDep,
     events: EventServicesDep,
 ) -> dict[str, Any]:
     with convert_not_found():
         try:
-            return await settings_services.service.reset(db, key, publisher=events.publisher)
+            return await settings_services.service.reset(key, publisher=events.publisher)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e

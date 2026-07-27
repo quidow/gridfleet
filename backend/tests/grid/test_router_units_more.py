@@ -146,7 +146,6 @@ async def test_settings_router_error_paths() -> None:
     with pytest.raises(HTTPException) as caught:
         await settings_router.bulk_update_settings(
             SettingsBulkUpdate(settings={"missing": 1}),
-            db=object(),
             settings_services=ss,
             events=SimpleNamespace(publisher=event_bus),
         )
@@ -156,7 +155,6 @@ async def test_settings_router_error_paths() -> None:
     with pytest.raises(HTTPException) as caught:
         await settings_router.bulk_update_settings(
             SettingsBulkUpdate(settings={"bad": 1}),
-            db=object(),
             settings_services=ss,
             events=SimpleNamespace(publisher=event_bus),
         )
@@ -172,7 +170,6 @@ async def test_settings_router_error_paths() -> None:
         await settings_router.update_setting(
             "missing",
             SettingUpdate(value=1),
-            db=object(),
             settings_services=ss,
             events=SimpleNamespace(publisher=event_bus),
         )
@@ -183,7 +180,6 @@ async def test_settings_router_error_paths() -> None:
         await settings_router.update_setting(
             "bad",
             SettingUpdate(value=1),
-            db=object(),
             settings_services=ss,
             events=SimpleNamespace(publisher=event_bus),
         )
@@ -192,7 +188,7 @@ async def test_settings_router_error_paths() -> None:
     svc.reset = AsyncMock(side_effect=KeyError("missing"))
     with pytest.raises(HTTPException) as caught:
         await settings_router.reset_setting(
-            "missing", db=object(), events=SimpleNamespace(publisher=event_bus), settings_services=ss
+            "missing", events=SimpleNamespace(publisher=event_bus), settings_services=ss
         )
     assert caught.value.status_code == 404
 
@@ -406,7 +402,7 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
     reset_svc = Mock()
     reset_svc.reset_all = AsyncMock()
     assert await settings_router.reset_all_settings(
-        db=object(), events=SimpleNamespace(publisher=event_bus), settings_services=_mock_settings_svc(reset_svc)
+        events=SimpleNamespace(publisher=event_bus), settings_services=_mock_settings_svc(reset_svc)
     ) == {"status": "all settings reset to defaults"}
     reset_svc.reset_all.assert_awaited_once()
 

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.settings import service as settings_module
+from tests.fakes import FakeSessionFactory
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -77,9 +78,9 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
     with pytest.raises(KeyError, match="Unknown setting"):
         service.get("missing.setting")
     with pytest.raises(KeyError, match="Unknown setting"):
-        await service.reset(AsyncMock(), "missing.setting", publisher=event_bus)
+        await service.reset("missing.setting", publisher=event_bus)
     with pytest.raises(KeyError, match="Unknown setting"):
-        await service.bulk_update(AsyncMock(), {"missing.setting": 1}, publisher=event_bus)
+        await service.bulk_update({"missing.setting": 1}, publisher=event_bus)
 
     row = SimpleNamespace(value=None)
 
@@ -88,22 +89,20 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
             return row
 
     class UpdateSession:
-        def __init__(self) -> None:
-            self.committed = False
-
         async def execute(self, *_args: object, **_kwargs: object) -> Result:
             return Result()
 
-        async def commit(self) -> None:
-            self.committed = True
-
     monkeypatch.setattr(settings_module, "_queue_settings_changed", lambda *_args, **_kwargs: None)
-    db = UpdateSession()
-    response = await service.update(db, "general.session_viability_timeout_sec", 11, publisher=event_bus)  # type: ignore[arg-type]
+    # The boundary is the service's own now, so the fake is the *factory*: its
+    # ``begun`` counter is what used to be ``UpdateSession.committed``.
+    factory = FakeSessionFactory(UpdateSession())
+    service.configure_store_refresh(factory)  # type: ignore[arg-type]
+    response = await service.update("general.session_viability_timeout_sec", 11, publisher=event_bus)
     assert response["value"] == 11
     assert row.value == 11
-    assert db.committed is True
+    assert factory.begun == 1
 
-    bulk_response = await service.bulk_update(db, {"general.session_viability_timeout_sec": 12}, publisher=event_bus)  # type: ignore[arg-type]
+    bulk_response = await service.bulk_update({"general.session_viability_timeout_sec": 12}, publisher=event_bus)
     assert bulk_response[0]["value"] == 12
     assert row.value == 12
+    assert factory.begun == 2

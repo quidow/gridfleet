@@ -54,11 +54,18 @@ MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/packs/routers/uploads.py",
     "app/packs/services/lifecycle.py",
     "app/packs/services/service.py",
+    # Phase 9 task 5: the settings mutations, the last of the phase's 16 files.
+    "app/settings/service.py",
 )
 
 # Phase-3 mixed modules: each carries a sanctioned commit boundary AND below-boundary
 # `*_locked` domain helpers that must never commit. A whole-file zero-commit assertion
 # cannot apply, so every commit/rollback must live inside an allowlisted function.
+#
+# Phase 9 emptied this of its own entries: `app/appium_nodes/services/reconciler_agent.py`
+# was the last one, and task 2 moved its three operator commands out to their router.
+# Every path left below is scheduler/job work that Phase 10 owns, and Phase 10's
+# repository-wide guard is what finally retires the dict.
 SANCTIONED_COMMIT_BOUNDARIES = {
     "app/appium_nodes/services/node_health.py": {"fold_host_nodes"},
     "app/devices/services/connectivity.py": {"fold_host_devices"},
