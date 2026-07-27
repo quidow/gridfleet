@@ -44,10 +44,6 @@ TRANSACTION_CONTROL_ARGUMENTS = frozenset({"commit", "rollback", "autocommit"})
 # argument guard along with the commit/rollback scan. Shrink this in the same
 # change that appends to that tuple; Task 5 empties it.
 EXPECTED_PENDING = {
-    "app/appium_nodes/routers/nodes.py",  # Task 2
-    "app/appium_nodes/services/reconciler_agent.py",  # Task 2
-    "app/devices/services/bulk.py",  # Task 2
-    "app/devices/services/maintenance.py",  # Task 2
     "app/hosts/router.py",  # Task 3
     "app/hosts/service.py",  # Task 3
     "app/packs/services/discovery.py",  # Task 3

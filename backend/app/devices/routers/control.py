@@ -15,6 +15,7 @@ from app.core.dependencies import DbDep
 from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.errors import AgentCallError
 from app.core.http_errors import convert_not_found
+from app.devices import locking as device_locking
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.routers.helpers import (
     get_device_for_update_or_404,
@@ -53,11 +54,18 @@ async def enter_device_maintenance(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
-    device = await get_device_for_update_or_404(device_id, db)
+    # No pre-lock on the request session: the command locks the same row from its
+    # own session, and holding both would deadlock until a statement timeout.
     try:
-        device = await device_services.maintenance.enter_maintenance(db, device)
+        with convert_not_found("Device not found"):
+            async with device_services.session_factory.begin() as command_db:
+                await device_services.maintenance.enter_maintenance(command_db, device_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    # Post-commit re-serialization on the request session: serialize_device runs
+    # several read projections, and pulling them into the write transaction would
+    # hold the Device FOR UPDATE across all of them for no behavioral gain.
+    device = await get_device_or_404(device_id, db, device_services.crud)
     return await device_services.presenter.serialize_device(db, device)
 
 
@@ -65,11 +73,18 @@ async def enter_device_maintenance(
 async def exit_device_maintenance(
     device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep
 ) -> dict[str, Any]:
-    device = await get_device_for_update_or_404(device_id, db)
     try:
-        device = await device_services.maintenance.exit_maintenance(db, device)
+        with convert_not_found("Device not found"):
+            async with device_services.session_factory.begin() as command_db:
+                recovery = await device_services.maintenance.exit_maintenance(command_db, device_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    if recovery is not None:
+        # The maintenance transaction has ended; create_job owns the enqueue's own
+        # commit, and an enqueue failure must not surface after the state mutation
+        # committed.
+        await device_services.maintenance.schedule_device_recovery(recovery.device_id)
+    device = await get_device_or_404(device_id, db, device_services.crud)
     return await device_services.presenter.serialize_device(db, device)
 
 
@@ -264,29 +279,27 @@ async def reconnect_device(
     success = data.get("success", False)
 
     if success and device.appium_node:
-        # Intentionally NOT re-fetched with `get_device_for_update_or_404` here:
-        # Inline restart writes desired state directly so concurrent operator
-        # actions (maintenance enter, delete) can preempt — see
-        # `tests/test_concurrency_reconnect_restart_lock.py`. Locking at the
-        # router would serialise these and break preemption.
-        #
-        # Clear stale session-viability failures so health checks can evaluate
-        # the device after the node restarts.
+        # Clear stale session-viability failures so health checks can evaluate the
+        # device after the node restarts. No device row lock is taken here: the
+        # write touches only these two columns, and the node lever below takes the
+        # aggregate lock on its own short-lived session so concurrent operator
+        # actions (maintenance enter, delete) queue behind it rather than
+        # interleaving with it — see
+        # `tests/concurrency/test_concurrency_reconnect_restart_lock.py`.
         device.session_viability_status = None
         device.session_viability_error = None
+        await db.flush()
+        await db.commit()
         try:
-            await db.flush()
-            # Intent reconciliation briefly locks the device row. Commit before
-            # the inline restart so maintenance/delete actions can still
-            # preempt while the restart talks to the agent.
-            await db.commit()
-            node = device.appium_node
-            if node is None or not node.observed_running:
-                if device.host_id is None:
-                    raise HTTPException(status_code=400, detail=f"Device {device.id} has no host assigned")
-                await appium_services.reconciler_agent.start_node(db, device, caller="operator_route")
-            else:
-                await appium_services.reconciler_agent.restart_node(db, device, caller="operator_restart")
+            async with appium_services.session_factory.begin() as node_db:
+                locked = await device_locking.lock_device_handle(node_db, device_id)
+                node = locked.device.appium_node
+                if node is None or not node.observed_running:
+                    if locked.device.host_id is None:
+                        raise HTTPException(status_code=400, detail=f"Device {device_id} has no host assigned")
+                    await appium_services.reconciler_agent.start_node_txn(node_db, locked, caller="operator_route")
+                else:
+                    await appium_services.reconciler_agent.restart_node_txn(node_db, locked, caller="operator_restart")
         except (node_manager.NodeManagerError, node_manager.NodePortConflictError) as exc:
             raise HTTPException(status_code=502, detail=f"Reconnect succeeded but node restart failed: {exc}") from exc
 

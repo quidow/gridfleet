@@ -28,7 +28,7 @@ from tests.helpers import test_event_bus as event_bus
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -109,7 +109,11 @@ async def test_mark_review_required_audits_reason_updates(db_session: AsyncSessi
     assert update_event.details.get("review_reason") == "second reason"
 
 
-async def test_exit_maintenance_clears_review_required(db_session: AsyncSession, db_host: Host) -> None:
+async def test_exit_maintenance_clears_review_required(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -121,14 +125,21 @@ async def test_exit_maintenance_clears_review_required(db_session: AsyncSession,
     await db_session.commit()
 
     await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).exit_maintenance(db_session, device)
+        review=build_review_service(),
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
+        session_factory=db_session_maker,
+    ).exit_maintenance(db_session, device.id)
     await db_session.refresh(device)
     assert device.review_required is False
     assert device.review_reason is None
 
 
-async def test_enter_maintenance_keeps_review_required(db_session: AsyncSession, db_host: Host) -> None:
+async def test_enter_maintenance_keeps_review_required(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
     """Entering maintenance does NOT clear the flag — it is a separate signal.
     Only the exit transition (operator promise that the device is ready again)
     clears it.
@@ -143,8 +154,11 @@ async def test_enter_maintenance_keeps_review_required(db_session: AsyncSession,
     await db_session.commit()
 
     await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).enter_maintenance(db_session, device)
+        review=build_review_service(),
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
+        session_factory=db_session_maker,
+    ).enter_maintenance(db_session, device.id)
     await db_session.refresh(device)
     assert device.review_required is True
 

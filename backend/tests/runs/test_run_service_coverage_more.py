@@ -69,7 +69,10 @@ def _make_failure_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunF
         settings=_settings,
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+            review=build_review_service(),
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
+            session_factory=session_factory,
         ),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
@@ -356,7 +359,10 @@ async def test_cooldown_device_guard_paths(
         settings=fake_settings,
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+            review=build_review_service(),
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
+            session_factory=db_session_maker,
         ),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
@@ -551,7 +557,7 @@ async def test_cooldown_escalation_releases_device(
     )
     assert result_tuple == (None, 1, True, 1, False)
     # Released; maintenance toggle off -> stays available, not maintenance.
-    maintenance.enter_maintenance.assert_not_awaited()
+    maintenance.enter_maintenance_locked.assert_not_awaited()
     active_run, _active = await get_device_reservation_with_entry(db_session, device.id)
     assert active_run is None
 
@@ -603,7 +609,7 @@ async def test_cooldown_escalation_enters_maintenance_when_enabled(
     )
     assert result_tuple == (None, 1, True, 1, True)
     # Escalation entered maintenance because the toggle is on.
-    maintenance.enter_maintenance.assert_awaited_once()
+    maintenance.enter_maintenance_locked.assert_awaited_once()
     # Released from the run regardless of toggle.
     active_run, _active = await get_device_reservation_with_entry(db_session, device.id)
     assert active_run is None
@@ -972,7 +978,7 @@ async def test_report_preparation_failure_releases_device_when_escalation_disabl
     active_run, _active = await get_device_reservation_with_entry(db_session, device.id)
     assert active_run is None
     # No maintenance / no maintenance-coupled failure-context write.
-    maintenance.enter_maintenance.assert_not_awaited()
+    maintenance.enter_maintenance_locked.assert_not_awaited()
     lifecycle_actions.record_run_escalation_failure.assert_not_awaited()
     # Incident still recorded.
     incidents.record_lifecycle_incident.assert_awaited_once()
@@ -1015,7 +1021,7 @@ async def test_report_preparation_failure_releases_and_maintains_when_enabled(
     await db_session.refresh(run, attribute_names=["device_reservations"])
     entry = next(r for r in run.device_reservations if r.device_id == device.id)
     assert entry.released_at is not None
-    maintenance.enter_maintenance.assert_awaited_once()
+    maintenance.enter_maintenance_locked.assert_awaited_once()
     lifecycle_actions.record_run_escalation_failure.assert_awaited_once()
     incidents.record_lifecycle_incident.assert_awaited_once()
 

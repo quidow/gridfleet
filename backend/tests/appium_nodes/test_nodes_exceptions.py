@@ -80,7 +80,7 @@ async def test_start_node_node_manager_error_returns_400(
     async def _raise(*args: object, **kwargs: object) -> None:
         raise node_manager.NodeManagerError("simulated start failure")
 
-    monkeypatch.setattr(ReconcilerAgentService, "start_node", _raise)
+    monkeypatch.setattr(ReconcilerAgentService, "start_node_txn", _raise)
 
     resp = await client.post(f"/api/devices/{device_id}/node/start")
     assert resp.status_code == 400
@@ -99,7 +99,7 @@ async def test_start_node_port_conflict_error_returns_400(
     async def _raise(*args: object, **kwargs: object) -> None:
         raise node_manager.NodePortConflictError("port already in use")
 
-    monkeypatch.setattr(ReconcilerAgentService, "start_node", _raise)
+    monkeypatch.setattr(ReconcilerAgentService, "start_node_txn", _raise)
 
     resp = await client.post(f"/api/devices/{device_id}/node/start")
     assert resp.status_code == 400
@@ -119,7 +119,7 @@ async def test_start_node_unexpected_exception_bubbles_to_500(
     async def _raise(*args: object, **kwargs: object) -> None:
         raise RuntimeError("unexpected bug")
 
-    monkeypatch.setattr(ReconcilerAgentService, "start_node", _raise)
+    monkeypatch.setattr(ReconcilerAgentService, "start_node_txn", _raise)
 
     async def override_get_db() -> AsyncGenerator[AsyncSession]:
         yield db_session
@@ -164,7 +164,7 @@ async def test_stop_node_node_manager_error_returns_400(
     async def _raise(*args: object, **kwargs: object) -> None:
         raise node_manager.NodeManagerError("simulated stop failure")
 
-    monkeypatch.setattr(ReconcilerAgentService, "stop_node", _raise)
+    monkeypatch.setattr(ReconcilerAgentService, "stop_node_txn", _raise)
 
     resp = await client.post(f"/api/devices/{device_id}/node/stop")
     assert resp.status_code == 400

@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from app.devices.schemas.filters import DeviceQueryFilters
     from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.devices.services.device_health_fold_context import LockedDeviceFold
+    from app.devices.services.maintenance import RecoveryRequest
     from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
 
@@ -48,14 +49,22 @@ class MaintenanceProtocol(Protocol):
     async def enter_maintenance(
         self,
         db: AsyncSession,
-        device: Device,
+        device_id: uuid.UUID,
         *,
-        commit: bool = ...,
         allow_reserved: bool = ...,
         maintenance_reason: str = ...,
-    ) -> Device: ...
-    async def exit_maintenance(self, db: AsyncSession, device: Device, *, commit: bool = ...) -> Device: ...
-    async def schedule_device_recovery(self, db: AsyncSession, device_id: uuid.UUID) -> None: ...
+    ) -> None: ...
+    async def enter_maintenance_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        allow_reserved: bool = ...,
+        maintenance_reason: str = ...,
+    ) -> None: ...
+    async def exit_maintenance(self, db: AsyncSession, device_id: uuid.UUID) -> RecoveryRequest | None: ...
+    async def exit_maintenance_locked(self, db: AsyncSession, locked: LockedDevice) -> RecoveryRequest | None: ...
+    async def schedule_device_recovery(self, device_id: uuid.UUID) -> None: ...
 
 
 class DeviceCrudProtocol(Protocol):
@@ -149,8 +158,12 @@ class NodeConvergence(Protocol):
 
 
 class RemoteNodeManager(Protocol):
-    async def start_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
-    async def stop_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
+    async def start_node_txn(
+        self, db: AsyncSession, locked: LockedDevice, *, caller: DesiredStateCaller = ...
+    ) -> AppiumNode: ...
+    async def stop_node_txn(
+        self, db: AsyncSession, locked: LockedDevice, *, caller: DesiredStateCaller = ...
+    ) -> AppiumNode: ...
 
 
 class OperatorNodeLifecycleProtocol(Protocol):

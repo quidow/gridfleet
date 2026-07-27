@@ -7,7 +7,6 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.routers import control as devices_control
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
@@ -20,6 +19,8 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.devices.locking import LockedDevice
+
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
 
 
@@ -29,6 +30,15 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
     default_host_id: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A maintenance entry that lands mid-reconnect must survive the node lever.
+
+    The race window is between the route's device read and its
+    ``session_viability_*`` write: maintenance commits from another session in
+    between. The route must not stomp ``lifecycle_policy_state`` on the way past,
+    and its node lever — which now takes the Device aggregate lock on its own
+    short session — must queue behind that maintenance rather than interleave
+    with it.
+    """
     device = await create_device(
         db_session,
         host_id=default_host_id,
@@ -51,26 +61,28 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
     await db_session.commit()
     device_id = device.id
 
+    agent_call_entered = asyncio.Event()
+    maintenance_committed = asyncio.Event()
+
     async def fake_lifecycle_action(*_args: object, **_kwargs: object) -> dict[str, object]:
+        # The reconnect route holds no session or row lock across the agent call,
+        # so the racer can enter maintenance right here.
+        agent_call_entered.set()
+        await asyncio.wait_for(maintenance_committed.wait(), timeout=2.0)
         return {"success": True}
 
-    restart_entered = asyncio.Event()
-    allow_restart = asyncio.Event()
+    restart_callers: list[str] = []
 
-    async def fake_restart_node(
+    async def fake_restart_node_txn(
         db: AsyncSession,
-        _device: Device,
+        locked: LockedDevice,
         *,
         caller: str,
-        **_kwargs: object,
     ) -> AppiumNode:
-        assert caller == "operator_restart"
-        device = await db.get(Device, device_id)
-        assert device is not None
-        assert device.appium_node is not None
-        restart_entered.set()
-        await asyncio.wait_for(allow_restart.wait(), timeout=2.0)
-        return device.appium_node
+        restart_callers.append(caller)
+        locked.assert_active(db)
+        assert locked.device.appium_node is not None
+        return locked.device.appium_node
 
     monkeypatch.setattr("app.devices.services.link_repair.pack_device_lifecycle_action", fake_lifecycle_action)
 
@@ -79,40 +91,40 @@ async def test_reconnect_restart_does_not_overwrite_concurrent_maintenance(
             await devices_control.reconnect_device(
                 device_id,
                 db=session,
-                device_services=SimpleNamespace(
+                device_services=SimpleNamespace(  # type: ignore[arg-type]
                     crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     publisher=event_bus,
                 ),
-                settings_services=SimpleNamespace(service=FakeSettingsReader({})),
-                agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
-                appium_services=SimpleNamespace(reconciler_agent=SimpleNamespace(restart_node=fake_restart_node)),
+                settings_services=SimpleNamespace(service=FakeSettingsReader({})),  # type: ignore[arg-type]
+                agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),  # type: ignore[arg-type]
+                appium_services=SimpleNamespace(  # type: ignore[arg-type]
+                    reconciler_agent=SimpleNamespace(restart_node_txn=fake_restart_node_txn),
+                    session_factory=db_session_maker,
+                ),
             )
 
-    async def enter_maintenance_before_restart() -> None:
-        await asyncio.wait_for(restart_entered.wait(), timeout=2.0)
-        async with db_session_maker() as session:
-            locked = await device_locking.lock_device(session, device_id)
+    async def enter_maintenance_mid_reconnect() -> None:
+        await asyncio.wait_for(agent_call_entered.wait(), timeout=2.0)
+        async with db_session_maker.begin() as session:
             await MaintenanceService(
-                review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-            ).enter_maintenance(session, locked)
-        allow_restart.set()
+                review=build_review_service(),
+                settings=FakeSettingsReader({}),
+                publisher=event_bus,
+                session_factory=db_session_maker,
+            ).enter_maintenance(session, device_id)
+        maintenance_committed.set()
 
-    await asyncio.gather(reconnect(), enter_maintenance_before_restart())
+    await asyncio.gather(reconnect(), enter_maintenance_mid_reconnect())
+
+    assert restart_callers == ["operator_restart"]
 
     async with db_session_maker() as verify:
-        final = (
-            await verify.execute(select(Device.operational_state_last_emitted).where(Device.id == device_id))
-        ).one()
+        device_row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
 
     # §4 (Phase 2): the concurrent maintenance signal derives onto the operational axis and
     # outranks the offline that the reconnect/restart race would otherwise produce.
-    assert final.operational_state_last_emitted == DeviceOperationalState.maintenance
+    assert device_row.operational_state_last_emitted == DeviceOperationalState.maintenance
     # hold is now derived by the reconciler (Task 7+8); check the maintenance_reason signal instead
-    from sqlalchemy import select as sa_select
-
-    from app.devices.models import Device as DeviceModel
     from app.devices.services.lifecycle_policy_state import state as ps
 
-    async with db_session_maker() as verify2:
-        device_row = (await verify2.execute(sa_select(DeviceModel).where(DeviceModel.id == device_id))).scalar_one()
-        assert ps(device_row).get("maintenance_reason") is not None
+    assert ps(device_row).get("maintenance_reason") is not None

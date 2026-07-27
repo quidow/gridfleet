@@ -242,7 +242,9 @@ class VerificationExecutionService:
                 return stop_error
 
         try:
-            async with self._session_factory() as db:
+            # ``start_node_txn`` no longer owns a boundary, so this command does:
+            # the operation lease and the node start commit together or not at all.
+            async with self._session_factory.begin() as db:
                 lock = await lock_verification_operation(
                     db, device_id=effect.device_id, operation_id=effect.operation_id
                 )
@@ -254,7 +256,7 @@ class VerificationExecutionService:
                         superseded=True,
                     )
                 locked, _lease = lock
-                node = await self._node_manager.start_node(db, locked.device, caller="verification")
+                node = await self._node_manager.start_node_txn(db, locked, caller="verification")
                 node_id = node.id
         except NodeManagerError as exc:
             detail = str(exc)

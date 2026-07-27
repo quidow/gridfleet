@@ -1,8 +1,10 @@
 import logging
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import DeviceEventType
 from app.devices.services.claims import device_is_reserved
 from app.devices.services.event import record_event
@@ -25,30 +27,73 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
-    from app.devices.models import Device
+    from app.core.type_defs import SessionFactory
+    from app.devices.locking import LockedDevice
     from app.devices.protocols import ReviewProtocol
     from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class RecoveryRequest:
+    """A committed maintenance exit that still owes a durable recovery job.
+
+    Carries only the device id: the enqueue runs on a session the maintenance
+    transaction no longer owns, so nothing ORM-shaped may cross this boundary.
+    """
+
+    device_id: uuid.UUID
+
+
 class MaintenanceService:
-    def __init__(self, *, settings: SettingsReader, publisher: EventPublisher, review: ReviewProtocol) -> None:
+    def __init__(
+        self,
+        *,
+        settings: SettingsReader,
+        publisher: EventPublisher,
+        review: ReviewProtocol,
+        session_factory: SessionFactory,
+    ) -> None:
         self._settings = settings
         # Publisher is needed so the reconciler's derived maintenance enter/exit
         # emits device.operational_state_changed (SSE).
         self._publisher = publisher
         self._review = review
+        # Only ``schedule_device_recovery`` uses this: the durable enqueue owns its
+        # own commit and therefore needs a session the caller's transaction has
+        # already released.
+        self._session_factory = session_factory
 
     async def enter_maintenance(
         self,
         db: AsyncSession,
-        device: Device,
+        device_id: uuid.UUID,
         *,
-        commit: bool = True,
         allow_reserved: bool = False,
         maintenance_reason: str = "Operator entered maintenance",
-    ) -> Device:
+    ) -> None:
+        """Acquire the Device aggregate lock once and enter maintenance under it.
+
+        Transaction-local: the caller owns the boundary. Raises ``NoResultFound``
+        when the device is gone and ``ValueError`` when it is reserved.
+        """
+        locked = await device_locking.lock_device_handle(db, device_id)
+        await self.enter_maintenance_locked(
+            db, locked, allow_reserved=allow_reserved, maintenance_reason=maintenance_reason
+        )
+
+    async def enter_maintenance_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        allow_reserved: bool = False,
+        maintenance_reason: str = "Operator entered maintenance",
+    ) -> None:
+        """Fold one maintenance entry under the caller's Device lock. Flush only."""
+        locked.assert_active(db)
+        device = locked.device
         if not allow_reserved and await device_is_reserved(db, device.id):
             raise ValueError("Device is reserved by an active run; release the run before entering maintenance")
 
@@ -67,13 +112,21 @@ class MaintenanceService:
         # set_maintenance_reason is the fact write; the inline reconcile derives the
         # maintenance:node graceful stop and maintenance:recovery deny from it.
         await IntentService(db).reconcile_now(device.id, publisher=self._publisher)
+        await db.flush()
 
-        if commit:
-            await db.commit()
-            await db.refresh(device)
-        return device
+    async def exit_maintenance(self, db: AsyncSession, device_id: uuid.UUID) -> RecoveryRequest | None:
+        """Acquire the Device aggregate lock once and leave maintenance under it.
 
-    async def exit_maintenance(self, db: AsyncSession, device: Device, *, commit: bool = True) -> Device:
+        Transaction-local. The returned :class:`RecoveryRequest` is owed to
+        ``schedule_device_recovery`` once the caller's transaction has committed.
+        """
+        locked = await device_locking.lock_device_handle(db, device_id)
+        return await self.exit_maintenance_locked(db, locked)
+
+    async def exit_maintenance_locked(self, db: AsyncSession, locked: LockedDevice) -> RecoveryRequest | None:
+        """Fold one maintenance exit under the caller's Device lock. Flush only."""
+        locked.assert_active(db)
+        device = locked.device
         if state(device).get("maintenance_reason") is None:
             raise ValueError("Device is not in maintenance")
 
@@ -110,31 +163,32 @@ class MaintenanceService:
         )
         # clear_maintenance_reason above is the fact write; the verification-intent
         # reconcile just above re-derives with no maintenance intents (reason cleared).
+        await db.flush()
+        # D3: the operator should not watch an idle offline device until the next
+        # device_connectivity_loop tick. The job row is durable and committed by
+        # create_job, so it cannot be staged here — the caller enqueues it once
+        # this transaction has ended.
+        return RecoveryRequest(device.id)
 
-        if commit:
-            await db.commit()
-            await db.refresh(device)
-            # D3: schedule recovery so the operator does not see an idle offline
-            # device while waiting for the next device_connectivity_loop tick.
-            # Bulk callers pass commit=False and enqueue their own jobs after
-            # their own final commit, to avoid create_job committing mid-loop.
-            # Enqueue failure must not raise back to the operator after the
-            # state mutation already committed — the device_connectivity_loop
-            # remains the fallback path.
-            try:
-                await _schedule_device_recovery(db, device.id)
-            except Exception:  # noqa: BLE001 — best-effort recovery scheduling; device_connectivity_loop is the fallback
-                logger.warning(
-                    "exit_maintenance: failed to enqueue recovery job for %s; "
-                    "device_connectivity_loop will pick it up on the next tick",
-                    device.id,
-                    exc_info=True,
-                )
+    async def schedule_device_recovery(self, device_id: uuid.UUID) -> None:
+        """Enqueue the durable recovery job on a fresh short session.
 
-        return device
-
-    async def schedule_device_recovery(self, db: AsyncSession, device_id: uuid.UUID) -> None:
-        await _schedule_device_recovery(db, device_id)
+        ``job_queue.create_job`` owns that commit, so this must run *after* the
+        maintenance transaction ended. Enqueue failure is swallowed: the state
+        mutation already committed and surfacing it would hand the operator a 500
+        for a device that really did leave maintenance. The
+        device_connectivity_loop remains the fallback path.
+        """
+        try:
+            async with self._session_factory() as recovery_db:
+                await _schedule_device_recovery(recovery_db, device_id)
+        except Exception:  # noqa: BLE001 — best-effort recovery scheduling; device_connectivity_loop is the fallback
+            logger.warning(
+                "exit_maintenance: failed to enqueue recovery job for %s; "
+                "device_connectivity_loop will pick it up on the next tick",
+                device_id,
+                exc_info=True,
+            )
 
 
 async def _schedule_device_recovery(db: AsyncSession, device_id: uuid.UUID) -> None:

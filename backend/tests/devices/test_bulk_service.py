@@ -1,74 +1,56 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+import uuid as uuid_module
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 
-from tests.fakes import FakeSessionFactory, build_review_service
+from tests.fakes import build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from collections.abc import AsyncIterator
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.devices.locking import LockedDevice
+    from app.hosts.models import Host
 
 from unittest.mock import MagicMock
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.core.errors import AgentCallError
-from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices import locking as device_locking
+from app.devices.models import (
+    Device,
+    DeviceEvent,
+    DeviceEventType,
+    DeviceOperationalState,
+)
+from app.devices.services import bulk as bulk_service
 from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.service import DeviceCrudService
-from app.hosts.models import Host, HostStatus, OSType
+from app.events.models import SystemEvent
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from app.packs.services.platform_resolver import ResolvedPackPlatform, ResolvedParallelResources
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 pytestmark = pytest.mark.asyncio
 
 
-def _device(
-    *,
-    platform_id: str = "android_mobile",
-    pack_id: str = "appium-uiautomator2",
-    connection_type: ConnectionType = ConnectionType.usb,
-    ip_address: str | None = None,
-) -> Device:
-    host = Host(
-        id=uuid4(),
-        hostname="bulk-host",
-        ip="10.0.0.10",
-        os_type=OSType.linux,
-        agent_port=5100,
-        status=HostStatus.online,
-    )
-    return Device(
-        id=uuid4(),
-        host_id=host.id,
-        pack_id=pack_id,
-        platform_id=platform_id,
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value=str(uuid4()),
-        connection_target="target",
-        name="Device",
-        os_version="14",
-        device_type=DeviceType.real_device,
-        connection_type=connection_type,
-        ip_address=ip_address,
-        host=host,
-    )
-
-
 async def test_bulk_start_stop_and_restart_nodes_collect_errors(
     monkeypatch: pytest.MonkeyPatch,
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     devices = [
@@ -87,19 +69,20 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
             verified=True,
         ),
     ]
+    await db_session.commit()
 
-    async def fake_start_node(_db: AsyncSession, device: Device, caller: str, *, operator: object) -> object:
-        if device.id == devices[1].id:
+    async def fake_start_node(_db: AsyncSession, locked: LockedDevice, caller: str, *, operator: object) -> object:
+        if locked.device.id == devices[1].id:
             raise NodeManagerError("cannot start")
         return object()
 
-    async def fake_stop_node(_db: AsyncSession, device: Device, caller: str, *, operator: object) -> object:
-        if device.id == devices[1].id:
+    async def fake_stop_node(_db: AsyncSession, locked: LockedDevice, caller: str, *, operator: object) -> object:
+        if locked.device.id == devices[1].id:
             raise RuntimeError("cannot stop")
         return object()
 
-    async def fake_restart_node(_db: AsyncSession, device: Device, caller: str, *, operator: object) -> object:
-        if device.id == devices[1].id:
+    async def fake_restart_node(_db: AsyncSession, locked: LockedDevice, caller: str, *, operator: object) -> object:
+        if locked.device.id == devices[1].id:
             raise NodeManagerError("cannot restart")
         return object()
 
@@ -114,61 +97,63 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
         maintenance=MagicMock(),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(review=build_review_service(), settings=settings, publisher=event_bus),
+        session_factory=db_session_maker,
     )
-    started = await svc.bulk_start_nodes(db_session, [device.id for device in devices])
-    stopped = await svc.bulk_stop_nodes(db_session, [device.id for device in devices])
-    restarted = await svc.bulk_restart_nodes(db_session, [device.id for device in devices])
+    started = await svc.bulk_start_nodes([device.id for device in devices])
+    stopped = await svc.bulk_stop_nodes([device.id for device in devices])
+    restarted = await svc.bulk_restart_nodes([device.id for device in devices])
 
     assert started["succeeded"] == 1
     assert stopped["failed"] == 1
     assert restarted["failed"] == 1
 
 
+@pytest.mark.usefixtures("seeded_driver_packs")
 async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_errors(
     monkeypatch: pytest.MonkeyPatch,
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
 ) -> None:
-    eligible_ok = _device(connection_type=ConnectionType.network, ip_address="10.0.0.20")
-    eligible_fail = _device(
-        platform_id="firetv_real",
-        connection_type=ConnectionType.network,
+    eligible_ok = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="bulk-rc-ok",
+        connection_type="network",
+        ip_address="10.0.0.20",
+        connection_target="10.0.0.20:5555",
+        verified=True,
+    )
+    eligible_fail = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="bulk-rc-fail",
+        connection_type="network",
         ip_address="10.0.0.21",
+        connection_target="10.0.0.21:5555",
+        verified=True,
     )
-    ineligible = _device(connection_type=ConnectionType.usb)
-    db = AsyncMock()
+    ineligible = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="bulk-rc-usb",
+        connection_type="usb",
+        verified=True,
+    )
+    await db_session.commit()
 
-    _reconnect_actions = [{"id": "reconnect"}]
-    _resolved = ResolvedPackPlatform(
-        pack_id="appium-uiautomator2",
-        release="1.0.0",
-        platform_id="android_mobile",
-        display_name="Android Mobile (Real)",
-        automation_name="UiAutomator2",
-        appium_platform_name="Android",
-        device_types=["real_device"],
-        connection_types=["usb", "network"],
-        identity_scheme="android_serial",
-        identity_scope="host",
-        capabilities={},
-        default_capabilities={},
-        device_fields_schema=[],
-        lifecycle_actions=_reconnect_actions,
-        health_checks=[],
-        connection_behavior={},
-        parallel_resources=ResolvedParallelResources(ports=[], derived_data_path=False),
-    )
+    outcomes = {
+        "10.0.0.20:5555": {"success": True},
+        "10.0.0.21:5555": AgentCallError("10.0.0.10", "boom"),
+    }
 
-    monkeypatch.setattr(
-        "app.devices.services.bulk._load_devices",
-        AsyncMock(return_value=[eligible_ok, eligible_fail, ineligible]),
-    )
-    monkeypatch.setattr(
-        "app.devices.services.bulk.resolve_pack_platform",
-        AsyncMock(return_value=_resolved),
-    )
-    monkeypatch.setattr(
-        "app.devices.services.bulk.pack_device_lifecycle_action",
-        AsyncMock(side_effect=[{"success": True}, AgentCallError("10.0.0.10", "boom")]),
-    )
+    async def fake_lifecycle_action(*args: object, **kwargs: object) -> dict[str, object]:
+        outcome = outcomes[cast("str", args[2])]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr("app.devices.services.bulk.pack_device_lifecycle_action", fake_lifecycle_action)
 
     _settings_rc = FakeSettingsReader()
     result = await BulkOperationsService(
@@ -180,37 +165,40 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         operator=OperatorNodeLifecycleService(
             review=build_review_service(), settings=_settings_rc, publisher=event_bus
         ),
-    ).bulk_reconnect(db, [eligible_ok.id, eligible_fail.id, ineligible.id])
+        session_factory=db_session_maker,
+    ).bulk_reconnect([eligible_ok.id, eligible_fail.id, ineligible.id])
 
     assert result["succeeded"] == 1
     assert result["failed"] == 2
     assert result["errors"][str(ineligible.id)] == "Not a network-connected Android device"
+    assert result["errors"][str(eligible_fail.id)] == "boom"
 
 
-async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypatch: pytest.MonkeyPatch) -> None:
-    devices = [_device(), _device()]
-    db = AsyncMock()
-    monkeypatch.setattr("app.devices.services.bulk._load_devices", AsyncMock(return_value=devices))
-    monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", Mock())
-    # bulk_enter_maintenance calls device_locking.lock_device(db, ...) which does
-    # `(await db.execute(stmt)).scalar_one()`. With db = AsyncMock(), the value
-    # returned by `await db.execute(...)` is itself an AsyncMock, so `.scalar_one()`
-    # is an AsyncMock attribute — calling it produces a coroutine that nothing
-    # awaits, leaking a "coroutine was never awaited" warning that surfaces in a
-    # later test during gc. Patch lock_device directly to keep the mock chain
-    # purely synchronous past the awaited call.
-    monkeypatch.setattr(
-        "app.devices.services.bulk.device_locking.lock_device",
-        AsyncMock(side_effect=lambda _db, device_id, **_: next(d for d in devices if d.id == device_id)),
-    )
-    # bulk_delete now opens one transaction per device; hand it a factory that
-    # yields the same mock session instead of a real engine.
-    monkeypatch.setattr("app.devices.services.bulk._session_factory_from_db", lambda _db: FakeSessionFactory(db))
+async def test_bulk_delete_and_maintenance_operations_collect_failures(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    devices = [
+        await create_device(db_session, host_id=db_host.id, name=f"bulk-collect-{index}", verified=True)
+        for index in range(2)
+    ]
+    await db_session.commit()
+
     mock_crud = AsyncMock()
-    mock_crud.delete_device_txn = AsyncMock(side_effect=[True, False, RuntimeError("cannot delete")])
+
+    # Key the outcome on the device id, not on call order: items run concurrently,
+    # so a positional side_effect list would bind outcomes to whichever id sorted
+    # first — a coin flip on random UUIDs.
+    async def fake_delete(_db: object, device_id: uuid_module.UUID) -> bool:
+        if device_id == devices[1].id:
+            raise RuntimeError("cannot delete")
+        return False
+
+    mock_crud.delete_device_txn = AsyncMock(side_effect=fake_delete)
     mock_maintenance = MagicMock()
-    mock_maintenance.enter_maintenance = AsyncMock(side_effect=[None, RuntimeError("boom")])
-    mock_maintenance.exit_maintenance = AsyncMock(side_effect=[ValueError("bad state"), RuntimeError("boom")])
+    mock_maintenance.enter_maintenance_locked = AsyncMock(side_effect=[None, RuntimeError("boom")])
+    mock_maintenance.exit_maintenance_locked = AsyncMock(side_effect=[ValueError("bad state"), RuntimeError("boom")])
     mock_maintenance.schedule_device_recovery = AsyncMock()
 
     _settings_del = FakeSettingsReader()
@@ -223,25 +211,35 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(monkeypat
         operator=OperatorNodeLifecycleService(
             review=build_review_service(), settings=_settings_del, publisher=event_bus
         ),
+        session_factory=db_session_maker,
     )
-    deleted = await svc.bulk_delete(db, [devices[0].id, devices[1].id, uuid4()])
-    entered = await svc.bulk_enter_maintenance(db, [device.id for device in devices])
-    exited = await svc.bulk_exit_maintenance(db, [device.id for device in devices])
+    # The unknown id is dropped by the pre-filter, so it is not in ``total``.
+    deleted = await svc.bulk_delete([devices[0].id, devices[1].id, uuid4()])
+    entered = await svc.bulk_enter_maintenance([device.id for device in devices])
+    exited = await svc.bulk_exit_maintenance([device.id for device in devices])
 
-    assert deleted["failed"] == 2
+    assert deleted == {
+        "total": 2,
+        "succeeded": 0,
+        "failed": 2,
+        "errors": {str(devices[0].id): "Device not found", str(devices[1].id): "cannot delete"},
+    }
+    assert entered["total"] == 2
     assert entered["failed"] == 1
+    assert exited["total"] == 2
     assert exited["failed"] == 2
 
 
 async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     """bulk_exit_maintenance must enqueue exactly one recovery job per successfully-exited device.
 
-    This regression test covers the fix-2 window: state mutations are committed
-    first (bulk commit) and recovery jobs are only enqueued afterwards, so
-    create_job cannot commit mid-loop and strand a device.
+    Each device's state mutation commits in its own transaction, and only then is
+    its recovery job enqueued — create_job owns that commit, so it can never run
+    inside the state mutation and strand a device.
     """
     # Create 3 devices in maintenance.
     devices = [
@@ -262,19 +260,24 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
         settings=_settings_exit,
         circuit_breaker=MagicMock(),
         maintenance=MaintenanceService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+            review=build_review_service(),
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
+            session_factory=db_session_maker,
         ),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(
             review=build_review_service(), settings=_settings_exit, publisher=event_bus
         ),
-    ).bulk_exit_maintenance(db_session, [d.id for d in devices])
+        session_factory=db_session_maker,
+    ).bulk_exit_maintenance([d.id for d in devices])
 
     assert result["succeeded"] == 3
     assert result["failed"] == 0
 
     # Each successfully-exited device must have exactly one recovery job enqueued.
-    rows = (await db_session.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()
+    async with db_session_maker() as verify:
+        rows = (await verify.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()
     assert len(rows) == 3, f"Expected 3 recovery jobs, got {len(rows)}"
 
     enqueued_device_ids = {row.payload["device_id"] for row in rows}
@@ -282,3 +285,246 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
     assert enqueued_device_ids == expected_device_ids, (
         f"Recovery jobs enqueued for wrong device IDs: {enqueued_device_ids!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9: one fresh transaction per device, one summary event, no lock across HTTP
+# ---------------------------------------------------------------------------
+
+
+def _real_service(
+    session_factory: object,
+    *,
+    maintenance: object | None = None,
+) -> BulkOperationsService:
+    settings = FakeSettingsReader()
+    return BulkOperationsService(
+        publisher=event_bus,
+        settings=settings,
+        circuit_breaker=MagicMock(),
+        maintenance=maintenance  # type: ignore[arg-type]
+        or MaintenanceService(
+            review=build_review_service(),
+            settings=settings,
+            publisher=event_bus,
+            session_factory=session_factory,  # type: ignore[arg-type]
+        ),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
+        operator=OperatorNodeLifecycleService(review=build_review_service(), settings=settings, publisher=event_bus),
+        session_factory=session_factory,  # type: ignore[arg-type]
+    )
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_bulk_enter_maintenance_isolates_one_failed_item(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """A failing item rolls back only its own facts, peers commit, one summary lands.
+
+    The failure is a real aborting statement inside the item transaction, not a
+    patched ``side_effect``: only a genuinely aborted transaction exercises the
+    rollback path the shared-session version needed a manual ``rollback()`` for.
+    """
+    healthy = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="bulk-isolate-ok",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+    poisoned = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="bulk-isolate-fail",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+    await db_session.commit()
+
+    class AbortingMaintenance(MaintenanceService):
+        async def enter_maintenance_locked(
+            self,
+            db: AsyncSession,
+            locked: LockedDevice,
+            *,
+            allow_reserved: bool = False,
+            maintenance_reason: str = "Operator entered maintenance",
+        ) -> None:
+            await super().enter_maintenance_locked(
+                db, locked, allow_reserved=allow_reserved, maintenance_reason=maintenance_reason
+            )
+            if locked.device.id == poisoned.id:
+                await db.execute(text("SELECT 1 / 0"))
+
+    settings = FakeSettingsReader()
+    service = _real_service(
+        db_session_maker,
+        maintenance=AbortingMaintenance(
+            review=build_review_service(),
+            settings=settings,
+            publisher=event_bus,
+            session_factory=db_session_maker,
+        ),
+    )
+
+    summary_before = await _summary_event_count(db_session)
+    result = await service.bulk_enter_maintenance([healthy.id, poisoned.id])
+
+    assert result["total"] == 2
+    assert result["succeeded"] == 1
+    assert result["failed"] == 1
+    assert str(poisoned.id) in result["errors"]
+
+    async with db_session_maker() as verify:
+        rows = {
+            device.id: device
+            for device in (
+                await verify.execute(select(Device).where(Device.id.in_([healthy.id, poisoned.id])))
+            ).scalars()
+        }
+        events = (
+            (
+                await verify.execute(
+                    select(DeviceEvent.device_id).where(
+                        DeviceEvent.event_type == DeviceEventType.maintenance_entered,
+                        DeviceEvent.device_id.in_([healthy.id, poisoned.id]),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert (rows[healthy.id].lifecycle_policy_state or {}).get("maintenance_reason") is not None
+    assert (rows[poisoned.id].lifecycle_policy_state or {}).get("maintenance_reason") is None, (
+        "the failed item's fact write survived — its transaction did not roll back"
+    )
+    assert list(events) == [healthy.id], f"the failed item's device-event row leaked: {events}"
+    assert await _summary_event_count(db_session) - summary_before == 1
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_bulk_reconnect_holds_no_session_or_row_lock_across_the_agent_call(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression pin: the read phase closes before ``pack_device_lifecycle_action``.
+
+    ``bulk_reconnect`` used to call ``_load_devices`` (a ``FOR UPDATE`` over every
+    requested device) and hold those locks across the whole HTTP fan-out.
+    """
+    eligible = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="bulk-reconnect-eligible",
+        connection_type="network",
+        ip_address="10.0.0.61",
+        connection_target="10.0.0.61:5555",
+        verified=True,
+    )
+    ineligible = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="bulk-reconnect-usb",
+        connection_type="usb",
+        verified=True,
+    )
+    await db_session.commit()
+
+    opened: list[AsyncSession] = []
+    real_maker = db_session_maker
+
+    class TrackingFactory:
+        def __call__(self) -> object:
+            return _tracked(real_maker())
+
+        def begin(self) -> object:
+            return _tracked(real_maker.begin())
+
+    @asynccontextmanager
+    async def _tracked(inner: object) -> AsyncIterator[AsyncSession]:
+        async with inner as session:  # type: ignore[attr-defined]
+            opened.append(session)
+            yield session
+
+    observations: dict[str, object] = {}
+
+    async def fake_lifecycle_action(*args: object, **kwargs: object) -> dict[str, object]:
+        observations["sessions_in_transaction"] = [session.in_transaction() for session in opened]
+        async with real_maker() as probe:
+            try:
+                await asyncio.wait_for(device_locking.lock_device(probe, eligible.id), timeout=1.0)
+                observations["row_lock_free"] = True
+            except TimeoutError:
+                observations["row_lock_free"] = False
+            finally:
+                await probe.rollback()
+        return {"success": True}
+
+    monkeypatch.setattr("app.devices.services.bulk.pack_device_lifecycle_action", fake_lifecycle_action)
+
+    result = await _real_service(TrackingFactory()).bulk_reconnect([eligible.id, ineligible.id])
+
+    assert result == {
+        "total": 2,
+        "succeeded": 1,
+        "failed": 1,
+        "errors": {str(ineligible.id): "Not a network-connected Android device"},
+    }
+    assert observations.get("row_lock_free") is True, (
+        "bulk_reconnect still held a device row lock while calling the agent"
+    )
+    assert observations["sessions_in_transaction"] == [False], (
+        f"a command session was still in a transaction during the agent call: {observations}"
+    )
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_bulk_delete_sorts_and_dedupes_input_ids(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Duplicated ids collapse to one item, and item order is ascending.
+
+    Deliberate response-value change: ``bulk_delete`` used to iterate the raw
+    caller list, so a repeated id reported ``total=2, succeeded=1, failed=1``
+    with ``"Device not found"`` from the second (already-deleted) pass.
+    """
+    devices = [
+        await create_device(db_session, host_id=db_host.id, name=f"bulk-dedupe-{index}", verified=True)
+        for index in range(3)
+    ]
+    await db_session.commit()
+
+    ordered: list[list[uuid_module.UUID]] = []
+    real_filter = bulk_service._load_existing_device_ids
+
+    async def spy(session_factory: object, device_ids: list[uuid_module.UUID]) -> list[uuid_module.UUID]:
+        result = await real_filter(session_factory, device_ids)  # type: ignore[arg-type]
+        ordered.append(list(result))
+        return result
+
+    monkeypatch.setattr(bulk_service, "_load_existing_device_ids", spy)
+
+    service = _real_service(db_session_maker)
+    duplicated = await service.bulk_delete([devices[0].id, devices[0].id])
+    assert duplicated == {"total": 1, "succeeded": 1, "failed": 0, "errors": {}}
+
+    reversed_ids = [devices[2].id, devices[1].id]
+    remaining = await service.bulk_delete([*reversed_ids, reversed_ids[0]])
+    assert remaining == {"total": 2, "succeeded": 2, "failed": 0, "errors": {}}
+    assert ordered[-1] == sorted(set(reversed_ids)), (
+        f"per-item tasks must start in ascending id order, got {ordered[-1]}"
+    )
+
+
+async def _summary_event_count(db_session: AsyncSession) -> int:
+    total = await db_session.scalar(
+        select(func.count()).select_from(SystemEvent).where(SystemEvent.type == "bulk.operation_completed")
+    )
+    return total or 0

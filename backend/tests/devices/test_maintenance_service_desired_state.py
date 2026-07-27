@@ -18,7 +18,7 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -27,6 +27,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs"
 
 async def test_exit_maintenance_writes_desired_running_when_node_present(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -57,8 +58,11 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
 
     monkeypatch.setattr(maintenance_service, "_schedule_device_recovery", AsyncMock())
     await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).exit_maintenance(db_session, device)
+        review=build_review_service(),
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
+        session_factory=db_session_maker,
+    ).exit_maintenance(db_session, device.id)
 
     events = (
         (
@@ -80,6 +84,7 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
 
 async def test_enter_maintenance_writes_desired_stopped_and_returns_without_waiting_for_agent(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="m-enter", verified=True)
@@ -98,8 +103,11 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
     from app.devices.services.maintenance import MaintenanceService
 
     await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).enter_maintenance(db_session, device)
+        review=build_review_service(),
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
+        session_factory=db_session_maker,
+    ).enter_maintenance(db_session, device.id)
 
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.stopped
@@ -117,6 +125,7 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
 
 async def test_enter_maintenance_resets_remediation_episode(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="maint-reset")
@@ -126,8 +135,13 @@ async def test_enter_maintenance_resets_remediation_episode(
 
     from app.devices.services.maintenance import MaintenanceService
 
-    service = MaintenanceService(review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus)
-    await service.enter_maintenance(db_session, device)
+    service = MaintenanceService(
+        review=build_review_service(),
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
+        session_factory=db_session_maker,
+    )
+    await service.enter_maintenance(db_session, device.id)
 
     reset_count = await db_session.scalar(
         select(func.count())
@@ -140,7 +154,7 @@ async def test_enter_maintenance_resets_remediation_episode(
     assert ladder.last_failure_reason is None  # episode superseded by the reset
 
     # Idempotent: entering again while already in maintenance adds no new reset.
-    await service.enter_maintenance(db_session, device)
+    await service.enter_maintenance(db_session, device.id)
     reset_count_again = await db_session.scalar(
         select(func.count())
         .select_from(DeviceRemediationLogEntry)

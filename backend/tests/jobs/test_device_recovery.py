@@ -265,6 +265,7 @@ async def test_recovery_retry_reuses_job_generation_and_effect_is_repeat_safe(
 @pytest.mark.usefixtures("seeded_driver_packs")
 async def test_exit_maintenance_recovery_rejoins_active_run(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     """Device in (offline, maintenance) reserved by an active run rejoins
@@ -301,10 +302,18 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     set_maintenance_reason(locked, "Operator entered maintenance")
     await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(
-        review=build_review_service(), settings=settings_service, publisher=event_bus
-    ).exit_maintenance(db_session, locked)
+    maintenance = MaintenanceService(
+        review=build_review_service(),
+        settings=settings_service,
+        publisher=event_bus,
+        session_factory=db_session_maker,
+    )
+    recovery = await maintenance.exit_maintenance(db_session, device.id)
+    await db_session.commit()
+    # The exit command is transaction-local now: the durable recovery job is
+    # enqueued by the caller, after that transaction has ended.
+    assert recovery is not None
+    await maintenance.schedule_device_recovery(recovery.device_id)
 
     from app.devices.models import DeviceIntent
     from app.devices.services.intent_types import verification_intent_source

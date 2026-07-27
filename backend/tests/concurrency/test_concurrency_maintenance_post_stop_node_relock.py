@@ -4,7 +4,6 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.maintenance import MaintenanceService
 from tests.fakes import FakeSettingsReader, build_review_service
@@ -12,7 +11,7 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -21,6 +20,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs"
 
 async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     device = await create_device(
@@ -43,10 +43,13 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
     await db_session.commit()
     device_id = device.id
 
-    target = await device_locking.lock_device(db_session, device_id)
     await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).enter_maintenance(db_session, target)
+        review=build_review_service(),
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
+        session_factory=db_session_maker,
+    ).enter_maintenance(db_session, device_id)
+    await db_session.commit()
 
     final_status = (
         await db_session.execute(select(Device.operational_state_last_emitted).where(Device.id == device_id))

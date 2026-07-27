@@ -359,7 +359,10 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     def override_get_device_services() -> DeviceServices:
         sf = request_session_factory
         _maintenance_svc = MaintenanceService(
-            review=build_review_service(), settings=settings_service, publisher=test_event_bus
+            review=build_review_service(),
+            settings=settings_service,
+            publisher=test_event_bus,
+            session_factory=sf,
         )
         _crud_svc = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=test_event_bus)
         return DeviceServices(
@@ -380,6 +383,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 operator=OperatorNodeLifecycleService(
                     review=build_review_service(), settings=settings_service, publisher=test_event_bus
                 ),
+                session_factory=sf,
             ),
             presenter=DevicePresenterService(),
             test_data=TestDataService(publisher=test_event_bus),
@@ -556,7 +560,10 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
             maintenance=MaintenanceService(
-                review=build_review_service(), settings=settings_service, publisher=test_event_bus
+                review=build_review_service(),
+                settings=settings_service,
+                publisher=test_event_bus,
+                session_factory=sf,
             ),
             lifecycle_actions=LifecyclePolicyActionsService(
                 publisher=test_event_bus,

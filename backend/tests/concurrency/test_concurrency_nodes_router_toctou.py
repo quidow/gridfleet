@@ -99,7 +99,10 @@ async def test_start_node_locks_device_before_reservation_check(
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
             maintenance=MaintenanceService(
-                review=build_review_service(), settings=settings_service, publisher=event_bus
+                review=build_review_service(),
+                settings=settings_service,
+                publisher=event_bus,
+                session_factory=db_session_maker,
             ),
             lifecycle_actions=AsyncMock(),
             reservation=RunReservationService(review=build_review_service()),

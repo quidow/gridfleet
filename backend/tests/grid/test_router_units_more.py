@@ -88,6 +88,7 @@ from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -663,6 +664,46 @@ def _run_read(run: SimpleNamespace) -> RunRead:
     )
 
 
+def _node_snapshot(**overrides: object) -> SimpleNamespace:
+    """A stand-in for an AppiumNode row carrying every AppiumNodeRead field.
+
+    The node routes build their response snapshot before the transaction exits,
+    so a bare SimpleNamespace no longer round-trips through the schema.
+    """
+    values: dict[str, Any] = {
+        "id": uuid.uuid4(),
+        "port": 4723,
+        "pid": None,
+        "active_connection_target": None,
+        "started_at": datetime.now(UTC),
+        "desired_state": AppiumDesiredState.running,
+        "desired_port": 4723,
+        "restart_requested_at": None,
+        "last_observed_at": None,
+        "health_running": None,
+        "health_state": None,
+        "observed_running": False,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _patch_device_lock(device: object) -> AbstractContextManager[object]:
+    """Hand a route the Device lock proof its own command session would mint."""
+    return patch(
+        "app.devices.locking.lock_device_handle",
+        new=AsyncMock(return_value=SimpleNamespace(device=device, assert_active=lambda _db: None)),
+    )
+
+
+def _appium_svc(reconciler_agent: object, reconciler: object | None = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        reconciler_agent=reconciler_agent,
+        reconciler=reconciler if reconciler is not None else SimpleNamespace(converge_device_now=AsyncMock()),
+        session_factory=FakeSessionFactory(object()),
+    )
+
+
 async def test_bulk_router_delegates_all_operations() -> None:
     device_ids = [uuid.uuid4()]
     body = SimpleNamespace(device_ids=device_ids)
@@ -678,7 +719,7 @@ async def test_bulk_router_delegates_all_operations() -> None:
     ):
         mock_bulk = AsyncMock(**{service_name: AsyncMock(return_value={"ok": service_name})})
         device_services = SimpleNamespace(bulk=mock_bulk)
-        assert await call(payload, db=object(), device_services=device_services) == {"ok": service_name}
+        assert await call(payload, device_services=device_services) == {"ok": service_name}
 
 
 async def test_devices_test_data_router_paths() -> None:
@@ -1127,20 +1168,29 @@ async def test_devices_control_maintenance_config_session_and_refresh_paths() ->
             lambda ds: devices_control.exit_device_maintenance(device_id, db=object(), device_services=ds),
         ),
     ):
+        # The router owns the boundary now, so every service double needs a factory.
         mock_maintenance = AsyncMock(**{method_name: AsyncMock(side_effect=ValueError("bad"))})
-        device_services_err = SimpleNamespace(maintenance=mock_maintenance)
-        with patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)):
-            with pytest.raises(HTTPException) as exc:
-                await call_fn(device_services_err)
+        device_services_err = SimpleNamespace(
+            maintenance=mock_maintenance,
+            session_factory=FakeSessionFactory(object()),
+        )
+        with pytest.raises(HTTPException) as exc:
+            await call_fn(device_services_err)
         assert exc.value.status_code == 409
 
-        mock_maintenance_ok = AsyncMock(**{method_name: AsyncMock(return_value=device)})
+        # exit returns the recovery request the router must hand back to the
+        # service after the transaction; enter returns nothing.
+        ok_return = SimpleNamespace(device_id=device_id) if method_name == "exit_maintenance" else None
+        mock_maintenance_ok = AsyncMock(**{method_name: AsyncMock(return_value=ok_return)})
         device_services_ok = SimpleNamespace(
             maintenance=mock_maintenance_ok,
             presenter=SimpleNamespace(serialize_device=AsyncMock(return_value=serialized)),
+            crud=SimpleNamespace(get_device=AsyncMock(return_value=device)),
+            session_factory=FakeSessionFactory(object()),
         )
-        with patch("app.devices.routers.control.get_device_for_update_or_404", new=AsyncMock(return_value=device)):
-            assert await call_fn(device_services_ok) == serialized
+        assert await call_fn(device_services_ok) == serialized
+        if method_name == "exit_maintenance":
+            mock_maintenance_ok.schedule_device_recovery.assert_awaited_once_with(device_id)
 
     config = {"env": {"A": "B"}}
     config_ss = _mock_settings_svc(FakeSettingsReader({}))
@@ -1206,7 +1256,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     _reconnect_ac = SimpleNamespace(circuit_breaker=Mock(), http_pool=None)
     _mock_ds_reconnect = SimpleNamespace(crud=AsyncMock(), publisher=event_bus)
 
-    _noop_appium_svc = SimpleNamespace(reconciler_agent=AsyncMock())
+    _noop_appium_svc = _appium_svc(AsyncMock())
     with (
         patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
         patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(side_effect=LookupError("missing"))),
@@ -1264,7 +1314,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     auto_device = _control_device(appium_node=SimpleNamespace(observed_running=False))
     auto_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     ra_start_boom = AsyncMock()
-    ra_start_boom.start_node = AsyncMock(side_effect=RuntimeError("boom"))
+    ra_start_boom.start_node_txn = AsyncMock(side_effect=RuntimeError("boom"))
     with (
         patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=auto_device)),
         patch("app.devices.routers.control.resolve_pack_platform", new=AsyncMock(return_value=resolved)),
@@ -1274,6 +1324,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
+        _patch_device_lock(auto_device),
     ):
         with pytest.raises(RuntimeError, match="boom"):
             await devices_control.reconnect_device(
@@ -1282,7 +1333,7 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
                 device_services=_mock_ds_reconnect,
                 settings_services=settings_services,
                 agent_comm=_reconnect_ac,
-                appium_services=SimpleNamespace(reconciler_agent=ra_start_boom),
+                appium_services=_appium_svc(ra_start_boom),
             )  # type: ignore[arg-type]
 
     with (
@@ -1293,15 +1344,16 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
             "app.devices.services.link_repair.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
+        _patch_device_lock(device),
     ):
         reconnect = await devices_control.reconnect_device(
             device_id,
-            db=object(),
+            db=SimpleNamespace(commit=AsyncMock(), flush=AsyncMock()),
             device_services=_mock_ds_reconnect,
             settings_services=settings_services,
             agent_comm=_reconnect_ac,
-            appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
-        )
+            appium_services=_appium_svc(AsyncMock()),
+        )  # type: ignore[arg-type]
     assert reconnect["message"] == "Reconnected"
 
     _ctrl_ss = _mock_settings_svc(FakeSettingsReader({}))
@@ -1440,7 +1492,7 @@ async def test_devices_control_reconnect_starts_without_stale_intent_revoke() ->
     db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     start_node = AsyncMock()
     mock_reconciler_agent_ctrl = AsyncMock()
-    mock_reconciler_agent_ctrl.start_node = start_node
+    mock_reconciler_agent_ctrl.start_node_txn = start_node
 
     with (
         patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
@@ -1450,6 +1502,7 @@ async def test_devices_control_reconnect_starts_without_stale_intent_revoke() ->
             "app.devices.services.link_repair.pack_device_lifecycle_action",
             new=AsyncMock(return_value={"success": True}),
         ),
+        _patch_device_lock(device),
     ):
         reconnect = await devices_control.reconnect_device(
             device_id,
@@ -1457,7 +1510,7 @@ async def test_devices_control_reconnect_starts_without_stale_intent_revoke() ->
             device_services=SimpleNamespace(crud=AsyncMock(), publisher=event_bus),
             settings_services=_mock_settings_svc(FakeSettingsReader({})),
             agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
-            appium_services=SimpleNamespace(reconciler_agent=mock_reconciler_agent_ctrl),
+            appium_services=_appium_svc(mock_reconciler_agent_ctrl),
         )  # type: ignore[arg-type]
 
     assert reconnect["message"] == "Reconnected"
@@ -1621,7 +1674,7 @@ async def test_nodes_router_validation_branches() -> None:
     running_node = SimpleNamespace(desired_state=AppiumDesiredState.running, observed_running=True)
     device.appium_node = running_node
     with (
-        patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        _patch_device_lock(device),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch(
             "app.appium_nodes.routers.nodes.assess_device_async",
@@ -1631,15 +1684,14 @@ async def test_nodes_router_validation_branches() -> None:
         with pytest.raises(HTTPException) as exc:
             await nodes_router.start_node(
                 device_id,
-                db=object(),
-                appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
+                appium_services=_appium_svc(AsyncMock()),
             )
     assert exc.value.status_code == 409
 
     device.appium_node = None
     device.host_id = None
     with (
-        patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        _patch_device_lock(device),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch(
             "app.appium_nodes.routers.nodes.assess_device_async",
@@ -1650,17 +1702,16 @@ async def test_nodes_router_validation_branches() -> None:
         with pytest.raises(HTTPException) as exc:
             await nodes_router.start_node(
                 device_id,
-                db=object(),
-                appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
+                appium_services=_appium_svc(AsyncMock()),
             )
     assert "no host assigned" in str(exc.value.detail)
 
     device.host_id = uuid.uuid4()
-    started_node = SimpleNamespace(desired_state=AppiumDesiredState.running)
+    started_node = _node_snapshot()
     mock_reconciler_agent = AsyncMock()
-    mock_reconciler_agent.start_node = AsyncMock(return_value=started_node)
+    mock_reconciler_agent.start_node_txn = AsyncMock(return_value=started_node)
     with (
-        patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        _patch_device_lock(device),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch(
             "app.appium_nodes.routers.nodes.assess_device_async",
@@ -1668,61 +1719,43 @@ async def test_nodes_router_validation_branches() -> None:
         ),
         patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
     ):
-        assert (
-            await nodes_router.start_node(
-                device_id,
-                db=object(),
-                appium_services=SimpleNamespace(reconciler_agent=mock_reconciler_agent),
-            )
-            is started_node
-        )
+        payload = await nodes_router.start_node(device_id, appium_services=_appium_svc(mock_reconciler_agent))
+    assert payload.id == started_node.id
 
 
 async def test_nodes_stop_and_restart_error_and_convergence_paths() -> None:
     device_id = uuid.uuid4()
     stopped_device = SimpleNamespace(id=device_id, hold=None, appium_node=None)
     with (
-        patch(
-            "app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=stopped_device)
-        ),
+        _patch_device_lock(stopped_device),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
     ):
         with pytest.raises(HTTPException) as exc:
-            await nodes_router.stop_node(
-                device_id, db=object(), appium_services=SimpleNamespace(reconciler_agent=AsyncMock())
-            )
+            await nodes_router.stop_node(device_id, appium_services=_appium_svc(AsyncMock()))
     assert exc.value.status_code == 400
 
     running_node = SimpleNamespace(desired_state=AppiumDesiredState.running)
     running_device = SimpleNamespace(id=device_id, hold=None, appium_node=running_node, lifecycle_policy_state=None)
-    restarted = SimpleNamespace(id=uuid.uuid4())
-    fake_db = SimpleNamespace(refresh=AsyncMock())
+    restarted = _node_snapshot()
     mock_ra_restart = AsyncMock()
-    mock_ra_restart.restart_node = AsyncMock(return_value=restarted)
+    mock_ra_restart.restart_node_txn = AsyncMock(return_value=restarted)
     with (
-        patch(
-            "app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)
-        ),
+        _patch_device_lock(running_device),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch(
             "app.appium_nodes.routers.nodes.assess_device_async",
             new=AsyncMock(return_value=SimpleNamespace(readiness_state="verified", missing_setup_fields=[])),
         ),
     ):
-        assert (
-            await nodes_router.restart_node(
-                device_id,
-                db=fake_db,
-                appium_services=SimpleNamespace(
-                    reconciler_agent=mock_ra_restart,
-                    reconciler=SimpleNamespace(
-                        converge_device_now=AsyncMock(side_effect=RuntimeError("converge failed"))
-                    ),
-                ),
-            )
-            is restarted
+        # A failing wake-hint poke must not lose the response the transaction produced.
+        payload = await nodes_router.restart_node(
+            device_id,
+            appium_services=_appium_svc(
+                mock_ra_restart,
+                reconciler=SimpleNamespace(converge_device_now=AsyncMock(side_effect=RuntimeError("converge failed"))),
+            ),
         )
-    fake_db.refresh.assert_awaited_once_with(restarted)
+    assert payload.id == restarted.id
 
 
 async def test_nodes_router_additional_start_stop_restart_branches() -> None:
@@ -1733,7 +1766,7 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         id=device_id, hold=None, appium_node=None, host_id=uuid.uuid4(), lifecycle_policy_state=None
     )
     with (
-        patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        _patch_device_lock(device),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
         patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=False)),
@@ -1742,17 +1775,16 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         with pytest.raises(HTTPException) as exc:
             await nodes_router.start_node(
                 device_id,
-                db=object(),
-                appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
+                appium_services=_appium_svc(AsyncMock()),
             )
     assert exc.value.status_code == 400
     assert exc.value.detail == "not ready"
 
     # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 400
     ra_boom = AsyncMock()
-    ra_boom.start_node = AsyncMock(side_effect=RuntimeError("boom"))
+    ra_boom.start_node_txn = AsyncMock(side_effect=RuntimeError("boom"))
     with (
-        patch("app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=device)),
+        _patch_device_lock(device),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
         patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
@@ -1760,45 +1792,34 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         with pytest.raises(RuntimeError, match="boom"):
             await nodes_router.start_node(
                 device_id,
-                db=object(),
-                appium_services=SimpleNamespace(reconciler_agent=ra_boom),
+                appium_services=_appium_svc(ra_boom),
             )
 
     running_node = SimpleNamespace(desired_state=AppiumDesiredState.running)
     running_device = SimpleNamespace(
         id=device_id, hold=None, appium_node=running_node, host_id=uuid.uuid4(), lifecycle_policy_state=None
     )
-    stopped_node = SimpleNamespace(desired_state=AppiumDesiredState.stopped)
+    stopped_node = _node_snapshot(desired_state=AppiumDesiredState.stopped, desired_port=None)
     ra_stop = AsyncMock()
-    ra_stop.stop_node = AsyncMock(return_value=stopped_node)
+    ra_stop.stop_node_txn = AsyncMock(return_value=stopped_node)
     with (
-        patch(
-            "app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)
-        ),
+        _patch_device_lock(running_device),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
     ):
-        assert (
-            await nodes_router.stop_node(
-                device_id, db=object(), appium_services=SimpleNamespace(reconciler_agent=ra_stop)
-            )
-            is stopped_node
-        )
+        payload = await nodes_router.stop_node(device_id, appium_services=_appium_svc(ra_stop))
+    assert payload.id == stopped_node.id
 
     # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 400
     ra_stop_fail = AsyncMock()
-    ra_stop_fail.stop_node = AsyncMock(side_effect=RuntimeError("stop failed"))
+    ra_stop_fail.stop_node_txn = AsyncMock(side_effect=RuntimeError("stop failed"))
     with (
-        patch(
-            "app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)
-        ),
+        _patch_device_lock(running_device),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
     ):
         with pytest.raises(RuntimeError, match="stop failed"):
-            await nodes_router.stop_node(
-                device_id, db=object(), appium_services=SimpleNamespace(reconciler_agent=ra_stop_fail)
-            )
+            await nodes_router.stop_node(device_id, appium_services=_appium_svc(ra_stop_fail))
 
-    fallback_started = SimpleNamespace(desired_state=AppiumDesiredState.running)
+    fallback_started = _node_snapshot()
     non_running_device = SimpleNamespace(
         id=device_id,
         hold=None,
@@ -1807,51 +1828,30 @@ async def test_nodes_router_additional_start_stop_restart_branches() -> None:
         lifecycle_policy_state=None,
     )
     ra_fallback = AsyncMock()
-    ra_fallback.start_node = AsyncMock(return_value=fallback_started)
+    ra_fallback.start_node_txn = AsyncMock(return_value=fallback_started)
     with (
-        patch(
-            "app.appium_nodes.routers.nodes.get_device_for_update_or_404",
-            new=AsyncMock(return_value=non_running_device),
-        ),
+        _patch_device_lock(non_running_device),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
         patch("app.appium_nodes.routers.nodes.is_ready_for_use_async", new=AsyncMock(return_value=True)),
     ):
-        assert (
-            await nodes_router.restart_node(
-                device_id,
-                db=object(),
-                appium_services=SimpleNamespace(
-                    reconciler_agent=ra_fallback,
-                    reconciler=SimpleNamespace(converge_device_now=AsyncMock(return_value=None)),
-                ),
-            )
-            is fallback_started
-        )
+        payload = await nodes_router.restart_node(device_id, appium_services=_appium_svc(ra_fallback))
+    # restart with no desired-running node falls back to the start lever, which
+    # downgrades the caller.
+    assert payload.id == fallback_started.id
+    assert ra_fallback.start_node_txn.await_args.kwargs["caller"] == "operator_route"
 
-    restarted = SimpleNamespace(id=uuid.uuid4())
-    fake_db = SimpleNamespace(refresh=AsyncMock())
+    restarted = _node_snapshot()
     ra_restart = AsyncMock()
-    ra_restart.restart_node = AsyncMock(return_value=restarted)
+    ra_restart.restart_node_txn = AsyncMock(return_value=restarted)
     with (
-        patch(
-            "app.appium_nodes.routers.nodes.get_device_for_update_or_404", new=AsyncMock(return_value=running_device)
-        ),
+        _patch_device_lock(running_device),
         patch("app.appium_nodes.routers.nodes.run_service.get_device_reservation", new=AsyncMock(return_value=None)),
         patch("app.appium_nodes.routers.nodes.assess_device_async", new=AsyncMock(return_value=verified)),
     ):
-        assert (
-            await nodes_router.restart_node(
-                device_id,
-                db=fake_db,
-                appium_services=SimpleNamespace(
-                    reconciler_agent=ra_restart,
-                    reconciler=SimpleNamespace(converge_device_now=AsyncMock(return_value=None)),
-                ),
-            )
-            is restarted
-        )
-    fake_db.refresh.assert_awaited_once_with(restarted)
+        payload = await nodes_router.restart_node(device_id, appium_services=_appium_svc(ra_restart))
+    assert payload.id == restarted.id
+    assert ra_restart.restart_node_txn.await_args.kwargs["caller"] == "operator_restart"
 
 
 async def test_device_group_router_bulk_and_membership_branches() -> None:
@@ -2583,6 +2583,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
+        _patch_device_lock(reconnect_device),
     ):
         with pytest.raises(HTTPException) as exc:
             await devices_control.reconnect_device(
@@ -2591,7 +2592,7 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
                 device_services=SimpleNamespace(crud=AsyncMock(), publisher=event_bus),
                 settings_services=_health_ss,
                 agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
-                appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
+                appium_services=_appium_svc(AsyncMock()),
             )  # type: ignore[arg-type]
     assert exc.value.status_code == 400
 

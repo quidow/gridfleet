@@ -406,53 +406,59 @@ class ReconcilerAgentService:
         self._settings = settings
         self._operator = operator
 
-    async def start_node(
-        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_route"
+    async def start_node_txn(
+        self, db: AsyncSession, locked: LockedDevice, *, caller: DesiredStateCaller = "operator_route"
     ) -> AppiumNode:
-        """Operator-initiated single-device start.
+        """Operator-initiated single-device start, inside the caller's transaction.
 
         Routes through ``self._operator.request_start`` so the operator:start
         intent payload is the single source of truth. Direct ``write_desired_state``
         calls are forbidden in operator code paths.
+
+        No refresh of ``appium_node``: ``locked`` was minted by
+        ``lock_device_handle``, which loads the relationship with
+        ``populate_existing`` inside this transaction.
         """
-        await db.refresh(device, attribute_names=["appium_node"])
+        locked.assert_active(db)
+        device = locked.device
         if device.appium_node and device.appium_node.observed_running:
             raise NodeManagerError(f"Node already running for device {device.id}")
         if caller != "verification" and not await is_ready_for_use_async(db, device):
             raise NodeManagerError(await readiness_error_detail_async(db, device, action="start a node"))
 
-        node = await self._operator.request_start(db, device, caller=caller, reason=f"{caller} start requested")
-        await db.commit()
-        await db.refresh(node)
-        return node
+        return await self._operator.request_start(db, device, caller=caller, reason=f"{caller} start requested")
 
-    async def stop_node(
-        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_route"
+    async def stop_node_txn(
+        self, db: AsyncSession, locked: LockedDevice, *, caller: DesiredStateCaller = "operator_route"
     ) -> AppiumNode:
-        """Operator-initiated single-device stop. Routes through
-        ``self._operator.request_stop`` so operator:stop intents are the
-        single source of truth.
+        """Operator-initiated single-device stop, inside the caller's transaction.
+
+        Routes through ``self._operator.request_stop`` so operator:stop intents are
+        the single source of truth.
         """
+        locked.assert_active(db)
+        device = locked.device
         node = cast("AppiumNode | None", device.appium_node)
         if not node or not node.observed_running:
             raise NodeManagerError(f"No running node for device {device.id}")
 
-        node = await self._operator.request_stop(db, device, reason=f"{caller} stop requested")
-        await db.commit()
-        await db.refresh(node)
-        return node
+        return await self._operator.request_stop(db, device, reason=f"{caller} stop requested")
 
-    async def restart_node(
-        self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = "operator_restart"
+    async def restart_node_txn(
+        self, db: AsyncSession, locked: LockedDevice, *, caller: DesiredStateCaller = "operator_restart"
     ) -> AppiumNode:
-        """Operator-initiated single-device restart. Routes through
-        ``self._operator.request_restart`` so the operator:start intent
-        payload is the single source of truth (with a fresh restart_requested_at
-        watermark and expires_at on every restart).
-        """
-        if not device.appium_node or not device.appium_node.observed_running:
-            return await self.start_node(db, device, caller=caller)
+        """Operator-initiated single-device restart, inside the caller's transaction.
 
-        node = await self._operator.request_restart(db, device, caller=caller, reason=f"{caller} restart requested")
-        await db.commit()
-        return node
+        Routes through ``self._operator.request_restart`` so the operator:start
+        intent payload is the single source of truth (with a fresh
+        restart_requested_at watermark and expires_at on every restart).
+
+        The no-running-node fallback forwards ``caller`` unchanged — unlike the two
+        route-level fallbacks, one of which downgrades it.
+        """
+        locked.assert_active(db)
+        device = locked.device
+        if not device.appium_node or not device.appium_node.observed_running:
+            return await self.start_node_txn(db, locked, caller=caller)
+
+        return await self._operator.request_restart(db, device, caller=caller, reason=f"{caller} restart requested")
