@@ -359,7 +359,6 @@ class ConnectivityService:
             device_id=device.id,
             failure_episode_id=device.failure_episode_id,
             action_id=action,
-            commit=False,
         )
 
     async def _maybe_auto_recover(

@@ -293,8 +293,10 @@ async def test_run_pending_once_releases_claim_transaction_before_dispatch(
     release_runner = asyncio.Event()
 
     class BlockingRemediationRunner:
-        async def run_device_health_remediation_job(self, job_id: str, payload: dict[str, Any]) -> None:
-            del job_id, payload
+        async def run_device_health_remediation_job(
+            self, job_id: str, payload: dict[str, Any], *, claim_attempt: int
+        ) -> None:
+            del job_id, payload, claim_attempt
             runner_started.set()
             await asyncio.wait_for(release_runner.wait(), timeout=5.0)
 

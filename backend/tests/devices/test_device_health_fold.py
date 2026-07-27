@@ -1181,3 +1181,46 @@ async def test_fold_rollback_after_recovery_prepare_leaves_no_state(
         == 0
     )
     assert device.device_checks_fold_applied_revision != 73
+
+
+async def test_fold_rollback_discards_the_failure_fact_and_its_remediation_job_together(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The durable enqueue is flush-only, so it lives or dies with the fold transaction."""
+    from app.devices.services.device_health_fold_context import LockedDeviceFold as FoldHandle
+
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-remediation-rollback")
+    device = devices[0]
+    device_id = device.id
+    await db_session.commit()
+    lifecycle_policy = MagicMock()
+    lifecycle_policy.handle_health_failure_locked = AsyncMock()
+    service = _loop_service(lifecycle_policy=lifecycle_policy)
+    real_mark_applied = FoldHandle.mark_applied
+
+    def raise_after_enqueue(self: FoldHandle, receipt: object) -> None:
+        real_mark_applied(self, receipt)  # type: ignore[arg-type]
+        raise RuntimeError("fold rolled back after the remediation enqueue")
+
+    monkeypatch.setattr(FoldHandle, "mark_applied", raise_after_enqueue)
+
+    revision = await next_observation_revision(db_session)
+    section = _health_section(
+        device_id,
+        revision=revision,
+        reported_at=now_utc().isoformat(),
+        health={
+            "healthy": False,
+            "checks": [{"check_id": "adb_connected", "ok": False}],
+            "recommended_action": "reconnect",
+        },
+    )
+    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is False
+
+    await db_session.refresh(device)
+    assert device.device_checks_healthy is not False
+    assert device.failure_episode_id is None
+    assert device.device_checks_fold_applied_revision != revision
+    jobs = (await db_session.execute(select(Job).where(Job.remediation_device_id == device_id))).scalars().all()
+    assert jobs == []

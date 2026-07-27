@@ -231,6 +231,7 @@ async def test_run_pending_jobs_once_dispatches_remediation_kind(db_session: Asy
     remediation_runner.run_device_health_remediation_job.assert_awaited_once_with(
         str(remediation.id),
         remediation.payload,
+        claim_attempt=1,
     )
 
 

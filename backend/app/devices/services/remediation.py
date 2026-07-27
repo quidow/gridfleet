@@ -20,8 +20,15 @@ async def enqueue_device_health_remediation(
     device_id: uuid.UUID,
     failure_episode_id: uuid.UUID,
     action_id: str,
-    commit: bool = False,
 ) -> uuid.UUID | None:
+    """Stage one durable remediation job; flush-only, so the caller owns the boundary.
+
+    The partial unique index makes a second enqueue for the same
+    ``(device, failure episode, action)`` a no-op while an earlier job is still
+    pending or running, and ``RETURNING`` tells the caller which of the two
+    happened. Nothing here commits: the job must live or die with the failure
+    fact that justified it.
+    """
     job_id = uuid.uuid4()
     stmt = (
         pg_insert(Job)
@@ -51,8 +58,5 @@ async def enqueue_device_health_remediation(
         .returning(Job.id)
     )
     inserted_id = (await db.execute(stmt)).scalar_one_or_none()
-    if commit:
-        await db.commit()
-    else:
-        await db.flush()
+    await db.flush()
     return inserted_id

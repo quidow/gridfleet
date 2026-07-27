@@ -193,7 +193,11 @@ class DurableJobService:
             return True
 
         if claim.kind == JOB_KIND_DEVICE_HEALTH_REMEDIATION:
-            await self._remediation_runner.run_device_health_remediation_job(str(claim.id), claim.payload)
+            # The claim's post-increment ``attempts`` is the remediation fence: the
+            # runner must reject a job whose generation moved on under it.
+            await self._remediation_runner.run_device_health_remediation_job(
+                str(claim.id), claim.payload, claim_attempt=claim.attempts
+            )
             return True
 
         if claim.kind == JOB_KIND_RUN_SESSION_TEARDOWN:

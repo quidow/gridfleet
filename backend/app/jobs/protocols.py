@@ -17,7 +17,19 @@ class RecoveryJobRunner(Protocol):
 
 
 class RemediationJobRunner(Protocol):
-    async def run_device_health_remediation_job(self, job_id: str, payload: dict[str, Any]) -> None: ...
+    async def run_device_health_remediation_job(
+        self,
+        job_id: str,
+        payload: dict[str, Any],
+        *,
+        claim_attempt: int,
+    ) -> None:
+        """``claim_attempt`` is the ``Job.attempts`` value the claim statement returned.
+
+        It is the generation that fences a stale in-flight effect out of a newer
+        claim; deriving it any later than the claim re-opens that hole.
+        """
+        ...
 
 
 class RunTeardownJobRunner(Protocol):

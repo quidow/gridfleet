@@ -19,18 +19,41 @@ from app.devices.services.remediation import enqueue_device_health_remediation
 from app.devices.services.remediation_job import RemediationJobService
 from app.jobs import JOB_KIND_DEVICE_HEALTH_REMEDIATION
 from app.jobs.models import Job
+from app.jobs.queue import DurableJobService
 from app.jobs.statuses import JOB_STATUS_COMPLETED
 from app.sessions.models import Session, SessionStatus
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from app.hosts.models import Host
 
+DISPATCH_TARGET = "app.devices.services.remediation_job.pack_device_lifecycle_action"
+
 
 def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
     assert db_session.bind is not None
     return async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+
+
+async def _claim_generation(db_session: AsyncSession, job_id: uuid.UUID) -> int:
+    """Claim the pending remediation job through the real queue and return its generation."""
+    service = DurableJobService(
+        session_factory=_session_factory(db_session),
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader({}),
+        circuit_breaker=AsyncMock(),
+        verification_runner=AsyncMock(),
+        recovery_runner=AsyncMock(),
+        remediation_runner=AsyncMock(),
+        run_teardown_runner=AsyncMock(),
+        session_kill_runner=AsyncMock(),
+    )
+    claim = await service.claim_next_job(kind=JOB_KIND_DEVICE_HEALTH_REMEDIATION)
+    assert claim is not None
+    assert claim.id == job_id
+    return claim.attempts
 
 
 async def _create_failing_remediation_job(
@@ -39,21 +62,21 @@ async def _create_failing_remediation_job(
     *,
     name: str,
     action_id: str = "reconnect",
-) -> tuple[Device, uuid.UUID, uuid.UUID]:
+) -> tuple[Device, uuid.UUID, uuid.UUID, int]:
     device = await create_device(db_session, host_id=host.id, name=name)
     failure_episode_id = uuid.uuid4()
     device.device_checks_healthy = False
     device.failure_episode_id = failure_episode_id
-    await db_session.commit()
     job_id = await enqueue_device_health_remediation(
         db_session,
         device_id=device.id,
         failure_episode_id=failure_episode_id,
         action_id=action_id,
-        commit=True,
     )
     assert job_id is not None
-    return device, failure_episode_id, job_id
+    await db_session.commit()
+    claim_attempt = await _claim_generation(db_session, job_id)
+    return device, failure_episode_id, job_id, claim_attempt
 
 
 def test_device_health_remediation_schema_contract() -> None:
@@ -74,7 +97,6 @@ async def test_worker_self_cancels_when_device_healthy(db_session: AsyncSession,
     )
     device.device_checks_healthy = True
     device.failure_episode_id = None
-    await db_session.commit()
 
     old_episode_id = uuid.uuid4()
     job_id = await enqueue_device_health_remediation(
@@ -82,15 +104,13 @@ async def test_worker_self_cancels_when_device_healthy(db_session: AsyncSession,
         device_id=device.id,
         failure_episode_id=old_episode_id,
         action_id="reconnect",
-        commit=True,
     )
     assert job_id is not None
+    await db_session.commit()
+    claim_attempt = await _claim_generation(db_session, job_id)
 
     dispatch = AsyncMock()
-    with patch(
-        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
-        new=dispatch,
-    ):
+    with patch(DISPATCH_TARGET, new=dispatch):
         await RemediationJobService(
             session_factory=_session_factory(db_session),
             circuit_breaker=AsyncMock(),
@@ -102,6 +122,7 @@ async def test_worker_self_cancels_when_device_healthy(db_session: AsyncSession,
                 "failure_episode_id": str(old_episode_id),
                 "action_id": "reconnect",
             },
+            claim_attempt=claim_attempt,
         )
 
     dispatch.assert_not_awaited()
@@ -113,7 +134,7 @@ async def test_worker_self_cancels_when_device_healthy(db_session: AsyncSession,
 
 
 async def test_worker_self_cancels_when_device_enters_maintenance(db_session: AsyncSession, db_host: Host) -> None:
-    device, failure_episode_id, job_id = await _create_failing_remediation_job(
+    device, failure_episode_id, job_id, claim_attempt = await _create_failing_remediation_job(
         db_session,
         db_host,
         name="maintenance-remediation-device",
@@ -122,10 +143,7 @@ async def test_worker_self_cancels_when_device_enters_maintenance(db_session: As
     await db_session.commit()
 
     dispatch = AsyncMock()
-    with patch(
-        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
-        new=dispatch,
-    ):
+    with patch(DISPATCH_TARGET, new=dispatch):
         await RemediationJobService(
             session_factory=_session_factory(db_session),
             circuit_breaker=AsyncMock(),
@@ -137,6 +155,7 @@ async def test_worker_self_cancels_when_device_enters_maintenance(db_session: As
                 "failure_episode_id": str(failure_episode_id),
                 "action_id": "reconnect",
             },
+            claim_attempt=claim_attempt,
         )
 
     dispatch.assert_not_awaited()
@@ -155,15 +174,13 @@ async def test_worker_completes_when_device_no_longer_exists(db_session: AsyncSe
         device_id=missing_device_id,
         failure_episode_id=failure_episode_id,
         action_id="reconnect",
-        commit=True,
     )
     assert job_id is not None
+    await db_session.commit()
+    claim_attempt = await _claim_generation(db_session, job_id)
 
     dispatch = AsyncMock()
-    with patch(
-        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
-        new=dispatch,
-    ):
+    with patch(DISPATCH_TARGET, new=dispatch):
         await RemediationJobService(
             session_factory=_session_factory(db_session),
             circuit_breaker=AsyncMock(),
@@ -175,6 +192,7 @@ async def test_worker_completes_when_device_no_longer_exists(db_session: AsyncSe
                 "failure_episode_id": str(failure_episode_id),
                 "action_id": "reconnect",
             },
+            claim_attempt=claim_attempt,
         )
 
     dispatch.assert_not_awaited()
@@ -189,7 +207,7 @@ async def test_worker_dispatches_and_records_repair_attempt(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device, failure_episode_id, job_id = await _create_failing_remediation_job(
+    device, failure_episode_id, job_id, claim_attempt = await _create_failing_remediation_job(
         db_session,
         db_host,
         name="dispatch-remediation-device",
@@ -197,10 +215,7 @@ async def test_worker_dispatches_and_records_repair_attempt(
     device_id = device.id
     dispatch = AsyncMock(return_value={"success": True, "detail": "cured_by=forward_remove"})
 
-    with patch(
-        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
-        new=dispatch,
-    ):
+    with patch(DISPATCH_TARGET, new=dispatch):
         await RemediationJobService(
             session_factory=_session_factory(db_session),
             circuit_breaker=AsyncMock(),
@@ -212,6 +227,7 @@ async def test_worker_dispatches_and_records_repair_attempt(
                 "failure_episode_id": str(failure_episode_id),
                 "action_id": "reconnect",
             },
+            claim_attempt=claim_attempt,
         )
 
     dispatch.assert_awaited_once()
@@ -240,7 +256,7 @@ async def test_worker_dispatch_receives_fresh_session_and_port_facts(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device, failure_episode_id, job_id = await _create_failing_remediation_job(
+    device, failure_episode_id, job_id, claim_attempt = await _create_failing_remediation_job(
         db_session,
         db_host,
         name="fresh-facts-remediation-device",
@@ -280,10 +296,7 @@ async def test_worker_dispatch_receives_fresh_session_and_port_facts(
     detail = "cured_by=forward_remove:" + ("x" * 240)
     dispatch = AsyncMock(return_value={"success": True, "detail": detail})
 
-    with patch(
-        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
-        new=dispatch,
-    ):
+    with patch(DISPATCH_TARGET, new=dispatch):
         await RemediationJobService(
             session_factory=_session_factory(db_session),
             circuit_breaker=AsyncMock(),
@@ -295,10 +308,13 @@ async def test_worker_dispatch_receives_fresh_session_and_port_facts(
                 "failure_episode_id": str(failure_episode_id),
                 "action_id": "release_forwarded_ports",
             },
+            claim_attempt=claim_attempt,
         )
 
     dispatch.assert_awaited_once()
-    assert dispatch.await_args.kwargs["extra_args"] == {
+    assert dispatch.await_args.kwargs["args"] == {
+        "ip_address": None,
+        "operation_id": str(job_id),
         "has_live_session": False,
         "host_has_live_sessions": True,
         "claimed_ports": {"appium:systemPort": claimed_port},
@@ -320,7 +336,7 @@ async def test_worker_budget_exhaustion_records_repair_failed(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device, failure_episode_id, job_id = await _create_failing_remediation_job(
+    device, failure_episode_id, job_id, claim_attempt = await _create_failing_remediation_job(
         db_session,
         db_host,
         name="budget-remediation-device",
@@ -335,10 +351,7 @@ async def test_worker_budget_exhaustion_records_repair_failed(
     await db_session.commit()
     dispatch = AsyncMock()
 
-    with patch(
-        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
-        new=dispatch,
-    ):
+    with patch(DISPATCH_TARGET, new=dispatch):
         await RemediationJobService(
             session_factory=_session_factory(db_session),
             circuit_breaker=AsyncMock(),
@@ -350,6 +363,7 @@ async def test_worker_budget_exhaustion_records_repair_failed(
                 "failure_episode_id": str(failure_episode_id),
                 "action_id": "reconnect",
             },
+            claim_attempt=claim_attempt,
         )
 
     dispatch.assert_not_awaited()
@@ -369,11 +383,11 @@ async def test_worker_budget_exhaustion_records_repair_failed(
     assert job.snapshot.get("note") == "budget exhausted"
 
 
-async def test_b6_redelivery_is_repeat_safe_and_new_episode_enqueues(
+async def test_completed_claim_redelivery_is_refused_and_new_episode_enqueues(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device, first_episode_id, job_id = await _create_failing_remediation_job(
+    device, first_episode_id, job_id, claim_attempt = await _create_failing_remediation_job(
         db_session,
         db_host,
         name="b6-redelivery-remediation-device",
@@ -384,8 +398,8 @@ async def test_b6_redelivery_is_repeat_safe_and_new_episode_enqueues(
         device_id=device_id,
         failure_episode_id=first_episode_id,
         action_id="reconnect",
-        commit=True,
     )
+    await db_session.commit()
     assert duplicate_job_id is None
 
     payload = {
@@ -400,16 +414,13 @@ async def test_b6_redelivery_is_repeat_safe_and_new_episode_enqueues(
         health=AsyncMock(),
     )
 
-    with patch(
-        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
-        new=dispatch,
-    ):
-        await worker.run_device_health_remediation_job(str(job_id), payload)
-        await worker.run_device_health_remediation_job(str(job_id), payload)
+    with patch(DISPATCH_TARGET, new=dispatch):
+        await worker.run_device_health_remediation_job(str(job_id), payload, claim_attempt=claim_attempt)
+        # A duplicate delivery of the same claim finds the Job already completed and
+        # declines: the generation fence gates the redelivery, not the action.
+        await worker.run_device_health_remediation_job(str(job_id), payload, claim_attempt=claim_attempt)
 
-    assert dispatch.await_count == 2
-    assert [call.args[1] for call in dispatch.await_args_list] == ["reconnect", "reconnect"]
-    assert [call.args[0].id for call in dispatch.await_args_list] == [device_id, device_id]
+    assert dispatch.await_count == 1
     repair_events = (
         (
             await db_session.execute(
@@ -426,7 +437,6 @@ async def test_b6_redelivery_is_repeat_safe_and_new_episode_enqueues(
     )
     assert [event.details for event in repair_events] == [
         {"action": "reconnect", "attempt": 1, "success": True, "detail": "already connected"},
-        {"action": "reconnect", "attempt": 2, "success": True, "detail": "already connected"},
     ]
     first_job = await db_session.get(Job, job_id)
     assert first_job is not None
@@ -451,8 +461,8 @@ async def test_b6_redelivery_is_repeat_safe_and_new_episode_enqueues(
         device_id=device_id,
         failure_episode_id=second_episode_id,
         action_id="reconnect",
-        commit=True,
     )
+    await db_session.commit()
     assert isinstance(second_job_id, uuid.UUID)
     assert second_job_id != job_id
     second_job = await db_session.get(Job, second_job_id)
@@ -465,7 +475,7 @@ async def test_ingest_order_residual_healthy_fact_cancels_queued_remediation(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    device, failure_episode_id, job_id = await _create_failing_remediation_job(
+    device, failure_episode_id, job_id, claim_attempt = await _create_failing_remediation_job(
         db_session,
         db_host,
         name="ingest-order-residual-remediation-device",
@@ -478,10 +488,7 @@ async def test_ingest_order_residual_healthy_fact_cancels_queued_remediation(
     assert device.failure_episode_id is None
 
     dispatch = AsyncMock(return_value={"success": True})
-    with patch(
-        "app.devices.services.remediation_job.link_repair.dispatch_recommended_action",
-        new=dispatch,
-    ):
+    with patch(DISPATCH_TARGET, new=dispatch):
         await RemediationJobService(
             session_factory=_session_factory(db_session),
             circuit_breaker=AsyncMock(),
@@ -493,6 +500,7 @@ async def test_ingest_order_residual_healthy_fact_cancels_queued_remediation(
                 "failure_episode_id": str(failure_episode_id),
                 "action_id": "reconnect",
             },
+            claim_attempt=claim_attempt,
         )
 
     dispatch.assert_not_awaited()
