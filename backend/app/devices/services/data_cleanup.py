@@ -50,6 +50,26 @@ CleanupModel = (
 )
 
 
+async def _delete_one_batch(
+    db: AsyncSession,
+    *,
+    model: CleanupModel,
+    timestamp_column: InstrumentedAttribute[datetime],
+    cutoff: datetime,
+    extra_predicates: tuple[ColumnElement[bool], ...] = (),
+) -> int:
+    id_column = model.id
+    order_columns = (timestamp_column.asc(), id_column.asc())
+    id_subquery = (
+        select(id_column)
+        .where(timestamp_column < cutoff, *extra_predicates)
+        .order_by(*order_columns)
+        .limit(DELETE_BATCH_SIZE)
+    )
+    result = await db.execute(delete(model).where(id_column.in_(id_subquery)))
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 async def _delete_in_batches(
     db: AsyncSession,
     *,
@@ -59,23 +79,18 @@ async def _delete_in_batches(
     extra_predicates: tuple[ColumnElement[bool], ...] = (),
 ) -> int:
     deleted_total = 0
-    id_column = model.id
-    order_columns = (timestamp_column.asc(), id_column.asc())
-
     for _ in range(MAX_BATCHES_PER_TABLE):
-        id_subquery = (
-            select(id_column)
-            .where(timestamp_column < cutoff, *extra_predicates)
-            .order_by(*order_columns)
-            .limit(DELETE_BATCH_SIZE)
-        )
-        result = await db.execute(delete(model).where(id_column.in_(id_subquery)))
-        deleted = int(getattr(result, "rowcount", 0) or 0)
+        async with db.begin():
+            deleted = await _delete_one_batch(
+                db,
+                model=model,
+                timestamp_column=timestamp_column,
+                cutoff=cutoff,
+                extra_predicates=extra_predicates,
+            )
         if deleted == 0:
             break
         deleted_total += deleted
-        await db.commit()
-
     return deleted_total
 
 
@@ -288,6 +303,7 @@ class DataCleanupService:
             counts.test_runs_deleted,
             counts.jobs_deleted,
         )
+        assert not db.in_transaction(), "cleanup_old_data: session must be clean before the standalone summary"
         # Standalone summary: source effects have already committed or are in-memory.
         await self._publisher.publish(
             "system.cleanup_completed",

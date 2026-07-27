@@ -3,21 +3,28 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
 from sqlalchemy import select
 
 from app.analytics.models import AnalyticsCapacitySnapshot
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceRemediationLogEntry
+from app.devices.services import data_cleanup
 from app.devices.services.data_cleanup import DataCleanupService
 from app.hosts.models import Host, HostResourceSample
 from app.sessions.models import Session, SessionStatus
 from app.settings.models import ConfigAuditLog
+from tests.concurrency.group_lock_helpers import capture_statements
 from tests.fakes import FakeSettingsReader
 from tests.helpers import dispatch_committed_events, recent_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    import pytest
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+    from sqlalchemy.orm import InstrumentedAttribute
+    from sqlalchemy.sql.elements import ColumnElement
+
+    from app.devices.services.data_cleanup import CleanupModel
+    from app.events.catalog import EventSeverity
 
 
 async def _create_device(db: AsyncSession, host: Host) -> uuid.UUID:
@@ -413,3 +420,141 @@ async def test_cleanup_capacity_snapshots_in_batches_and_reports_counts(db_sessi
     events = recent_events(event_bus, event_types=["system.cleanup_completed"])
     assert len(events) == 1
     assert events[0]["data"]["capacity_snapshots_deleted"] == 4
+
+
+async def test_delete_in_batches_batch_failure_preserves_earlier_batch_commits(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """Each batch is its own transaction: a failure in batch two must not undo batch one.
+
+    A different session (a fresh connection) proves batch one's delete is durable —
+    checking through ``db_session`` itself would not distinguish "committed" from
+    "still visible in the same open transaction".
+    """
+    device_id = await _create_device(db_session, db_host)
+    old_time = datetime.now(UTC) - timedelta(days=100)
+    session_ids = [f"batch-fail-{index}" for index in range(4)]
+    db_session.add_all(
+        [
+            Session(
+                session_id=session_id,
+                device_id=device_id,
+                status=SessionStatus.passed,
+                started_at=old_time - timedelta(minutes=index),
+                ended_at=old_time - timedelta(minutes=index - 1),
+            )
+            for index, session_id in enumerate(session_ids)
+        ]
+    )
+    await db_session.commit()
+
+    real_delete_one_batch = data_cleanup._delete_one_batch
+    call_count = 0
+
+    async def _flaky_delete_one_batch(
+        db: AsyncSession,
+        *,
+        model: CleanupModel,
+        timestamp_column: InstrumentedAttribute[datetime],
+        cutoff: datetime,
+        extra_predicates: tuple[ColumnElement[bool], ...] = (),
+    ) -> int:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise RuntimeError("batch two boom")
+        return await real_delete_one_batch(
+            db,
+            model=model,
+            timestamp_column=timestamp_column,
+            cutoff=cutoff,
+            extra_predicates=extra_predicates,
+        )
+
+    with (
+        patch("app.devices.services.data_cleanup.DELETE_BATCH_SIZE", 2),
+        patch("app.devices.services.data_cleanup._delete_one_batch", _flaky_delete_one_batch),
+        pytest.raises(RuntimeError, match="batch two boom"),
+    ):
+        await data_cleanup._delete_in_batches(
+            db_session,
+            model=Session,
+            timestamp_column=Session.started_at,
+            cutoff=old_time + timedelta(days=1),
+        )
+
+    async with db_session_maker() as verify_db:
+        remaining = set(
+            (await verify_db.execute(select(Session.session_id).where(Session.session_id.in_(session_ids)))).scalars()
+        )
+    # _delete_one_batch orders by timestamp_column.asc(): the two oldest rows
+    # (highest index -> earliest started_at) are batch one and are gone for good;
+    # the two most recent rows were queued for batch two, which never committed.
+    assert remaining == {session_ids[0], session_ids[1]}, (
+        "batch one (the two oldest session rows) must stay deleted even though batch two raised"
+    )
+
+
+async def test_cleanup_old_data_publishes_with_no_open_transaction(db_session: AsyncSession, db_host: Host) -> None:
+    device_id = await _create_device(db_session, db_host)
+    old_time = datetime.now(UTC) - timedelta(days=100)
+    db_session.add_all(
+        [
+            Session(
+                session_id=f"publish-check-{index}",
+                device_id=device_id,
+                status=SessionStatus.passed,
+                started_at=old_time - timedelta(minutes=index),
+                ended_at=old_time - timedelta(minutes=index - 1),
+            )
+            for index in range(5)
+        ]
+    )
+    await db_session.commit()
+
+    in_transaction_at_publish: list[bool] = []
+
+    class _RecordingPublisher:
+        async def publish(
+            self,
+            event_type: str,
+            data: dict[str, object],
+            *,
+            severity: EventSeverity | None = None,
+        ) -> None:
+            del event_type, data, severity
+            in_transaction_at_publish.append(db_session.in_transaction())
+
+    with (
+        patch("app.devices.services.data_cleanup.DELETE_BATCH_SIZE", 2),
+        patch("app.devices.services.data_cleanup.MAX_BATCHES_PER_TABLE", 3),
+    ):
+        await DataCleanupService(publisher=_RecordingPublisher(), settings=FakeSettingsReader({})).cleanup_old_data(
+            db_session
+        )
+
+    assert in_transaction_at_publish == [False]
+
+
+async def test_delete_in_batches_zero_rows_commits_once_and_leaves_no_open_transaction(
+    db_session: AsyncSession,
+) -> None:
+    """An empty table's terminal batch still commits, so it never leaves an idle read
+    transaction on the shared session — and the loop stops after that single attempt
+    rather than probing again."""
+    assert not db_session.in_transaction()
+
+    async with capture_statements(db_session) as statements:
+        deleted_total = await data_cleanup._delete_in_batches(
+            db_session,
+            model=Session,
+            timestamp_column=Session.started_at,
+            cutoff=datetime.now(UTC),
+        )
+
+    delete_statements = [sql for sql in statements if sql.lstrip().upper().startswith("DELETE")]
+    assert deleted_total == 0
+    assert len(delete_statements) == 1
+    assert not db_session.in_transaction()
