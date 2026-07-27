@@ -11,7 +11,7 @@ from app.core.observability import get_logger
 from app.devices.models import Device, DeviceReservation
 from app.devices.services.claims import reservation_active
 from app.packs.models import DriverPack, DriverPackRelease, PackState
-from app.packs.services.service import build_pack_out
+from app.packs.services.service import PackNotFound, PackTransitionError, build_pack_out
 from app.runs.models import TERMINAL_STATES, RunState, TestRun
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session
@@ -186,14 +186,14 @@ class PackLifecycleService:
         """
         pack = await self._lock_pack(db, pack_id, with_releases=True)
         if pack is None:
-            raise LookupError(f"pack {pack_id!r} not found")
+            raise PackNotFound(f"pack {pack_id!r} not found")
 
         current = PackState(pack.state)
         if target == PackState.disabled and current == PackState.enabled:
             settled = await self._drain_settled(db, pack_id)
             pack.state = PackState.disabled if settled else PackState.draining
         elif target not in VALID_TRANSITIONS.get(current, set()):
-            raise ValueError(f"Cannot transition pack {pack_id!r} from {current.value!r} to {target.value!r}")
+            raise PackTransitionError(f"Cannot transition pack {pack_id!r} from {current.value!r} to {target.value!r}")
         else:
             pack.state = target
 

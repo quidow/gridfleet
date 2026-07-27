@@ -2,12 +2,13 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import event, text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session as SyncSession
 
 from app.devices.models import ConnectionType, Device, DeviceReservation, DeviceType
-from app.packs.models import DriverPack, DriverPackRelease, PackState
+from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease, PackState
 from app.packs.services.lifecycle import PackLifecycleService
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
@@ -21,16 +22,40 @@ count_active_work_for_pack = _lifecycle.count_active_work_for_pack
 transition_pack_state_txn = _lifecycle.transition_pack_state_txn
 
 
-async def _seed_pack(db: AsyncSession, pack_id: str = "test-pack", state: PackState = PackState.enabled) -> DriverPack:
+async def _seed_pack(
+    db: AsyncSession,
+    pack_id: str = "test-pack",
+    state: PackState = PackState.enabled,
+    *,
+    manifest_json: dict[str, object] | None = None,
+    runtime_policy: dict[str, object] | None = None,
+    platform_data: dict[str, object] | None = None,
+) -> DriverPack:
     pack = DriverPack(id=pack_id, display_name="Test", state=state.value)
+    if runtime_policy is not None:
+        pack.runtime_policy = runtime_policy
     db.add(pack)
     release = DriverPackRelease(
         pack_id=pack_id,
         release="2026.04.0",
-        manifest_json={"platforms": []},
+        manifest_json={"platforms": []} if manifest_json is None else manifest_json,
     )
     db.add(release)
     await db.flush()
+    if platform_data is not None:
+        db.add(
+            DriverPackPlatform(
+                pack_release_id=release.id,
+                manifest_platform_id="test-plat",
+                display_name="Test",
+                automation_name="Test",
+                appium_platform_name="Test",
+                device_types=["real_device"],
+                connection_types=["usb"],
+                data=platform_data,
+            )
+        )
+        await db.flush()
     return pack
 
 
@@ -159,6 +184,84 @@ async def test_failure_after_the_recount_leaves_the_pack_enabled(
     assert pack.state == PackState.enabled, (
         f"a failed transition left {pack.state} durable; enabled -> disabled must be one transaction"
     )
+
+
+# Every pack command builds its PackOut response snapshot *inside* its
+# transaction while its router translates exceptions *outside* it, so the
+# translation sits over ``build_pack_out``. That function indexes persisted
+# manifest and platform data and validates the persisted policy column, and its
+# failures are KeyError (a LookupError) and pydantic ValidationError (a
+# ValueError) — the exact base classes a not-found/bad-request translation would
+# otherwise catch. These cases pin that a malformed row stays a server error.
+_MALFORMED_ROWS = (
+    # _installable_out indexes data["source"] …
+    pytest.param({"appium_server": {"package": "appium"}}, None, id="manifest-missing-source"),
+    # … and data["version"].
+    pytest.param({"appium_driver": {"source": "npm", "package": "d"}}, None, id="manifest-missing-version"),
+    # _platform_out indexes platform.data["identity"]["scheme"].
+    pytest.param(None, {}, id="platform-missing-identity"),
+)
+
+_COMMAND_ROUTES = (
+    pytest.param("", {"state": "disabled"}, id="update_pack"),
+    pytest.param("/policy", {"runtime_policy": {"strategy": "recommended"}}, id="update_runtime_policy"),
+    pytest.param("/releases/current", {"release": "2026.04.0"}, id="update_current_release"),
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("manifest_json", "platform_data"), _MALFORMED_ROWS)
+@pytest.mark.parametrize(("path_suffix", "body"), _COMMAND_ROUTES)
+async def test_malformed_persisted_pack_data_is_not_translated_into_a_404(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    manifest_json: dict[str, object] | None,
+    platform_data: dict[str, object] | None,
+    path_suffix: str,
+    body: dict[str, object],
+) -> None:
+    """A data bug must reach the unhandled-exception handler, not the 404 lane.
+
+    The test client re-raises application exceptions, so the exception escaping
+    the route *is* the 500: ``register_exception_handlers``' catch-all is what
+    turns it into one. What matters is that the router did not swallow it.
+    """
+    await _seed_pack(db_session, manifest_json=manifest_json, platform_data=platform_data)
+    await db_session.commit()
+
+    with pytest.raises(KeyError):
+        await client.patch(f"/api/driver-packs/test-pack{path_suffix}", json=body)
+
+
+@pytest.mark.asyncio
+async def test_malformed_persisted_policy_is_not_translated_into_a_400(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    """``RuntimePolicy.model_validate`` on a stale policy column must not read as a bad request.
+
+    ``build_pack_out`` validates the persisted ``runtime_policy``, and pydantic's
+    ``ValidationError`` is a ``ValueError`` — the class the invalid-transition
+    translation used to catch. The caller's own request is valid here, so a 400
+    with a validation dump would blame the wrong side.
+    """
+    await _seed_pack(db_session, runtime_policy={"strategy": "latest_patch"})
+    await db_session.commit()
+
+    with pytest.raises(ValidationError):
+        await client.patch("/api/driver-packs/test-pack", json={"state": "disabled"})
+
+
+@pytest.mark.asyncio
+async def test_missing_pack_still_maps_to_404_on_every_command_route(client: AsyncClient) -> None:
+    """The narrowed catches must not have closed the genuine not-found lane."""
+    assert (await client.patch("/api/driver-packs/ghost", json={"state": "disabled"})).status_code == 404
+    policy = await client.patch("/api/driver-packs/ghost/policy", json={"runtime_policy": {"strategy": "recommended"}})
+    assert policy.status_code == 404
+    assert policy.json()["error"]["message"] == "Pack 'ghost' not found"
+    current = await client.patch("/api/driver-packs/ghost/releases/current", json={"release": "1.0.0"})
+    assert current.status_code == 404
+    assert current.json()["error"]["message"] == "Pack 'ghost' not found"
 
 
 @pytest.mark.asyncio

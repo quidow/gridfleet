@@ -65,6 +65,7 @@ from app.packs.routers import (
     uploads as driver_pack_uploads,
 )
 from app.packs.schemas import CurrentReleasePatch, RuntimePolicy
+from app.packs.services.service import PackNotFound, PackTransitionError
 from app.runs import router as runs
 from app.runs.models import RunState
 from app.runs.schemas import (
@@ -2145,7 +2146,7 @@ async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
         )
     assert exc.value.status_code == 400
 
-    for error, status_code in ((LookupError("missing"), 404), (ValueError("bad transition"), 400)):
+    for error, status_code in ((PackNotFound("missing"), 404), (PackTransitionError("bad transition"), 400)):
         mock_packs_lc_err = SimpleNamespace(
             lifecycle=SimpleNamespace(transition_pack_state_txn=AsyncMock(side_effect=error)),
             session_factory=FakeSessionFactory(object()),
@@ -2161,7 +2162,7 @@ async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
         assert mock_packs_lc_err.session_factory.begun == 1
 
     mock_packs_policy_err = SimpleNamespace(
-        catalog=SimpleNamespace(set_runtime_policy=AsyncMock(side_effect=LookupError("missing"))),
+        catalog=SimpleNamespace(set_runtime_policy=AsyncMock(side_effect=PackNotFound("missing"))),
         session_factory=FakeSessionFactory(object()),
     )
     with pytest.raises(HTTPException) as exc:
@@ -2478,7 +2479,7 @@ async def test_devices_core_router_branches() -> None:
     assert mock_ds_delete.session_factory.begun == 1, "the delete route must own exactly one boundary"
 
     mock_packs_cur_err = SimpleNamespace(
-        release=SimpleNamespace(set_current_release=AsyncMock(side_effect=LookupError("missing"))),
+        release=SimpleNamespace(set_current_release=AsyncMock(side_effect=PackNotFound("missing"))),
         session_factory=FakeSessionFactory(object()),
     )
     with pytest.raises(HTTPException) as exc:

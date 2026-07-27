@@ -21,7 +21,7 @@ from app.packs.services.ingest import (
 from app.packs.services.ingest import (
     PackIngestValidationError as PackUploadValidationError,
 )
-from app.packs.services.service import build_pack_out
+from app.packs.services.service import PackNotFound, build_pack_out, unlink_pack_artifact
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
@@ -109,11 +109,14 @@ async def update_current_release(
     _username: AdminDep,
     packs: PackServicesDep,
 ) -> PackOut:
+    # PackNotFound by name, not LookupError: build_pack_out runs inside the
+    # transaction and indexes persisted manifest/platform data, so a KeyError
+    # from a malformed row must stay a 500 instead of becoming a 404.
     try:
         async with packs.session_factory.begin() as db:
             pack = await packs.release.set_current_release(db, pack_id, body.release)
             return build_pack_out(pack)
-    except LookupError as exc:
+    except PackNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
@@ -134,7 +137,8 @@ async def delete_release(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     # Post-commit, for the same reason as the pack delete: no transaction and no
-    # pack row lock may span filesystem deletion.
+    # pack row lock may span filesystem deletion, and a failing unlink is logged
+    # rather than reported as a rollback that did not happen.
     if artifact_path:
-        Path(artifact_path).unlink(missing_ok=True)
+        unlink_pack_artifact(artifact_path)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

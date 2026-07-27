@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, select
@@ -11,6 +12,7 @@ if TYPE_CHECKING:
 
     from app.packs.services.lifecycle import PackLifecycleService
 
+from app.core.observability import get_logger
 from app.devices.models import Device
 from app.packs.models import (
     DriverPack,
@@ -31,6 +33,49 @@ from app.packs.schemas import (
 )
 from app.packs.services.driver_version import has_driver_drift, installed_driver_version
 from app.packs.services.release_ordering import selected_release
+
+logger = get_logger(__name__)
+
+
+class PackNotFound(LookupError):  # noqa: N818  # matches the sibling PackPlatformNotFound
+    """The pack a command was asked to mutate does not exist.
+
+    Named, rather than a bare ``LookupError``, because the pack commands build
+    their ``PackOut`` response snapshot *inside* the transaction while their
+    router translates exceptions *outside* it. ``build_pack_out`` indexes
+    persisted manifest and platform data (``data["source"]``,
+    ``data["identity"]["scheme"]``), so a malformed row raises ``KeyError`` —
+    itself a ``LookupError`` — from within the same ``try``. A router catching
+    the base class would answer ``404 not found`` for a data bug that deserves a
+    500. Subclasses ``LookupError`` so callers that still catch the base class,
+    including the two delete routes, keep working unchanged.
+    """
+
+
+class PackTransitionError(ValueError):
+    """The requested pack state transition is not allowed.
+
+    Named for the same reason as :class:`PackNotFound`: ``build_pack_out`` runs
+    ``RuntimePolicy.model_validate`` on the persisted policy column, and
+    pydantic's ``ValidationError`` is a ``ValueError``. A router catching the
+    base class would answer ``400`` with a validation dump to a caller whose
+    request was perfectly valid.
+    """
+
+
+def unlink_pack_artifact(path: str) -> None:
+    """Remove a pack artifact whose metadata deletion has already committed.
+
+    Called by the routers once their transaction has ended, so the failure has
+    nowhere to roll back to: the deletion the caller asked for did happen, and
+    failing the response would report a rollback that never occurred. The
+    orphaned file is logged for the operator instead. There is no artifact
+    ledger to reap it from.
+    """
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError as exc:
+        logger.warning("pack_artifact_unlink_failed", artifact_path=path, error=str(exc))
 
 
 @dataclass
@@ -190,7 +235,7 @@ class PackCatalogService:
             )
         ).scalar_one_or_none()
         if pack is None:
-            raise LookupError(pack_id)
+            raise PackNotFound(pack_id)
         pack.runtime_policy = policy.model_dump()
         await db.flush()
         return build_pack_out(pack)

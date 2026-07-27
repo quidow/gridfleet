@@ -30,9 +30,11 @@ async def test_complete_draining_packs_once_disables_empty_draining_pack(
 
     assert changed == ["draining-pack"]
     async with db_session_maker() as peer:
-        assert (await peer.get(DriverPack, "draining-pack")).state == PackState.draining, (  # type: ignore[union-attr]
-            "the scan committed on its own; the janitor stage owns that boundary"
-        )
+        uncommitted = await peer.get(DriverPack, "draining-pack")
+    assert uncommitted is not None
+    assert uncommitted.state == PackState.draining, (
+        "the scan committed on its own; the janitor stage owns that boundary"
+    )
     await db_session.commit()
     async with db_session_maker() as peer:
         refreshed = await peer.get(DriverPack, "draining-pack")

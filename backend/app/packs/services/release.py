@@ -15,6 +15,7 @@ from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation
 from app.packs.schemas import PackReleaseOut, PackReleasesOut
 from app.packs.services.ingest import ingest_pack_tarball
 from app.packs.services.release_ordering import parse_release_key, selected_release
+from app.packs.services.service import PackNotFound
 from app.packs.services.storage import PackStorageError
 
 if TYPE_CHECKING:
@@ -158,9 +159,9 @@ class PackReleaseService:
             )
         ).scalar_one_or_none()
         if pack is None:
-            raise LookupError(f"Pack {pack_id!r} not found")
+            raise PackNotFound(f"Pack {pack_id!r} not found")
         if not any(row.release == release for row in pack.releases):
-            raise LookupError(f"Pack {pack_id!r} release {release!r} not found")
+            raise PackNotFound(f"Pack {pack_id!r} release {release!r} not found")
         pack.current_release = release
         await db.flush()
         return pack

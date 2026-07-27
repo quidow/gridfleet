@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import tarfile
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -82,6 +83,9 @@ class _ObservedPackSessions:
     filesystem work happens once that transaction has ended. ``fail_before_exit``
     injects the failure as a real statement against a table that does not exist,
     so the transaction is genuinely aborted rather than left artificially clean.
+
+    Only ``begin()`` is wrapped: no pack route takes the plain ``session_factory()``
+    read form, so a stand-in for it would be scaffolding nothing could keep honest.
     """
 
     def __init__(self) -> None:
@@ -108,12 +112,6 @@ class _ObservedPackSessions:
             self.sessions.append(db)
             yield db
             await self._inject(db)
-
-    @asynccontextmanager
-    async def __call__(self) -> AsyncIterator[AsyncSession]:
-        async with self._bound() as db:
-            self.sessions.append(db)
-            yield db
 
     @property
     def open_transactions(self) -> int:
@@ -511,15 +509,18 @@ async def test_delete_release_unlinks_artifact_after_its_transaction(
     )
 
 
-async def test_failed_artifact_deletion_does_not_resurrect_committed_metadata(
+async def test_failed_artifact_deletion_is_logged_and_still_reports_success(
     client: AsyncClient,
     db_session_maker: async_sessionmaker[AsyncSession],
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The unlink is post-commit, so its failure is reported but not undone.
+    """The unlink is post-commit, so its failure is logged rather than surfaced.
 
-    Read from a peer session: the request session would show the deletion
-    whether or not it was ever made durable.
+    The deletion the caller asked for is already durable; answering 500 would
+    report a rollback that did not happen and send the operator looking for a
+    pack that is gone. Read the durability half from a peer session — the request
+    session would show the deletion whether or not it was ever committed.
     """
     await _upload(client, "0.1.0")
 
@@ -527,10 +528,12 @@ async def test_failed_artifact_deletion_does_not_resurrect_committed_metadata(
         raise PermissionError(f"cannot remove {self}")
 
     monkeypatch.setattr(Path, "unlink", _explode)
-    with pytest.raises(PermissionError):
-        await client.delete("/api/driver-packs/vendor-foo")
-
+    with caplog.at_level(logging.WARNING):
+        res = await client.delete("/api/driver-packs/vendor-foo")
     monkeypatch.undo()
+
+    assert res.status_code == 204, "a failing unlink must not turn a committed delete into an error"
+    assert "pack_artifact_unlink_failed" in caplog.text, "the orphaned artifact was not reported anywhere"
     async with db_session_maker() as peer:
         assert await peer.get(DriverPack, "vendor-foo") is None, (
             "metadata deletion committed before the unlink and must stay committed"
