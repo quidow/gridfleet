@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
@@ -40,8 +39,6 @@ if TYPE_CHECKING:
 
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
 resolve_pack_platform = pack_platform_resolver.resolve_pack_platform
-
-logger = logging.getLogger(__name__)
 
 MAX_CONCURRENCY = 5
 
@@ -278,25 +275,26 @@ class BulkOperationsService:
                 return BulkItemResult(device_id, str(exc))
             if recovery is not None:
                 # After this device's own transaction committed: create_job owns its
-                # commit, so it must not run inside the state mutation.
-                try:
-                    await self._maintenance.schedule_device_recovery(recovery.device_id)
-                except Exception as exc:  # noqa: BLE001 — best-effort recovery scheduling; device_connectivity_loop is the fallback
-                    logger.warning("bulk_exit_maintenance: failed to enqueue recovery for %s: %s", device_id, exc)
+                # commit, so it must not run inside the state mutation. No guard
+                # here — schedule_device_recovery is contractually best-effort and
+                # swallows its own failures.
+                await self._maintenance.schedule_device_recovery(recovery.device_id)
             return BulkItemResult(device_id, None)
 
         results = await asyncio.gather(*[_one(device_id) for device_id in existing_device_ids])
         return await _publish_summary(self._publisher, "exit_maintenance", list(results))
 
-    async def bulk_reconnect(self, device_ids: list[uuid.UUID], *, caller: str = "bulk") -> dict[str, Any]:
+    async def bulk_reconnect(self, device_ids: list[uuid.UUID]) -> dict[str, Any]:
         """Reconnect network-connected ADB devices.
 
         Two phases: one short read session resolves eligibility into immutable
         ``ReconnectTarget`` scalars, then the agent calls run with no session and
         no row lock held. The read takes no ``FOR UPDATE`` — the effect is remote
         and there is no DB write to protect.
+
+        Takes no ``caller``: unlike the node actions, a reconnect writes no
+        desired state, so there is nothing for the caller label to reach.
         """
-        _ = caller
         targets, results = await self._load_reconnect_targets(device_ids)
         sem = asyncio.Semaphore(MAX_CONCURRENCY)
 

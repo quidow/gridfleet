@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
@@ -56,7 +56,8 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
     device_b_id = device_b.id
 
     b_manager_entered = asyncio.Event()
-    a_returned = asyncio.Event()
+    a_committed = asyncio.Event()
+    racer_probed = asyncio.Event()
     release_b = asyncio.Event()
     racer_acquired_b = asyncio.Event()
 
@@ -70,6 +71,12 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
             await release_b.wait()
         elif dev.id == device_a_id:
             await asyncio.wait_for(b_manager_entered.wait(), timeout=3.0)
+            # Gate the racer on A's COMMIT, not on a sleep after A's action
+            # returns. session_factory.begin() commits in __aexit__, after this
+            # function has already returned, so a wall-clock guess here degrades
+            # into a vacuous pass on a loaded runner: the racer would probe before
+            # A committed and find B's lock held for the wrong reason.
+            event.listen(db.sync_session, "after_commit", lambda _s: a_committed.set(), once=True)
 
         node = AppiumNode(
             device_id=dev.id,
@@ -82,19 +89,12 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
         db.add(node)
         await db.flush()
         dev.appium_node = node
-        if dev.id == device_a_id:
-            # Returning ends A's item transaction: session_factory.begin() commits
-            # on the way out. In the buggy shared-session path that commit also
-            # released B's FOR UPDATE.
-            a_returned.set()
         return node
 
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start_node)
 
     async def racer() -> None:
-        await a_returned.wait()
-        # Let A's item transaction finish committing before probing B.
-        await asyncio.sleep(0.2)
+        await asyncio.wait_for(a_committed.wait(), timeout=3.0)
         async with db_session_maker() as racer_db:
             try:
                 # Pre-fix: A's commit on the shared session released device_b's
@@ -113,6 +113,7 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
                 # Expected post-fix: per-task session holds B's lock during A's gate.
                 with contextlib.suppress(Exception):
                     await racer_db.rollback()
+        racer_probed.set()
 
     async def runner() -> dict[str, object]:
         _settings_runner = FakeSettingsReader({})
@@ -131,9 +132,9 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
     runner_task = asyncio.create_task(runner())
     racer_task = asyncio.create_task(racer())
 
-    await asyncio.wait_for(a_returned.wait(), timeout=3.0)
-    # Give the racer a chance to attempt B's lock under the gate.
-    await asyncio.sleep(0.8)
+    # Release B only once the racer has finished its probe — no sleep anywhere in
+    # the handshake, so a slow runner cannot let B commit before the probe runs.
+    await asyncio.wait_for(racer_probed.wait(), timeout=10.0)
     release_b.set()
     result, _ = await asyncio.wait_for(asyncio.gather(runner_task, racer_task), timeout=10.0)
 

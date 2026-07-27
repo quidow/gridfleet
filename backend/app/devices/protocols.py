@@ -64,7 +64,16 @@ class MaintenanceProtocol(Protocol):
     ) -> None: ...
     async def exit_maintenance(self, db: AsyncSession, device_id: uuid.UUID) -> RecoveryRequest | None: ...
     async def exit_maintenance_locked(self, db: AsyncSession, locked: LockedDevice) -> RecoveryRequest | None: ...
-    async def schedule_device_recovery(self, device_id: uuid.UUID) -> None: ...
+
+    async def schedule_device_recovery(self, device_id: uuid.UUID) -> None:
+        """Enqueue the durable recovery job a committed maintenance exit owes.
+
+        Best-effort by contract: it must not raise. The state mutation has already
+        committed by the time a caller reaches this, so an enqueue failure has to
+        be logged and dropped — device_connectivity_loop is the fallback. Callers
+        therefore do not guard it.
+        """
+        ...
 
 
 class DeviceCrudProtocol(Protocol):

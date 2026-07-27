@@ -185,7 +185,7 @@ async def group_bulk_reconnect(
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
     device_ids = await _group_device_ids_or_404(db, group_key, device_services)
-    return await device_services.bulk.bulk_reconnect(device_ids, caller="group")
+    return await device_services.bulk.bulk_reconnect(device_ids)
 
 
 @router.post("/{group_key}/bulk/delete", response_model=BulkOperationResult)

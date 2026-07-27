@@ -232,13 +232,15 @@ async def test_bulk_maintenance_collects_per_item_errors(monkeypatch: pytest.Mon
             else SimpleNamespace(device_id=locked.device.id)
         )
     )
-    mock_maintenance.schedule_device_recovery = AsyncMock(side_effect=RuntimeError("queue down"))
+    mock_maintenance.schedule_device_recovery = AsyncMock()
 
     exited = await _svc(FakeSessionFactory(_db()), maintenance=mock_maintenance).bulk_exit_maintenance(
         [success, failure]
     )
     assert exited["succeeded"] == 1
     assert exited["errors"][str(failure)] == "not in maintenance"
+    # Recovery is owed only by the item whose transaction committed.
+    mock_maintenance.schedule_device_recovery.assert_awaited_once_with(success)
 
     mock_enter = MagicMock()
     mock_enter.enter_maintenance_locked = AsyncMock(

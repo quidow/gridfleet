@@ -14,7 +14,7 @@ from app.appium_nodes.services import reconciler_agent as node_manager
 from app.core.dependencies import DbDep
 from app.core.error_responses import STANDARD_ERROR_RESPONSES
 from app.core.errors import AgentCallError
-from app.core.http_errors import convert_not_found
+from app.core.http_errors import convert_missing_row
 from app.devices import locking as device_locking
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.routers.helpers import (
@@ -57,7 +57,7 @@ async def enter_device_maintenance(
     # No pre-lock on the request session: the command locks the same row from its
     # own session, and holding both would deadlock until a statement timeout.
     try:
-        with convert_not_found("Device not found"):
+        with convert_missing_row("Device not found"):
             async with device_services.session_factory.begin() as command_db:
                 await device_services.maintenance.enter_maintenance(command_db, device_id)
     except ValueError as e:
@@ -74,7 +74,7 @@ async def exit_device_maintenance(
     device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep
 ) -> dict[str, Any]:
     try:
-        with convert_not_found("Device not found"):
+        with convert_missing_row("Device not found"):
             async with device_services.session_factory.begin() as command_db:
                 recovery = await device_services.maintenance.exit_maintenance(command_db, device_id)
     except ValueError as e:
@@ -108,7 +108,7 @@ async def merge_device_config(
 ) -> dict[str, Any]:
     # No pre-lock on the request session: the command locks the same row from its
     # own session, and holding both would deadlock until a statement timeout.
-    with convert_not_found("Device not found"):
+    with convert_missing_row("Device not found"):
         async with settings_services.session_factory.begin() as db:
             return await settings_services.config.merge_device_config(db, device_id, body)
 

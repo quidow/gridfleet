@@ -5,7 +5,7 @@ from fastapi import APIRouter, Query
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404
-from app.core.http_errors import convert_not_found
+from app.core.http_errors import convert_missing_row
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.routers.helpers import get_device_or_404
 from app.devices.schemas.test_data import TestDataAuditEntryRead, TestDataPayload, TestDataRead
@@ -27,7 +27,7 @@ async def replace_test_data(
 ) -> dict[str, Any]:
     # No pre-lock on the request session: the command locks the same row from its
     # own session, and holding both would deadlock until a statement timeout.
-    with convert_not_found("Device not found"):
+    with convert_missing_row("Device not found"):
         async with device_services.session_factory.begin() as db:
             return await device_services.test_data.replace_device_test_data(db, device_id, payload.root)
 
@@ -38,7 +38,7 @@ async def merge_test_data(
     payload: TestDataPayload,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
-    with convert_not_found("Device not found"):
+    with convert_missing_row("Device not found"):
         async with device_services.session_factory.begin() as db:
             return await device_services.test_data.merge_device_test_data(db, device_id, payload.root)
 
