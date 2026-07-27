@@ -2,12 +2,12 @@
 FK when a concurrent delete removes the static group mid-import.
 
 ``commit_import`` commits group definitions in one transaction, then runs the
-device loop (per-row commits), then stages and commits
-``device_group_memberships`` rows for each created device's bundle static
-groups. Nothing holds the definitions across the device loop — nor could it, in
-a fleet-wide import — so a ``delete_group`` landing between the device-loop
-commits and the membership write removes a static group the membership rows are
-about to reference, and that write violates
+device loop (one transaction per bounded batch, each row contained in its own
+savepoint), then stages and commits ``device_group_memberships`` rows for each
+created device's bundle static groups. Nothing holds the definitions across the
+device loop — nor could it, in a fleet-wide import — so a ``delete_group``
+landing between a device batch's commit and the membership write removes a
+static group the membership rows are about to reference, and that write violates
 ``device_group_memberships_group_id_fkey``, surfacing as a 500 with the device
 rows already committed. (The violation lands on the INSERT, not the commit:
 these FKs are non-deferrable.)
@@ -35,8 +35,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import delete, select
@@ -61,6 +62,8 @@ from tests.concurrency.group_lock_helpers import build_groups_service, fetch_gro
 from tests.helpers import seed_host_named
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.db, pytest.mark.asyncio]
@@ -144,25 +147,46 @@ def _bundle_with_device(
     return bundle, mappings
 
 
-def _signal_after_device_loop_commit(session: AsyncSession, fired: asyncio.Event) -> None:
-    """Set *fired* once the device-row commit lands, then hold for HANDOFF_SEC.
+def _signaling_session_factory(
+    inner: async_sessionmaker[AsyncSession],
+    fired: asyncio.Event,
+    *,
+    fire_after_begin_call: int,
+) -> async_sessionmaker[AsyncSession]:
+    """A ``session_factory`` stand-in whose Nth ``.begin()`` transaction signals *fired*.
 
-    Commit #1 carries group definitions and commit #2 the first device row.
-    Firing there lets the peer act before membership staging.
+    ``commit_import`` no longer holds a caller session to intercept ``.commit()``
+    on directly -- it owns its own sessions via the injected ``session_factory``
+    and commits each one through ``session_factory.begin()``'s own context-manager
+    exit, which never calls the ``AsyncSession.commit()`` method. Wrapping
+    ``.begin()`` itself is the only hook point left: the code right after the
+    inner ``async with session.begin():`` block runs exactly once that
+    transaction has committed and before ``commit_import`` moves on to its next
+    step, which is where *fired* fires and the handoff pause happens.
+
+    Call #1 is the definitions transaction and call #2 the device batch (every
+    device in these tests fits in one ``DEVICE_IMPORT_BATCH_SIZE`` batch), so
+    ``fire_after_begin_call=2`` lets the peer act after the device rows commit
+    but before membership staging runs.
     """
-    original_commit = session.commit
-    count = 0
+    begin_calls = 0
 
-    async def _intercepted(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-        nonlocal count
-        result = await original_commit(*args, **kwargs)
-        count += 1
-        if count == 2 and not fired.is_set():
-            fired.set()
-            await asyncio.sleep(HANDOFF_SEC)
-        return result
+    class _SignalingFactory:
+        def __call__(self) -> AsyncSession:
+            return inner()
 
-    session.commit = _intercepted  # type: ignore[assignment, method-assign]
+        @asynccontextmanager
+        async def begin(self) -> AsyncIterator[AsyncSession]:
+            nonlocal begin_calls
+            begin_calls += 1
+            is_target = begin_calls == fire_after_begin_call
+            async with inner() as session, session.begin():
+                yield session
+            if is_target and not fired.is_set():
+                fired.set()
+                await asyncio.sleep(HANDOFF_SEC)
+
+    return _SignalingFactory()  # type: ignore[return-value]
 
 
 async def _wait_for_device_commit(fired: asyncio.Event) -> None:
@@ -170,10 +194,9 @@ async def _wait_for_device_commit(fired: asyncio.Event) -> None:
         await asyncio.wait_for(fired.wait(), timeout=EVENT_WAIT_TIMEOUT_SEC)
     except TimeoutError:
         pytest.fail(
-            f"import: never observed the device-row commit (commit #2) within "
-            f"{EVENT_WAIT_TIMEOUT_SEC}s. The session.commit override in "
-            "_signal_after_device_loop_commit likely no longer fires — did the "
-            "commit count in commit_import change?"
+            f"import: never observed the device batch's session_factory.begin() commit "
+            f"within {EVENT_WAIT_TIMEOUT_SEC}s. The signal in _signaling_session_factory "
+            "likely no longer fires — did the begin() call sequence in commit_import change?"
         )
 
 
@@ -198,11 +221,9 @@ async def test_delete_during_membership_staging_does_not_500(
     device_committed = asyncio.Event()
 
     async def run_import() -> ImportCommitResult:
-        async with db_session_maker() as session:
-            _signal_after_device_loop_commit(session, device_committed)
-            return await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-                session, request
-            )
+        factory = _signaling_session_factory(db_session_maker, device_committed, fire_after_begin_call=2)
+        service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=factory)
+        return await service.commit_import(request)
 
     async def delete_static() -> bool:
         await _wait_for_device_commit(device_committed)
@@ -256,11 +277,9 @@ async def test_delete_and_recreate_during_membership_staging_does_not_500(
     device_committed = asyncio.Event()
 
     async def run_import() -> ImportCommitResult:
-        async with db_session_maker() as session:
-            _signal_after_device_loop_commit(session, device_committed)
-            return await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-                session, request
-            )
+        factory = _signaling_session_factory(db_session_maker, device_committed, fire_after_begin_call=2)
+        service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=factory)
+        return await service.commit_import(request)
 
     async def delete_and_recreate_static() -> bool:
         await _wait_for_device_commit(device_committed)
@@ -324,11 +343,9 @@ async def test_concurrent_add_members_during_staging_keeps_the_memberships(
     device_committed = asyncio.Event()
 
     async def run_import() -> ImportCommitResult:
-        async with db_session_maker() as session:
-            _signal_after_device_loop_commit(session, device_committed)
-            return await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-                session, request
-            )
+        factory = _signaling_session_factory(db_session_maker, device_committed, fire_after_begin_call=2)
+        service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=factory)
+        return await service.commit_import(request)
 
     async def add_the_same_member() -> int | None:
         await _wait_for_device_commit(device_committed)
@@ -389,11 +406,9 @@ async def test_device_deleted_during_staging_does_not_500(
     device_committed = asyncio.Event()
 
     async def run_import() -> ImportCommitResult:
-        async with db_session_maker() as session:
-            _signal_after_device_loop_commit(session, device_committed)
-            return await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-                session, request
-            )
+        factory = _signaling_session_factory(db_session_maker, device_committed, fire_after_begin_call=2)
+        service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=factory)
+        return await service.commit_import(request)
 
     async def delete_the_device() -> None:
         await _wait_for_device_commit(device_committed)

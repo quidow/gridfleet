@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -36,6 +37,8 @@ from app.verification.services.service import VerificationService
 from tests.concurrency.group_lock_helpers import build_groups_service, fetch_group_rows, fetch_member_of_keys
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.db, pytest.mark.asyncio]
@@ -70,49 +73,66 @@ def _groups_bundle(static_key: str, dynamic_key: str) -> ExportBundle:
     )
 
 
-def _signal_after_first_commit(session: AsyncSession, committed: asyncio.Event) -> None:
-    """Set *committed* once *session* has committed for the first time.
+def _signaling_session_factory(
+    inner: async_sessionmaker[AsyncSession],
+    committed: asyncio.Event,
+    *,
+    fire_after_begin_call: int,
+) -> async_sessionmaker[AsyncSession]:
+    """A ``session_factory`` stand-in whose Nth ``.begin()`` transaction signals *committed*.
 
-    That first commit is ``commit_import``'s definition transaction: static
-    groups, dynamic groups, and the ``device_group_member_of`` rows joining
-    them. Holding for ``HANDOFF_SEC`` gives the deleter time to run against
-    exactly the state it published — which is the point, since an arrangement
-    that published the target without its edge would hand the deleter a
-    deletable row here.
+    ``commit_import`` no longer holds a caller session to intercept ``.commit()``
+    on directly -- it owns its own sessions via the injected ``session_factory``
+    and commits each one through ``session_factory.begin()``'s own context-manager
+    exit, which never calls the ``AsyncSession.commit()`` method. Wrapping
+    ``.begin()`` itself is the only hook point left: the code right after the
+    inner ``async with session.begin():`` block runs exactly once that
+    transaction has committed and before ``commit_import`` moves on to its next
+    step, which is where *committed* fires and the handoff pause happens.
+
+    ``commit_import``'s first ``session_factory.begin()`` call is always the
+    definitions transaction (static groups, dynamic groups, and the
+    ``device_group_member_of`` edges), so ``fire_after_begin_call=1`` pins
+    exactly that commit.
     """
-    original_commit = session.commit
-    fired = False
+    begin_calls = 0
 
-    async def _intercepted(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-        nonlocal fired
-        result = await original_commit(*args, **kwargs)
-        if not fired:
-            fired = True
-            committed.set()
-            await asyncio.sleep(HANDOFF_SEC)
-        return result
+    class _SignalingFactory:
+        def __call__(self) -> AsyncSession:
+            return inner()
 
-    session.commit = _intercepted  # type: ignore[assignment, method-assign]
+        @asynccontextmanager
+        async def begin(self) -> AsyncIterator[AsyncSession]:
+            nonlocal begin_calls
+            begin_calls += 1
+            is_target = begin_calls == fire_after_begin_call
+            async with inner() as session, session.begin():
+                yield session
+            if is_target and not committed.is_set():
+                committed.set()
+                await asyncio.sleep(HANDOFF_SEC)
+
+    return _SignalingFactory()  # type: ignore[return-value]
 
 
 async def _wait_for_import_commit(committed: asyncio.Event) -> None:
     """Await *committed* with a bounded timeout instead of hanging forever.
 
-    ``committed`` is only ever set by ``_signal_after_first_commit``'s override of
-    ``session.commit``. If ``commit_import`` ever stops calling ``session.commit``
-    on this path — e.g. the fold this test pins is undone and a later refactor
-    changes it again — that override would never fire and a bare
-    ``await committed.wait()`` would hang the test run forever
-    (``pytest-timeout`` is deliberately not a dependency here). Fail fast with a
-    message that names the likely cause instead.
+    ``committed`` is only ever set by ``_signaling_session_factory``'s wrapped
+    ``.begin()``. If ``commit_import`` ever stops opening its definitions
+    transaction through ``session_factory.begin()`` — e.g. the fold this test
+    pins is undone and a later refactor changes it again — that signal would
+    never fire and a bare ``await committed.wait()`` would hang the test run
+    forever (``pytest-timeout`` is deliberately not a dependency here). Fail
+    fast with a message that names the likely cause instead.
     """
     try:
         await asyncio.wait_for(committed.wait(), timeout=EVENT_WAIT_TIMEOUT_SEC)
     except TimeoutError:
         pytest.fail(
-            f"import: never observed commit_import's first session.commit within "
-            f"{EVENT_WAIT_TIMEOUT_SEC}s. The session.commit override in "
-            "_signal_after_first_commit likely no longer fires on the commit path."
+            f"import: never observed commit_import's first session_factory.begin() commit "
+            f"within {EVENT_WAIT_TIMEOUT_SEC}s. The signal in _signaling_session_factory "
+            "likely no longer fires on the definitions-transaction commit path."
         )
 
 
@@ -138,11 +158,9 @@ async def test_delete_during_import_cannot_orphan_a_dynamic_group(
     import_committed = asyncio.Event()
 
     async def run_import() -> ImportCommitResult:
-        async with db_session_maker() as session:
-            _signal_after_first_commit(session, import_committed)
-            return await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-                session, request
-            )
+        factory = _signaling_session_factory(db_session_maker, import_committed, fire_after_begin_call=1)
+        service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=factory)
+        return await service.commit_import(request)
 
     async def delete_static() -> bool:
         await _wait_for_import_commit(import_committed)

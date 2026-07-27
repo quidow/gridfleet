@@ -1,8 +1,11 @@
 """Validate and commit device portability bundles.
 
 Validate is read-only: parse the bundle, classify each row, suggest a host per
-row. Commit (T8) re-parses from the original bundle and inserts rows in
-per-row transactions with verification enqueue.
+row. Commit re-parses from the original bundle and owns its own sessions via
+an injected ``session_factory``: one short read for the preview, one
+transaction for group definitions, one transaction per bounded device batch
+(each row contained in its own savepoint), and one transaction per bounded
+membership batch.
 """
 
 from __future__ import annotations
@@ -53,12 +56,13 @@ if TYPE_CHECKING:
     import uuid
     from collections.abc import Mapping, Sequence
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.portability.protocols import VerificationEnqueuer
 
 logger = logging.getLogger(__name__)
 MEMBERSHIP_BATCH_SIZE = 1000  # ponytail: bounds one batch's row-lock hold; tune only from measured import contention
+DEVICE_IMPORT_BATCH_SIZE = 100  # ponytail: bounds one batch's crash-durability unit; the savepoint is per-row, not this
 
 
 class BundleHashMismatchError(ValueError):
@@ -215,33 +219,6 @@ def _group_filters_payload(group: ExportedDeviceGroup) -> dict[str, Any] | None:
     return dumped or None
 
 
-async def _flush_groups_or_collide(session: AsyncSession, keys: list[str]) -> None:
-    """Flush staged ``device_groups`` rows, turning a key collision into a typed error.
-
-    Nothing reserves a key that is not yet in the table, so two operators committing
-    the same bundle both pass validation and the loser's flush violates
-    ``ix_device_groups_key``. The unique index is the real guarantee; this translates
-    it into the ``GroupKeyCollisionError`` the route already maps to 409, so the loser
-    gets the documented conflict rather than an unhandled 500 on a dead transaction.
-    """
-    try:
-        await session.flush()
-    except IntegrityError as exc:
-        await session.rollback()
-        if constraint_name(exc) != "ix_device_groups_key":
-            raise
-        # The transaction is gone, so re-read to name the keys that actually landed
-        # rather than blaming every key the bundle carried.
-        #
-        # No `or keys` fallback on an empty read. Nothing holds the winner's row
-        # still, so it can be deleted before this re-read runs; an empty result
-        # means the collision resolved itself, not that every key in the bundle
-        # collided. Naming them all would send the operator to edit groups that
-        # are fine.
-        collided = await _load_existing_group_keys(session, set(keys))
-        raise GroupKeyCollisionError(sorted(collided)) from exc
-
-
 async def _load_existing_group_keys(session: AsyncSession, keys: set[str]) -> set[str]:
     if not keys:
         return set()
@@ -340,8 +317,14 @@ async def _validate_group_references(session: AsyncSession, bundle: ExportBundle
 class PortabilityImportService:
     """Container-held device-portability import (validate + commit)."""
 
-    def __init__(self, *, verification_enqueuer: VerificationEnqueuer) -> None:
+    def __init__(
+        self,
+        *,
+        verification_enqueuer: VerificationEnqueuer,
+        session_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
         self._verification_enqueuer = verification_enqueuer
+        self._session_factory = session_factory
 
     async def validate_bundle(self, session: AsyncSession, bundle: ExportBundle) -> ImportPreview:
         """Validate a bundle and return a preview with per-row classifications.
@@ -388,12 +371,15 @@ class PortabilityImportService:
             rows=rows,
         )
 
-    async def commit_import(self, session: AsyncSession, request: ImportCommitRequest) -> ImportCommitResult:
-        """Commit definitions, then per-row devices, then memberships.
+    async def commit_import(self, request: ImportCommitRequest) -> ImportCommitResult:
+        """Commit definitions, then per-batch devices, then per-batch memberships.
 
-        Definitions and memberships commit in separate transactions; nothing is
-        held across the device loop, which is why membership staging re-checks
-        every group id it cached rather than trusting the definition pass.
+        Owns every session it uses via the injected ``session_factory``: a
+        short read for validation, one transaction for definitions, one
+        transaction per bounded device batch (each row in its own savepoint),
+        and one transaction per bounded membership batch. Nothing is held
+        across batches, which is why membership staging re-checks every group
+        id it cached rather than trusting the definition pass.
 
         Raises:
             BundleHashMismatchError: if ``request.bundle_hash`` does not match the recomputed hash.
@@ -407,38 +393,69 @@ class PortabilityImportService:
 
         # Validate (read-only) before any writes so group references resolve against
         # the pre-import DB state rather than the rows this commit is about to insert.
-        preview = await self.validate_bundle(session, request.bundle)
+        async with self._session_factory() as read_db:
+            preview = await self.validate_bundle(read_db, request.bundle)
 
-        static_groups = [g for g in request.bundle.groups if g.group_type == GroupType.static]
-        dynamic_groups = [g for g in request.bundle.groups if g.group_type == GroupType.dynamic]
-
-        group_id_by_key: dict[str, uuid.UUID] = {}
-        if static_groups or dynamic_groups:
-            try:
-                # Static definitions, dynamic definitions, and the edges joining
-                # them commit atomically. Publishing a static group before its
-                # referring edge would let a concurrent delete_group see an
-                # unreferenced target and remove it, and the edge that follows
-                # would have nothing to point at.
-                group_id_by_key = await self._insert_group_definitions(session, static_groups)
-                dynamic_id_by_key = await self._insert_dynamic_group_definitions(session, dynamic_groups)
-                await _insert_member_of_references(session, dynamic_groups, dynamic_id_by_key, group_id_by_key)
-                await session.commit()
-            finally:
-                # A failure short of the commit leaves the staged rows in an open
-                # transaction the caller never ends. (The key-collision path has
-                # already rolled back, so this is a no-op there.)
-                if session.in_transaction():
-                    await session.rollback()
+        group_id_by_key = await self._commit_group_definitions(request)
 
         by_index = {row.index: row for row in preview.rows}
         mappings_by_index = {m.index: m for m in request.mappings}
+        rows_to_insert, skipped = self._plan_device_rows(by_index, mappings_by_index)
 
-        created: list[ImportCommitCreatedRow] = []
+        created, failed, device_id_by_index = await self._insert_device_batches(rows_to_insert)
+
+        memberships_skipped = await self._stage_static_memberships(
+            by_index=by_index,
+            device_id_by_index=device_id_by_index,
+            group_id_by_key=group_id_by_key,
+        )
+
+        return ImportCommitResult(
+            created=created,
+            skipped=skipped,
+            failed=failed,
+            memberships_skipped=memberships_skipped,
+        )
+
+    async def _commit_group_definitions(self, request: ImportCommitRequest) -> dict[str, uuid.UUID]:
+        """Commit the bundle's group definitions and ``member_of`` edges in one transaction.
+
+        Raises:
+            GroupKeyCollisionError: if a bundle group key already exists in the target.
+        """
+        static_groups = [g for g in request.bundle.groups if g.group_type == GroupType.static]
+        dynamic_groups = [g for g in request.bundle.groups if g.group_type == GroupType.dynamic]
+        if not static_groups and not dynamic_groups:
+            return {}
+
+        session_factory = self._session_factory
+        try:
+            # Static definitions, dynamic definitions, and the edges joining
+            # them commit atomically. Publishing a static group before its
+            # referring edge would let a concurrent delete_group see an
+            # unreferenced target and remove it, and the edge that follows
+            # would have nothing to point at.
+            async with session_factory.begin() as definition_db:
+                return await self._insert_group_definitions_and_edges(definition_db, static_groups, dynamic_groups)
+        except IntegrityError as exc:
+            if constraint_name(exc) != "ix_device_groups_key":
+                raise
+            # The transaction is gone, so re-read through a fresh session to
+            # name the keys that actually landed rather than blaming every
+            # key the bundle carried.
+            bundle_group_keys = {g.key for g in request.bundle.groups}
+            async with session_factory() as conflict_db:
+                collided = await _load_existing_group_keys(conflict_db, bundle_group_keys)
+            raise GroupKeyCollisionError(sorted(collided)) from exc
+
+    def _plan_device_rows(
+        self,
+        by_index: dict[int, ImportPreviewRow],
+        mappings_by_index: dict[int, ImportMapping],
+    ) -> tuple[list[tuple[int, ImportPreviewRow, ImportMapping]], list[ImportCommitSkippedRow]]:
+        """Classify each preview row as skipped or queued for insertion. Issues no writes."""
         skipped: list[ImportCommitSkippedRow] = []
-        failed: list[ImportCommitFailedRow] = []
-
-        device_id_by_index: dict[int, uuid.UUID] = {}
+        rows_to_insert: list[tuple[int, ImportPreviewRow, ImportMapping]] = []
         for idx, row in by_index.items():
             if row.status == ImportRowStatus.DUPLICATE_IN_BUNDLE:
                 skipped.append(ImportCommitSkippedRow(index=idx, reason="duplicate in bundle"))
@@ -455,35 +472,41 @@ class PortabilityImportService:
                 skipped.append(ImportCommitSkippedRow(index=idx, reason="no mapping"))
                 continue
 
-            host = await session.get(Host, mapping.target_host_id)
-            if host is None:
-                failed.append(ImportCommitFailedRow(index=idx, reason="host not found"))
-                continue
+            rows_to_insert.append((idx, row, mapping))
+        return rows_to_insert, skipped
 
-            result = await self._insert_row_with_savepoint(session, idx, row, mapping)
-            if isinstance(result, ImportCommitCreatedRow):
-                created.append(result)
-                device_id_by_index[idx] = result.device_id
-            else:
-                failed.append(result)
+    async def _insert_device_batches(
+        self,
+        rows_to_insert: list[tuple[int, ImportPreviewRow, ImportMapping]],
+    ) -> tuple[list[ImportCommitCreatedRow], list[ImportCommitFailedRow], dict[int, uuid.UUID]]:
+        """Insert queued rows in bounded batches, each row contained in its own savepoint.
 
-        memberships_skipped = await self._stage_static_memberships(
-            session,
-            by_index=by_index,
-            device_id_by_index=device_id_by_index,
-            group_id_by_key=group_id_by_key,
-        )
+        A completed batch is the crash-durability unit; the savepoint inside
+        ``_insert_row_with_savepoint`` is the public per-row failure-isolation
+        unit. A failure that escapes the savepoint's own containment rolls back
+        this batch only — earlier completed batches stay durable.
+        """
+        created: list[ImportCommitCreatedRow] = []
+        failed: list[ImportCommitFailedRow] = []
+        device_id_by_index: dict[int, uuid.UUID] = {}
+        for batch in batched(rows_to_insert, DEVICE_IMPORT_BATCH_SIZE, strict=False):
+            async with self._session_factory.begin() as batch_db:
+                for idx, row, mapping in batch:
+                    host = await batch_db.get(Host, mapping.target_host_id)
+                    if host is None:
+                        failed.append(ImportCommitFailedRow(index=idx, reason="host not found"))
+                        continue
 
-        return ImportCommitResult(
-            created=created,
-            skipped=skipped,
-            failed=failed,
-            memberships_skipped=memberships_skipped,
-        )
+                    result = await self._insert_row_with_savepoint(batch_db, idx, row, mapping)
+                    if isinstance(result, ImportCommitCreatedRow):
+                        created.append(result)
+                        device_id_by_index[idx] = result.device_id
+                    else:
+                        failed.append(result)
+        return created, failed, device_id_by_index
 
     async def _stage_static_memberships(
         self,
-        session: AsyncSession,
         *,
         by_index: dict[int, ImportPreviewRow],
         device_id_by_index: dict[int, uuid.UUID],
@@ -497,19 +520,13 @@ class PortabilityImportService:
             if (group_id := group_id_by_key.get(key)) is not None
         ]
         if not planned:
-            # The caller's own reads (validation, the device loop) autobegan a
-            # transaction that nothing here will commit.
-            if session.in_transaction():
-                await session.rollback()
             return []
 
         memberships_skipped: list[MembershipSkip] = []
-        try:
-            for batch in batched(planned, MEMBERSHIP_BATCH_SIZE, strict=False):
-                current_group_ids = await _load_existing_group_ids(session, {key for _, key, _, _ in batch})
-                existing_device_ids = await _lock_existing_device_ids(
-                    session, {device_id for _, _, device_id, _ in batch}
-                )
+        for batch in batched(planned, MEMBERSHIP_BATCH_SIZE, strict=False):
+            async with self._session_factory.begin() as db:
+                current_group_ids = await _load_existing_group_ids(db, {key for _, key, _, _ in batch})
+                existing_device_ids = await _lock_existing_device_ids(db, {device_id for _, _, device_id, _ in batch})
                 values: list[dict[str, uuid.UUID]] = []
                 for idx, key, device_id, cached_group_id in batch:
                     current_group_id = current_group_ids.get(key)
@@ -527,21 +544,31 @@ class PortabilityImportService:
                     else:
                         values.append({"group_id": cached_group_id, "device_id": device_id})
                 if values:
-                    await session.execute(
+                    await db.execute(
                         pg_insert(DeviceGroupMembership)
                         .values(values)
                         .on_conflict_do_nothing(
                             index_elements=[DeviceGroupMembership.group_id, DeviceGroupMembership.device_id]
                         )
                     )
-                await session.commit()
-        finally:
-            # A failure mid-batch strands the ``FOR KEY SHARE`` locks
-            # ``_lock_existing_device_ids`` took, which block device deletes
-            # until the session closes.
-            if session.in_transaction():
-                await session.rollback()
         return memberships_skipped
+
+    async def _insert_group_definitions_and_edges(
+        self,
+        session: AsyncSession,
+        static_groups: list[ExportedDeviceGroup],
+        dynamic_groups: list[ExportedDeviceGroup],
+    ) -> dict[str, uuid.UUID]:
+        """Stage static/dynamic group definitions and their ``member_of`` edges.
+
+        All three inserts share the caller's transaction. A key-collision
+        ``IntegrityError`` from either flush propagates to ``commit_import``,
+        which owns collision translation after the transaction has rolled back.
+        """
+        group_id_by_key = await self._insert_group_definitions(session, static_groups)
+        dynamic_id_by_key = await self._insert_dynamic_group_definitions(session, dynamic_groups)
+        await _insert_member_of_references(session, dynamic_groups, dynamic_id_by_key, group_id_by_key)
+        return group_id_by_key
 
     async def _insert_group_definitions(
         self,
@@ -559,7 +586,7 @@ class PortabilityImportService:
             for group_def in static_groups
         ]
         session.add_all(groups)
-        await _flush_groups_or_collide(session, [g.key for g in groups])
+        await session.flush()
         return {group.key: group.id for group in groups}
 
     async def _insert_dynamic_group_definitions(
@@ -587,36 +614,35 @@ class PortabilityImportService:
             for group_def in dynamic_groups
         ]
         session.add_all(groups)
-        await _flush_groups_or_collide(session, [g.key for g in groups])
+        await session.flush()
         return {group.key: group.id for group in groups}
 
     async def _insert_row_with_savepoint(
         self,
-        session: AsyncSession,
+        db: AsyncSession,
         idx: int,
         row: ImportPreviewRow,
         mapping: ImportMapping,
     ) -> ImportCommitCreatedRow | ImportCommitFailedRow:
-        savepoint = await session.begin_nested()
-        savepoint_released = False
+        """Stage and flush one device row inside its own savepoint.
+
+        The repository's only production ``begin_nested()``: a row failure
+        rolls back only this row, never the batch it shares a transaction
+        with. Translation happens only after the nested context has exited
+        (committed or rolled back) and never calls a savepoint method directly.
+        """
         try:
-            payload = _build_create_payload(row.device, mapping.target_host_id)
-            device = device_write.stage_device_record(session, payload)
-            await session.flush()
-            await self._verification_enqueuer.enqueue_for_device(session, device)
-            await savepoint.commit()
-            savepoint_released = True
-            await session.commit()
-            return ImportCommitCreatedRow(index=idx, device_id=device.id)
+            async with db.begin_nested():
+                payload = _build_create_payload(row.device, mapping.target_host_id)
+                device = device_write.stage_device_record(db, payload)
+                await db.flush()
+                await self._verification_enqueuer.enqueue_for_device(db, device)
+                created = ImportCommitCreatedRow(index=idx, device_id=device.id)
         except IntegrityError as exc:
-            if not savepoint_released:
-                await savepoint.rollback()
             return ImportCommitFailedRow(index=idx, reason=f"identity conflict: {exc.orig}")
-        except Exception as exc:  # noqa: BLE001 — per-row import: any staging/enqueue failure becomes a failed row, never aborts the bundle
-            if not savepoint_released:
-                await savepoint.rollback()
+        except Exception as exc:  # noqa: BLE001 -- public per-row partial-success contract
             reason = str(exc) or exc.__class__.__name__
-            lower = reason.lower()
-            if "verification" in lower or "create_job" in lower:
-                return ImportCommitFailedRow(index=idx, reason=f"verification enqueue failed: {reason}")
+            if "verification" in reason.lower() or "create_job" in reason.lower():
+                reason = f"verification enqueue failed: {reason}"
             return ImportCommitFailedRow(index=idx, reason=reason)
+        return created

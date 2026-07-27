@@ -53,10 +53,10 @@ async def import_validate(
 
 @router.post("/import", response_model=ImportCommitResult, summary="Commit a previously-validated device import bundle")
 async def import_commit(
-    request: ImportCommitRequest, db: DbDep, portability_services: PortabilityServicesDep
+    request: ImportCommitRequest, portability_services: PortabilityServicesDep
 ) -> ImportCommitResult:
     try:
-        return await portability_services.import_.commit_import(db, request)
+        return await portability_services.import_.commit_import(request)
     except BundleHashMismatchError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except GroupKeyCollisionError as exc:
