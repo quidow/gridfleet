@@ -305,7 +305,6 @@ class RunTeardownService:
             payload=_payload(effect),
             snapshot={"operation_id": str(operation_id), "status": JOB_STATUS_PENDING},
             job_id=operation_id,
-            commit=False,
             max_attempts=3,
         )
         return effect

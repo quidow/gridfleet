@@ -536,7 +536,7 @@ async def store_verification_job_for_test(
     job: dict[str, Any],
     session_factory: SessionFactory,
 ) -> None:
-    async with session_factory() as db:
+    async with session_factory.begin() as db:
         await job_queue.create_job(
             db,
             kind=JOB_KIND_DEVICE_VERIFICATION,

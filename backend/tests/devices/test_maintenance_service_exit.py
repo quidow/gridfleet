@@ -75,9 +75,11 @@ async def test_exit_maintenance_recovery_enqueue_runs_after_the_command_transact
 ) -> None:
     """The enqueue session must be able to lock the device the exit just released.
 
-    ``create_job`` owns its own commit, so the enqueue cannot share the
-    maintenance transaction. Proving the row lock is free is a stronger check than
-    inspecting ``in_transaction()``: it fails on a still-open peer session too.
+    ``schedule_device_recovery`` opens its own ``session_factory.begin()``, so the
+    enqueue cannot share the maintenance transaction -- it is a fresh session, in a
+    transaction of its own, entered only after that transaction has committed.
+    Proving the row lock is free is a stronger check than inspecting
+    ``in_transaction()``: it fails on a still-open peer session too.
     """
     device = await create_device(
         db_session,
@@ -114,8 +116,8 @@ async def test_exit_maintenance_recovery_enqueue_runs_after_the_command_transact
     assert observed.get("row_lock_free") is True, (
         "the maintenance transaction was still holding the device row when recovery was enqueued"
     )
-    assert observed["enqueue_session_in_transaction"] is False, (
-        "the recovery enqueue must start from a fresh session with no open transaction"
+    assert observed["enqueue_session_in_transaction"] is True, (
+        "the recovery enqueue's session_factory.begin() must already be in its own transaction"
     )
     async with db_session_maker() as verify:
         rows = (await verify.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()

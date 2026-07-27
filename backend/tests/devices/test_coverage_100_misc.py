@@ -645,6 +645,10 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         async def __aexit__(self, *_args: object) -> None:
             return None
 
+        @staticmethod
+        def begin() -> QueueCtx:
+            return QueueCtx()
+
     job = SimpleNamespace(id=uuid.uuid4(), kind="demo", snapshot={})
     service = DurableJobService(
         session_factory=QueueCtx,

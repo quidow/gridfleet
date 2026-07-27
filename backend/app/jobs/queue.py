@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import copy
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 
 from app.core.background_loop import BackgroundLoop
+from app.core.db_retry import retry_on_serialization_failure
 from app.core.metrics import register_gauge_refresher
 from app.core.metrics_recorders import PENDING_JOBS
 from app.core.observability import get_logger, observe_background_loop
@@ -55,6 +57,14 @@ async def _refresh_jobs_gauges(db: AsyncSession) -> None:
 register_gauge_refresher(_refresh_jobs_gauges)
 
 
+@dataclass(frozen=True, slots=True)
+class JobClaim:
+    id: uuid.UUID
+    kind: str
+    payload: dict[str, Any]
+    attempts: int
+
+
 async def create_job(
     db: AsyncSession,
     *,
@@ -64,7 +74,6 @@ async def create_job(
     max_attempts: int = 1,
     scheduled_at: datetime | None = None,
     job_id: uuid.UUID | None = None,
-    commit: bool = True,
 ) -> Job:
     job = Job(
         id=job_id or uuid.uuid4(),
@@ -76,11 +85,7 @@ async def create_job(
         scheduled_at=scheduled_at or now_utc(),
     )
     db.add(job)
-    if commit:
-        await db.commit()
-    else:
-        await db.flush()
-    await db.refresh(job)
+    await db.flush()
     return job
 
 
@@ -115,7 +120,7 @@ class DurableJobService:
         timeout: timedelta = STALE_JOB_TIMEOUT,
     ) -> int:
         cutoff = now_utc() - timeout
-        async with self._session_factory() as db:
+        async with self._session_factory.begin() as db:
             result = await db.execute(
                 select(Job).where(
                     Job.kind == kind,
@@ -137,76 +142,79 @@ class DurableJobService:
                     snapshot["error"] = None
                     snapshot["finished_at"] = None
                     row.snapshot = snapshot
-            await db.commit()
         if rows:
             logger.warning("Reset %d stale %s jobs back to pending", len(rows), kind)
         return len(rows)
 
-    async def claim_next_job(self, *, kind: str | None = None) -> Job | None:
-        async with self._session_factory() as db:
-            stmt = (
-                select(Job)
+    async def claim_next_job(self, *, kind: str | None = None) -> JobClaim | None:
+        async def _attempt(db: AsyncSession) -> JobClaim | None:
+            claimed_at = now_utc()
+            candidate_id = (
+                select(Job.id)
                 .where(
                     Job.status == JOB_STATUS_PENDING,
-                    or_(Job.scheduled_at.is_(None), Job.scheduled_at <= now_utc()),
+                    or_(Job.scheduled_at.is_(None), Job.scheduled_at <= claimed_at),
+                    *([Job.kind == kind] if kind is not None else []),
                 )
-                .order_by(Job.created_at.asc())
+                .order_by(Job.created_at, Job.id)
                 .limit(1)
                 .with_for_update(skip_locked=True)
+                .scalar_subquery()
             )
-            if kind is not None:
-                stmt = stmt.where(Job.kind == kind)
-            result = await db.execute(stmt)
-            row = result.scalar_one_or_none()
-            if row is None:
-                await db.rollback()
-                return None
+            row = (
+                await db.execute(
+                    update(Job)
+                    .where(Job.id == candidate_id, Job.status == JOB_STATUS_PENDING)
+                    .values(
+                        status=JOB_STATUS_RUNNING,
+                        attempts=Job.attempts + 1,
+                        started_at=claimed_at,
+                        completed_at=None,
+                    )
+                    .returning(Job.id, Job.kind, Job.payload, Job.attempts)
+                    .execution_options(synchronize_session=False)
+                )
+            ).one_or_none()
+            return None if row is None else JobClaim(row.id, row.kind, copy.deepcopy(row.payload), row.attempts)
 
-            row.status = JOB_STATUS_RUNNING
-            row.attempts += 1
-            row.started_at = now_utc()
-            row.completed_at = None
-            await db.commit()
-            await db.refresh(row)
-            return row
+        return await retry_on_serialization_failure(self._session_factory, _attempt, caller="job_claim")
 
     async def run_pending_once(self, *, kind: str | None = None) -> bool:  # noqa: PLR0911 - one dispatch per job kind
-        row = await self.claim_next_job(kind=kind)
-        if row is None:
+        claim = await self.claim_next_job(kind=kind)
+        if claim is None:
             return False
 
-        if row.kind == JOB_KIND_DEVICE_VERIFICATION:
-            await self._verification_runner.run_persisted_verification_job(str(row.id), row.payload)
+        if claim.kind == JOB_KIND_DEVICE_VERIFICATION:
+            await self._verification_runner.run_persisted_verification_job(str(claim.id), claim.payload)
             return True
 
-        if row.kind == JOB_KIND_DEVICE_RECOVERY:
-            await self._recovery_runner.run_device_recovery_job(str(row.id), row.payload)
+        if claim.kind == JOB_KIND_DEVICE_RECOVERY:
+            await self._recovery_runner.run_device_recovery_job(str(claim.id), claim.payload)
             return True
 
-        if row.kind == JOB_KIND_DEVICE_HEALTH_REMEDIATION:
-            await self._remediation_runner.run_device_health_remediation_job(str(row.id), row.payload)
+        if claim.kind == JOB_KIND_DEVICE_HEALTH_REMEDIATION:
+            await self._remediation_runner.run_device_health_remediation_job(str(claim.id), claim.payload)
             return True
 
-        if row.kind == JOB_KIND_RUN_SESSION_TEARDOWN:
-            await self._run_teardown_runner.run_run_session_teardown_job(str(row.id), row.payload)
+        if claim.kind == JOB_KIND_RUN_SESSION_TEARDOWN:
+            await self._run_teardown_runner.run_run_session_teardown_job(str(claim.id), claim.payload)
             return True
 
-        if row.kind == JOB_KIND_SESSION_KILL:
-            await self._session_kill_runner.run_session_kill_job(str(row.id), row.payload)
+        if claim.kind == JOB_KIND_SESSION_KILL:
+            await self._session_kill_runner.run_session_kill_job(str(claim.id), claim.payload)
             return True
 
-        async with self._session_factory() as db:
-            job = await db.get(Job, row.id)
+        async with self._session_factory.begin() as db:
+            job = await db.get(Job, claim.id)
             if job is None:
                 return True
             job.status = JOB_STATUS_FAILED
             snapshot = copy.deepcopy(job.snapshot)
             snapshot["status"] = JOB_STATUS_FAILED
-            snapshot["error"] = f"Unsupported job kind: {row.kind}"
+            snapshot["error"] = f"Unsupported job kind: {claim.kind}"
             snapshot["finished_at"] = now_utc().isoformat()
             job.snapshot = snapshot
             job.completed_at = now_utc()
-            await db.commit()
         return True
 
 

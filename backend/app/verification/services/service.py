@@ -37,7 +37,7 @@ class VerificationService:
                 await assert_runnable(db, pack_id=data.pack_id, platform_id=data.platform_id)
 
         job_uuid = uuid.uuid4()
-        async with session_factory() as db:
+        async with session_factory.begin() as db:
             row = await job_queue.create_job(
                 db,
                 kind=JOB_KIND_DEVICE_VERIFICATION,
@@ -56,7 +56,7 @@ class VerificationService:
         self, device_id: uuid.UUID, data: DeviceVerificationUpdate, session_factory: SessionFactory = async_session
     ) -> dict[str, Any]:
         job_uuid = uuid.uuid4()
-        async with session_factory() as db:
+        async with session_factory.begin() as db:
             row = await job_queue.create_job(
                 db,
                 kind=JOB_KIND_DEVICE_VERIFICATION,
@@ -89,8 +89,8 @@ class VerificationService:
     async def enqueue_for_device(self, db: AsyncSession, device: Device) -> uuid.UUID:
         """Enqueue a create-mode verification job for an already-built device row.
 
-        Uses the caller's session with ``commit=False`` so the enqueue joins the
-        caller's transaction (e.g. the per-row portability-import savepoint).
+        ``create_job`` is flush-only, so this joins the caller's transaction
+        (e.g. the per-row portability-import savepoint).
         """
         job_id = uuid.uuid4()
         data = DeviceVerificationCreate(
@@ -116,6 +116,5 @@ class VerificationService:
             snapshot=new_job(str(job_id)),
             max_attempts=1,
             job_id=job_id,
-            commit=False,
         )
         return job_id

@@ -130,7 +130,6 @@ async def _seed_prepared_recovery(
         snapshot={"status": JOB_STATUS_PENDING},
         max_attempts=1,
         job_id=generation,
-        commit=False,
     )
     await db.commit()
     return _PreparedRecovery(
@@ -459,6 +458,7 @@ async def test_device_recovery_job_completed_when_device_missing(
         snapshot={"status": JOB_STATUS_PENDING},
         max_attempts=1,
     )
+    await db_session.commit()
 
     _sf = _session_factory(db_session)
     worked = await DurableJobService(

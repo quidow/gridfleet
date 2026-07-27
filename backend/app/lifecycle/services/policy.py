@@ -170,7 +170,6 @@ class LifecyclePolicyService:
             snapshot={"status": JOB_STATUS_PENDING},
             max_attempts=1,
             job_id=generation,
-            commit=False,
         )
         return True
 

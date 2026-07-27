@@ -176,7 +176,6 @@ async def test_attempt_auto_recovery_probes_verifying_device(
         snapshot={"status": JOB_STATUS_PENDING},
         max_attempts=1,
         job_id=generation,
-        commit=False,
     )
     await db_session.commit()
 
