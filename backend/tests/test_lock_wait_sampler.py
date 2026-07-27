@@ -9,6 +9,7 @@ flags parse without any live dependency. They are loaded by path with
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import subprocess
@@ -26,6 +27,23 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO_ROOT / "scripts"
 SAMPLER_PATH = SCRIPTS / "lock_wait_sampler.py"
 CHURN_PATH = SCRIPTS / "run_allocation_churn.py"
+# Both tools are held to testkit's floor (``requires-python = ">=3.10"``) because
+# run_allocation_churn.py is invoked as ``cd testkit && uv run --extra dev python
+# ../scripts/run_allocation_churn.py``. This backend venv is 3.14, so a --help
+# smoke test run with ``sys.executable`` alone CANNOT catch a 3.11+ construct:
+# that is exactly how ``from datetime import UTC`` (a ``ruff --fix`` UP017
+# rewrite) shipped and killed the real Step 9 measurement run.
+TESTKIT_PYTHON = REPO_ROOT / "testkit" / ".venv" / "bin" / "python"
+PYTHON_FLOOR = (3, 10)
+# Symbols that exist only on 3.11+, in the exact spellings ``ruff --fix`` produces.
+PY311_ONLY_SYMBOLS = {
+    "UTC": "datetime.UTC is 3.11+; use datetime.timezone.utc",
+    "tomllib": "tomllib is 3.11+",
+    "TaskGroup": "asyncio.TaskGroup is 3.11+",
+    "ExceptionGroup": "ExceptionGroup is 3.11+",
+    "StrEnum": "enum.StrEnum is 3.11+",
+    "assert_never": "typing.assert_never is 3.11+",
+}
 
 
 def _load(path: Path) -> ModuleType:
@@ -136,8 +154,11 @@ def test_churn_summary_is_written_atomically(tmp_path: Path) -> None:
     assert list(target.parent.glob("*.tmp")) == [], "the atomic temp file must not survive"
 
 
-@pytest.mark.parametrize("script", [SAMPLER_PATH, CHURN_PATH])
-def test_load_tool_help_runs_without_a_live_stack(script: Path) -> None:
+@pytest.mark.parametrize(
+    ("script", "expected_flag"),
+    [(SAMPLER_PATH, "--output-dir"), (CHURN_PATH, "--summary-json")],
+)
+def test_load_tool_help_runs_without_a_live_stack(script: Path, expected_flag: str) -> None:
     """``--help`` must work from any venv: the live-only imports are lazy."""
     result = subprocess.run(
         [sys.executable, str(script), "--help"],
@@ -148,4 +169,62 @@ def test_load_tool_help_runs_without_a_live_stack(script: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
-    assert "--output-dir" in result.stdout if script == SAMPLER_PATH else "--summary-json" in result.stdout
+    assert expected_flag in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("script", "expected_flag"),
+    [(SAMPLER_PATH, "--output-dir"), (CHURN_PATH, "--summary-json")],
+)
+def test_load_tool_help_runs_on_the_python_floor(script: Path, expected_flag: str) -> None:
+    """The same smoke test, run on the interpreter the tools are really invoked with.
+
+    ``run_allocation_churn.py`` is launched from ``testkit/`` (3.10), not from this
+    backend venv (3.14), so this is the run that would have caught the shipped
+    ``from datetime import UTC``. It is skipped rather than failed when the
+    testkit venv is absent, because a backend unit test must not require a
+    sibling component to be synced; ``test_promoted_scripts_hold_the_python_floor``
+    below is the version-independent backstop that always runs.
+    """
+    if not TESTKIT_PYTHON.exists():
+        pytest.skip(
+            f"{TESTKIT_PYTHON} is absent (run `cd testkit && uv sync --extra dev`). "
+            f"Both scripts must stay importable on Python {'.'.join(map(str, PYTHON_FLOOR))}."
+        )
+    result = subprocess.run(
+        [str(TESTKIT_PYTHON), str(script), "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert expected_flag in result.stdout
+
+
+@pytest.mark.parametrize("script", [SAMPLER_PATH, CHURN_PATH])
+def test_promoted_scripts_hold_the_python_floor(script: Path) -> None:
+    """No 3.11+-only symbol, whatever interpreter happens to be available.
+
+    ``ruff --fix`` rewrites ``datetime.timezone.utc`` into ``datetime.UTC``
+    (UP017) and ``asyncio.TimeoutError`` into the builtin (UP041) without knowing
+    these files target 3.10. The ``# noqa`` markers in the scripts are what stop
+    that; this test is what notices if one is removed.
+    """
+    tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            found.extend(
+                f"{script.name}:{node.lineno} imports {alias.name} — {PY311_ONLY_SYMBOLS[alias.name]}"
+                for alias in node.names
+                if alias.name in PY311_ONLY_SYMBOLS
+            )
+        elif isinstance(node, ast.Attribute) and node.attr in PY311_ONLY_SYMBOLS:
+            found.append(f"{script.name}:{node.lineno} uses .{node.attr} — {PY311_ONLY_SYMBOLS[node.attr]}")
+
+    assert found == [], (
+        f"{script.name} must stay importable on Python {'.'.join(map(str, PYTHON_FLOOR))} "
+        f"(testkit's floor — it is invoked from there):\n  " + "\n  ".join(found)
+    )

@@ -41,6 +41,12 @@ Stdlib only apart from ``asyncpg``, which is already a backend dependency and is
 imported lazily so ``--help`` works from any environment.
 """
 
+# ruff: noqa: UP017, UP041
+# ^ pinned to the Python floor below, file-wide rather than per line: UP017
+#   rewrites `timezone.utc` to `datetime.UTC` (3.11+) and UP041 rewrites
+#   `asyncio.TimeoutError` to the builtin (only the same object on 3.11+).
+#   Both are wrong here. A per-line noqa drifts as lines move.
+
 from __future__ import annotations
 
 import argparse
@@ -53,11 +59,17 @@ import re
 import signal
 import sys
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# Held to the same floor as its paired driver (run_allocation_churn.py, run from
+# testkit/ on 3.10) so the two tools can never diverge on interpreter. No 3.11+
+# construct: ``datetime.UTC``, the unified builtin ``TimeoutError`` (on 3.10
+# ``asyncio.wait_for`` raises ``asyncio.TimeoutError``, which is NOT the
+# builtin), ``tomllib``, ``except*``/``TaskGroup``, ``Self``, ``StrEnum``.
+PYTHON_FLOOR = (3, 10)
 
 TABLES_OF_INTEREST = ("devices", "appium_nodes", "device_reservations", "sessions", "grid_session_queue")
 
@@ -89,7 +101,7 @@ CSV_HEADER = [
 
 def default_output_dir() -> Path:
     """Timestamped local-only directory; ``--output-dir`` overrides it."""
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return REPO_ROOT / ".superpowers" / "bench-results" / "lock-waits" / stamp
 
 
@@ -127,7 +139,7 @@ class Sampler:
                 while not stop.is_set():
                     rows = await conn.fetch(SAMPLE_SQL)
                     self.samples_total += 1
-                    now = datetime.now(UTC).isoformat(timespec="milliseconds")
+                    now = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
                     waiting_pids: set[int] = set()
                     if rows:
                         self.samples_with_wait += 1
@@ -161,7 +173,7 @@ class Sampler:
                         )
                     for pid in [pid for pid in self._streaks if pid not in waiting_pids]:
                         self.episodes.append(self._streaks.pop(pid))
-                    with contextlib.suppress(TimeoutError):
+                    with contextlib.suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(stop.wait(), timeout=self.interval)
         finally:
             self.episodes.extend(self._streaks.values())
@@ -194,7 +206,7 @@ async def tail_container(
         while not stop.is_set():
             try:
                 raw = await asyncio.wait_for(proc.stdout.readline(), timeout=0.5)
-            except TimeoutError:
+            except asyncio.TimeoutError:
                 continue
             if not raw:
                 break

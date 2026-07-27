@@ -29,6 +29,12 @@ Stdlib only apart from ``httpx`` and ``gridfleet_testkit``, which are imported
 lazily so ``--help`` works from any environment.
 """
 
+# ruff: noqa: UP017
+# ^ pinned to the Python floor below, file-wide rather than per line: UP017
+#   rewrites `timezone.utc` to `datetime.UTC` (3.11+) and UP041 rewrites
+#   `asyncio.TimeoutError` to the builtin (only the same object on 3.11+).
+#   Both are wrong here. A per-line noqa drifts as lines move.
+
 from __future__ import annotations
 
 import argparse
@@ -37,7 +43,7 @@ import os
 import signal
 import time
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -48,6 +54,14 @@ if TYPE_CHECKING:
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HTTP_CONFLICT = 409
+# The plan runs this from ``testkit/``, whose pyproject floor is >=3.10 and whose
+# resolved interpreter is 3.10. Nothing here may use a 3.11+ construct:
+# ``datetime.UTC``, the unified builtin ``TimeoutError``, ``tomllib``,
+# ``except*``/``TaskGroup``, ``Self``, ``StrEnum``. ``ruff --fix`` will happily
+# rewrite the first two into 3.11+ forms; the noqa above and
+# tests/test_lock_wait_sampler.py::test_promoted_scripts_hold_the_python_floor
+# are what stop that.
+PYTHON_FLOOR = (3, 10)
 
 
 @dataclass(slots=True)
@@ -59,7 +73,7 @@ class ChurnCounters:
 
 
 def default_summary_path() -> Path:
-    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return REPO_ROOT / ".superpowers" / "bench-results" / "lock-waits" / stamp / "churn-summary.json"
 
 

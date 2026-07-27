@@ -184,9 +184,37 @@ def test_operational_state_transition_called_only_by_edge_detector() -> None:
 #     reads, not a fact any lock protects, and is deliberately not a writer;
 #   * a call to ``write_desired_state``; or
 #   * an assignment to ``failure_episode_id`` / ``operational_state_last_emitted``.
-# Constructor *keyword* writes are invisible to this scan, which is why device
-# creation (``app/devices/services/write.py``) does not appear — the same limit
-# ``PROTECTED_COLUMN_WRITERS`` documents above.
+#
+# WHAT THIS SCAN CANNOT SEE. Read this before trusting the set-equality in
+# ``test_decision_fact_writer_inventory_is_registered``: that equality is exact
+# over what the rules above discover, and that is NOT the same as coverage of
+# every decision-fact write in the repository.
+#
+#   1. Constructor *keyword* writes, which is why device creation
+#      (``app/devices/services/write.py``) does not appear — the same limit
+#      ``PROTECTED_COLUMN_WRITERS`` documents above.
+#   2. **ORM attribute assignment to the decision columns declared in
+#      ``DECISION_COLUMNS`` below.** ``session.status = ...``,
+#      ``reservation.released_at = ...`` and ``intent.payload = ...`` on a loaded
+#      row are real decision-fact writes and are all invisible here: only the
+#      SQLAlchemy Core ``update().values()`` form is matched. Roughly fifteen real
+#      writers are unregistered for this reason. Concretely, and searchable:
+#
+#        app/sessions/service.py:229,232  close_running_session_locked
+#            The shared session-close path. It takes ``locked: LockedDevice`` and
+#            calls ``assert_active`` — the strongest ``accepts_locked`` writer in
+#            the repository, and this scan does not see it at all.
+#        app/sessions/service.py:148,156,194,466-478,522
+#        app/runs/service_reservation.py:197,221,257,277,310,312,336,355
+#            Every reservation release/exclude/restore path.
+#        app/runs/service_lifecycle_release.py:133,134,148,150
+#        app/runs/service_lifecycle_failures.py:226
+#        app/verification/services/execution.py:541
+#        app/verification/services/preparation.py:573   (DeviceIntent.payload)
+#
+# Widening the rule to attribute assignment needs type inference the scan does
+# not have (``row.status = x`` says nothing about ``row``'s class), so this is a
+# documented gap, not a bug to patch here. Tracked as Phase 11 stream B12.
 DECISION_FACT_MODELS = {
     "DeviceIntent": "device_intent",
     "Session": "live_session",
@@ -223,25 +251,33 @@ DEVICE_LOCK_ACQUIRERS = frozenset(
 
 @dataclass(frozen=True, slots=True)
 class DecisionFactWriter:
-    """One function that mutates decision facts, and its proof of the device lock.
+    """One function that mutates decision facts, and what is checked about it.
 
-    ``proof_mode`` is one of:
+    The three ``proof_mode`` values are NOT three strengths of the same claim.
+    Two of them prove a device lock. The third does not, and saying so plainly is
+    the point of this docstring:
 
-    * ``accepts_locked`` — declares a ``LockedDevice`` parameter and calls
-      ``locked.assert_active(db)`` before its first write. The strongest form:
-      the proof object itself refuses a foreign or closed transaction.
-    * ``acquires_locked`` — calls a ``DEVICE_LOCK_ACQUIRERS`` function before its
-      first write, so the lock is taken in the same function that writes.
-    * ``caller_locked`` — transaction-local. Enforced, not asserted: the function
-      must own no ``begin()`` (absent from ``BEGIN_OWNER_REGISTRY``) and its
-      module must be in ``MIGRATED_TRANSACTION_LOCAL_MODULES``, which pins it as
-      owning no ``commit()``/``rollback()`` either. It can therefore neither open
-      nor end a transaction, so it necessarily runs inside its caller's — the one
-      that took the lock.
+    * ``accepts_locked`` — **proves a lock.** Declares a ``LockedDevice``
+      parameter and calls ``locked.assert_active(db)`` before its first write.
+      The strongest form: the proof object itself refuses a foreign or closed
+      transaction.
+    * ``acquires_locked`` — **proves a lock.** Calls a ``DEVICE_LOCK_ACQUIRERS``
+      function before its first write, so the lock is taken in the same function
+      that writes.
+    * ``caller_locked`` — **proves transaction-locality, not a lock.** The
+      function must own no ``begin()`` (absent from ``BEGIN_OWNER_REGISTRY``) and
+      its module must be in ``MIGRATED_TRANSACTION_LOCAL_MODULES``. Both
+      conditions are about transaction *ownership*: neither mentions a lock, and
+      neither inspects the call chain. A writer with no lock anywhere above it
+      passes this branch. It establishes only that the write happens inside some
+      caller's transaction — and, since the sibling contract already proves every
+      module but two owns no commit/rollback, the second condition is close to
+      free.
 
-    ``caller_locked`` is weaker than the other two: it proves the writer is not
-    the boundary, not that the caller locked the row. Prefer threading a real
-    ``LockedDevice`` when a path is touched; every conversion shrinks this mode.
+    ``caller_locked`` is therefore a placeholder for work not done, not a proof.
+    Prefer threading a real ``LockedDevice`` when a path is touched; every
+    conversion moves an entry into a mode that actually proves something. Tracked
+    as Phase 11 stream B11.
     """
 
     module: str
@@ -437,7 +473,16 @@ def _function_node(module: str, qualified_function: str) -> ast.FunctionDef | as
 
 
 def test_decision_fact_writer_inventory_is_registered() -> None:
-    """Documentary entries and unregistered writers both fail: this is set equality."""
+    """Set equality over what ``decision_fact_writes()`` discovers — which is not coverage.
+
+    Within the discovery rules, this is exact in both directions: an unregistered
+    writer fails, and so does a documentary entry whose write is gone. It says
+    nothing about the writes the scan cannot see — above all ORM attribute
+    assignment to the ``DECISION_COLUMNS``, which hides roughly fifteen real
+    writers including ``app/sessions/service.py::close_running_session_locked``.
+    The module comment above ``DECISION_FACT_MODELS`` lists them; do not read
+    this assertion as "every decision-fact write is registered".
+    """
     discovered = {
         (module, owner, fact) for (module, owner), per_fact in decision_fact_writes().items() for fact in per_fact
     }
@@ -454,15 +499,25 @@ def test_decision_fact_proof_modes_are_known() -> None:
     assert modes <= {"accepts_locked", "acquires_locked", "caller_locked"}, f"unknown proof modes: {sorted(modes)}"
 
 
-def test_decision_fact_writers_prove_their_device_lock() -> None:
+def test_decision_fact_writers_match_their_declared_proof_mode() -> None:
+    """Each registered writer satisfies the checks its own ``proof_mode`` names.
+
+    Deliberately not called "proves their device lock": only the
+    ``accepts_locked`` and ``acquires_locked`` branches do that. The
+    ``caller_locked`` branch checks transaction-locality and never looks for a
+    lock, so a writer with no lock anywhere up its call chain passes it. Every
+    violation message below names the mode it was checked under, so a failure can
+    never be misread as a lock proof that was only a locality check.
+    """
     writes = decision_fact_writes()
     begin_owners = {owner.key for owner in BEGIN_OWNER_REGISTRY}
     violations: list[str] = []
     for writer in sorted(DECISION_FACT_WRITERS, key=lambda entry: (entry.module, entry.qualified_function)):
         key = (writer.module, writer.qualified_function)
+        where = f"{writer.module}::{writer.qualified_function} [{writer.proof_mode}]"
         node = _function_node(*key)
         if node is None:
-            violations.append(f"{writer.module}::{writer.qualified_function}: no such function")
+            violations.append(f"{where}: no such function")
             continue
         first_write = min(writes[key].values())
         declared = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
@@ -480,11 +535,9 @@ def test_decision_fact_writers_prove_their_device_lock() -> None:
                 and inner.lineno < first_write
             ]
             if not locked:
-                violations.append(f"{writer.module}::{writer.qualified_function}: no LockedDevice parameter")
+                violations.append(f"{where}: lock proof missing — no LockedDevice parameter")
             elif not asserted:
-                violations.append(
-                    f"{writer.module}::{writer.qualified_function}: no assert_active() before line {first_write}"
-                )
+                violations.append(f"{where}: lock proof missing — no assert_active() before line {first_write}")
         elif writer.proof_mode == "acquires_locked":
             acquired = [
                 inner.lineno
@@ -494,20 +547,21 @@ def test_decision_fact_writers_prove_their_device_lock() -> None:
                 and inner.lineno < first_write
             ]
             if not acquired:
-                violations.append(
-                    f"{writer.module}::{writer.qualified_function}: no device lock acquired before line {first_write}"
-                )
+                violations.append(f"{where}: lock proof missing — no device lock acquired before line {first_write}")
         else:
+            # No lock is checked here, by design; see the class docstring.
             if key in begin_owners:
-                violations.append(
-                    f"{writer.module}::{writer.qualified_function}: caller_locked but owns a begin() context"
-                )
+                violations.append(f"{where}: transaction-locality broken — owns a begin() context")
             if writer.module not in MIGRATED_TRANSACTION_LOCAL_MODULES:
                 violations.append(
-                    f"{writer.module}::{writer.qualified_function}: caller_locked but the module is not pinned "
-                    "transaction-local by MIGRATED_TRANSACTION_LOCAL_MODULES"
+                    f"{where}: transaction-locality broken — the module is not pinned transaction-local by "
+                    "MIGRATED_TRANSACTION_LOCAL_MODULES"
                 )
-    assert violations == [], "decision-fact writers without a device-lock proof:\n  " + "\n  ".join(violations)
+    assert violations == [], (
+        "decision-fact writers that do not satisfy their declared proof_mode "
+        "(accepts_locked/acquires_locked check a device lock; caller_locked checks transaction-locality only):\n  "
+        + "\n  ".join(violations)
+    )
 
 
 def test_read_projection_is_not_a_mutation_api() -> None:
