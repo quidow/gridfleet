@@ -149,11 +149,12 @@ async def test_claim_next_job_respects_kind_and_schedule(db_session: AsyncSessio
     await db_session.commit()
 
     service = _make_service(db_session)
-    job = await service.claim_next_job(kind=job_queue.JOB_KIND_DEVICE_RECOVERY)
+    claim = await service.claim_next_job(kind=job_queue.JOB_KIND_DEVICE_RECOVERY)
 
-    assert job is not None
-    assert job.id == ready.id
-    assert job.status == job_queue.JOB_STATUS_RUNNING
+    assert claim is not None
+    assert claim.id == ready.id
+    await db_session.refresh(ready)
+    assert ready.status == job_queue.JOB_STATUS_RUNNING
     assert await service.claim_next_job(kind="missing") is None
 
 
@@ -230,6 +231,7 @@ async def test_run_pending_jobs_once_dispatches_remediation_kind(db_session: Asy
     remediation_runner.run_device_health_remediation_job.assert_awaited_once_with(
         str(remediation.id),
         remediation.payload,
+        claim_attempt=1,
     )
 
 

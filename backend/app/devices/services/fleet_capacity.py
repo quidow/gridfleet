@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -175,10 +176,10 @@ async def _count_schedulable_capacity(db: AsyncSession) -> int:
     return int((await db.execute(stmt)).scalar_one() or 0)
 
 
-async def _count_hosts(db: AsyncSession, *, offline_after_sec: float) -> tuple[int, int]:
+async def _count_hosts(db: AsyncSession, *, now: datetime, offline_after_sec: float) -> tuple[int, int]:
     stmt = select(
         func.count().label("total"),
-        func.count().filter(host_online_clause(offline_after_sec=offline_after_sec)).label("online"),
+        func.count().filter(host_online_clause(offline_after_sec=offline_after_sec, now=now)).label("online"),
     ).select_from(Host)
     row = (await db.execute(stmt)).one()
     return int(row.total or 0), int(row.online or 0)
@@ -194,6 +195,20 @@ async def _count_devices(db: AsyncSession) -> tuple[int, int, int, int]:
     ).select_from(Device)
     row = (await db.execute(stmt)).one()
     return int(row.total or 0), int(row.available or 0), int(row.offline or 0), int(row.maintenance or 0)
+
+
+@dataclass(frozen=True)
+class CapacitySnapshotValue:
+    captured_at: datetime
+    total_capacity_slots: int
+    active_sessions: int
+    queued_requests: int
+    hosts_total: int
+    hosts_online: int
+    devices_total: int
+    devices_available: int
+    devices_offline: int
+    devices_maintenance: int
 
 
 class FleetCapacityService:
@@ -331,26 +346,40 @@ class FleetCapacityService:
         *,
         offline_after_sec: float,
         captured_at: datetime | None = None,
-    ) -> AnalyticsCapacitySnapshot | None:
-        active_sessions = await _count_active_sessions(db)
-        queued_requests = await _count_queued_requests(db)
-        total_capacity_slots = await _count_schedulable_capacity(db)
-        hosts_total, hosts_online = await _count_hosts(db, offline_after_sec=offline_after_sec)
-        devices_total, devices_available, devices_offline, devices_maintenance = await _count_devices(db)
+    ) -> CapacitySnapshotValue:
+        now = captured_at or now_utc()
+        async with db.begin():
+            active_sessions = await _count_active_sessions(db)
+            queued_requests = await _count_queued_requests(db)
+            total_capacity_slots = await _count_schedulable_capacity(db)
+            hosts_total, hosts_online = await _count_hosts(db, now=now, offline_after_sec=offline_after_sec)
+            devices_total, devices_available, devices_offline, devices_maintenance = await _count_devices(db)
 
-        snapshot = AnalyticsCapacitySnapshot(
-            captured_at=captured_at or now_utc(),
-            total_capacity_slots=total_capacity_slots,
-            active_sessions=active_sessions,
-            queued_requests=queued_requests,
-            hosts_total=hosts_total,
-            hosts_online=hosts_online,
-            devices_total=devices_total,
-            devices_available=devices_available,
-            devices_offline=devices_offline,
-            devices_maintenance=devices_maintenance,
-        )
-        db.add(snapshot)
-        await db.commit()
-        await db.refresh(snapshot)
-        return snapshot
+            db.add(
+                AnalyticsCapacitySnapshot(
+                    captured_at=now,
+                    total_capacity_slots=total_capacity_slots,
+                    active_sessions=active_sessions,
+                    queued_requests=queued_requests,
+                    hosts_total=hosts_total,
+                    hosts_online=hosts_online,
+                    devices_total=devices_total,
+                    devices_available=devices_available,
+                    devices_offline=devices_offline,
+                    devices_maintenance=devices_maintenance,
+                )
+            )
+            await db.flush()
+            value = CapacitySnapshotValue(
+                captured_at=now,
+                total_capacity_slots=total_capacity_slots,
+                active_sessions=active_sessions,
+                queued_requests=queued_requests,
+                hosts_total=hosts_total,
+                hosts_online=hosts_online,
+                devices_total=devices_total,
+                devices_available=devices_available,
+                devices_offline=devices_offline,
+                devices_maintenance=devices_maintenance,
+            )
+        return value

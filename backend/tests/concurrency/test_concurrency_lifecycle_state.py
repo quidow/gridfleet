@@ -106,7 +106,9 @@ async def test_concurrent_health_failure_does_not_tear_lifecycle_state(
     ]
 
     async def writer(source: str, reason: str) -> None:
-        async with db_session_maker() as session:
+        # ``handle_health_failure`` is transaction-local; each writer owns its own
+        # boundary, which is also what serialises them on the device row lock.
+        async with db_session_maker.begin() as session:
             stmt = select(Device).where(Device.id == device_id)
             device_obj = (await session.execute(stmt)).scalar_one()
             svc = LifecyclePolicyService(

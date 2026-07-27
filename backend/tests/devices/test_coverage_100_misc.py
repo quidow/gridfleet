@@ -411,6 +411,7 @@ async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.Monk
             return None
 
     cleanup_db = AsyncMock()
+    cleanup_db.in_transaction = Mock(return_value=False)  # sync on the real AsyncSession, unlike its other methods
     monkeypatch.setattr(data_cleanup, "_delete_in_batches", AsyncMock(return_value=0))
     await data_cleanup.DataCleanupService(
         publisher=AsyncMock(),
@@ -643,6 +644,10 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
 
         async def __aexit__(self, *_args: object) -> None:
             return None
+
+        @staticmethod
+        def begin() -> QueueCtx:
+            return QueueCtx()
 
     job = SimpleNamespace(id=uuid.uuid4(), kind="demo", snapshot={})
     service = DurableJobService(

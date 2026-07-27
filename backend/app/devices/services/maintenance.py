@@ -165,22 +165,21 @@ class MaintenanceService:
         # reconcile just above re-derives with no maintenance intents (reason cleared).
         await db.flush()
         # D3: the operator should not watch an idle offline device until the next
-        # device_connectivity_loop tick. The job row is durable and committed by
-        # create_job, so it cannot be staged here — the caller enqueues it once
-        # this transaction has ended.
+        # device_connectivity_loop tick. The job row belongs to its own transaction,
+        # so it cannot be staged here — the caller enqueues it once this transaction
+        # has ended.
         return RecoveryRequest(device.id)
 
     async def schedule_device_recovery(self, device_id: uuid.UUID) -> None:
-        """Enqueue the durable recovery job on a fresh short session.
+        """Enqueue the durable recovery job on a fresh short transaction.
 
-        ``job_queue.create_job`` owns that commit, so this must run *after* the
-        maintenance transaction ended. Enqueue failure is swallowed: the state
-        mutation already committed and surfacing it would hand the operator a 500
-        for a device that really did leave maintenance. The
-        device_connectivity_loop remains the fallback path.
+        This must run *after* the maintenance transaction ended. Enqueue failure
+        is swallowed: the state mutation already committed and surfacing it would
+        hand the operator a 500 for a device that really did leave maintenance.
+        The device_connectivity_loop remains the fallback path.
         """
         try:
-            async with self._session_factory() as recovery_db:
+            async with self._session_factory.begin() as recovery_db:
                 await _schedule_device_recovery(recovery_db, device_id)
         except Exception:  # noqa: BLE001 — best-effort recovery scheduling; device_connectivity_loop is the fallback
             logger.warning(
@@ -194,8 +193,8 @@ class MaintenanceService:
 async def _schedule_device_recovery(db: AsyncSession, device_id: uuid.UUID) -> None:
     """Enqueue a one-shot device_recovery job for the given device.
 
-    Creates and commits one row in the durable job queue. Safe to call
-    after the device-state mutations are already committed.
+    Stages one row in the durable job queue; the caller's transaction commits
+    it. Safe to call after the device-state mutations are already committed.
 
     Lazy import of job_queue + the job-kind/status constants breaks an
     import cycle (maintenance_service → job_queue → device_recovery_job →

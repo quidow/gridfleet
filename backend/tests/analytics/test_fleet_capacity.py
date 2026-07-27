@@ -16,6 +16,7 @@ from app.devices.services.fleet_capacity import (
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.hosts.models import Host, HostStatus, OSType
 from app.sessions.models import Session, SessionStatus
+from tests.concurrency.group_lock_helpers import capture_statements
 from tests.helpers import create_device_record, create_reservation
 
 if TYPE_CHECKING:
@@ -515,6 +516,9 @@ async def test_collect_capacity_snapshot_records_fleet_counts(
             await db_session.execute(select(func.count()).select_from(Host).where(Host.status == HostStatus.online))
         ).scalar_one()
     )
+    # Close the read-only transaction those counts opened: collect_capacity_snapshot_once
+    # now owns its own db.begin(), which raises if the session already has one open.
+    await db_session.commit()
 
     snapshot = await FleetCapacityService().collect_capacity_snapshot_once(
         db_session,
@@ -557,6 +561,9 @@ async def test_count_devices_excludes_reserved_from_available(
         operational_state=DeviceOperationalState.available,
     )
     await create_reservation(db_session, device_id=reserved.id)
+    # create_reservation only flushes: close its open transaction before
+    # collect_capacity_snapshot_once opens its own db.begin().
+    await db_session.commit()
 
     snapshot = await FleetCapacityService().collect_capacity_snapshot_once(
         db_session,
@@ -580,6 +587,9 @@ async def test_count_devices_counts_maintenance_by_operational_state(
         name="Maintenance OpState Device",
         lifecycle_policy_state={"maintenance_reason": "operator"},
     )
+    # create_device_record's post-commit refresh() reopens a read transaction: close
+    # it before collect_capacity_snapshot_once opens its own db.begin().
+    await db_session.commit()
 
     snapshot = await FleetCapacityService().collect_capacity_snapshot_once(
         db_session,
@@ -589,3 +599,23 @@ async def test_count_devices_counts_maintenance_by_operational_state(
 
     assert snapshot is not None
     assert snapshot.devices_maintenance == 1
+
+
+async def test_collect_capacity_snapshot_once_is_one_transaction_of_five_reads_and_one_insert(
+    db_session: AsyncSession,
+) -> None:
+    """The five aggregate reads and the insert share one transaction and one timestamp;
+    the returned value is frozen, never a re-fetched ORM row."""
+    captured_at = datetime(2026, 4, 18, 16, tzinfo=UTC)
+
+    async with capture_statements(db_session) as statements:
+        value = await FleetCapacityService().collect_capacity_snapshot_once(
+            db_session,
+            offline_after_sec=45.0,
+            captured_at=captured_at,
+        )
+
+    assert value.captured_at == captured_at
+    assert sum(sql.lstrip().upper().startswith("SELECT") for sql in statements) == 5
+    assert sum(sql.lstrip().upper().startswith("INSERT") for sql in statements) == 1
+    assert not any("analytics_capacity_snapshots.id" in sql and "SELECT" in sql.upper() for sql in statements)

@@ -78,7 +78,6 @@ class LifecyclePolicyActionsService:
             source=source,
             detail=detail,
         )
-        await db.commit()
         return run, entry
 
     async def complete_auto_stop_locked(
@@ -205,7 +204,6 @@ class LifecyclePolicyActionsService:
         """
         device = await _lock_for_state_write(db, device)
         await self._handle_node_crash_loaded(db, device, locked=None, source=source, reason=reason)
-        await db.commit()
 
     async def handle_node_crash_locked(
         self,

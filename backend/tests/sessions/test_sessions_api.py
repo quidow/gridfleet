@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import inspect
+from sqlalchemy import inspect, select
 
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.sessions import service as session_module
@@ -12,7 +12,7 @@ from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 
 @pytest.fixture(autouse=True)
@@ -504,6 +504,36 @@ async def test_update_session_status(client: AsyncClient, db_session: AsyncSessi
     assert events[0]["type"] == "session.ended"
     assert events[0]["data"]["session_id"] == "gs-update"
     assert events[0]["data"]["status"] == "failed"
+
+
+async def test_update_session_status_commits_on_its_own_boundary(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    default_host_id: str,
+) -> None:
+    """The route owns a boundary of its own, not the request-scoped session's.
+
+    The request session is shared with whatever else the request touched, so a
+    commit on it publishes state the route never authored. Staging an unrelated
+    row on that session before the call is what makes the difference visible: the
+    route's write must land, and the bystander must not.
+    """
+    from app.sessions.models import Session, SessionStatus
+
+    device = await _create_device(db_session, default_host_id)
+    db_session.add(Session(session_id="gs-boundary", device_id=device["id"], status=SessionStatus.running))
+    await db_session.commit()
+    db_session.add(Session(session_id="gs-bystander", device_id=device["id"], status=SessionStatus.running))
+
+    resp = await client.patch("/api/sessions/gs-boundary/status", json={"status": "failed"})
+
+    assert resp.status_code == 200
+    async with db_session_maker() as verify:
+        rows = (await verify.execute(select(Session.session_id, Session.status))).all()
+        durable = dict(rows)
+    assert durable["gs-boundary"] == SessionStatus.failed, "the route's own write did not reach the database"
+    assert "gs-bystander" not in durable, "the route committed the request session's unrelated pending work"
 
 
 async def test_grid_queue(client: AsyncClient, db_session: AsyncSession) -> None:

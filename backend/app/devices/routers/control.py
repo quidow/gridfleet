@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 import httpx2 as httpx
 from fastapi import APIRouter, HTTPException, Query
@@ -36,6 +36,10 @@ from app.sessions.dependencies import SessionServicesDep
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from app.settings import service_config as config_service
 from app.settings.dependencies import SettingsServicesDep
+
+if TYPE_CHECKING:
+    from app.core.type_defs import SessionFactory
+    from app.devices.protocols import DeviceCrudProtocol
 
 appium_connection_target = identity.appium_connection_target
 platform_has_lifecycle_action = pack_platform_catalog.platform_has_lifecycle_action
@@ -238,36 +242,67 @@ async def device_session_test(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+async def _clear_session_viability_after_reconnect(
+    session_factory: SessionFactory,
+    crud: DeviceCrudProtocol,
+    device_id: uuid.UUID,
+) -> bool:
+    """Clear stale session-viability failures; report whether a node row exists.
+
+    Health checks cannot re-evaluate the device while a stale failure stands, so a
+    successful reconnect drops both columns. No device row lock is taken: the write
+    touches only these two columns, and the node lever the caller runs next takes
+    the aggregate lock on its own short-lived session, so concurrent operator
+    actions (maintenance enter, delete) queue behind that rather than interleaving
+    with it — see `tests/concurrency/test_concurrency_reconnect_restart_lock.py`.
+
+    The row is re-read rather than carried over from before the agent dial: that
+    call ran unlocked, and this transaction has to own the row it mutates.
+    """
+    async with session_factory.begin() as db:
+        device = await crud.get_device(db, device_id)
+        if device is None or device.appium_node is None:
+            return False
+        device.session_viability_status = None
+        device.session_viability_error = None
+        return True
+
+
 @router.post("/{device_id}/reconnect")
 async def reconnect_device(
     device_id: uuid.UUID,
-    db: DbDep,
     device_services: DeviceServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
     appium_services: AppiumNodeServicesDep,
 ) -> dict[str, Any]:
-    device = await get_device_or_404(device_id, db, device_services.crud)
-
-    try:
-        resolved = await resolve_pack_platform(
-            db,
-            pack_id=device.pack_id,
-            platform_id=device.platform_id,
-            device_type=device.device_type.value if device.device_type else None,
-        )
-    except LookupError as exc:
-        raise HTTPException(status_code=400, detail="Device pack/platform not found in catalog") from exc
-    if not platform_has_lifecycle_action(resolved.lifecycle_actions, "reconnect"):
-        raise HTTPException(status_code=400, detail="Reconnect is not supported for this device platform")
-    if device.connection_type.value != "network":
-        raise HTTPException(status_code=400, detail="Reconnect is only supported for network-connected devices")
-    if not device.ip_address:
-        raise HTTPException(status_code=400, detail="Device has no IP address")
-    if not device.host:
-        raise HTTPException(status_code=400, detail="Device has no host assigned")
-    if not device.connection_target:
-        raise HTTPException(status_code=400, detail="Device has no connection target")
+    session_factory = appium_services.session_factory
+    # The dispatch below is an agent HTTP call, so nothing may hold a transaction
+    # across it. Load, resolve the catalog entry, and run every guard in a short
+    # read session that closes first; ``dispatch_recommended_action`` reads only
+    # eager-loaded scalars (host, connection_target, pack/platform ids,
+    # ip_address), so the detached row serves it unchanged.
+    async with session_factory() as read_db:
+        device = await get_device_or_404(device_id, read_db, device_services.crud)
+        try:
+            resolved = await resolve_pack_platform(
+                read_db,
+                pack_id=device.pack_id,
+                platform_id=device.platform_id,
+                device_type=device.device_type.value if device.device_type else None,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=400, detail="Device pack/platform not found in catalog") from exc
+        if not platform_has_lifecycle_action(resolved.lifecycle_actions, "reconnect"):
+            raise HTTPException(status_code=400, detail="Reconnect is not supported for this device platform")
+        if device.connection_type.value != "network":
+            raise HTTPException(status_code=400, detail="Reconnect is only supported for network-connected devices")
+        if not device.ip_address:
+            raise HTTPException(status_code=400, detail="Device has no IP address")
+        if not device.host:
+            raise HTTPException(status_code=400, detail="Device has no host assigned")
+        if not device.connection_target:
+            raise HTTPException(status_code=400, detail="Device has no connection target")
 
     data = await link_repair.dispatch_recommended_action(
         device,
@@ -278,20 +313,12 @@ async def reconnect_device(
 
     success = data.get("success", False)
 
-    if success and device.appium_node:
-        # Clear stale session-viability failures so health checks can evaluate the
-        # device after the node restarts. No device row lock is taken here: the
-        # write touches only these two columns, and the node lever below takes the
-        # aggregate lock on its own short-lived session so concurrent operator
-        # actions (maintenance enter, delete) queue behind it rather than
-        # interleaving with it — see
-        # `tests/concurrency/test_concurrency_reconnect_restart_lock.py`.
-        device.session_viability_status = None
-        device.session_viability_error = None
-        await db.flush()
-        await db.commit()
+    node_present = success and await _clear_session_viability_after_reconnect(
+        session_factory, device_services.crud, device_id
+    )
+    if node_present:
         try:
-            async with appium_services.session_factory.begin() as node_db:
+            async with session_factory.begin() as node_db:
                 locked = await device_locking.lock_device_handle(node_db, device_id)
                 node = locked.device.appium_node
                 if node is None or not node.observed_running:

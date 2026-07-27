@@ -57,6 +57,7 @@ class JanitorLoop(BackgroundLoop):
         return JANITOR_BASE_INTERVAL_SEC
 
     async def _run_cycle(self, db: AsyncSession) -> None:
+        del db
         for stage in self._stages:
             if stage.skip_first_cycle and self._cycle_index == 0:
                 continue
@@ -65,13 +66,10 @@ class JanitorLoop(BackgroundLoop):
             ):
                 continue
             try:
-                await stage.run(db)
+                async with self._sf() as stage_db:
+                    await stage.run(stage_db)
             except Exception:
-                # Stage isolation (host_sweep precedent): one chore's failure
-                # must not starve the others this tick. Roll back so the shared
-                # session is clean for the next stage.
                 logger.exception("janitor_stage_failed", stage=stage.name)
-                await db.rollback()
 
     def _on_cycle_end(self, elapsed_seconds: float, interval: float) -> None:
         del elapsed_seconds, interval

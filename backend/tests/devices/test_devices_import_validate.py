@@ -6,6 +6,7 @@ import pytest
 from app.portability.schemas import ExportBundle, ExportedDevice, OriginalHost
 from app.portability.services.import_bundle import PortabilityImportService
 from app.verification.services.service import VerificationService
+from tests.fakes.session_factory import FakeSessionFactory
 from tests.helpers import seed_existing_device, seed_host_named
 
 if TYPE_CHECKING:
@@ -13,6 +14,11 @@ if TYPE_CHECKING:
 
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _import_service() -> PortabilityImportService:
+    """``validate_bundle`` never touches ``session_factory``, so a real one is unneeded here."""
+    return PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=FakeSessionFactory())  # type: ignore[arg-type]
 
 
 def _bundle(devices: list[ExportedDevice]) -> ExportBundle:
@@ -50,7 +56,7 @@ def _device(
 @pytest.mark.db
 async def test_validate_classifies_new_row_as_valid_new(db_session: AsyncSession, seeded_driver_packs: None) -> None:
     host = await seed_host_named(db_session, "lab-04")
-    preview = await PortabilityImportService(verification_enqueuer=VerificationService()).validate_bundle(
+    preview = await _import_service().validate_bundle(
         db_session, _bundle([_device(hostname="lab-04", host_id=host.id)])
     )
     assert preview.rows[0].status.value == "valid_new"
@@ -62,9 +68,7 @@ async def test_validate_classifies_new_row_as_valid_new(db_session: AsyncSession
 @pytest.mark.db
 async def test_validate_hostname_match_is_case_insensitive(db_session: AsyncSession, seeded_driver_packs: None) -> None:
     host = await seed_host_named(db_session, "Lab-Host-04")
-    preview = await PortabilityImportService(verification_enqueuer=VerificationService()).validate_bundle(
-        db_session, _bundle([_device(hostname="lab-host-04")])
-    )
+    preview = await _import_service().validate_bundle(db_session, _bundle([_device(hostname="lab-host-04")]))
     assert preview.rows[0].host_suggestion is not None
     assert preview.rows[0].host_suggestion.id == host.id
 
@@ -73,7 +77,7 @@ async def test_validate_hostname_match_is_case_insensitive(db_session: AsyncSess
 @pytest.mark.db
 async def test_validate_flags_intra_bundle_duplicates(db_session: AsyncSession, seeded_driver_packs: None) -> None:
     await seed_host_named(db_session, "lab-04")
-    preview = await PortabilityImportService(verification_enqueuer=VerificationService()).validate_bundle(
+    preview = await _import_service().validate_bundle(
         db_session, _bundle([_device(identity_value="R58"), _device(identity_value="R58")])
     )
     assert {row.status.value for row in preview.rows} == {"duplicate_in_bundle"}
@@ -91,7 +95,7 @@ async def test_validate_flags_existing_global_identity_as_conflict_skip(
         identity_value="GLOBAL-1",
         identity_scope="global",
     )
-    preview = await PortabilityImportService(verification_enqueuer=VerificationService()).validate_bundle(
+    preview = await _import_service().validate_bundle(
         db_session,
         _bundle([_device(identity_value="GLOBAL-1", identity_scope="global", identity_scheme="udid")]),
     )
@@ -104,7 +108,7 @@ async def test_validate_returns_bundle_hash_and_available_hosts(
     db_session: AsyncSession, seeded_driver_packs: None
 ) -> None:
     host = await seed_host_named(db_session, "lab-04")
-    preview = await PortabilityImportService(verification_enqueuer=VerificationService()).validate_bundle(
+    preview = await _import_service().validate_bundle(
         db_session, _bundle([_device(hostname="lab-04", host_id=host.id)])
     )
     assert preview.bundle_hash.startswith("sha256:")
@@ -236,9 +240,7 @@ async def test_validate_flags_unknown_pack_as_invalid(db_session: AsyncSession, 
     device_dict["pack_id"] = "no-such-pack"
     device_dict["platform_id"] = "no-such-platform"
     bundle = _bundle([ExportedDevice.model_validate(device_dict)])
-    preview = await PortabilityImportService(verification_enqueuer=VerificationService()).validate_bundle(
-        db_session, bundle
-    )
+    preview = await _import_service().validate_bundle(db_session, bundle)
     assert preview.rows[0].status.value == "invalid"
     assert any("pack" in i.lower() for i in preview.rows[0].issues)
 
@@ -259,9 +261,7 @@ async def test_validate_same_identity_on_different_host_is_valid_new(
     )
     # Bundle device targets host-B (different host), same identity_value — should be valid_new.
     device = _device(hostname="lab-B", host_id=host_b.id, identity_value="SAME-ID")
-    preview = await PortabilityImportService(verification_enqueuer=VerificationService()).validate_bundle(
-        db_session, _bundle([device])
-    )
+    preview = await _import_service().validate_bundle(db_session, _bundle([device]))
     assert preview.rows[0].status.value == "valid_new"
 
 
@@ -279,7 +279,5 @@ async def test_validate_host_scoped_identity_on_original_host_is_conflict(
         identity_scope="host",
     )
     device = _device(hostname="lab-04", host_id=host.id, identity_value="SAME-ID")
-    preview = await PortabilityImportService(verification_enqueuer=VerificationService()).validate_bundle(
-        db_session, _bundle([device])
-    )
+    preview = await _import_service().validate_bundle(db_session, _bundle([device]))
     assert preview.rows[0].status.value == "conflict_skip"

@@ -152,45 +152,53 @@ class NodeHealthService:
             )
             .order_by(AppiumNode.device_id)
         )
-        nodes_with_packs = (await db.execute(stmt)).all()
-        # Snapshot the per-node work up front: a rollback below expires every
-        # loaded ORM row, so an attribute read on an un-processed node afterward
-        # would trigger a sync lazy-load (MissingGreenlet). device_id + the
-        # observation carry everything the loop needs.
+        # The inventory read owns a transaction of its own: it runs on the same
+        # session as the per-node transactions below, and a session that has
+        # already issued a statement holds an open implicit transaction that
+        # ``db.begin()`` refuses to nest into.
         work: list[tuple[AppiumNode, uuid.UUID, str, _NodeObservation]] = []
         pack_ids = set()
-        for node, pack_id in nodes_with_packs:
-            entry = by_port.get(node.port)
-            if entry is None:
-                continue
-            if revision is not None and revision <= node.health_fold_applied_revision:
-                record_node_health_fold_result("skipped")
-                continue
-            # _process_node_health never reads the passed node's attributes before
-            # re-locking it, so carrying the (possibly later-expired) row here is
-            # safe; device_id is captured now while the row is live.
-            work.append(
-                (
-                    node,
-                    node.device_id,
-                    pack_id,
-                    _NodeObservation(
-                        result=from_status_response(entry),
-                        port=node.port,
-                        pid=entry.get("pid") if isinstance(entry.get("pid"), int) else None,
-                        active_connection_target=(
-                            entry.get("connection_target") if isinstance(entry.get("connection_target"), str) else None
+        async with db.begin():
+            nodes_with_packs = (await db.execute(stmt)).all()
+            # Snapshot the per-node work up front: a per-node transaction that
+            # rolls back below expires every loaded ORM row, so an attribute read
+            # on an un-processed node afterward would trigger a sync lazy-load
+            # (MissingGreenlet). device_id + the observation carry everything the
+            # loop needs.
+            for node, pack_id in nodes_with_packs:
+                entry = by_port.get(node.port)
+                if entry is None:
+                    continue
+                if revision is not None and revision <= node.health_fold_applied_revision:
+                    record_node_health_fold_result("skipped")
+                    continue
+                # _process_node_health never reads the passed node's attributes before
+                # re-locking it, so carrying the (possibly later-expired) row here is
+                # safe; device_id is captured now while the row is live.
+                work.append(
+                    (
+                        node,
+                        node.device_id,
+                        pack_id,
+                        _NodeObservation(
+                            result=from_status_response(entry),
+                            port=node.port,
+                            pid=entry.get("pid") if isinstance(entry.get("pid"), int) else None,
+                            active_connection_target=(
+                                entry.get("connection_target")
+                                if isinstance(entry.get("connection_target"), str)
+                                else None
+                            ),
+                            observed_at=observed_at,
+                            revision=revision,
+                            boot_id=boot_id,
+                            section_sequence=section_sequence,
                         ),
-                        observed_at=observed_at,
-                        revision=revision,
-                        boot_id=boot_id,
-                        section_sequence=section_sequence,
-                    ),
+                    )
                 )
-            )
-            pack_ids.add(pack_id)
+                pack_ids.add(pack_id)
 
-        packs = await load_pack_catalog(db, pack_ids)
+            packs = await load_pack_catalog(db, pack_ids)
 
         apply_started = perf_counter()
         retryable = 0
@@ -203,22 +211,22 @@ class NodeHealthService:
                 record_node_health_fold_result("retryable")
                 break
             try:
-                # No load_sessions: the node-health path never reads device.sessions
-                # off this row — apply_node_state_transition and the recovery-control
-                # methods each re-lock the device and load what they need.
-                locked_device = await device_locking.lock_device_handle(db, device_id)
-            except NoResultFound:
-                logger.warning("Node health fold skipped: device %s no longer exists", device_id)
-                record_node_health_fold_result("terminal_noop")
-                await db.commit()
-                continue
-            try:
-                snapshot = await load_device_decision_snapshot(db, locked_device, packs=packs, now=now_utc())
-                outcome = await self._process_node_health(db, node, locked_device, snapshot, observation=observation)
-                await db.commit()
+                async with db.begin():
+                    try:
+                        # No load_sessions: the node-health path never reads device.sessions
+                        # off this row — apply_node_state_transition and the recovery-control
+                        # methods each re-lock the device and load what they need.
+                        locked_device = await device_locking.lock_device_handle(db, device_id)
+                    except NoResultFound:
+                        logger.warning("Node health fold skipped: device %s no longer exists", device_id)
+                        record_node_health_fold_result("terminal_noop")
+                        continue  # leaves the transaction with no DML of its own
+                    snapshot = await load_device_decision_snapshot(db, locked_device, packs=packs, now=now_utc())
+                    outcome = await self._process_node_health(
+                        db, node, locked_device, snapshot, observation=observation
+                    )
                 record_node_health_fold_result(outcome)
             except Exception:
-                await db.rollback()
                 retryable += 1
                 record_node_health_fold_result("retryable")
                 logger.exception("node_health_fold_node_failed", extra={"device_id": str(device_id)})

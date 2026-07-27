@@ -12,7 +12,7 @@ from app.core.db_retry import is_retryable_serialization_error, retry_on_seriali
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.type_defs import SessionFactory
 
@@ -96,6 +96,32 @@ async def test_retry_does_not_swallow_non_serialization_errors() -> None:
         await retry_on_serialization_failure(cast("SessionFactory", factory), attempt, caller="test", backoff_sec=0)
     assert exc.value is raised[0]  # original exception propagates unchanged
     assert len(factory.sessions) == 1
+
+
+async def test_retry_leaves_the_failed_session_out_of_transaction_before_retrying(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The generic retry helper is what ``DurableJobService.claim_next_job`` runs its
+    claim statement through. Real sessions on the real test database (not the bare
+    ``object()`` sentinels above) prove the failed attempt's transaction is fully
+    exited -- not merely abandoned mid-flight -- before the retry opens its own."""
+    sessions: list[AsyncSession] = []
+    calls = 0
+
+    async def attempt(db: AsyncSession) -> str:
+        nonlocal calls
+        calls += 1
+        sessions.append(db)
+        if calls == 1:
+            raise retryable_dbapi_error("40001")
+        assert sessions[0] is not db
+        assert sessions[0].in_transaction() is False
+        return "ok"
+
+    result = await retry_on_serialization_failure(db_session_maker, attempt, caller="test-real-session", backoff_sec=0)
+    assert result == "ok"
+    assert len(sessions) == 2
+    assert sessions[0] is not sessions[1]
 
 
 async def test_retry_surfaces_error_after_exhausting_attempts() -> None:

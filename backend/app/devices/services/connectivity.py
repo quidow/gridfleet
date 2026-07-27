@@ -331,6 +331,8 @@ class ConnectivityService:
             # Keep the episode-bearing fact, connectivity marker, and durable
             # enqueue atomic; the fold owns the commit for lifecycle policy too.
             await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
+            # Device is locked before this enqueue's insert; the opposite order
+            # is taken in remediation_job._prepare -- see the note there.
             await self._maybe_enqueue_remediation(db, device, remediation_result)
         if not was_offline:
             await self._lifecycle_policy.handle_health_failure_locked(
@@ -359,7 +361,6 @@ class ConnectivityService:
             device_id=device.id,
             failure_episode_id=device.failure_episode_id,
             action_id=action,
-            commit=False,
         )
 
     async def _maybe_auto_recover(
@@ -459,35 +460,41 @@ class ConnectivityService:
             .options(selectinload(Device.appium_node).defer(AppiumNode.live_capabilities), selectinload(Device.host))
             .order_by(Device.id)
         )
-        devices = (await db.execute(stmt)).scalars().all()
-        # Snapshot device ids up front: a rollback below expires every loaded row,
-        # so an attribute read on an un-processed device afterward would trigger a
-        # sync lazy-load (MissingGreenlet). Mirrors node_health.fold_host_nodes.
+        # The inventory read and the fold scope it builds own a transaction of
+        # their own: they run on the same session as the per-device transactions
+        # below, and a session that has already issued a statement holds an open
+        # implicit transaction that ``db.begin()`` refuses to nest into.
         work: list[uuid.UUID] = []
         work_pack_ids: set[str] = set()
         work_presence_keys: set[str] = set()
-        for device in devices:
-            if device.id not in observations.by_device_id:
-                continue  # not in this gather — never absence
-            if revision is not None and revision <= device.device_checks_fold_applied_revision:
-                metrics.record_device_health_fold_result("skipped")
-                continue
-            work.append(device.id)
-            work_presence_keys.add(device.identity_value)
-            if device.pack_id:
-                work_pack_ids.add(device.pack_id)
+        async with db.begin():
+            devices = (await db.execute(stmt)).scalars().all()
+            # Snapshot device ids up front: a per-device transaction that rolls back
+            # below expires every loaded row, so an attribute read on an un-processed
+            # device afterward would trigger a sync lazy-load (MissingGreenlet).
+            # Mirrors node_health.fold_host_nodes.
+            for device in devices:
+                if device.id not in observations.by_device_id:
+                    continue  # not in this gather — never absence
+                if revision is not None and revision <= device.device_checks_fold_applied_revision:
+                    metrics.record_device_health_fold_result("skipped")
+                    continue
+                work.append(device.id)
+                work_presence_keys.add(device.identity_value)
+                if device.pack_id:
+                    work_pack_ids.add(device.pack_id)
 
-        fold_scope = await DeviceHealthFoldScope.create(
-            db,
-            pack_ids=work_pack_ids,
-            presence_namespaces=(
-                CONNECTIVITY_NAMESPACE,
-                IP_PING_NAMESPACE,
-                PROBE_UNANSWERED_NAMESPACE,
-                PROBE_FAILED_NAMESPACE,
-            ),
-            presence_keys=work_presence_keys,
-        )
+            fold_scope = await DeviceHealthFoldScope.create(
+                db,
+                pack_ids=work_pack_ids,
+                presence_namespaces=(
+                    CONNECTIVITY_NAMESPACE,
+                    IP_PING_NAMESPACE,
+                    PROBE_UNANSWERED_NAMESPACE,
+                    PROBE_FAILED_NAMESPACE,
+                ),
+                presence_keys=work_presence_keys,
+            )
         retryable = 0
         with fold_scope.activate():
             for index, device_id in enumerate(work):
@@ -497,27 +504,39 @@ class ConnectivityService:
                     break
                 item = observations.by_device_id[device_id]
                 try:
-                    locked = await fold_scope.lock_device(db, device_id)
-                    if locked is None:
-                        outcome: DeviceFoldOutcome = "terminal_noop"
-                        await db.commit()
-                    else:
-                        async with locked.transactional_presence():
-                            outcome = await self._apply_device_health(
-                                db,
-                                locked,
-                                item,
-                                fold_scope=fold_scope,
-                                receipt=receipt,
-                                observed_at=observed_at,
-                                debounce_windows=debounce_windows,
-                            )
-                            await db.commit()
+                    async with db.begin():
+                        locked = await fold_scope.lock_device(db, device_id)
+                        if locked is None:
+                            outcome: DeviceFoldOutcome = "terminal_noop"
+                        else:
+                            async with locked.transactional_presence():
+                                outcome = await self._apply_device_health(
+                                    db,
+                                    locked,
+                                    item,
+                                    fold_scope=fold_scope,
+                                    receipt=receipt,
+                                    observed_at=observed_at,
+                                    debounce_windows=debounce_windows,
+                                )
+                                # This flush pulls statement failures back inside
+                                # transactional_presence(): a rejected write raises
+                                # here, still inside the block, so the presence
+                                # child is discarded with it. It does not restore
+                                # full containment -- the actual COMMIT now happens
+                                # at db.begin() exit, outside this block, so a
+                                # connection-level COMMIT failure with zero pending
+                                # DML would still merge the child. That residual is
+                                # inert: presence keys are per-device
+                                # (device.identity_value), and the only device that
+                                # could touch this key is the one whose item
+                                # transaction just failed and will not be revisited
+                                # this tick.
+                                await db.flush()
                     metrics.record_device_health_fold_result(outcome)
                     if outcome == "retryable":
                         retryable += 1
                 except Exception:
-                    await db.rollback()
                     retryable += 1
                     metrics.record_device_health_fold_result("retryable")
                     logger.exception("device_health_fold_device_failed", extra={"device_id": str(device_id)})

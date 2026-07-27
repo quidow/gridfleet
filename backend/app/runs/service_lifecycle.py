@@ -167,10 +167,12 @@ class RunLifecycleService:
         return RunCommandResult(run_id=run_id)
 
     async def _run_deferred_stops(self, device_ids: list[uuid.UUID]) -> None:
-        if not device_ids:
-            return
-        async with self._session_factory() as db:
-            await self._release.complete_deferred_stops_post_commit(db, device_ids)
+        # One transaction per device: the deferred stop used to commit inside
+        # ``complete_auto_stop``, so a device that raises must still leave its
+        # settled peers durable.
+        for device_id in device_ids:
+            async with self._session_factory.begin() as db:
+                await self._release.complete_deferred_stops_post_commit(db, [device_id])
 
     async def expire_run(self, run_id: uuid.UUID, reason: str) -> None:
         """Expire a run due to heartbeat or TTL timeout via the durable teardown

@@ -4,17 +4,19 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
+from sqlalchemy import select
 
 from app.core.janitor import JANITOR_BASE_INTERVAL_SEC, JanitorLoop, JanitorStage
+from tests.fakes import FakeSessionFactory, RecordingSessionFactory
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = pytest.mark.asyncio
 
 
 def _loop(stages: tuple[JanitorStage, ...]) -> JanitorLoop:
-    return JanitorLoop(session_factory=AsyncMock(), stages=stages)
+    return JanitorLoop(session_factory=FakeSessionFactory(), stages=stages)
 
 
 async def _run_cycles(loop: JanitorLoop, db: AsyncSession, count: int) -> None:
@@ -46,16 +48,32 @@ async def test_skip_first_cycle_stage_skips_boot_cycle() -> None:
     assert hourly.await_count == 1
 
 
-async def test_failing_stage_is_isolated_and_rolls_back() -> None:
-    boom = AsyncMock(side_effect=RuntimeError("boom"))
-    after = AsyncMock()
-    db = AsyncMock()
-    loop = _loop(
-        (
+async def test_failing_stage_closes_its_session_before_next_stage(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    factory = RecordingSessionFactory(db_session_maker)
+    ran_after = False
+
+    async def boom(db: AsyncSession) -> None:
+        await db.execute(select(1))
+        raise RuntimeError("boom")
+
+    async def after(db: AsyncSession) -> None:
+        nonlocal ran_after
+        await db.execute(select(1))
+        ran_after = True
+
+    loop = JanitorLoop(
+        session_factory=factory,
+        stages=(
             JanitorStage("boom", JANITOR_BASE_INTERVAL_SEC, boom),
             JanitorStage("after", JANITOR_BASE_INTERVAL_SEC, after),
-        )
+        ),
     )
-    await _run_cycles(loop, db, 1)
-    after.assert_awaited_once()
-    db.rollback.assert_awaited_once()
+
+    await loop._run_cycle(AsyncMock())
+
+    assert len(factory.sessions) == 2
+    assert factory.sessions[0] is not factory.sessions[1]
+    assert all(not db.in_transaction() for db in factory.sessions)
+    assert ran_after

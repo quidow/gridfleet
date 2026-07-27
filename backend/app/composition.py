@@ -315,7 +315,9 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
         viability=viability_svc,
     )
     verification_svc = VerificationService()
-    portability_import_svc = PortabilityImportService(verification_enqueuer=verification_svc)
+    portability_import_svc = PortabilityImportService(
+        verification_enqueuer=verification_svc, session_factory=session_factory
+    )
     verification_services = VerificationServices(
         service=verification_svc,
         runner=verification_runner_svc,

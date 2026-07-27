@@ -373,6 +373,48 @@ async def test_failed_gap_resolution_keeps_the_gap_set_and_the_poll_continues(
     assert bus._last_seen_system_event_id == row_id, "the frontier stalled behind a failed gap lookup"
 
 
+async def test_gap_lookup_runs_on_a_session_the_forward_scan_does_not_share(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """The failing statement's aborted transaction dies with its own session.
+
+    Sharing one session forced the poller to repair it with an explicit
+    ``rollback()`` before the forward scan could run. Giving the gap lookup a
+    session of its own is what retires that call: the abort is scoped to a
+    context that closes, and the scan starts on a session no statement has
+    touched.
+    """
+    bus, received = _build_bus(db_session, db_session_maker)
+    sessions: dict[str, AsyncSession] = {}
+
+    async def failing_lookup(db: AsyncSession) -> list[Event]:
+        sessions["gap"] = db
+        await db.execute(text("SELECT 1 / 0"))
+        raise AssertionError("unreachable: the statement above must raise")
+
+    original_scan = bus._scan_window
+
+    async def recording_scan(db: AsyncSession) -> Any:  # noqa: ANN401
+        sessions["scan"] = db
+        return await original_scan(db)
+
+    bus._pending_gaps = {10_002: time.monotonic()}
+    row_id = await _commit_row(bus, db_session_maker, "own-session")
+
+    with (
+        patch.object(bus, "_resolve_pending_gaps", new=failing_lookup),
+        patch.object(bus, "_scan_window", new=recording_scan),
+    ):
+        await bus._dispatch_missed_events()
+    await drain_handlers(bus)
+
+    assert sessions["gap"] is not sessions["scan"], "the gap lookup shared the forward scan's session"
+    # Documented behavior, unchanged: gap ids survive, the scan still delivers.
+    assert set(bus._pending_gaps) == {10_002}, "a failed lookup dropped a gap entry"
+    assert [event.data["device_id"] for event in received] == ["own-session"]
+    assert bus._last_seen_system_event_id == row_id
+
+
 async def test_the_lock_keeps_the_frontier_monotonic(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
 ) -> None:

@@ -75,7 +75,8 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
     monkeypatch.setattr(device_locking, "lock_device", observed_lock_device)
     monkeypatch.setattr(appium_node_locking, "lock_appium_node_for_device", observed_lock_node)
 
-    async with db_session_maker() as session:
+    # ``handle_node_crash`` is transaction-local now, so the caller owns the boundary.
+    async with db_session_maker.begin() as session:
         target = await session.get(Device, device_id)
         assert target is not None
         await LifecyclePolicyActionsService(

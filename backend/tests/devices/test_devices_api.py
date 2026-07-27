@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -141,6 +141,33 @@ async def _create_device(db_session: AsyncSession, host_id: str, **overrides: ob
         operational_state=str(payload.get("operational_state", "offline")),
         **extra,
     )
+
+
+async def _seed_reconnectable_device(db_session: AsyncSession, host_id: str, *, identity: str, port: int) -> Device:
+    """A network device with a running node and a stale session-viability failure."""
+    device = await _create_device(
+        db_session,
+        host_id,
+        identity_value=identity,
+        connection_target=identity,
+        connection_type="network",
+        ip_address="10.0.0.77",
+        verified=True,
+    )
+    device.session_viability_status = "failed"
+    device.session_viability_error = "stale probe failure"
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=port,
+            desired_state=AppiumDesiredState.running,
+            desired_port=port,
+            pid=12345,
+            active_connection_target=identity,
+        )
+    )
+    await db_session.flush()
+    return device
 
 
 async def _fake_start_node(db: AsyncSession, device: Device, *, caller: str = "operator_route") -> AppiumNode:
@@ -2294,3 +2321,80 @@ async def test_transitioning_available_device_reports_transitioning(
     body = got.json()
     assert body["allocatable"] is False
     assert body["unavailable_reason"] == "transitioning"
+
+
+@pytest.mark.asyncio
+async def test_reconnect_dispatches_the_agent_call_with_no_transaction_open(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reconnect route holds no read transaction across the agent dial.
+
+    The device load, the catalog resolve and the five validation guards used to run
+    on the request-scoped session, whose implicit read transaction was therefore
+    still open when ``dispatch_recommended_action`` reached out to the agent. The
+    route now runs all of that in a short read session that closes first.
+    """
+    device = await _seed_reconnectable_device(db_session, default_host_id, identity="reconnect-boundary", port=4788)
+    device_id = device.id
+    await db_session.commit()
+    assert db_session.in_transaction() is False
+
+    observed: dict[str, bool] = {}
+
+    async def fake_lifecycle_action(*_args: object, **_kwargs: object) -> dict[str, object]:
+        observed["request_session_in_transaction"] = db_session.in_transaction()
+        return {"success": True}
+
+    monkeypatch.setattr("app.devices.services.link_repair.pack_device_lifecycle_action", fake_lifecycle_action)
+
+    resp = await client.post(f"/api/devices/{device_id}/reconnect")
+
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+    assert observed["request_session_in_transaction"] is False, (
+        "the agent dial ran with the request session's read transaction still open"
+    )
+    async with db_session_maker() as verify:
+        row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
+    assert row.session_viability_status is None, "the route's own write boundary did not persist"
+    assert row.session_viability_error is None
+
+
+@pytest.mark.asyncio
+async def test_reconnect_does_not_commit_the_request_session(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The viability-column write rides the route's own boundary.
+
+    The request session carries whatever else the request touched, so committing it
+    publishes state the route never authored. A bystander row staged on it before
+    the call is what makes that visible.
+    """
+    device = await _seed_reconnectable_device(db_session, default_host_id, identity="reconnect-bystander", port=4789)
+    device_id = device.id
+    await db_session.commit()
+
+    async def fake_lifecycle_action(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {"success": True}
+
+    monkeypatch.setattr("app.devices.services.link_repair.pack_device_lifecycle_action", fake_lifecycle_action)
+    db_session.add(Session(session_id="reconnect-bystander-session", device_id=device_id))
+
+    resp = await client.post(f"/api/devices/{device_id}/reconnect")
+
+    assert resp.status_code == 200
+    async with db_session_maker() as verify:
+        row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
+        bystander = (
+            await verify.execute(select(Session).where(Session.session_id == "reconnect-bystander-session"))
+        ).scalar_one_or_none()
+    assert row.session_viability_status is None, "the route's own write boundary did not persist"
+    assert bystander is None, "the route committed the request session's unrelated pending work"

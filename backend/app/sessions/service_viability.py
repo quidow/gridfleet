@@ -232,13 +232,12 @@ class SessionViabilityService:
         result: tuple[bool, str | None],
         checked_by: SessionViabilityCheckedBy,
     ) -> None:
-        """Run escalation in its own fresh session, decoupled from the finalize
+        """Run escalation in its own fresh transaction, decoupled from the finalize
         transaction. The wired ``handle_health_failure`` handler acquires the
-        device row lock and commits internally, so a plain session (not
-        ``begin()``) is used to avoid a double commit with the handler's own
+        device row lock and is transaction-local, so this command owns the
         boundary. The finalized probe session is never carried in.
         """
-        async with self._session_factory() as db:
+        async with self._session_factory.begin() as db:
             device = await db.get(Device, device_id)
             if device is None:
                 return

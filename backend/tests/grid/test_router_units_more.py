@@ -856,26 +856,30 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
             await sessions.get_session("s1", db=object(), session_services=SimpleNamespace(crud=crud_found))  # type: ignore[arg-type]
         )["session_id"] == "s1"
 
+    # The status route owns its boundary now, so it opens a session of its own
+    # instead of taking the request-scoped one.
     status_payload = SimpleNamespace(status="passed")
     crud_upd_none = SimpleNamespace(update_session_status=AsyncMock(return_value=None))
     with pytest.raises(HTTPException) as exc:
         await sessions.update_session_status(
             "missing",
             status_payload,
-            db=object(),
-            session_services=SimpleNamespace(crud=crud_upd_none),  # type: ignore[arg-type]
+            session_services=SimpleNamespace(  # type: ignore[arg-type]
+                crud=crud_upd_none, session_factory=FakeSessionFactory(DummySession())
+            ),
         )
     assert exc.value.status_code == 404
     crud_upd_ok = SimpleNamespace(update_session_status=AsyncMock(return_value=session_obj))
+    status_factory = FakeSessionFactory(DummySession())
     assert (
         await sessions.update_session_status(
             "s1",
             status_payload,
-            db=DummySession(),
-            session_services=SimpleNamespace(crud=crud_upd_ok),  # type: ignore[arg-type]
+            session_services=SimpleNamespace(crud=crud_upd_ok, session_factory=status_factory),  # type: ignore[arg-type]
         )
         is session_obj
     )
+    assert status_factory.begun == 1
 
 
 async def test_hosts_router_registration_and_basic_crud_paths() -> None:
@@ -1339,7 +1343,6 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         with pytest.raises(HTTPException) as exc:
             await devices_control.reconnect_device(
                 device_id,
-                db=object(),
                 device_services=_mock_ds_reconnect,
                 settings_services=settings_services,
                 agent_comm=_reconnect_ac,
@@ -1361,7 +1364,6 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
             with pytest.raises(HTTPException) as exc:
                 await devices_control.reconnect_device(
                     device_id,
-                    db=object(),
                     device_services=_mock_ds_reconnect,
                     settings_services=settings_services,
                     agent_comm=_reconnect_ac,
@@ -1377,7 +1379,6 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         with pytest.raises(HTTPException) as exc:
             await devices_control.reconnect_device(
                 device_id,
-                db=object(),
                 device_services=_mock_ds_reconnect,
                 settings_services=settings_services,
                 agent_comm=_reconnect_ac,
@@ -1387,7 +1388,6 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
 
     # Phase 2: narrowed except — RuntimeError is NOT NodeManagerError and must bubble, not become 502
     auto_device = _control_device(appium_node=SimpleNamespace(observed_running=False))
-    auto_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     ra_start_boom = AsyncMock()
     ra_start_boom.start_node_txn = AsyncMock(side_effect=RuntimeError("boom"))
     with (
@@ -1404,7 +1404,6 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
         with pytest.raises(RuntimeError, match="boom"):
             await devices_control.reconnect_device(
                 device_id,
-                db=auto_db,
                 device_services=_mock_ds_reconnect,
                 settings_services=settings_services,
                 agent_comm=_reconnect_ac,
@@ -1423,7 +1422,6 @@ async def test_devices_control_reconnect_lifecycle_health_and_logs_paths() -> No
     ):
         reconnect = await devices_control.reconnect_device(
             device_id,
-            db=SimpleNamespace(commit=AsyncMock(), flush=AsyncMock()),
             device_services=_mock_ds_reconnect,
             settings_services=settings_services,
             agent_comm=_reconnect_ac,
@@ -1564,10 +1562,13 @@ async def test_devices_control_reconnect_starts_without_stale_intent_revoke() ->
         session_viability_status="failed",
         session_viability_error="Appium node is not running",
     )
-    db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     start_node = AsyncMock()
     mock_reconciler_agent_ctrl = AsyncMock()
     mock_reconciler_agent_ctrl.start_node_txn = start_node
+    # The route re-reads the row it mutates inside its own write transaction.
+    reconnect_crud = AsyncMock()
+    reconnect_crud.get_device = AsyncMock(return_value=device)
+    ctrl_appium_svc = _appium_svc(mock_reconciler_agent_ctrl)
 
     with (
         patch("app.devices.routers.control.get_device_or_404", new=AsyncMock(return_value=device)),
@@ -1581,17 +1582,17 @@ async def test_devices_control_reconnect_starts_without_stale_intent_revoke() ->
     ):
         reconnect = await devices_control.reconnect_device(
             device_id,
-            db=db,
-            device_services=SimpleNamespace(crud=AsyncMock(), publisher=event_bus),
+            device_services=SimpleNamespace(crud=reconnect_crud, publisher=event_bus),
             settings_services=_mock_settings_svc(FakeSettingsReader({})),
             agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
-            appium_services=_appium_svc(mock_reconciler_agent_ctrl),
+            appium_services=ctrl_appium_svc,
         )  # type: ignore[arg-type]
 
     assert reconnect["message"] == "Reconnected"
     assert device.session_viability_status is None
     assert device.session_viability_error is None
-    db.commit.assert_awaited_once()
+    # Two write transactions: the viability clear, then the node lever.
+    assert ctrl_appium_svc.session_factory.begun == 2
     start_node.assert_awaited_once()
 
 
@@ -2650,7 +2651,6 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         identity_value="stable",
         appium_node=SimpleNamespace(observed_running=False),
     )
-    reconnect_db = SimpleNamespace(commit=AsyncMock(), flush=AsyncMock())
     _health_ss = _mock_settings_svc(FakeSettingsReader({}))
     # Phase 2: inner HTTPException(400) propagates unchanged (was incorrectly wrapped as 502)
     with (
@@ -2669,7 +2669,6 @@ async def test_devices_control_health_and_reconnect_error_branches() -> None:
         with pytest.raises(HTTPException) as exc:
             await devices_control.reconnect_device(
                 device_id,
-                db=reconnect_db,
                 device_services=SimpleNamespace(crud=AsyncMock(), publisher=event_bus),
                 settings_services=_health_ss,
                 agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),

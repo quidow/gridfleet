@@ -23,7 +23,12 @@ from app.devices.services.health import DeviceHealthService
 from app.hosts.models import Host
 from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.fakes import FakeSettingsReader
-from tests.helpers import seed_host_and_running_node, seed_host_named, seed_host_with_devices
+from tests.helpers import (
+    committed_session,
+    seed_host_and_running_node,
+    seed_host_named,
+    seed_host_with_devices,
+)
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -538,7 +543,7 @@ async def test_terminal_noop_receipt_prevents_peer_replay_after_partial_failure(
 
     service._process_node_health = fail_one  # type: ignore[method-assign]
 
-    settled = await service.fold_host_nodes(db_session, host_id, section, boot_id=boot_id)
+    settled = await service.fold_host_nodes(await committed_session(db_session), host_id, section, boot_id=boot_id)
 
     assert settled is False
     db_session.expire_all()
@@ -551,7 +556,9 @@ async def test_terminal_noop_receipt_prevents_peer_replay_after_partial_failure(
     assert terminal_after.health_fold_section_sequence == 7
     assert retryable_after.health_fold_applied_revision < revision
 
-    assert await service.fold_host_nodes(db_session, host_id, section, boot_id=boot_id) is False
+    assert (
+        await service.fold_host_nodes(await committed_session(db_session), host_id, section, boot_id=boot_id) is False
+    )
     assert calls.count(terminal_device_id) == 1
     assert calls.count(retryable_device_id) == 2
 
@@ -593,7 +600,7 @@ async def test_node_fold_defers_remaining_devices_at_cycle_deadline(
     service._process_node_health = process  # type: ignore[method-assign]
 
     settled = await service.fold_host_nodes(
-        db_session,
+        await committed_session(db_session),
         host.id,
         section,
         deadline=status_fold_module.STATUS_FOLD_CYCLE_BUDGET_SEC,

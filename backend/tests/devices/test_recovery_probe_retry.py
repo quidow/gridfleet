@@ -263,7 +263,6 @@ async def test_attempt_auto_recovery_calls_run_recovery_probe(
         snapshot={"status": JOB_STATUS_PENDING},
         max_attempts=1,
         job_id=generation,
-        commit=False,
     )
     await db_session.commit()
 

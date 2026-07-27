@@ -27,7 +27,8 @@ from app.portability.services.import_bundle import (
     UnknownGroupReferenceError,
 )
 from app.verification.services.service import VerificationService
-from tests.concurrency.group_lock_helpers import capture_statements
+from tests.concurrency.group_lock_helpers import pin_statement_listener
+from tests.fakes.session_factory import RecordingSessionFactory
 from tests.helpers import seed_existing_device, seed_host_named
 
 if TYPE_CHECKING:
@@ -84,10 +85,25 @@ async def _committed_group_keys(session_maker: async_sessionmaker[AsyncSession])
         return {row.key: row for row in rows}
 
 
+class _FailingEnqueuer:
+    """Delegates to a real VerificationService, except for one named identity."""
+
+    def __init__(self, real: VerificationService, fail_identity_value: str) -> None:
+        self._real = real
+        self._fail_identity_value = fail_identity_value
+
+    async def enqueue_for_device(self, db: AsyncSession, device: Device) -> uuid.UUID:
+        if device.identity_value == self._fail_identity_value:
+            raise RuntimeError("simulated verification enqueue failure")
+        return await self._real.enqueue_for_device(db, device)
+
+
 @pytest.mark.asyncio
 @pytest.mark.db
 async def test_commit_creates_device_and_enqueues_verification(
-    db_session: AsyncSession, seeded_driver_packs: None
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
 ) -> None:
     host = await seed_host_named(db_session, "lab-04")
     bundle = _bundle([_device()])
@@ -96,9 +112,8 @@ async def test_commit_creates_device_and_enqueues_verification(
         bundle_hash=compute_bundle_hash(bundle),
         mappings=[ImportMapping(index=0, target_host_id=host.id)],
     )
-    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-        db_session, request
-    )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
+    result = await service.commit_import(request)
 
     assert len(result.created) == 1
     assert result.failed == []
@@ -116,7 +131,11 @@ async def test_commit_creates_device_and_enqueues_verification(
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_rejects_bundle_hash_mismatch(db_session: AsyncSession, seeded_driver_packs: None) -> None:
+async def test_commit_rejects_bundle_hash_mismatch(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
     host = await seed_host_named(db_session, "lab-04")
     bundle = _bundle([_device()])
     request = ImportCommitRequest(
@@ -124,13 +143,18 @@ async def test_commit_rejects_bundle_hash_mismatch(db_session: AsyncSession, see
         bundle_hash="sha256:" + "0" * 64,
         mappings=[ImportMapping(index=0, target_host_id=host.id)],
     )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
     with pytest.raises(BundleHashMismatchError):
-        await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(db_session, request)
+        await service.commit_import(request)
 
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_skips_duplicate_in_bundle_rows(db_session: AsyncSession, seeded_driver_packs: None) -> None:
+async def test_commit_skips_duplicate_in_bundle_rows(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
     host = await seed_host_named(db_session, "lab-04")
     bundle = _bundle([_device(identity_value="X"), _device(identity_value="X")])
     request = ImportCommitRequest(
@@ -141,9 +165,8 @@ async def test_commit_skips_duplicate_in_bundle_rows(db_session: AsyncSession, s
             ImportMapping(index=1, target_host_id=host.id),
         ],
     )
-    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-        db_session, request
-    )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
+    result = await service.commit_import(request)
     assert result.created == []
     assert len(result.skipped) == 2
     assert all(r.reason == "duplicate in bundle" for r in result.skipped)
@@ -152,7 +175,9 @@ async def test_commit_skips_duplicate_in_bundle_rows(db_session: AsyncSession, s
 @pytest.mark.asyncio
 @pytest.mark.db
 async def test_commit_skips_existing_identity_as_conflict_skip(
-    db_session: AsyncSession, seeded_driver_packs: None
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
 ) -> None:
     host = await seed_host_named(db_session, "lab-04")
     await seed_existing_device(
@@ -168,9 +193,8 @@ async def test_commit_skips_existing_identity_as_conflict_skip(
         bundle_hash=compute_bundle_hash(bundle),
         mappings=[ImportMapping(index=0, target_host_id=host.id)],
     )
-    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-        db_session, request
-    )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
+    result = await service.commit_import(request)
     assert result.created == []
     assert len(result.skipped) == 1
     assert "identity" in result.skipped[0].reason
@@ -178,7 +202,11 @@ async def test_commit_skips_existing_identity_as_conflict_skip(
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_fails_row_when_host_missing(db_session: AsyncSession, seeded_driver_packs: None) -> None:
+async def test_commit_fails_row_when_host_missing(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
     await seed_host_named(db_session, "lab-04")
     bundle = _bundle([_device()])
     bogus = uuid.uuid4()
@@ -187,9 +215,8 @@ async def test_commit_fails_row_when_host_missing(db_session: AsyncSession, seed
         bundle_hash=compute_bundle_hash(bundle),
         mappings=[ImportMapping(index=0, target_host_id=bogus)],
     )
-    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-        db_session, request
-    )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
+    result = await service.commit_import(request)
     assert result.created == []
     assert len(result.failed) == 1
     assert "host" in result.failed[0].reason
@@ -198,7 +225,9 @@ async def test_commit_fails_row_when_host_missing(db_session: AsyncSession, seed
 @pytest.mark.asyncio
 @pytest.mark.db
 async def test_commit_rolls_back_device_when_verification_enqueue_fails(
-    db_session: AsyncSession, seeded_driver_packs: None
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
 ) -> None:
     host = await seed_host_named(db_session, "lab-04")
     bundle = _bundle([_device()])
@@ -208,13 +237,12 @@ async def test_commit_rolls_back_device_when_verification_enqueue_fails(
         mappings=[ImportMapping(index=0, target_host_id=host.id)],
     )
 
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
     with patch(
         "app.verification.services.service.job_queue.create_job",
         side_effect=RuntimeError("boom"),
     ):
-        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-            db_session, request
-        )
+        result = await service.commit_import(request)
 
     assert result.created == []
     assert len(result.failed) == 1
@@ -310,84 +338,147 @@ async def test_import_endpoint_commits_valid_row(
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_handles_session_commit_failure_after_savepoint_release(
-    db_session: AsyncSession, seeded_driver_packs: None
+async def test_commit_savepoint_contains_a_failed_row_to_itself_and_its_job(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
 ) -> None:
-    """If session.commit() fails after savepoint.commit() succeeded, the per-row exception
-    handler must not crash trying to roll back an already-released savepoint."""
-    host = await seed_host_named(db_session, "lab-04")
-    bundle = _bundle([_device()])
+    """Row two's verification enqueue fails; only its device and job roll back.
+
+    Definitions, the device batch, and the membership batch each own a
+    separate session opened from the injected ``session_factory`` -- this pins
+    that boundary shape (distinct session identities, one nested transaction
+    per attempted row) alongside the row-two/job-two rollback it protects.
+    Replaces the old ``session.commit``-monkeypatch tests, which assumed a
+    single shared session the command no longer holds.
+    """
+    async with db_session_maker() as seed_db:
+        host = await seed_host_named(seed_db, "lab-04")
+        host_id = host.id
+
+    bundle = _bundle(
+        [
+            _device(identity_value="ROW-1", static_groups=["shelf-a"]),
+            _device(identity_value="ROW-2", static_groups=["shelf-a"]),
+            _device(identity_value="ROW-3", static_groups=["shelf-a"]),
+        ],
+        groups=[_static_group("shelf-a")],
+    )
     request = ImportCommitRequest(
         bundle=bundle,
         bundle_hash=compute_bundle_hash(bundle),
-        mappings=[ImportMapping(index=0, target_host_id=host.id)],
+        mappings=[
+            ImportMapping(index=0, target_host_id=host_id),
+            ImportMapping(index=1, target_host_id=host_id),
+            ImportMapping(index=2, target_host_id=host_id),
+        ],
     )
 
-    original_commit = db_session.__class__.commit
-    call_count = {"n": 0}
-
-    async def flaky_commit(self: AsyncSession) -> None:  # type: ignore[override]
-        call_count["n"] += 1
-        # First call (the per-row outer commit) fails; subsequent calls (e.g. test teardown) succeed.
-        if call_count["n"] == 1:
-            raise RuntimeError("outer commit failed")
-        return await original_commit(self)
-
-    with patch.object(db_session.__class__, "commit", flaky_commit):
-        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-            db_session, request
+    factory = RecordingSessionFactory(db_session_maker, statement_pinner=pin_statement_listener)
+    try:
+        service = PortabilityImportService(
+            verification_enqueuer=_FailingEnqueuer(VerificationService(), "ROW-2"),
+            session_factory=factory,
         )
+        result = await service.commit_import(request)
+    finally:
+        factory.close()
 
-    # The row is reported as failed with the outer commit error message, not an InvalidStateError.
-    assert result.created == []
+    assert [r.index for r in result.created] == [0, 2]
     assert len(result.failed) == 1
-    assert "outer commit" in result.failed[0].reason.lower()
+    assert result.failed[0].index == 1
+    assert "verification" in result.failed[0].reason.lower()
+
+    async with db_session_maker() as verify:
+        surviving = (
+            (await verify.execute(select(Device.identity_value).order_by(Device.identity_value))).scalars().all()
+        )
+        assert surviving == ["ROW-1", "ROW-3"], "row two must not persist"
+
+        jobs = (await verify.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_VERIFICATION))).scalars().all()
+        job_identities = {job.payload["data"]["identity_value"] for job in jobs}
+        assert job_identities == {"ROW-1", "ROW-3"}, "row two's verification job must not persist"
+
+        group = (await verify.execute(select(DeviceGroup).where(DeviceGroup.key == "shelf-a"))).scalar_one()
+        memberships = (
+            (await verify.execute(select(DeviceGroupMembership).where(DeviceGroupMembership.group_id == group.id)))
+            .scalars()
+            .all()
+        )
+        assert len(memberships) == 2, "only the two created rows' memberships may survive"
+
+    # Boundary shape: a read for validate, one definitions transaction, one
+    # device-batch transaction (all three rows fit in one
+    # DEVICE_IMPORT_BATCH_SIZE batch), and one membership-batch transaction --
+    # four distinct sessions, three of them opened via session_factory.begin().
+    assert len(factory.sessions) == 4
+    assert len({id(session) for session in factory.sessions}) == 4, "every session must be a distinct object"
+    assert factory.begun == 3
+
+    device_batch_statements = factory.statements_for(2)
+    savepoint_opens = [s for s in device_batch_statements if s.startswith("savepoint")]
+    assert len(savepoint_opens) == 3, (
+        f"expected one nested transaction per attempted device row: {device_batch_statements}"
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_persists_groups_when_a_device_commit_fails(
-    db_session: AsyncSession,
+async def test_a_failure_that_escapes_the_row_helper_only_rolls_back_its_own_batch(
     db_session_maker: async_sessionmaker[AsyncSession],
     seeded_driver_packs: None,
 ) -> None:
-    """Static definitions commit before the device loop, so a mid-loop commit failure
-    cannot roll them back and strand the dynamic groups' ``member_of`` references."""
-    host = await seed_host_named(db_session, "lab-04")
-    bundle = _bundle([_device(static_groups=["shelf-a"])], groups=[_static_group("shelf-a")])
-    request = ImportCommitRequest(
-        bundle=bundle,
-        bundle_hash=compute_bundle_hash(bundle),
-        mappings=[ImportMapping(index=0, target_host_id=host.id)],
-    )
+    """DEVICE_IMPORT_BATCH_SIZE + 1 valid rows; an outer failure fires after batch one commits.
 
-    original_commit = db_session.__class__.commit
+    This distinguishes batch durability from row savepoint containment: batch
+    one's ``session_factory.begin()`` block has already exited (and committed)
+    before batch two's failure fires, so its rows survive independently of
+    batch two's rollback -- a completed batch is a crash-durability unit, not
+    the same thing as a single row's savepoint. The failure is injected past
+    ``_insert_row_with_savepoint``'s own try/except (which is what the
+    previous test pins) to simulate a bug that escapes the per-row contract
+    entirely, rather than another documented per-row failure.
+    """
+    async with db_session_maker() as seed_db:
+        host = await seed_host_named(seed_db, "lab-04")
+        host_id = host.id
 
-    commits: list[str] = []
+    total_rows = import_bundle_module.DEVICE_IMPORT_BATCH_SIZE + 1
+    devices = [_device(identity_value=f"BATCH-{i:04d}") for i in range(total_rows)]
+    bundle = _bundle(devices)
+    mappings = [ImportMapping(index=i, target_host_id=host_id) for i in range(total_rows)]
+    request = ImportCommitRequest(bundle=bundle, bundle_hash=compute_bundle_hash(bundle), mappings=mappings)
 
-    async def flaky_commit(self: AsyncSession) -> None:  # type: ignore[override]
-        # Identify the per-row outer commit by the device the savepoint just flushed
-        # into the session, rather than by call index — an index would silently start
-        # targeting a different commit if the sequence ever changed.
-        has_device = any(isinstance(obj, Device) for obj in self.identity_map.values())
-        commits.append("device" if has_device else "group")
-        if has_device:
-            raise RuntimeError("outer commit failed")
-        return await original_commit(self)
+    real_insert = PortabilityImportService._insert_row_with_savepoint
+    last_index = total_rows - 1
 
-    with patch.object(db_session.__class__, "commit", flaky_commit):
-        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-            db_session, request
+    async def _flaky_insert(
+        self: PortabilityImportService,
+        db: AsyncSession,
+        idx: int,
+        row: object,
+        mapping: object,
+    ) -> object:
+        if idx == last_index:
+            raise RuntimeError("simulated outer failure escaping the row helper")
+        return await real_insert(self, db, idx, row, mapping)  # type: ignore[arg-type]
+
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
+    with (
+        patch.object(PortabilityImportService, "_insert_row_with_savepoint", _flaky_insert),
+        pytest.raises(RuntimeError, match="simulated outer failure"),
+    ):
+        await service.commit_import(request)
+
+    async with db_session_maker() as verify:
+        surviving = (
+            (await verify.execute(select(Device.identity_value).where(Device.identity_value.like("BATCH-%"))))
+            .scalars()
+            .all()
         )
-
-    # The group definitions committed before the device loop ever ran.
-    assert commits[0] == "group"
-    assert "device" in commits
-    assert result.created == []
-    assert len(result.failed) == 1
-
-    persisted = await _committed_group_keys(db_session_maker)
-    assert "shelf-a" in persisted
+    assert len(surviving) == import_bundle_module.DEVICE_IMPORT_BATCH_SIZE, (
+        "the first, already-committed batch must remain durable"
+    )
+    assert f"BATCH-{last_index:04d}" not in surviving, "the row in the failed second batch must not persist"
 
 
 @pytest.mark.asyncio
@@ -414,9 +505,8 @@ async def test_commit_persists_groups_when_every_device_row_is_skipped(
             ImportMapping(index=1, target_host_id=host.id),
         ],
     )
-    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-        db_session, request
-    )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
+    result = await service.commit_import(request)
 
     assert result.created == []
     assert len(result.skipped) == 2
@@ -440,9 +530,8 @@ async def test_commit_persists_groups_for_bundle_with_no_devices(
         bundle_hash=compute_bundle_hash(bundle),
         mappings=[],
     )
-    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-        db_session, request
-    )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
+    result = await service.commit_import(request)
 
     assert result.created == []
     assert result.skipped == []
@@ -469,9 +558,8 @@ async def test_commit_persists_static_groups_and_memberships(
         bundle_hash=compute_bundle_hash(bundle),
         mappings=[ImportMapping(index=0, target_host_id=host.id)],
     )
-    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-        db_session, request
-    )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
+    result = await service.commit_import(request)
     assert len(result.created) == 1
     device_id = result.created[0].device_id
 
@@ -507,9 +595,8 @@ async def test_commit_dedupes_a_repeated_static_group_key(
         bundle_hash=compute_bundle_hash(bundle),
         mappings=[ImportMapping(index=0, target_host_id=host.id)],
     )
-    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-        db_session, request
-    )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
+    result = await service.commit_import(request)
     assert len(result.created) == 1
     assert result.memberships_skipped == []
 
@@ -522,40 +609,41 @@ async def test_commit_dedupes_a_repeated_static_group_key(
 @pytest.mark.asyncio
 @pytest.mark.db
 async def test_commit_leaves_no_open_transaction_when_nothing_is_staged(
-    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     seeded_driver_packs: None,
 ) -> None:
-    """A bundle that stages no memberships must not leave a read transaction open.
+    """A bundle that stages no memberships must not leave any session mid-transaction.
 
-    ``validate_bundle`` reads before any write, and on this path no commit
-    follows it. An open transaction surviving to request teardown sits idle
-    holding back the xmin horizon.
+    ``validate_bundle``'s read session and the definitions session are both
+    exited (closed) before ``commit_import`` returns. A session surviving open
+    to request teardown sits idle holding back the xmin horizon.
     """
     bundle = _bundle([], groups=[_static_group("shelf-a")])
     request = ImportCommitRequest(bundle=bundle, bundle_hash=compute_bundle_hash(bundle), mappings=[])
-    await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(db_session, request)
+    factory = RecordingSessionFactory(db_session_maker)
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=factory)
+    await service.commit_import(request)
 
-    assert not db_session.in_transaction()
+    assert factory.sessions, "the command must have opened at least one session"
+    assert factory.open_transactions() == [], "no session opened by commit_import may still be in a transaction"
 
 
 @pytest.mark.asyncio
 @pytest.mark.db
 async def test_commit_stages_no_memberships_when_the_plan_is_empty(
-    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     seeded_driver_packs: None,
 ) -> None:
     """A device in no bundle group must cost membership staging nothing.
 
     The bundle defines a static group and imports a device that does not belong
     to it, so ``_stage_static_memberships`` plans no rows. It must issue no
-    membership INSERT and no per-batch device lock, and leave no transaction
-    behind for the caller.
+    membership INSERT and no per-batch device lock, and leave no session
+    behind mid-transaction.
     """
-    host = await seed_host_named(db_session, "lab-04")
-    host_id = host.id
-    # seed_host_named refreshes the row after committing, which opens a read
-    # transaction; the import endpoint itself starts with a clean session.
-    await db_session.rollback()
+    async with db_session_maker() as seed_db:
+        host = await seed_host_named(seed_db, "lab-04")
+        host_id = host.id
     bundle = _bundle([_device(static_groups=[])], groups=[_static_group("shelf-a")])
     request = ImportCommitRequest(
         bundle=bundle,
@@ -563,23 +651,24 @@ async def test_commit_stages_no_memberships_when_the_plan_is_empty(
         mappings=[ImportMapping(index=0, target_host_id=host_id)],
     )
 
-    async with capture_statements(db_session) as statements:
-        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-            db_session, request
-        )
+    factory = RecordingSessionFactory(db_session_maker, statement_pinner=pin_statement_listener)
+    try:
+        service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=factory)
+        result = await service.commit_import(request)
+    finally:
+        factory.close()
 
+    statements = [s for index in range(len(factory.sessions)) for s in factory.statements_for(index)]
     assert len(result.created) == 1
-    assert not any("device_group_memberships" in statement.lower() for statement in statements), statements
-    assert not any(
-        "from devices" in statement.lower() and "for key share" in statement.lower() for statement in statements
-    ), statements
-    assert not db_session.in_transaction(), "an empty membership plan left the caller's read transaction open"
+    assert not any("device_group_memberships" in statement for statement in statements), statements
+    assert not any("from devices" in statement and "for key share" in statement for statement in statements), statements
+    assert factory.open_transactions() == [], "an empty membership plan left a session mid-transaction"
 
 
 @pytest.mark.asyncio
 @pytest.mark.db
 async def test_commit_bounds_membership_locks_to_batches(
-    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     seeded_driver_packs: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -591,9 +680,9 @@ async def test_commit_bounds_membership_locks_to_batches(
     bundle until the last row lands. The ordering clause is what keeps two
     concurrent imports from deadlocking against each other.
     """
-    host = await seed_host_named(db_session, "lab-04")
-    host_id = host.id
-    await db_session.rollback()
+    async with db_session_maker() as seed_db:
+        host = await seed_host_named(seed_db, "lab-04")
+        host_id = host.id
     bundle = _bundle(
         [
             _device(identity_value="batch-1", static_groups=["shelf-a"]),
@@ -611,22 +700,23 @@ async def test_commit_bounds_membership_locks_to_batches(
     )
     monkeypatch.setattr(import_bundle_module, "MEMBERSHIP_BATCH_SIZE", 1, raising=False)
 
-    async with capture_statements(db_session) as statements:
-        result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-            db_session, request
-        )
+    factory = RecordingSessionFactory(db_session_maker, statement_pinner=pin_statement_listener)
+    try:
+        service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=factory)
+        result = await service.commit_import(request)
+    finally:
+        factory.close()
 
+    statements = [s for index in range(len(factory.sessions)) for s in factory.statements_for(index)]
     assert len(result.created) == 2
     device_locks = [
-        statement.lower()
-        for statement in statements
-        if "from devices" in statement.lower() and "for key share" in statement.lower()
+        statement for statement in statements if "from devices" in statement and "for key share" in statement
     ]
     assert len(device_locks) == 2, statements
     assert all("order by devices.id" in statement for statement in device_locks), device_locks
-    assert not any(
-        "from device_groups" in statement.lower() and "for key share" in statement.lower() for statement in statements
-    ), statements
+    assert not any("from device_groups" in statement and "for key share" in statement for statement in statements), (
+        statements
+    )
 
 
 @pytest.mark.asyncio
@@ -646,9 +736,8 @@ async def test_commit_persists_static_and_dynamic_groups(
         bundle_hash=compute_bundle_hash(bundle),
         mappings=[ImportMapping(index=0, target_host_id=host.id)],
     )
-    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-        db_session, request
-    )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
+    result = await service.commit_import(request)
     assert len(result.created) == 1
 
     persisted = await _committed_group_keys(db_session_maker)
@@ -698,8 +787,9 @@ async def test_commit_rejects_unresolvable_member_of_before_writing_definitions(
         bundle_hash=compute_bundle_hash(bundle),
         mappings=[],
     )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
     with pytest.raises(UnknownGroupReferenceError) as exc_info:
-        await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(db_session, request)
+        await service.commit_import(request)
     assert unknown_key in exc_info.value.keys
 
     persisted = await _committed_group_keys(db_session_maker)
@@ -708,7 +798,11 @@ async def test_commit_rejects_unresolvable_member_of_before_writing_definitions(
 
 @pytest.mark.asyncio
 @pytest.mark.db
-async def test_commit_partial_failure_mixed_results(db_session: AsyncSession, seeded_driver_packs: None) -> None:
+async def test_commit_partial_failure_mixed_results(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    seeded_driver_packs: None,
+) -> None:
     """One created, one skipped (conflict), one failed (missing host)."""
     host = await seed_host_named(db_session, "lab-04")
     await seed_existing_device(
@@ -735,9 +829,8 @@ async def test_commit_partial_failure_mixed_results(db_session: AsyncSession, se
             ImportMapping(index=2, target_host_id=bogus_host),
         ],
     )
-    result = await PortabilityImportService(verification_enqueuer=VerificationService()).commit_import(
-        db_session, request
-    )
+    service = PortabilityImportService(verification_enqueuer=VerificationService(), session_factory=db_session_maker)
+    result = await service.commit_import(request)
     assert len(result.created) == 1
     assert result.created[0].index == 0
     assert len(result.skipped) == 1
@@ -759,10 +852,10 @@ async def test_import_endpoint_returns_409_when_a_group_key_is_created_concurren
     the pre-check to return empty, which is exactly what the loser of that race sees,
     and assert the unique-index violation surfaces as the documented 409.
 
-    Only the *pre-check* is stubbed. ``_flush_groups_or_collide`` calls the same
-    helper again after its rollback to name the keys that actually collided, and
-    that call must run for real — stubbing it too would assert against a
-    fallback rather than against the re-read.
+    Only the *pre-check* is stubbed. ``commit_import``'s ``IntegrityError`` handler
+    calls the same helper again, through a fresh session, to name the keys that
+    actually collided, and that call must run for real — stubbing it too would
+    assert against a fallback rather than against the re-read.
     """
     await seed_host_named(db_session, "lab-04")
     db_session.add(DeviceGroup(key="lab-fleet", name="lab fleet", group_type=GroupType.static))

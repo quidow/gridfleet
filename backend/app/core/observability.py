@@ -22,12 +22,11 @@ from app.core.metrics_recorders import (
 from app.core.timeutil import now_utc, parse_iso
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable, Mapping
-    from contextlib import AbstractAsyncContextManager
+    from collections.abc import AsyncGenerator, Mapping
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+    from app.core.type_defs import SessionFactory
 
 
 class _ControlPlaneStateStore(Protocol):
@@ -287,11 +286,10 @@ async def flush_background_loop_snapshots(
     if snapshot_copy is None:
         return 0
     control_plane_state_store = _control_plane_state_store()
-    session_cm = session_factory() if session_factory is not None else async_session()
+    factory = session_factory or async_session
     try:
-        async with session_cm as db:
+        async with factory.begin() as db:
             await control_plane_state_store.set_many(db, LOOP_HEARTBEAT_NAMESPACE, snapshot_copy)
-            await db.commit()
     except Exception:
         # Re-mark dirty so the next flush retries the data we just dropped.
         _heartbeat_buffer.mark_dirty()

@@ -545,13 +545,12 @@ class SessionSyncService:
     ) -> None:
         """Per-device still-running check + lifecycle handler + restore.
 
-        Runs across two fresh sessions. ``handle_session_finished`` is a sanctioned
-        commit boundary (Phase 3: it commits internally), so the first session is
-        deliberately plain (not ``begin()``) to avoid a double commit with its own
-        boundary; the locked recheck + intent reconcile that may follow then run in
-        their own fresh ``begin()`` transaction.
+        Runs across two fresh transactions. ``handle_session_finished`` is
+        transaction-local, so this command owns its boundary; the locked recheck +
+        intent reconcile that may follow then run in their own fresh ``begin()``
+        transaction.
         """
-        async with session_factory() as db:
+        async with session_factory.begin() as db:
             count_stmt = select(Session).where(
                 Session.device_id == device_id,
                 Session.status == SessionStatus.running,

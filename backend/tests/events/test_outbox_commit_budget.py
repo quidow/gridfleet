@@ -77,10 +77,10 @@ async def test_event_bearing_fold_performs_one_commit(
     The two assertions below cover different halves of the outbox invariant and are NOT
     interchangeable:
 
-    - ``commits.count == 1`` is what actually catches a reintroduced separate event
-      transaction. ``CommitTap`` hooks the engine-level ``"commit"`` event, so it fires
-      no matter which session API issued the commit. Do not weaken or remove it on the
-      theory that the attribution check below already covers separate-transaction
+    - the exact ``commits.count`` is what actually catches a reintroduced separate
+      event transaction. ``CommitTap`` hooks the engine-level ``"commit"`` event, so it
+      fires no matter which session API issued the commit. Do not weaken or remove it on
+      the theory that the attribution check below already covers separate-transaction
       regressions -- it does not (see next bullet).
     - the callsite-attribution check only covers an INSERT reached through the
       instrumented ``AsyncSession`` methods (``install_async_session_callsite_profiler``).
@@ -109,6 +109,9 @@ async def test_event_bearing_fold_performs_one_commit(
         host, devices = await seed_fleet(db_session, MIXED_FLEET, 1, generation=0)
         revision = await next_observation_revision(db_session)
         section = device_health_loop_section(devices, unhealthy_count=1, revision=revision, section_sequence=1)
+        # Publish the seed before arming: the fold opens transactions of its own on
+        # this session and cannot nest into the seed's implicit one.
+        await db_session.commit()
         tap.armed = True
         commits.armed = True
         settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
@@ -125,7 +128,11 @@ async def test_event_bearing_fold_performs_one_commit(
     assert not any(callsite.startswith("app.events.") for callsite in inserts), (
         f"outbox INSERT ran outside the source transaction: {inserts}"
     )
-    assert commits.count == 1
+    # Exactly two, and the count is what catches a reintroduced event-only
+    # transaction: the fold's inventory read (a read-only transaction that writes
+    # nothing) and the one device transaction carrying both the mutation and its
+    # outbox rows. A third would mean the event row found its own boundary again.
+    assert commits.count == 2
     event_row_count = await db_session.scalar(select(func.count()).select_from(SystemEvent))
     assert event_row_count is not None
     assert event_row_count >= 1
