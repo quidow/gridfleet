@@ -4,13 +4,21 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.services.capability import DeviceCapabilityService
+from app.devices.services.lifecycle_policy_state import set_maintenance_reason
+from app.devices.services.lifecycle_policy_state import state as ps
 from app.grid.session_create import CREATE_TIMEOUT_MARGIN_SEC, effective_create_timeout
+from app.lifecycle.services.actions import LifecyclePolicyActionsService
+from app.lifecycle.services.incidents import LifecycleIncidentService
+from app.lifecycle.services.policy import LifecyclePolicyService
+from app.runs.service_reservation import RunReservationService
 from app.sessions import service_viability as session_viability
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
@@ -26,7 +34,7 @@ from app.sessions.service_viability import (
     grid_probe_response_to_result,
 )
 from tests.conftest import settings_service
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import (
     create_reservation,
     dispatch_committed_events,
@@ -1801,3 +1809,200 @@ def test_probe_always_match_routes_on_device_id_not_udid() -> None:
     assert filtered["gridfleet:probeSession"] is True
     assert "appium:udid" not in _PROBE_ALWAYS_MATCH_KEYS
     assert "appium:deviceName" not in _PROBE_ALWAYS_MATCH_KEYS
+
+
+# --------------------------------------------------------------------------- #
+# The escalation command's own transaction boundary                            #
+# --------------------------------------------------------------------------- #
+
+
+def _wired_escalation_service(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> SessionViabilityService:
+    """A viability service wired to the real handler, as ``composition.py`` wires it.
+
+    ``configure_health_failure_handler(lifecycle_policy_svc.handle_health_failure)``
+    is the production wiring (``app/composition.py:180``). Every other test in this
+    module installs an ``AsyncMock`` there, which cannot say anything about whose
+    transaction the handler's writes land in — so this builds the real chain.
+    """
+    review = build_review_service()
+    incidents = LifecycleIncidentService()
+    policy = LifecyclePolicyService(
+        review=review,
+        publisher=_test_event_bus,
+        settings=FakeSettingsReader({}),
+        actions=LifecyclePolicyActionsService(
+            publisher=_test_event_bus,
+            reservation=RunReservationService(review=review),
+            incidents=incidents,
+        ),
+        incidents=incidents,
+        viability=AsyncMock(),
+        node_manager=AsyncMock(),
+    )
+    service = SessionViabilityService(
+        publisher=_test_event_bus,
+        settings=FakeSettingsReader({"general.session_viability_failure_threshold": 1}),
+        session_factory=session_factory,
+        capability=DeviceCapabilityService(),
+        health=AsyncMock(),
+    )
+    service.configure_health_failure_handler(policy.handle_health_failure)
+    return service
+
+
+async def _seed_escalation_device(db_session: AsyncSession, db_host: Host, identity: str) -> uuid.UUID:
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=identity,
+        connection_target=identity,
+        name=identity,
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.commit()
+    return device.id
+
+
+async def test_escalation_command_publishes_the_wired_handlers_writes(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """``_escalate_probe_failure_command`` owns the boundary for the wired handler.
+
+    The positive half: the handler's escalation does reach the database through
+    the command's ``begin()``, asserted from a session that never saw it staged.
+    The falsifying half — that the *command's* transaction, and nothing inside the
+    handler, is what published it — is the test below.
+    """
+    device_id = await _seed_escalation_device(db_session, db_host, "viab-escalation-boundary")
+    service = _wired_escalation_service(db_session_maker)
+
+    await service._escalate_probe_failure_command(
+        device_id,
+        {"consecutive_failures": 1},
+        result=(False, "Appium session viability probe failed"),
+        checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
+    )
+
+    async with db_session_maker() as verify:
+        entries = (
+            (
+                await verify.execute(
+                    select(DeviceRemediationLogEntry).where(DeviceRemediationLogEntry.device_id == device_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    sources = {entry.source for entry in entries}
+    assert sources == {"session_viability"}, f"the handler's escalation did not reach the database: {entries}"
+    assert any(entry.kind == "failure" for entry in entries)
+
+
+async def test_escalation_command_rollback_takes_the_wired_handlers_writes_with_it(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """The mirror of the ``handle_session_finished`` caller-boundary test, on the real path.
+
+    ``handle_health_failure`` used to commit internally, so this command opened a
+    plain session on purpose to avoid a double commit — and a failure after the
+    handler returned could not undo what the handler had already published. The
+    failure injected here is a real statement error on the command's own
+    transaction, not a raise from a patched method, so the transaction is genuinely
+    aborted the way production would abort it.
+    """
+    device_id = await _seed_escalation_device(db_session, db_host, "viab-escalation-rollback")
+    service = _wired_escalation_service(db_session_maker)
+    real_escalate = service._escalate_probe_failure
+
+    async def escalate_then_fail(
+        db: AsyncSession,
+        device: Device,
+        state: dict[str, Any],
+        *,
+        result: tuple[bool, str | None],
+        checked_by: session_viability.SessionViabilityCheckedBy,
+    ) -> None:
+        await real_escalate(db, device, state, result=result, checked_by=checked_by)
+        await db.execute(text("SELECT 1 / 0"))
+
+    service._escalate_probe_failure = escalate_then_fail  # type: ignore[method-assign]
+
+    with pytest.raises(SQLAlchemyError):
+        await service._escalate_probe_failure_command(
+            device_id,
+            {"consecutive_failures": 1},
+            result=(False, "Appium session viability probe failed"),
+            checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
+        )
+
+    async with db_session_maker() as verify:
+        entries = (
+            (
+                await verify.execute(
+                    select(DeviceRemediationLogEntry).where(DeviceRemediationLogEntry.device_id == device_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert entries == [], "the handler committed behind the escalation command's boundary"
+
+
+async def test_escalation_command_persists_the_failure_entry_for_a_maintenance_held_device(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """The maintenance-suppressed branch now records its failure entry.
+
+    ``handle_health_failure`` appends the ladder failure entry *before* it checks
+    ``in_maintenance`` and returns ``"suppressed"`` (``policy.py:313-314``), and
+    that early return never committed. On the old plain session the entry was
+    therefore dropped on close; on the command's ``begin()`` it lands. This is a
+    deliberate consequence of the conversion — a maintenance-held device that
+    keeps failing viability probes now accumulates ladder failure history — and
+    this test is what states the choice rather than leaving it implicit.
+    """
+    device_id = await _seed_escalation_device(db_session, db_host, "viab-escalation-maintenance")
+    device = await db_session.get(Device, device_id)
+    assert device is not None
+    set_maintenance_reason(device, "operator hold")
+    await db_session.commit()
+
+    service = _wired_escalation_service(db_session_maker)
+    await service._escalate_probe_failure_command(
+        device_id,
+        {"consecutive_failures": 1},
+        result=(False, "Appium session viability probe failed"),
+        checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
+    )
+
+    async with db_session_maker() as verify:
+        entries = (
+            (
+                await verify.execute(
+                    select(DeviceRemediationLogEntry).where(DeviceRemediationLogEntry.device_id == device_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        held = await verify.get(Device, device_id)
+    assert [(entry.kind, entry.source) for entry in entries] == [("failure", "session_viability")]
+    # Suppressed means suppressed: the maintenance hold still stands and no
+    # auto-stop ran alongside the recorded failure.
+    assert held is not None
+    assert ps(held).get("maintenance_reason") == "operator hold"

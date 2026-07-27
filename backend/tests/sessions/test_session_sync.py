@@ -17,10 +17,15 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
+from app.devices.models.remediation_log import DeviceRemediationLogEntry
+from app.devices.services.health import DeviceHealthService
+from app.lifecycle.services import policy as lifecycle_policy
+from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
@@ -33,7 +38,7 @@ from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -1150,3 +1155,75 @@ async def test_short_new_command_timeout_never_shortens_window(db_session: Async
     await db_session.refresh(session)
     assert session.status == SessionStatus.running
     assert session.ended_at is None
+
+
+# --------------------------------------------------------------------------- #
+# The device-restore command's own transaction boundary                        #
+# --------------------------------------------------------------------------- #
+
+
+async def test_restore_after_session_end_rollback_takes_the_lifecycle_writes_with_it(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """``_restore_device_after_session_end`` owns the boundary for ``handle_session_finished``.
+
+    The helper used to commit internally (``complete_auto_stop`` and
+    ``handle_node_crash`` each did), which is exactly why this command opened a
+    plain session — and why a failure after the helper returned could not undo
+    what it had already published. The failure injected here is a real statement
+    error on the command's own transaction, not a raise from a patched method, so
+    the transaction aborts the way production would abort it.
+    """
+    device = await _seed_device_with_node(
+        db_session,
+        db_host,
+        identity_value="sync-restore-boundary",
+        operational_state=DeviceOperationalState.busy,
+    )
+    device_id = device.id
+    await remediation_log.append_action(
+        db_session,
+        device_id,
+        source="device_checks",
+        action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
+        reason="ADB not responsive",
+    )
+    await db_session.commit()
+    health = DeviceHealthService(publisher=event_bus)
+    await health.update_device_checks(db_session, device, healthy=False, summary="ADB not responsive")
+    await db_session.commit()
+
+    lifecycle = _make_real_lifecycle()
+    real_finished = lifecycle.handle_session_finished
+
+    async def finish_then_fail(db: AsyncSession, target: Device) -> object:
+        outcome = await real_finished(db, target)
+        assert outcome is lifecycle_policy.DeferredStopOutcome.AUTO_STOPPED
+        await db.execute(text("SELECT 1 / 0"))
+        return outcome
+
+    lifecycle.handle_session_finished = finish_then_fail  # type: ignore[method-assign, assignment]
+    service = _make_sync_service(lifecycle=lifecycle)
+
+    with pytest.raises(SQLAlchemyError):
+        await service._restore_device_after_session_end(db_session_maker, device_id)
+
+    async with db_session_maker() as verify:
+        assert (await remediation_log.load_ladder(verify, device_id)).deferred_stop_pending is True, (
+            "the lifecycle helper committed behind the restore command's boundary"
+        )
+        entries = (
+            (
+                await verify.execute(
+                    select(DeviceRemediationLogEntry).where(
+                        DeviceRemediationLogEntry.device_id == device_id,
+                        DeviceRemediationLogEntry.action == remediation_log.ACTION_AUTO_STOPPED,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert entries == []
