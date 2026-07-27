@@ -298,3 +298,52 @@ class CommitTap:
         if self.armed:
             self.count += 1
             self.callsite_counter[ACTIVE_DB_CALLSITE.get()] += 1
+
+
+# A *write* or a commit attributed here is the event bus owning a transaction of
+# its own. Phase 6 made the outbox row ride the source transaction, so a benchmark
+# cell must see none of it. The taps no longer carry a source/deferred split of
+# their own (see test_bench_taps_total_across_every_callsite) -- the partition is
+# by call site, which is what this prefix names.
+#
+# The poller's *read* (``event_bus._scan_window``) is deliberately not deferred
+# work: the benchmark arms the taps across ``dispatch_committed_events()`` on
+# purpose to measure poll-delivery latency. Only a write or a commit from the
+# event bus means the row found a second boundary.
+DEFERRED_EVENT_CALLSITE_PREFIX = "app.events."
+_WRITE_VERBS = ("INSERT", "UPDATE", "DELETE")
+
+
+def assert_fold_boundary_shape(
+    *,
+    tap: QueryTap,
+    commits: CommitTap,
+    scenario: str,
+    devices: int,
+    iters: int,
+    churn: float,
+) -> None:
+    """Reject an event-owned transaction, and pin the fold's source-commit count.
+
+    One armed fold commits once per *present* device plus once for its own
+    inventory-read transaction (``ConnectivityService.fold_host_devices`` opens
+    that read explicitly so the per-device transactions can nest nowhere). A
+    different total means a device stopped getting its own rollback unit, or a
+    second boundary appeared.
+    """
+    present = scenario_observation_shape(scenario=scenario, devices=devices, churn=churn).present_count
+    deferred_statements = sorted(
+        f"{callsite} [{signature}]"
+        for callsite, signature in tap.callsite_counter
+        if callsite.startswith(DEFERRED_EVENT_CALLSITE_PREFIX) and signature.startswith(_WRITE_VERBS)
+    )
+    assert deferred_statements == [], f"deferred event statements outside the source transaction: {deferred_statements}"
+    deferred_commits = sorted(
+        callsite for callsite in commits.callsite_counter if callsite.startswith(DEFERRED_EVENT_CALLSITE_PREFIX)
+    )
+    assert deferred_commits == [], f"deferred event commits outside the source transaction: {deferred_commits}"
+    expected = (present + 1) * iters
+    assert commits.count == expected, (
+        f"source transactions: expected {expected} ({present} present devices + 1 inventory read, "
+        f"x {iters} iters), saw {commits.count}"
+    )

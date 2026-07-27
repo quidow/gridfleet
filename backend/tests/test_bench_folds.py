@@ -101,6 +101,7 @@ from app.sessions.models import Session, SessionStatus
 from tests.bench_instrumentation import (
     CommitTap,
     QueryTap,
+    assert_fold_boundary_shape,
     build_json_report,
     explain_statement_sql,
     install_async_session_callsite_profiler,
@@ -259,13 +260,19 @@ async def _verify_deep_history_untouched(db: AsyncSession, tap: QueryTap, device
         .where(DeviceRemediationLogEntry.device_id == devices[0].device_id)
     )
     assert count == _DEEP_HISTORY_ROWS, f"healthy fold must not append to an inactive deep ladder (rows={count})"
-    # Every healthy observation loads the existing ladder before readiness can
-    # affect the later self-heal branch, so mixed-fleet setup-required devices
-    # still contribute one full history read per armed iteration.
-    ladder_key = ("app.lifecycle.services.remediation_log.load_ladder", "SELECT device_remediation_log")
-    expected_rows = len(devices) * _DEEP_HISTORY_ROWS * ITERS
-    assert tap.rows[ladder_key] >= expected_rows, (
-        f"deep-history expected at least {expected_rows} timed remediation rows, observed {tap.rows[ladder_key]}"
+    # Every healthy observation still loads the ladder once per device per armed
+    # iteration -- but through the Phase 3 snapshot loader, and bounded to the
+    # entries *after* the latest reset. The seed ends in a terminal reset, so a
+    # ~200-row inactive history costs a bounded read returning nothing. The old
+    # assertion here demanded a full-history read from the retired
+    # ``remediation_log.load_ladder`` call site: it measured a cost Phase 3
+    # removed, against a call site the fold no longer uses.
+    ladder_key = ("app.devices.services.decision_snapshot._load_current_ladder", "SELECT device_remediation_log")
+    assert tap.callsite_counter[ladder_key] >= len(devices) * ITERS, "deep-history ladder read did not run per device"
+    full_history_rows = len(devices) * _DEEP_HISTORY_ROWS * ITERS
+    assert tap.rows[ladder_key] < full_history_rows, (
+        f"the ladder read regressed to scanning history behind the terminal reset: "
+        f"{tap.rows[ladder_key]} rows approaches the full {full_history_rows}"
     )
 
 
@@ -301,18 +308,21 @@ async def _verify_claims_intact(db: AsyncSession, tap: QueryTap, devices: list[S
     )
     assert sessions == (len(claimed) + 1) // 2, "live session claims disappeared mid-benchmark"
     assert leases == len(claimed) // 2, "verification leases disappeared mid-benchmark"
-    session_key = (
-        "app.sessions.live_session_predicate.device_has_masking_live_session",
-        "SELECT sessions",
+    # Phase 3 folded the standalone ``device_has_masking_live_session`` and
+    # ``device_has_verification_lease`` predicates into one combined
+    # claims/intents/reservation select per locked device, so that is the call
+    # site the claim reads now land on -- see the categories asserted in
+    # test_bench_healthy_fold_statement_budget. Naming the retired predicates
+    # here made this scenario assert against a read the fold no longer issues.
+    snapshot_key = (
+        "app.devices.services.decision_snapshot._load_claims_intents_and_reservation",
+        "SELECT device_intents",
     )
-    lease_key = ("app.devices.services.claims.device_has_verification_lease", "SELECT device_intents")
-    assert tap.callsite_counter[session_key] >= len(devices) * ITERS, "live-session masking predicate did not run"
-    assert tap.rows[lease_key] >= (len(claimed) // 2) * ITERS, "verification-lease predicate missed seeded claims"
-    session_parameters = tap.captured_parameter_values(session_key)
-    lease_parameters = tap.captured_parameter_values(lease_key)
+    assert tap.callsite_counter[snapshot_key] >= len(devices) * ITERS, "claim snapshot read did not run per device"
+    assert tap.rows[snapshot_key] >= (len(claimed) // 2) * ITERS, "claim snapshot read missed the seeded claims"
+    snapshot_parameters = tap.captured_parameter_values(snapshot_key)
     for index, seeded in enumerate(claimed):
-        timed_parameters = session_parameters if index % 2 == 0 else lease_parameters
-        assert str(seeded.device_id) in timed_parameters, f"timed claim predicate did not inspect {seeded.identity}"
+        assert str(seeded.device_id) in snapshot_parameters, f"claim snapshot did not inspect {seeded.identity}"
         device = await db.get(Device, seeded.device_id)
         assert device is not None
         state = await derive_operational_state(db, device, now=now_utc())
@@ -866,6 +876,12 @@ async def test_bench_device_health_loop_fold(
                 revision=revision,
                 section_sequence=iteration + 1,
             )
+            # Publish the seed/rearm before arming: the fold opens transactions of
+            # its own on this session (Phase 10 gave the inventory read its own
+            # ``db.begin()``) and cannot nest into the seed's implicit one. Same
+            # reason as tests/events/test_outbox_commit_budget.py. Unarmed, so the
+            # seed's commit is never counted as fold cost.
+            await db_session.commit()
 
             tap.armed = armed
             commits.armed = armed
@@ -945,6 +961,16 @@ async def test_bench_device_health_loop_fold(
         attributed_callsites = {callsite for callsite, _signature_name in tap.callsite_counter}
         assert "unattributed" not in attributed_callsites
         assert "app.devices.locking.lock_device_handle" in attributed_callsites
+        # Phase 10 boundary shape for this cell: no event-owned transaction, and
+        # one source transaction per present device plus the inventory read.
+        assert_fold_boundary_shape(
+            tap=tap,
+            commits=commits,
+            scenario=SCENARIO,
+            devices=len(devices),
+            iters=ITERS,
+            churn=CHURN,
+        )
         # Gated on reseed_per_iteration, not just effective_unhealthy > 0: a device
         # already offline is never re-escalated (connectivity._escalate_health_failure
         # skips handle_health_failure once was_offline), so a static scenario that
@@ -999,6 +1025,9 @@ async def test_bench_healthy_fold_statement_budget(
             revision=revision,
             section_sequence=1,
         )
+        # See the note in test_bench_device_health_loop_fold: the fold's inventory
+        # read owns a transaction, so the seed's implicit one has to end first.
+        await db_session.commit()
         tap.armed = True
         commits.armed = True
         settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
@@ -1043,7 +1072,9 @@ async def test_bench_healthy_fold_statement_budget(
         "device_lock": device_count,
         "snapshot_claims": device_count,
         "snapshot_ladder": device_count,
-        "source_commits": device_count,
+        # One per device, plus one for the fold's own inventory-read transaction
+        # (Phase 10 gave that read an explicit ``db.begin()`` of its own).
+        "source_commits": device_count + 1,
         "legacy_ladder_load": 0,
         "legacy_reservation_load": 0,
     }

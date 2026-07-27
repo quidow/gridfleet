@@ -73,6 +73,11 @@ MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/core/janitor.py",
     "app/core/observability.py",
     "app/main.py",
+    # Phase 10 task 8: the remediation-ladder appender. Already clean; listed so
+    # DECISION_FACT_WRITERS can rely on it being pinned transaction-local, which
+    # is what makes its ``caller_locked`` proof mode enforceable rather than
+    # asserted (see tests/contracts/test_no_direct_device_state_writes.py).
+    "app/lifecycle/services/remediation_log.py",
 )
 
 

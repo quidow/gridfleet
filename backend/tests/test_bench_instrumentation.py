@@ -304,3 +304,101 @@ def test_bench_scenario_observation_shape(
 
     assert shape.present_count == present
     assert shape.unhealthy_count == unhealthy
+
+
+def _fold_taps(
+    *, source_commits: int, deferred_statements: int = 0, deferred_commits: int = 0
+) -> tuple[QueryTap, CommitTap]:
+    """Taps shaped like one benchmark cell's totals, with optional event-owned work."""
+    tap = QueryTap()
+    commits = CommitTap()
+    tap.total = source_commits
+    tap.callsite_counter.update(
+        {("app.devices.services.connectivity.fold_host_devices", "UPDATE devices"): source_commits}
+    )
+    commits.count = source_commits
+    commits.callsite_counter.update({"app.devices.services.connectivity.fold_host_devices": source_commits})
+    if deferred_statements:
+        tap.total += deferred_statements
+        tap.callsite_counter.update({("app.events.event_bus.publish", "INSERT system_events"): deferred_statements})
+    if deferred_commits:
+        commits.count += deferred_commits
+        commits.callsite_counter.update({"app.events.event_bus.publish": deferred_commits})
+    return tap, commits
+
+
+@pytest.mark.parametrize(
+    ("scenario", "devices", "churn", "iters", "source_commits"),
+    [
+        # One transaction per present device, plus the fold's own inventory read.
+        ("steady", 10, 0.3, 3, (10 + 1) * 3),
+        ("terminal-noop", 10, 0.0, 2, (5 + 1) * 2),
+    ],
+)
+def test_bench_fold_boundary_shape_accepts_one_transaction_per_present_device(
+    scenario: str,
+    devices: int,
+    churn: float,
+    iters: int,
+    source_commits: int,
+) -> None:
+    from tests.bench_instrumentation import assert_fold_boundary_shape
+
+    tap, commits = _fold_taps(source_commits=source_commits)
+
+    assert (
+        assert_fold_boundary_shape(
+            tap=tap,
+            commits=commits,
+            scenario=scenario,
+            devices=devices,
+            iters=iters,
+            churn=churn,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("source_commits", [(10 + 1) * 3 - 1, (10 + 1) * 3 + 1])
+def test_bench_fold_boundary_shape_rejects_a_wrong_source_commit_count(source_commits: int) -> None:
+    from tests.bench_instrumentation import assert_fold_boundary_shape
+
+    tap, commits = _fold_taps(source_commits=source_commits)
+
+    with pytest.raises(AssertionError, match="source transactions"):
+        assert_fold_boundary_shape(tap=tap, commits=commits, scenario="steady", devices=10, iters=3, churn=0.3)
+
+
+def test_bench_fold_boundary_shape_rejects_a_deferred_event_query() -> None:
+    from tests.bench_instrumentation import assert_fold_boundary_shape
+
+    tap, commits = _fold_taps(source_commits=(10 + 1) * 3, deferred_statements=2)
+
+    with pytest.raises(AssertionError, match="deferred event statements"):
+        assert_fold_boundary_shape(tap=tap, commits=commits, scenario="steady", devices=10, iters=3, churn=0.3)
+
+
+def test_bench_fold_boundary_shape_accepts_the_pollers_read() -> None:
+    """``dispatch_committed_events()`` runs inside the armed window on purpose.
+
+    Its ``SELECT system_events`` is poll-delivery latency the benchmark measures,
+    not a second boundary. Only an event-bus *write* or commit is deferred work.
+    """
+    from tests.bench_instrumentation import assert_fold_boundary_shape
+
+    tap, commits = _fold_taps(source_commits=(10 + 1) * 3)
+    tap.total += 3
+    tap.callsite_counter.update({("app.events.event_bus._scan_window", "SELECT system_events"): 3})
+
+    assert (
+        assert_fold_boundary_shape(tap=tap, commits=commits, scenario="steady", devices=10, iters=3, churn=0.3) is None
+    )
+
+
+def test_bench_fold_boundary_shape_rejects_a_deferred_event_commit() -> None:
+    from tests.bench_instrumentation import assert_fold_boundary_shape
+
+    tap, commits = _fold_taps(source_commits=(10 + 1) * 3, deferred_commits=1)
+
+    with pytest.raises(AssertionError, match="deferred event commits"):
+        assert_fold_boundary_shape(tap=tap, commits=commits, scenario="steady", devices=10, iters=3, churn=0.3)
