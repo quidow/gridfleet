@@ -331,6 +331,14 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     async def override_get_db() -> AsyncGenerator[AsyncSession]:
         yield db_session
 
+    # One factory for every container that owns a command boundary. Phase 9 gives
+    # more containers a session_factory, so build it once here rather than
+    # re-deriving the same async_sessionmaker per override.
+    assert db_session.bind is not None
+    request_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+        db_session.bind, class_=AsyncSession, expire_on_commit=False
+    )
+
     def override_get_event_services() -> EventServices:
         return EventServices(  # type: ignore[arg-type]
             publisher=test_event_bus,
@@ -339,24 +347,17 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         )
 
     def override_get_settings_services() -> SettingsServices:
-        assert db_session.bind is not None
-        settings_sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
-            db_session.bind, class_=AsyncSession, expire_on_commit=False
-        )
         return SettingsServices(
             service=settings_service,
             config=SettingsConfigService(publisher=test_event_bus),
-            session_factory=settings_sf,
+            session_factory=request_session_factory,
         )
 
     def override_get_agent_comm_services() -> AgentCommServices:
         return AgentCommServices(http_pool=test_http_pool, circuit_breaker=test_circuit_breaker)
 
     def override_get_device_services() -> DeviceServices:
-        assert db_session.bind is not None
-        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
-            db_session.bind, class_=AsyncSession, expire_on_commit=False
-        )
+        sf = request_session_factory
         _maintenance_svc = MaintenanceService(
             review=build_review_service(), settings=settings_service, publisher=test_event_bus
         )

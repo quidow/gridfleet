@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -37,6 +38,15 @@ async def test_put_replaces_and_audits(client: AsyncClient, db_session: AsyncSes
     rows = history.json()
     assert len(rows) == 1
     assert rows[0]["new_test_data"] == {"a": 1}
+
+
+async def test_put_and_patch_missing_device_return_404(client: AsyncClient) -> None:
+    """The command's ``NoResultFound`` maps to the body the deleted pre-lock produced."""
+    missing = uuid.uuid4()
+    for call in (client.put, client.patch):
+        resp = await call(f"/api/devices/{missing}/test_data", json={"v": 1})
+        assert resp.status_code == 404
+        assert resp.json()["error"]["message"] == "Device not found"
 
 
 async def test_put_dispatches_test_data_updated_after_commit(

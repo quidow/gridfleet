@@ -2382,6 +2382,8 @@ async def test_devices_core_router_branches() -> None:
             device_services=mock_ds_update_none,
         )
     assert exc.value.status_code == 404
+    # The 404 is raised after the command transaction closed, not instead of it.
+    assert mock_ds_update_none.session_factory.begun == 1
 
     mock_ds_delete = SimpleNamespace(
         crud=SimpleNamespace(delete_device_txn=AsyncMock(return_value=False)),
@@ -2390,6 +2392,7 @@ async def test_devices_core_router_branches() -> None:
     with pytest.raises(HTTPException) as exc:
         await devices_core.delete_device(device_id, device_services=mock_ds_delete)
     assert exc.value.status_code == 404
+    assert mock_ds_delete.session_factory.begun == 1, "the delete route must own exactly one boundary"
 
     mock_packs_cur_err = SimpleNamespace(
         release=SimpleNamespace(set_current_release=AsyncMock(side_effect=LookupError("missing")))

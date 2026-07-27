@@ -39,6 +39,25 @@ PHASE9_COMMAND_MODULES = (
 
 TRANSACTION_CONTROL_ARGUMENTS = frozenset({"commit", "rollback", "autocommit"})
 
+# The Phase 9 paths this guard does not cover yet, spelled out so a forgotten
+# append to ``MIGRATED_TRANSACTION_LOCAL_MODULES`` cannot silently disable the
+# argument guard along with the commit/rollback scan. Shrink this in the same
+# change that appends to that tuple; Task 5 empties it.
+EXPECTED_PENDING = {
+    "app/appium_nodes/routers/nodes.py",  # Task 2
+    "app/appium_nodes/services/reconciler_agent.py",  # Task 2
+    "app/devices/services/bulk.py",  # Task 2
+    "app/devices/services/maintenance.py",  # Task 2
+    "app/hosts/router.py",  # Task 3
+    "app/hosts/service.py",  # Task 3
+    "app/packs/services/discovery.py",  # Task 3
+    "app/packs/routers/catalog.py",  # Task 4
+    "app/packs/routers/uploads.py",  # Task 4
+    "app/packs/services/lifecycle.py",  # Task 4
+    "app/packs/services/service.py",  # Task 4
+    "app/settings/service.py",  # Task 5
+}
+
 
 def _guarded_modules() -> tuple[str, ...]:
     """The Phase 9 files whose boundaries have already moved out to their callers.
@@ -46,7 +65,8 @@ def _guarded_modules() -> tuple[str, ...]:
     Every task appends its own production files to
     ``MIGRATED_TRANSACTION_LOCAL_MODULES`` before implementing them, so this
     guard widens one task at a time instead of failing over arguments a later
-    task still owns. Phase 10's final gate covers whatever is left.
+    task still owns. ``EXPECTED_PENDING`` pins what is still uncovered, so the
+    widening has to be deliberate.
     """
     return tuple(path for path in PHASE9_COMMAND_MODULES if path in MIGRATED_TRANSACTION_LOCAL_MODULES)
 
@@ -70,6 +90,22 @@ def test_phase9_scope_paths_exist() -> None:
     """A typo in the scope tuple would silently empty the guard below."""
     missing = [path for path in PHASE9_COMMAND_MODULES if not (BACKEND_ROOT / path).is_file()]
     assert missing == [], f"Phase 9 scope references files that do not exist: {missing}"
+
+
+def test_pending_scope_shrinks_deliberately() -> None:
+    """The uncovered set is declared, not derived, so no task can leave a hole.
+
+    Deriving coverage from ``MIGRATED_TRANSACTION_LOCAL_MODULES`` alone means a
+    forgotten append drops this file's argument guard and the commit/rollback
+    scan together. Pinning the remainder makes them fail independently.
+    """
+    pending = set(PHASE9_COMMAND_MODULES) - set(_guarded_modules())
+    assert pending == EXPECTED_PENDING, (
+        "Phase 9 pending scope drifted. Shrink EXPECTED_PENDING in the same change that appends the file to "
+        f"MIGRATED_TRANSACTION_LOCAL_MODULES (the last task drives it to set()).\n"
+        f"  newly covered, still listed as pending: {sorted(EXPECTED_PENDING - pending)}\n"
+        f"  uncovered, missing from EXPECTED_PENDING: {sorted(pending - EXPECTED_PENDING)}"
+    )
 
 
 def test_migrated_commands_take_no_transaction_control_arguments() -> None:

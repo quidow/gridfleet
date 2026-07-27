@@ -301,22 +301,6 @@ class DeviceCrudService:
         await device_write.persist_device_record(db, device)
         return True
 
-    async def recheck_device_identity(
-        self, db: AsyncSession, device_id: uuid.UUID, data: DevicePatch | DeviceVerificationUpdate
-    ) -> None:
-        """Re-run the identity gate on a read-only session after a lost insert race.
-
-        Raises :class:`DeviceIdentityConflictError` when the clashing row is now
-        visible, so the caller can report the same 409 detail the in-transaction
-        gate would have produced. Returns silently when the row is already gone —
-        the caller then re-raises the original ``IntegrityError``.
-        """
-        device = await self.get_device(db, device_id)
-        if device is None:
-            return
-        payload = await self.prepare_device_update_payload(db, device, data)
-        await self._identity.ensure_device_payload_identity_available(db, payload, exclude_device_id=device.id)
-
     async def delete_device_txn(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
         locked = await _lock_device_for_delete(db, device_id)
         if locked is None:

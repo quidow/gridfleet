@@ -87,9 +87,6 @@ class DeviceCrudProtocol(Protocol):
         *,
         enforce_patch_contract: bool = ...,
     ) -> bool: ...
-    async def recheck_device_identity(
-        self, db: AsyncSession, device_id: uuid.UUID, data: DevicePatch | DeviceVerificationUpdate
-    ) -> None: ...
     async def delete_device_txn(self, db: AsyncSession, device_id: uuid.UUID) -> bool: ...
 
 

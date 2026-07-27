@@ -85,17 +85,6 @@ async def test_update_device_txn_contract_missing_and_integrity_paths(monkeypatc
     db.rollback.assert_not_awaited()
 
 
-async def test_recheck_device_identity_ignores_a_vanished_device(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The clashing row is already gone, so there is nothing friendlier to report."""
-    crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
-    monkeypatch.setattr(DeviceCrudService, "get_device", AsyncMock(return_value=None))
-    ensure = AsyncMock()
-    monkeypatch.setattr(crud._identity, "ensure_device_payload_identity_available", ensure)
-
-    assert await crud.recheck_device_identity(MagicMock(), uuid.uuid4(), DevicePatch(name="new")) is None
-    ensure.assert_not_awaited()
-
-
 async def test_lock_device_for_delete_missing_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     device_id = uuid.uuid4()

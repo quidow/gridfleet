@@ -1,21 +1,19 @@
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError, NoResultFound
 
-from app.devices import locking as device_locking
 from app.devices.models import DeviceTestDataAuditLog
 from app.devices.services.test_data import TestDataService
 from app.events.models import SystemEvent
-from tests.helpers import create_device_record
+from tests.helpers import create_device_record, record_device_lock_proofs
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from app.devices.locking import LockedDevice
     from app.hosts.models import Host
 
 pytestmark = pytest.mark.db
@@ -106,13 +104,22 @@ async def test_get_history_returns_descending(
     assert [h.new_test_data for h in history] == [{"v": 2}, {"v": 1}]
 
 
-async def test_merge_test_data_locks_the_device_exactly_once(
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("replace_device_test_data", {"a": {"y": 2}}),
+        ("merge_device_test_data", {"a": {"x": 1, "y": 2}}),
+    ],
+)
+async def test_test_data_commands_lock_the_device_exactly_once(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    expected: dict[str, Any],
 ) -> None:
-    """Merge reads the current payload through the same proof it writes under."""
+    """Both commands read and write through one aggregate lock they own outright."""
     device = await create_device_record(
         db_session,
         host_id=db_host.id,
@@ -120,24 +127,15 @@ async def test_merge_test_data_locks_the_device_exactly_once(
         name="dev-lock-1",
         test_data={"a": {"x": 1}},
     )
-    proofs: list[uuid.UUID] = []
-    real_lock = device_locking.lock_device_handle
-
-    async def spy(db: AsyncSession, device_id: uuid.UUID, **kwargs: bool) -> LockedDevice:
-        locked = await real_lock(db, device_id, **kwargs)
-        locked.assert_active(db)
-        proofs.append(locked.device.id)
-        return locked
-
-    monkeypatch.setattr(device_locking, "lock_device_handle", spy)
+    proofs = record_device_lock_proofs(monkeypatch)
 
     svc = TestDataService(publisher=event_bus)
     async with db_session_maker() as command_db, command_db.begin():
-        await svc.merge_device_test_data(command_db, device.id, {"a": {"y": 2}}, changed_by="op")
+        await getattr(svc, command)(command_db, device.id, {"a": {"y": 2}}, changed_by="op")
 
-    assert proofs == [device.id], "the merge command must take exactly one Device aggregate lock"
+    assert proofs == [device.id], f"{command} must take exactly one Device aggregate lock"
     await db_session.refresh(device)
-    assert device.test_data == {"a": {"x": 1, "y": 2}}
+    assert device.test_data == expected
 
 
 async def test_replace_test_data_rejects_a_missing_device(
