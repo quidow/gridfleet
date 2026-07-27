@@ -45,6 +45,10 @@ MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/devices/services/maintenance.py",
     "app/appium_nodes/services/reconciler_agent.py",
     "app/appium_nodes/routers/nodes.py",
+    # Phase 9 task 3: host commands and the pack discovery effects.
+    "app/hosts/router.py",
+    "app/hosts/service.py",
+    "app/packs/services/discovery.py",
 )
 
 # Phase-3 mixed modules: each carries a sanctioned commit boundary AND below-boundary

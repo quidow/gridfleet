@@ -232,7 +232,9 @@ async def test_approve_and_reject_host_only_work_for_pending(db_session: AsyncSe
     assert await svc.approve_host(db_session, online.id) is None
 
     assert await svc.reject_host(db_session, reject_me.id) is True
-    assert db_session.in_transaction() is False
+    # Transaction-local: the caller's transaction is still open and still owns
+    # the decision to commit. reject_host has not ended it.
+    assert db_session.in_transaction() is True
     assert await svc.reject_host(db_session, online.id) is False
 
 

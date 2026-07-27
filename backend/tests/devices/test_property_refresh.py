@@ -1,7 +1,10 @@
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.timeutil import now_utc
@@ -11,12 +14,15 @@ from app.hosts.models import Host, HostStatus, OSType
 from app.packs.services.discovery import PackDiscoveryService
 from tests.helpers import create_device_record
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
 
 class _TrackingSessionFactory:
     """Wraps a real session factory, recording every session it yields.
 
     Lets a test assert on the shape of sessions opened (one inventory session,
-    then one fresh session per settled device), not just the persisted data.
+    then one fresh transaction per settled device), not just the persisted data.
     """
 
     def __init__(self, engine: AsyncEngine) -> None:
@@ -27,6 +33,13 @@ class _TrackingSessionFactory:
         session = self._factory()
         self.sessions.append(session)
         return session
+
+    @asynccontextmanager
+    async def begin(self) -> AsyncIterator[AsyncSession]:
+        async with self._factory() as session:
+            self.sessions.append(session)
+            async with session.begin():
+                yield session
 
 
 def _properties_section(*connection_targets: str) -> dict[str, object]:
@@ -80,9 +93,9 @@ async def test_fold_continues_after_device_failure(
     db_session: AsyncSession,
     setup_database: AsyncEngine,
 ) -> None:
-    """A real aborted PostgreSQL transaction in the middle device's commit rolls
-    back only that device; first/third persist. Each device settles in its own
-    fresh session, distinct from the one inventory read and from each other."""
+    """A real aborted PostgreSQL transaction on the middle device rolls back only
+    that device; first/third persist. Each device settles in its own fresh
+    transaction, distinct from the one inventory read and from each other."""
     host = Host(hostname="fold-host", ip="10.0.0.12", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
     db_session.add(host)
     await db_session.flush()
@@ -112,9 +125,9 @@ async def test_fold_continues_after_device_failure(
             "refresh-b": {
                 "identity_value": "refresh-b",
                 # A real PostgreSQL rejection: a non-string value bound against the
-                # VARCHAR os_version column fails during the provider's commit. A
-                # mocked side_effect would leave the session clean and miss the
-                # aborted-transaction path this refactor exists to isolate.
+                # VARCHAR os_version column fails when the caller's transaction
+                # flushes. A mocked side_effect would leave the session clean and
+                # miss the aborted-transaction path this refactor exists to isolate.
                 "detected_properties": {"os_version": ["invalid"]},
                 "observed_at": stamp,
             },
@@ -159,6 +172,94 @@ def _discovery_service() -> PackDiscoveryService:
     )
 
 
+# ---------------------------------------------------------------------------
+# The boundary hand-off apply_pack_device_properties gave up
+# ---------------------------------------------------------------------------
+#
+# ``apply_pack_device_properties`` is flush-only now: it mutates the row and
+# returns. ``fold_host_device_properties`` is the only production caller and it
+# used to open a plain ``session_factory()`` with no transaction context, so
+# deleting the callee commit without giving the caller a ``begin()`` would drop
+# every refreshed property while leaving both sides' unit tests green. These two
+# tests pin both directions of that hand-off.
+
+
+class _FailAfterApply:
+    """Applies the real property fold, then aborts the transaction for real.
+
+    Not a patched ``side_effect``: the failure is an actual statement Postgres
+    rejects, so the transaction is genuinely aborted at the point the fold has
+    already mutated the row — the state a partially-applied refresh reaches in
+    production.
+    """
+
+    def __init__(self, inner: PackDiscoveryService) -> None:
+        self._inner = inner
+        self.mutated: list[str | None] = []
+
+    async def apply_pack_device_properties(
+        self, session: AsyncSession, device: Device, data: dict[str, object]
+    ) -> None:
+        await self._inner.apply_pack_device_properties(session, device, data)
+        self.mutated.append(device.os_version)
+        await session.execute(text("SELECT no_such_column_for_property_refresh"))
+
+
+def _os_version_section(target: str, os_version: str) -> dict[str, Any]:
+    stamp = now_utc().isoformat()
+    return {
+        "reported_at": stamp,
+        "devices": {
+            target: {
+                "identity_value": target,
+                "detected_properties": {"os_version": os_version},
+                "observed_at": stamp,
+            }
+        },
+    }
+
+
+async def test_fold_persists_a_clean_apply(db_session: AsyncSession, setup_database: AsyncEngine) -> None:
+    """The caller owns the boundary the provider gave up; without it nothing lands."""
+    host = Host(hostname="fold-commit", ip="10.0.0.13", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    db_session.add(host)
+    await db_session.flush()
+    device = await create_device_record(
+        db_session, host_id=host.id, identity_value="fold-ok", connection_target="fold-ok", name="Fold OK"
+    )
+
+    svc = PropertyRefreshService(discovery=_discovery_service())
+    session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
+    await svc.fold_host_device_properties(session_factory, host.id, _os_version_section("fold-ok", "15.7"))
+
+    async with session_factory() as verify:
+        refreshed = await verify.get(Device, device.id)
+    assert refreshed is not None
+    assert refreshed.os_version == "15.7", "a clean fold did not persist — the caller's transaction never committed"
+
+
+async def test_fold_persists_nothing_when_the_transaction_aborts_after_the_mutation(
+    db_session: AsyncSession, setup_database: AsyncEngine
+) -> None:
+    host = Host(hostname="fold-abort", ip="10.0.0.14", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
+    db_session.add(host)
+    await db_session.flush()
+    device = await create_device_record(
+        db_session, host_id=host.id, identity_value="fold-abort", connection_target="fold-abort", name="Fold Abort"
+    )
+
+    failing = _FailAfterApply(_discovery_service())
+    svc = PropertyRefreshService(discovery=failing)  # type: ignore[arg-type]
+    session_factory = async_sessionmaker(setup_database, class_=AsyncSession, expire_on_commit=False)
+    await svc.fold_host_device_properties(session_factory, host.id, _os_version_section("fold-abort", "15.7"))
+
+    assert failing.mutated == ["15.7"], "the fold never reached the mutation this test is pinning"
+    async with session_factory() as verify:
+        refreshed = await verify.get(Device, device.id)
+    assert refreshed is not None
+    assert refreshed.os_version == "14", "a partially applied refresh was committed anyway"
+
+
 def _roku_device(**overrides: object) -> SimpleNamespace:
     defaults: dict[str, object] = {
         "identity_value": "SER123",
@@ -188,7 +289,7 @@ async def test_apply_updates_connection_target_for_verified_identity() -> None:
     )
     assert device.connection_target == "10.0.0.9"
     assert device.os_version == "14.5"
-    session.commit.assert_awaited_once()
+    session.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -209,7 +310,7 @@ async def test_apply_ignores_connection_target_on_identity_mismatch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_no_commit_when_connection_target_unchanged() -> None:
+async def test_apply_leaves_the_connection_target_alone_when_unchanged() -> None:
     svc = _discovery_service()
     device = _roku_device()
     session = AsyncMock()

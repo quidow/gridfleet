@@ -106,6 +106,10 @@ HOST_PAYLOAD = {
 async def reset_verification_jobs(db_session: AsyncSession) -> AsyncGenerator[None]:
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     await seed_test_packs(db_session)
+    # Commit explicitly. Verification runs on its own session_factory, so a
+    # flush-only seed is invisible to it; this used to ride on the incidental
+    # commit that ``POST /api/hosts`` performed on the shared request session.
+    await db_session.commit()
     async with session_factory() as db:
         await delete_jobs_by_kind(db, kind=JOB_KIND_DEVICE_VERIFICATION)
     yield

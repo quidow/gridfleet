@@ -81,7 +81,7 @@ async def test_discovery_forwards_pool(monkeypatch: pytest.MonkeyPatch) -> None:
         identity_guard=Mock(),
         pool=pool,
     )
-    host = SimpleNamespace(ip="10.0.0.10", agent_port=5100)
-    await service.list_intake_candidates(Mock(), host)
+    target = SimpleNamespace(ip="10.0.0.10", agent_port=5100)
+    await service.fetch_pack_candidates(target)
 
     assert fetcher.await_args.kwargs["pool"] is pool

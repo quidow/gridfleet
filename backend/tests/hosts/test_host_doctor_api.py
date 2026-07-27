@@ -26,7 +26,10 @@ async def _create_online_host(db_session: AsyncSession) -> Host:
         status=HostStatus.online,
     )
     db_session.add(host)
-    await db_session.flush()
+    # Committed, not flushed: the doctor route reads the host on its own short
+    # session, which cannot see another session's uncommitted insert.
+    await db_session.commit()
+    await db_session.refresh(host)
     return host
 
 
@@ -39,7 +42,10 @@ async def _create_offline_host(db_session: AsyncSession) -> Host:
         status=HostStatus.offline,
     )
     db_session.add(host)
-    await db_session.flush()
+    # Committed, not flushed: the doctor route reads the host on its own short
+    # session, which cannot see another session's uncommitted insert.
+    await db_session.commit()
+    await db_session.refresh(host)
     return host
 
 
@@ -60,7 +66,7 @@ async def test_trigger_doctor_returns_409_for_offline_host(client: AsyncClient, 
 async def test_trigger_doctor_proxies_to_agent_and_persists(client: AsyncClient, db_session: AsyncSession) -> None:
     host = await _create_online_host(db_session)
     db_session.add(DriverPack(id="appium-uiautomator2", display_name="UiAutomator2", maintainer=""))
-    await db_session.flush()
+    await db_session.commit()
     agent_checks: list[dict[str, Any]] = [
         {"check_id": "adb", "ok": True, "message": "adb found"},
         {"check_id": "java", "ok": False, "message": "java not found"},

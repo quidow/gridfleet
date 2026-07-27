@@ -481,15 +481,15 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     monkeypatch.setattr(
         pack_discovery_service.platform_label_service, "load_platform_label_map", AsyncMock(return_value={})
     )
-    result = await _PackDiscoveryService(
+    discovery_service = _PackDiscoveryService(
         agent_get_pack_devices=DummyClient().get_pack_devices,
         circuit_breaker=Mock(),
         serializer=_DevicePresenterService(),
         identity_guard=DeviceIdentityConflictService(),
-    ).discover_devices(
-        discovery_db,
-        SimpleNamespace(id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100),
     )
+    target = SimpleNamespace(host_id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100)
+    candidates = await discovery_service.fetch_pack_candidates(target)
+    result = await discovery_service.classify_discovery(discovery_db, target.host_id, candidates)
     assert result.new_devices == []
 
     assert (

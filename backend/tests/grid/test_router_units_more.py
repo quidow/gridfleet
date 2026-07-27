@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx2 as httpx
 import pytest
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, NoResultFound
 
 from app.analytics import router as analytics
 from app.analytics.schemas import DeviceReliabilityRow, DeviceUtilizationRow, GroupByOption
@@ -50,6 +50,7 @@ from app.events import router as events
 from app.grid import router as grid
 from app.hosts import router as hosts
 from app.hosts.models import HostStatus
+from app.hosts.service import HostTarget
 from app.lifecycle import router as lifecycle
 from app.packs.routers import (
     agent_state as agent_driver_packs,
@@ -111,6 +112,14 @@ class DummySession:
 
     async def refresh(self, _obj: object) -> None:
         return None
+
+
+class _UniqueViolationError(Exception):
+    """Stand-in for the asyncpg error ``constraint_name`` is unwrapped from."""
+
+    def __init__(self, constraint_name: str) -> None:
+        super().__init__(constraint_name)
+        self.constraint_name = constraint_name
 
 
 class MutatingSession(DummySession):
@@ -536,37 +545,31 @@ async def test_device_verification_router_error_paths(monkeypatch: pytest.Monkey
 async def test_hosts_router_auto_tasks_and_driver_pack_404() -> None:
     host_id = uuid.uuid4()
 
-    class SessionCtx:
-        async def __aenter__(self) -> object:
-            return object()
-
-        async def __aexit__(self, *args: object) -> None:
-            return None
-
-    host = SimpleNamespace(id=host_id, hostname="host-a")
+    target = HostTarget(host_id=host_id, hostname="host-a", ip="10.0.0.1", agent_port=5100, current_boot_id=None)
     discovery_result = SimpleNamespace(new_devices=[SimpleNamespace(id=uuid.uuid4())])
     mock_publisher = AsyncMock()
+    session_factory = FakeSessionFactory(DummySession())
+
     fake_discovery = AsyncMock()
-    fake_discovery.discover_devices = AsyncMock(return_value=discovery_result)
-    fake_crud_host = SimpleNamespace(get_host=AsyncMock(return_value=host))
-    with patch.object(hosts, "async_session", return_value=SessionCtx()):
-        await hosts._auto_discover(host_id, mock_publisher, fake_discovery, fake_crud_host)
+    fake_discovery.fetch_pack_candidates = AsyncMock(return_value=())
+    fake_discovery.classify_discovery = AsyncMock(return_value=discovery_result)
+    fake_crud_host = SimpleNamespace(load_host_target=AsyncMock(return_value=target))
+    await hosts._auto_discover(host_id, mock_publisher, fake_discovery, fake_crud_host, session_factory)
     mock_publisher.publish.assert_awaited_once()
+    # The dial is the middle phase: prepare, dial, classify — each with its own session.
+    fake_discovery.fetch_pack_candidates.assert_awaited_once_with(target)
 
-    fake_crud_none = SimpleNamespace(get_host=AsyncMock(return_value=None))
+    fake_crud_none = SimpleNamespace(load_host_target=AsyncMock(return_value=None))
     fake_discovery2 = AsyncMock()
-    fake_discovery2.discover_devices = AsyncMock(return_value=discovery_result)
-    with patch.object(hosts, "async_session", return_value=SessionCtx()):
-        await hosts._auto_discover(host_id, mock_publisher, fake_discovery2, fake_crud_none)
+    fake_discovery2.fetch_pack_candidates = AsyncMock(return_value=())
+    fake_discovery2.classify_discovery = AsyncMock(return_value=discovery_result)
+    await hosts._auto_discover(host_id, mock_publisher, fake_discovery2, fake_crud_none, session_factory)
+    fake_discovery2.fetch_pack_candidates.assert_not_awaited()
 
-    fake_crud_err = SimpleNamespace(get_host=AsyncMock(side_effect=RuntimeError("db")))
+    fake_crud_err = SimpleNamespace(load_host_target=AsyncMock(side_effect=RuntimeError("db")))
     fake_discovery3 = AsyncMock()
-    fake_discovery3.discover_devices = AsyncMock(return_value=discovery_result)
-    with (
-        patch.object(hosts, "async_session", return_value=SessionCtx()),
-        patch.object(hosts.logger, "exception", new=Mock()) as log_exception,
-    ):
-        await hosts._auto_discover(host_id, mock_publisher, fake_discovery3, fake_crud_err)
+    with patch.object(hosts.logger, "exception", new=Mock()) as log_exception:
+        await hosts._auto_discover(host_id, mock_publisher, fake_discovery3, fake_crud_err, session_factory)
     assert log_exception.call_count == 1
 
     with pytest.raises(HTTPException) as caught:
@@ -875,7 +878,7 @@ async def test_sessions_router_list_detail_and_mutation_paths() -> None:
 
 async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     host_id = uuid.uuid4()
-    host = SimpleNamespace(id=host_id, hostname="host-1", devices=[])
+    host = SimpleNamespace(id=host_id, hostname="host-1", ip="10.0.0.1", devices=[])
     response = SimpleNamespace(status_code=200)
 
     mock_event_services = SimpleNamespace(publisher=object())
@@ -884,17 +887,20 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     host_settings_svc.get = Mock(return_value=True)
     mock_ss = _mock_settings_svc(host_settings_svc)
 
-    _host_agent_comm = SimpleNamespace(circuit_breaker=Mock(), http_pool=None)
+    _host_agent_comm = SimpleNamespace(circuit_breaker=AsyncMock(), http_pool=None)
 
     fake_pack_services = SimpleNamespace(discovery=AsyncMock())
-    fake_hs_reg_err = SimpleNamespace(
-        crud=SimpleNamespace(register_host=AsyncMock(side_effect=IntegrityError("", {}, None)))
-    )
+
+    def _host_services(**crud: object) -> SimpleNamespace:
+        return SimpleNamespace(crud=SimpleNamespace(**crud), session_factory=FakeSessionFactory(DummySession()))
+
+    # An IntegrityError that is not the hostname unique index is not a lost race:
+    # it propagates out of the attempt and the route reports the conflict.
+    fake_hs_reg_err = _host_services(register_host=AsyncMock(side_effect=IntegrityError("", {}, None)))
     with pytest.raises(HTTPException) as exc:
         await hosts.register_host(  # type: ignore[arg-type]
             object(),
             response,
-            db=object(),
             host_services=fake_hs_reg_err,
             event_services=mock_event_services,
             settings_services=mock_ss,
@@ -903,7 +909,45 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
         )
     assert exc.value.status_code == 409
 
-    fake_hs_reg_ok = SimpleNamespace(crud=SimpleNamespace(register_host=AsyncMock(return_value=(host, True))))
+    # The hostname conflict degrades to the fallback, which opens a second
+    # transaction. A winner that has since vanished is the same 409.
+    hostname_conflict = IntegrityError("", {}, _UniqueViolationError(hosts.host_service.HOSTNAME_UNIQUE_INDEX))
+    fake_hs_reg_gone = _host_services(
+        register_host=AsyncMock(side_effect=hostname_conflict),
+        reregister_host=AsyncMock(return_value=None),
+    )
+    with pytest.raises(HTTPException) as exc:
+        await hosts.register_host(  # type: ignore[arg-type]
+            object(),
+            response,
+            host_services=fake_hs_reg_gone,
+            event_services=mock_event_services,
+            settings_services=mock_ss,
+            agent_comm=_host_agent_comm,
+            pack_services=fake_pack_services,
+        )
+    assert exc.value.status_code == 409
+
+    fake_hs_reg_fallback = _host_services(
+        register_host=AsyncMock(side_effect=hostname_conflict),
+        reregister_host=AsyncMock(return_value=host),
+    )
+    with patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})):
+        result = await hosts.register_host(  # type: ignore[arg-type]
+            object(),
+            response,
+            host_services=fake_hs_reg_fallback,
+            event_services=mock_event_services,
+            settings_services=mock_ss,
+            agent_comm=_host_agent_comm,
+            pack_services=fake_pack_services,
+        )
+    assert result == {"id": str(host_id)}
+    assert fake_hs_reg_fallback.session_factory.begun == 2
+    _host_agent_comm.circuit_breaker.record_success.assert_awaited_once_with(host.ip)
+
+    response.status_code = 200
+    fake_hs_reg_ok = _host_services(register_host=AsyncMock(return_value=(host, True)))
     with (
         patch("app.hosts.router._fire_and_forget", new=Mock()) as fire,
         patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
@@ -911,7 +955,6 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
         result = await hosts.register_host(  # type: ignore[arg-type]
             object(),
             response,
-            db=object(),
             host_services=fake_hs_reg_ok,
             event_services=mock_event_services,
             settings_services=mock_ss,
@@ -922,11 +965,10 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
     assert response.status_code == 201
     assert fire.call_count == 1
 
-    fake_hs_appr_none = SimpleNamespace(crud=SimpleNamespace(approve_host=AsyncMock(return_value=None)))
+    fake_hs_appr_none = _host_services(approve_host=AsyncMock(return_value=None))
     with pytest.raises(HTTPException) as exc:
         await hosts.approve_host(
             host_id,
-            db=object(),
             host_services=fake_hs_appr_none,
             event_services=mock_event_services,
             settings_services=mock_ss,
@@ -934,14 +976,13 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
         )
     assert exc.value.status_code == 404
 
-    fake_hs_appr_ok = SimpleNamespace(crud=SimpleNamespace(approve_host=AsyncMock(return_value=host)))
+    fake_hs_appr_ok = _host_services(approve_host=AsyncMock(return_value=host))
     with (
         patch("app.hosts.router._fire_and_forget", new=Mock()) as fire,
         patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})),
     ):
         result = await hosts.approve_host(
             host_id,
-            db=object(),
             host_services=fake_hs_appr_ok,
             event_services=mock_event_services,
             settings_services=mock_ss,
@@ -950,28 +991,26 @@ async def test_hosts_router_registration_and_basic_crud_paths() -> None:
         assert result == {"id": str(host_id)}
     assert fire.call_count == 1
 
-    fake_hs_rej_false = SimpleNamespace(crud=SimpleNamespace(reject_host=AsyncMock(return_value=False)))
+    fake_hs_rej_false = _host_services(reject_host=AsyncMock(return_value=False))
     with pytest.raises(HTTPException) as exc:
-        await hosts.reject_host(host_id, db=object(), host_services=fake_hs_rej_false)
+        await hosts.reject_host(host_id, host_services=fake_hs_rej_false)
     assert exc.value.status_code == 404
 
-    fake_hs_rej_true = SimpleNamespace(crud=SimpleNamespace(reject_host=AsyncMock(return_value=True)))
-    assert await hosts.reject_host(host_id, db=object(), host_services=fake_hs_rej_true) is None
+    fake_hs_rej_true = _host_services(reject_host=AsyncMock(return_value=True))
+    assert await hosts.reject_host(host_id, host_services=fake_hs_rej_true) is None
 
-    fake_hs_create_err = SimpleNamespace(
-        crud=SimpleNamespace(create_host=AsyncMock(side_effect=IntegrityError("", {}, None)))
-    )
+    fake_hs_create_err = _host_services(create_host=AsyncMock(side_effect=IntegrityError("", {}, None)))
     with pytest.raises(HTTPException) as exc:
-        await hosts.create_host(object(), db=object(), host_services=fake_hs_create_err, settings_services=mock_ss)  # type: ignore[arg-type]
+        await hosts.create_host(object(), host_services=fake_hs_create_err, settings_services=mock_ss)  # type: ignore[arg-type]
     assert exc.value.status_code == 409
 
-    fake_hs_create_ok = SimpleNamespace(crud=SimpleNamespace(create_host=AsyncMock(return_value=host)))
+    fake_hs_create_ok = _host_services(create_host=AsyncMock(return_value=host))
     with patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})):
-        assert await hosts.create_host(
-            object(), db=object(), host_services=fake_hs_create_ok, settings_services=mock_ss
-        ) == {"id": str(host_id)}  # type: ignore[arg-type]
+        assert await hosts.create_host(object(), host_services=fake_hs_create_ok, settings_services=mock_ss) == {
+            "id": str(host_id)
+        }  # type: ignore[arg-type]
 
-    fake_hs_list = SimpleNamespace(crud=SimpleNamespace(list_hosts=AsyncMock(return_value=[host])))
+    fake_hs_list = _host_services(list_hosts=AsyncMock(return_value=[host]))
     with patch("app.hosts.router._serialize_host", new=Mock(return_value={"id": str(host_id)})):
         assert await hosts.list_hosts(db=object(), host_services=fake_hs_list, settings_services=mock_ss) == [
             {"id": str(host_id)}
@@ -993,14 +1032,24 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
 
     mock_ss = _mock_settings_svc(FakeSettingsReader({}))
     _tools_agent_comm = SimpleNamespace(circuit_breaker=Mock(), http_pool=None)
-    _disc_pack_svc = SimpleNamespace(discovery=AsyncMock())
-    fake_hs_none = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=None)))
+    _disc_pack_svc = SimpleNamespace(discovery=AsyncMock(), session_factory=FakeSessionFactory(DummySession()))
+
+    def _hosts_with(session: object, **crud: object) -> SimpleNamespace:
+        return SimpleNamespace(crud=SimpleNamespace(**crud), session_factory=FakeSessionFactory(session))
+
+    # Tool status reads the row on its own short session; discovery reads a
+    # HostTarget through crud. Both answer 404 for a host that is not there.
+    fake_hs_none = _hosts_with(
+        DummySession(get_result=None),
+        load_host_target=AsyncMock(return_value=None),
+        get_host=AsyncMock(return_value=None),
+    )
     for call in (
         lambda: hosts.get_host_tool_status(
-            host_id, db=object(), host_services=fake_hs_none, settings_services=mock_ss, agent_comm=_tools_agent_comm
+            host_id, host_services=fake_hs_none, settings_services=mock_ss, agent_comm=_tools_agent_comm
         ),
-        lambda: hosts.discover_devices(host_id, db=object(), host_services=fake_hs_none, pack_services=_disc_pack_svc),
-        lambda: hosts.intake_candidates(host_id, db=object(), host_services=fake_hs_none, pack_services=_disc_pack_svc),
+        lambda: hosts.discover_devices(host_id, host_services=fake_hs_none, pack_services=_disc_pack_svc),
+        lambda: hosts.intake_candidates(host_id, host_services=fake_hs_none, pack_services=_disc_pack_svc),
     ):
         with pytest.raises(HTTPException) as exc:
             await call()
@@ -1014,7 +1063,6 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
         lambda: hosts.confirm_discovery(
             host_id,
             SimpleNamespace(add_identity_values=[], remove_identity_values=[]),
-            db=object(),
             host_services=fake_hs_none,
             pack_services=_disc_pack_svc,
         ),
@@ -1023,7 +1071,7 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
             await call()
         assert exc.value.status_code == 404
 
-    fake_hs_host = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=host)))
+    fake_hs_host = _hosts_with(DummySession(), get_host=AsyncMock(return_value=host))
     fake_ds_host: Any = SimpleNamespace(
         presenter=SimpleNamespace(serialize_device=AsyncMock(return_value={"id": str(device.id)}))
     )
@@ -1067,16 +1115,35 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
         "samples": []
     }
 
-    offline = SimpleNamespace(status=HostStatus.offline, last_heartbeat=None)
-    fake_hs_offline = SimpleNamespace(crud=SimpleNamespace(get_host=AsyncMock(return_value=offline)))
+    offline = SimpleNamespace(
+        id=host_id,
+        hostname="host-1",
+        ip="10.0.0.1",
+        agent_port=5100,
+        current_boot_id=None,
+        status=HostStatus.offline,
+        last_heartbeat=None,
+    )
+    fake_hs_offline = _hosts_with(DummySession(get_result=offline))
     with pytest.raises(HTTPException) as exc:
         await hosts.get_host_tool_status(
-            host_id, db=object(), host_services=fake_hs_offline, settings_services=mock_ss, agent_comm=_tools_agent_comm
+            host_id, host_services=fake_hs_offline, settings_services=mock_ss, agent_comm=_tools_agent_comm
         )
     assert exc.value.status_code == 400
+
+    online_target = SimpleNamespace(
+        id=host_id,
+        hostname="host-1",
+        ip="10.0.0.1",
+        agent_port=5100,
+        current_boot_id=None,
+        status=HostStatus.online,
+        last_heartbeat=datetime.now(UTC),
+    )
+    fake_hs_online = _hosts_with(DummySession(get_result=online_target))
     with patch("app.hosts.router.get_agent_tool_status", new=AsyncMock(return_value={"host": {}, "packs": {}})):
         assert await hosts.get_host_tool_status(
-            host_id, db=object(), host_services=fake_hs_host, settings_services=mock_ss, agent_comm=_tools_agent_comm
+            host_id, host_services=fake_hs_online, settings_services=mock_ss, agent_comm=_tools_agent_comm
         ) == {
             "host": {},
             "packs": {},
@@ -1084,53 +1151,55 @@ async def test_hosts_router_detail_diagnostics_tools_and_discovery_paths() -> No
 
     for error, status_code in ((ValueError("busy"), 409), (None, 404)):
         del_mock = AsyncMock(side_effect=error) if error is not None else AsyncMock(return_value=False)
-        fake_hs_del = SimpleNamespace(crud=SimpleNamespace(delete_host=del_mock))
+        fake_hs_del = _hosts_with(DummySession(), delete_host=del_mock)
         with pytest.raises(HTTPException) as exc:
-            await hosts.delete_host(host_id, db=object(), host_services=fake_hs_del)
+            await hosts.delete_host(host_id, host_services=fake_hs_del)
         assert exc.value.status_code == status_code
-    fake_hs_del_ok = SimpleNamespace(crud=SimpleNamespace(delete_host=AsyncMock(return_value=True)))
-    assert await hosts.delete_host(host_id, db=object(), host_services=fake_hs_del_ok) is None
+    fake_hs_del_ok = _hosts_with(DummySession(), delete_host=AsyncMock(return_value=True))
+    assert await hosts.delete_host(host_id, host_services=fake_hs_del_ok) is None
 
+    target = HostTarget(host_id=host_id, hostname="host-1", ip="10.0.0.1", agent_port=5100, current_boot_id=None)
+    fake_hs_target = _hosts_with(DummySession(), load_host_target=AsyncMock(return_value=target))
     fake_disc_svc_ok = SimpleNamespace(
-        discover_devices=AsyncMock(return_value="discovered"),
-        list_intake_candidates=AsyncMock(return_value=["candidate"]),
+        fetch_pack_candidates=AsyncMock(return_value=()),
+        classify_discovery=AsyncMock(return_value="discovered"),
+        build_intake_candidates=AsyncMock(return_value=["candidate"]),
     )
-    fake_ps_ok = SimpleNamespace(discovery=fake_disc_svc_ok)
-    assert (
-        await hosts.discover_devices(
-            host_id,
-            db=object(),
-            host_services=fake_hs_host,
-            pack_services=fake_ps_ok,
-        )
-        == "discovered"
-    )
-    assert await hosts.intake_candidates(
-        host_id,
-        db=object(),
-        host_services=fake_hs_host,
-        pack_services=fake_ps_ok,
-    ) == ["candidate"]
+    fake_ps_ok = SimpleNamespace(discovery=fake_disc_svc_ok, session_factory=FakeSessionFactory(DummySession()))
+    assert await hosts.discover_devices(host_id, host_services=fake_hs_target, pack_services=fake_ps_ok) == "discovered"
+    assert await hosts.intake_candidates(host_id, host_services=fake_hs_target, pack_services=fake_ps_ok) == [
+        "candidate"
+    ]
 
     body = SimpleNamespace(add_identity_values=["serial"], remove_identity_values=[])
     fake_disc_svc_conflict = SimpleNamespace(
-        discover_devices=AsyncMock(return_value="fresh"),
+        fetch_pack_candidates=AsyncMock(return_value=()),
         confirm_discovery=AsyncMock(side_effect=DeviceIdentityConflictError("dupe")),
     )
-    fake_ps_conflict = SimpleNamespace(discovery=fake_disc_svc_conflict)
+    fake_ps_conflict = SimpleNamespace(
+        discovery=fake_disc_svc_conflict, session_factory=FakeSessionFactory(DummySession())
+    )
     with pytest.raises(HTTPException) as exc:
-        await hosts.confirm_discovery(
-            host_id, body, db=object(), host_services=fake_hs_host, pack_services=fake_ps_conflict
-        )  # type: ignore[arg-type]
+        await hosts.confirm_discovery(host_id, body, host_services=fake_hs_target, pack_services=fake_ps_conflict)  # type: ignore[arg-type]
     assert exc.value.status_code == 409
 
+    # A vanished or superseded host surfaces as the same 404 the prepare phase gives.
+    fake_disc_svc_stale = SimpleNamespace(
+        fetch_pack_candidates=AsyncMock(return_value=()),
+        confirm_discovery=AsyncMock(side_effect=NoResultFound),
+    )
+    fake_ps_stale = SimpleNamespace(discovery=fake_disc_svc_stale, session_factory=FakeSessionFactory(DummySession()))
+    with pytest.raises(HTTPException) as exc:
+        await hosts.confirm_discovery(host_id, body, host_services=fake_hs_target, pack_services=fake_ps_stale)  # type: ignore[arg-type]
+    assert exc.value.status_code == 404
+
     fake_disc_svc_ok2 = SimpleNamespace(
-        discover_devices=AsyncMock(return_value="fresh"),
+        fetch_pack_candidates=AsyncMock(return_value=()),
         confirm_discovery=AsyncMock(return_value="confirmed"),
     )
-    fake_ps_ok2 = SimpleNamespace(discovery=fake_disc_svc_ok2)
+    fake_ps_ok2 = SimpleNamespace(discovery=fake_disc_svc_ok2, session_factory=FakeSessionFactory(DummySession()))
     assert (
-        await hosts.confirm_discovery(host_id, body, db=object(), host_services=fake_hs_host, pack_services=fake_ps_ok2)
+        await hosts.confirm_discovery(host_id, body, host_services=fake_hs_target, pack_services=fake_ps_ok2)
         == "confirmed"
     )  # type: ignore[arg-type]
 

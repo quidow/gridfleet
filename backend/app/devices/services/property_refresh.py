@@ -30,7 +30,12 @@ class PropertyRefreshService:
         (identity guard for network-device connection_target rewrites included).
 
         Inventory reads in one short session; each device then settles in its
-        own fresh session, so one failed device cannot poison a peer.
+        own fresh transaction, so one failed device cannot poison a peer.
+
+        The ``begin()`` below is the boundary ``apply_pack_device_properties``
+        gave up when it became flush-only. Without it the provider's mutation
+        would be discarded at session close and every refreshed property would
+        be silently dropped.
         """
         raw = section.get("devices")
         if not isinstance(raw, dict) or not raw:
@@ -51,7 +56,7 @@ class PropertyRefreshService:
 
         for device_id, _target, data in sorted(work, key=lambda item: str(item[0])):
             try:
-                async with session_factory() as db:
+                async with session_factory.begin() as db:
                     device = await db.get(Device, device_id, options=[selectinload(Device.host)])
                     if device is None:
                         continue

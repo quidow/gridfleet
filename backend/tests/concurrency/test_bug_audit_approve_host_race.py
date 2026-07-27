@@ -106,6 +106,9 @@ async def test_approve_host_races_concurrent_reject(
         # crash-free when a concurrent reject deletes the row between the SELECT
         # and the UPDATE/refresh.
         approved = await crud.approve_host(db_session, host_id)
+        # approve_host is transaction-local: the caller owns the boundary, so the
+        # side-channel below can only observe the outcome once we commit.
+        await db_session.commit()
     finally:
         db_session.execute = original_execute  # type: ignore[method-assign]
 

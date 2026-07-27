@@ -6,7 +6,7 @@ from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.presenter import DevicePresenterService
-from app.hosts.schemas import DiscoveredDevice, DiscoveryResult
+from app.hosts.service import HostTarget
 from app.lifecycle.services import incidents
 from app.lifecycle.services.incidents import LifecycleIncidentDetails, LifecycleIncidentService
 from app.packs.services.discovery import PackDiscoveryService
@@ -157,34 +157,33 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
         identity_guard=DeviceIdentityConflictService(),
     )
 
-    intake = await svc.list_intake_candidates(db_session, db_host)
+    target = HostTarget(
+        host_id=db_host.id,
+        hostname=db_host.hostname,
+        ip=db_host.ip,
+        agent_port=db_host.agent_port,
+        current_boot_id=db_host.current_boot_id,
+    )
+    fetched = await svc.fetch_pack_candidates(target)
+
+    intake = await svc.build_intake_candidates(db_session, target.host_id, fetched)
     assert [item.already_registered for item in intake] == [True, False]
     assert intake[0].platform_label == "Android"
 
-    result = await svc.discover_devices(db_session, db_host)
+    result = await svc.classify_discovery(db_session, target.host_id, fetched)
     assert [device.identity_value for device in result.updated_devices] == ["discovery-existing"]
     assert [device.identity_value for device in result.new_devices] == ["discovery-new"]
     assert result.removed_identity_values == ["discovery-removed"]
 
     monkeypatch.setattr(svc._identity_guard, "ensure_device_payload_identity_available", AsyncMock())
+    # Confirmation classifies for itself, under the Host lock, from the same raw
+    # candidate list — no caller-supplied DiscoveryResult to drift from it.
     confirm_result = await svc.confirm_discovery(
         db_session,
-        db_host,
-        add_identity_values=["discovery-new"],
-        remove_identity_values=[removed.identity_value],
-        discovery_result=DiscoveryResult(
-            new_devices=result.new_devices,
-            updated_devices=[
-                DiscoveredDevice(
-                    **{
-                        **result.updated_devices[0].model_dump(),
-                        "os_version": "17",
-                        "software_versions": {"build": "confirm"},
-                    }
-                )
-            ],
-            removed_identity_values=result.removed_identity_values,
-        ),
+        target,
+        fetched,
+        ["discovery-new"],
+        [removed.identity_value],
     )
     assert confirm_result.added == ["discovery-new"]
     assert confirm_result.removed == ["discovery-removed"]

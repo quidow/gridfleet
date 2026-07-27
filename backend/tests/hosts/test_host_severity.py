@@ -104,6 +104,9 @@ async def test_approve_host_pending_to_online_emits_success(
         db_session, host.id
     )
     assert approved is not None
+    # approve_host is transaction-local now: the staged row only becomes
+    # deliverable once the caller's transaction commits.
+    await db_session.commit()
 
     await dispatch_committed_events()
     events = [e for e in captured if e["type"] == "host.status_changed"]

@@ -198,7 +198,7 @@ async def test_error_envelope_for_agent_unreachable(client: AsyncClient) -> None
 
     with patch.object(
         PackDiscoveryService,
-        "discover_devices",
+        "fetch_pack_candidates",
         new=AsyncMock(side_effect=AgentUnreachableError("10.0.0.31", "Cannot reach agent host 10.0.0.31: boom")),
     ):
         response = await client.post(f"/api/hosts/{host['id']}/discover")
@@ -212,7 +212,7 @@ async def test_error_envelope_for_circuit_open(client: AsyncClient) -> None:
 
     with patch.object(
         PackDiscoveryService,
-        "discover_devices",
+        "fetch_pack_candidates",
         new=AsyncMock(side_effect=CircuitOpenError("10.0.0.31", retry_after_seconds=12.0)),
     ):
         response = await client.post(f"/api/hosts/{host['id']}/discover")

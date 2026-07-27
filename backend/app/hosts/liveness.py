@@ -10,7 +10,7 @@ use these helpers (Python or SQL form) with general.host_offline_after_sec.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import and_, or_
 
@@ -21,7 +21,23 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
 
-def host_online(host: Host, *, offline_after_sec: float, now: datetime | None = None) -> bool:
+class HostLivenessFacts(Protocol):
+    """The three Host columns liveness reads, and nothing else.
+
+    ``Host`` satisfies it, and so does an immutable command snapshot that has
+    outlived its session — a router builds its response from the snapshot, so
+    the status projection has to answer for both.
+    """
+
+    @property
+    def status(self) -> HostStatus: ...
+    @property
+    def last_heartbeat(self) -> datetime | None: ...
+    @property
+    def created_at(self) -> datetime: ...
+
+
+def host_online(host: HostLivenessFacts, *, offline_after_sec: float, now: datetime | None = None) -> bool:
     if host.status == HostStatus.pending:
         return False
     moment = now or now_utc()
@@ -35,7 +51,9 @@ def host_online(host: Host, *, offline_after_sec: float, now: datetime | None = 
     return (moment - host.created_at).total_seconds() <= offline_after_sec
 
 
-def effective_host_status(host: Host, *, offline_after_sec: float, now: datetime | None = None) -> HostStatus:
+def effective_host_status(
+    host: HostLivenessFacts, *, offline_after_sec: float, now: datetime | None = None
+) -> HostStatus:
     if host.status == HostStatus.pending:
         return HostStatus.pending
     online = host_online(host, offline_after_sec=offline_after_sec, now=now)

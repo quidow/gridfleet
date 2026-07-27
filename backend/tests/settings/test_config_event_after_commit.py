@@ -27,6 +27,9 @@ async def test_register_host_queues_host_registered(
     host, _is_new = await HostCrudService(publisher=event_bus, settings=FakeSettingsReader({})).register_host(
         db_session, payload
     )
+    # register_host is transaction-local: the staged row is only deliverable
+    # once the caller's transaction commits.
+    await db_session.commit()
     await dispatch_committed_events()
 
     registered = [p for n, p in event_bus_capture if n == "host.registered"]
@@ -45,6 +48,7 @@ async def test_approve_host_queues_status_changed(
         publisher=event_bus, settings=FakeSettingsReader({"agent.auto_accept_hosts": False})
     ).register_host(db_session, payload)
     assert host.status.value == "pending"
+    await db_session.commit()
     await dispatch_committed_events()
     event_bus_capture.clear()
 
@@ -52,6 +56,7 @@ async def test_approve_host_queues_status_changed(
         db_session, host.id
     )
     assert approved is not None
+    await db_session.commit()
     await dispatch_committed_events()
 
     changed = [p for n, p in event_bus_capture if n == "host.status_changed"]
