@@ -177,6 +177,9 @@ def test_churnable_combos_selects_only_available_devices() -> None:
             _StubDevice("appium-uiautomator2", "android-auto", "maintenance"),
             # An unpacked device cannot be matched by (pack_id, platform_id).
             _StubDevice("", "android", "available"),
+            # Nor can an unplatformed one -- the testkit Device coerces a null
+            # backend platform_id to "", a shape a live device row can take.
+            _StubDevice("appium-uiautomator2", "", "available"),
         ]
     )
 

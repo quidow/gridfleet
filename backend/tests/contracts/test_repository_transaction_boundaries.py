@@ -737,11 +737,20 @@ def test_every_effect_entry_point_is_registered() -> None:
 
 
 def test_no_effect_runs_inside_a_transaction_block() -> None:
+    """Name-set-based, not construct-based: this sees only the tails matched by
+    AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / SUBPROCESS_NAMES / FILESYSTEM_NAMES
+    (via ``_effect_call_name``), so a raw ``await client.post(...)`` inside a
+    ``begin()`` block would not be caught here. That is fine today because raw
+    ``httpx2`` calls are confined to ``app/agent_comm/`` and
+    ``app/grid/appium_direct.py``, both of which route through the named tails
+    above -- but it is a property of this repository's current call sites, not
+    a guarantee this scan enforces."""
     findings = effects_inside_transactions()
     assert findings == [], (
-        "an agent/Appium/HTTP call, subprocess, filesystem write or wait must not sit inside a begin() block: "
-        "the transaction (and any row lock it holds) would stay open across it. Copy immutable scalars out, let "
-        f"the transaction end, then act. Found: {findings}"
+        "one of this repository's known effect entry points (see AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / "
+        "SUBPROCESS_NAMES / FILESYSTEM_NAMES above) must not sit inside a begin() block: the transaction (and any "
+        "row lock it holds) would stay open across it. Copy immutable scalars out, let the transaction end, then "
+        f"act. Found: {findings}"
     )
 
 

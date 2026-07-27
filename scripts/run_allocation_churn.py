@@ -117,7 +117,7 @@ def churnable_combos(devices: Sequence[Device]) -> list[tuple[str, str]]:
         {
             (device.pack_id, device.platform_id)
             for device in devices
-            if device.pack_id and device.operational_state == "available"
+            if device.pack_id and device.platform_id and device.operational_state == "available"
         }
     )
 

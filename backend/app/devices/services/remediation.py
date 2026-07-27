@@ -30,6 +30,9 @@ async def enqueue_device_health_remediation(
     fact that justified it.
     """
     job_id = uuid.uuid4()
+    # This insert takes Device before Job; the opposite order (Job before
+    # Device) is taken in remediation_job._prepare -- see the note there for
+    # why that inversion does not deadlock against ON CONFLICT DO NOTHING.
     stmt = (
         pg_insert(Job)
         .values(

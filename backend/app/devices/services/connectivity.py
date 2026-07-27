@@ -331,6 +331,8 @@ class ConnectivityService:
             # Keep the episode-bearing fact, connectivity marker, and durable
             # enqueue atomic; the fold owns the commit for lifecycle policy too.
             await control_plane_state_store.set_value(db, CONNECTIVITY_NAMESPACE, device.identity_value, True)
+            # Device is locked before this enqueue's insert; the opposite order
+            # is taken in remediation_job._prepare -- see the note there.
             await self._maybe_enqueue_remediation(db, device, remediation_result)
         if not was_offline:
             await self._lifecycle_policy.handle_health_failure_locked(
@@ -517,9 +519,19 @@ class ConnectivityService:
                                     observed_at=observed_at,
                                     debounce_windows=debounce_windows,
                                 )
-                                # Flush inside the presence block so a rejected write
-                                # discards the presence child with it, the way the
-                                # commit that used to sit here did.
+                                # This flush pulls statement failures back inside
+                                # transactional_presence(): a rejected write raises
+                                # here, still inside the block, so the presence
+                                # child is discarded with it. It does not restore
+                                # full containment -- the actual COMMIT now happens
+                                # at db.begin() exit, outside this block, so a
+                                # connection-level COMMIT failure with zero pending
+                                # DML would still merge the child. That residual is
+                                # inert: presence keys are per-device
+                                # (device.identity_value), and the only device that
+                                # could touch this key is the one whose item
+                                # transaction just failed and will not be revisited
+                                # this tick.
                                 await db.flush()
                     metrics.record_device_health_fold_result(outcome)
                     if outcome == "retryable":

@@ -632,6 +632,16 @@ class PortabilityImportService:
         bounded batches. Translation happens only after the nested context has
         exited (committed or rolled back) and never calls a savepoint method
         directly.
+
+        That per-row contract assumes the ``except Exception`` below only ever
+        catches an error local to this row's statements. A ``40P01`` deadlock
+        or ``40001`` serialization failure aborts the *outer* (batch)
+        transaction instead -- ``ROLLBACK TO SAVEPOINT`` cannot recover an
+        already-aborted transaction -- and every later row in the batch would
+        then surface as a spuriously-failed row before the batch commit itself
+        raises. That class is unreachable under READ COMMITTED for the
+        statements this method issues, so the assumption holds today, but it
+        is an assumption, not a guarantee this method enforces.
         """
         try:
             async with db.begin_nested():

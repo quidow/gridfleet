@@ -55,6 +55,8 @@ from app.sessions.models import Session
 from app.sessions.service import device_has_running_session
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.agent_comm.http_pool import AgentHttpPool
@@ -84,7 +86,7 @@ class RemediationEffect:
     pack_id: str
     platform_id: str
     ip_address: str | None
-    extra_args: dict[str, Any]
+    extra_args: Mapping[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +169,23 @@ class RemediationJobService:
         action = str(payload["action_id"])
 
         async with self._session_factory.begin() as db:
+            # Lock order here is Job then Device -- the opposite of the health
+            # fold's Device-then-jobs-insert (connectivity.py's
+            # _escalate_health_failure -> remediation.enqueue_device_health_remediation).
+            # The inversion does not deadlock only because SELECT ... FOR UPDATE
+            # leaves a lock-only xmax on the job row: Postgres's dirty-snapshot
+            # check does not treat that as an xwait, so the fold's
+            # INSERT ... ON CONFLICT DO NOTHING never blocks on it. The moment a
+            # job.* write lands on this locked row before the device lock below
+            # succeeds, the row carries a real update xmax and the fold's insert
+            # does wait on it -- while this transaction is waiting on the device
+            # lock the fold already holds. That is a confirmed deadlock, not a
+            # theoretical one. So every job.* write in this method (including a
+            # hoisted _complete(job, ...)) must stay strictly below the
+            # lock_device_handle() call. The one exception is the
+            # NoResultFound branch right below: it runs only when that call
+            # itself failed to acquire the device lock, so there is no device
+            # lock for a fold transaction to be holding.
             job = await _lock_claimed_job(db, job_id, claim_attempt)
             if job is None:
                 return None
