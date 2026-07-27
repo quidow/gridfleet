@@ -363,39 +363,44 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
     assert created.id == run.id
 
     pack_id = "appium-demo"
-    pack = SimpleNamespace(id=pack_id)
-    mock_packs_update = SimpleNamespace(lifecycle=SimpleNamespace(transition_pack_state=AsyncMock(return_value=pack)))
-    with patch("app.packs.routers.catalog.build_pack_out", new=Mock(return_value={"id": pack_id})):
-        assert (
-            await driver_packs.update_pack(
-                pack_id,
-                driver_packs.PackPatch(state="enabled"),
-                _username="admin",
-                session=object(),
-                packs=mock_packs_update,
-            )
-        ) == {"id": pack_id}
+    pack_out = SimpleNamespace(id=pack_id)
+    mock_packs_update = SimpleNamespace(
+        lifecycle=SimpleNamespace(transition_pack_state_txn=AsyncMock(return_value=pack_out)),
+        session_factory=FakeSessionFactory(object()),
+    )
+    assert (
+        await driver_packs.update_pack(
+            pack_id,
+            driver_packs.PackPatch(state="enabled"),
+            _username="admin",
+            packs=mock_packs_update,
+        )
+    ) is pack_out
+    assert mock_packs_update.session_factory.begun == 1, "the state transition must own exactly one boundary"
 
-    mock_packs_policy = SimpleNamespace(catalog=SimpleNamespace(set_runtime_policy=AsyncMock(return_value=pack)))
-    with patch("app.packs.routers.catalog.build_pack_out", new=Mock(return_value={"id": pack_id})):
-        assert (
-            await driver_packs.update_runtime_policy(
-                pack_id,
-                driver_packs.RuntimePolicyPatch(runtime_policy=RuntimePolicy()),
-                _username="admin",
-                session=object(),
-                packs=mock_packs_policy,
-            )
-        ) == {"id": pack_id}
+    mock_packs_policy = SimpleNamespace(
+        catalog=SimpleNamespace(set_runtime_policy=AsyncMock(return_value=pack_out)),
+        session_factory=FakeSessionFactory(object()),
+    )
+    assert (
+        await driver_packs.update_runtime_policy(
+            pack_id,
+            driver_packs.RuntimePolicyPatch(runtime_policy=RuntimePolicy()),
+            _username="admin",
+            packs=mock_packs_policy,
+        )
+    ) is pack_out
+    assert mock_packs_policy.session_factory.begun == 1, "the policy route must own exactly one boundary"
 
     mock_packs_del_404 = SimpleNamespace(
-        catalog=SimpleNamespace(delete_pack=AsyncMock(side_effect=LookupError("missing")))
+        catalog=SimpleNamespace(delete_pack=AsyncMock(side_effect=LookupError("missing"))),
+        session_factory=FakeSessionFactory(object()),
     )
     with pytest.raises(HTTPException) as exc:
-        await driver_packs.delete_driver_pack(
-            pack_id, _username="admin", session=DummySession(), packs=mock_packs_del_404
-        )
+        await driver_packs.delete_driver_pack(pack_id, _username="admin", packs=mock_packs_del_404)
     assert exc.value.status_code == 404
+    # The 404 is raised after the command transaction closed, not instead of it.
+    assert mock_packs_del_404.session_factory.begun == 1
 
     reset_svc = Mock()
     reset_svc.reset_all = AsyncMock()
@@ -2002,8 +2007,7 @@ async def test_driver_pack_upload_export_error_mapping() -> None:
         await driver_pack_uploads.upload(
             tarball=ChunkUpload([]),  # type: ignore[arg-type]
             username="admin",
-            session=DummySession(),
-            packs=SimpleNamespace(release=object()),
+            packs=SimpleNamespace(release=object(), session_factory=FakeSessionFactory(object())),
         )
     assert exc.value.status_code == 400
 
@@ -2015,30 +2019,34 @@ async def test_driver_pack_upload_export_error_mapping() -> None:
     assert await driver_pack_uploads.list_releases("pack", session=object(), packs=mock_packs_releases) == "releases"
 
     pack = SimpleNamespace(id="local/uploaded")
-    session = DummySession()
-    mock_packs_upload = SimpleNamespace(release=SimpleNamespace(upload=AsyncMock(return_value=pack)))
+    mock_packs_upload = SimpleNamespace(
+        release=SimpleNamespace(upload=AsyncMock(return_value=pack)),
+        session_factory=FakeSessionFactory(object()),
+    )
     with patch("app.packs.routers.uploads.build_pack_out", new=Mock(return_value={"id": pack.id})):
         assert await driver_pack_uploads.upload(
             tarball=ChunkUpload([b"tar"]),  # type: ignore[arg-type]
             username="admin",
-            session=session,
             packs=mock_packs_upload,
         ) == {"id": "local/uploaded"}
-    assert session.committed is True
+    assert mock_packs_upload.session_factory.begun == 1
 
     for error, status_code in (
         (driver_pack_uploads.PackUploadValidationError("bad manifest"), 400),
         (driver_pack_uploads.PackUploadConflictError("duplicate"), 409),
     ):
-        mock_packs_err = SimpleNamespace(release=SimpleNamespace(upload=AsyncMock(side_effect=error)))
+        mock_packs_err = SimpleNamespace(
+            release=SimpleNamespace(upload=AsyncMock(side_effect=error)),
+            session_factory=FakeSessionFactory(object()),
+        )
         with pytest.raises(HTTPException) as exc:
             await driver_pack_uploads.upload(
                 tarball=ChunkUpload([b"tar"]),  # type: ignore[arg-type]
                 username="admin",
-                session=DummySession(),
                 packs=mock_packs_err,
             )
         assert exc.value.status_code == status_code
+        assert mock_packs_err.session_factory.begun == 1
 
 
 async def test_driver_pack_upload_tarball_and_release_mutations(tmp_path: Path) -> None:
@@ -2067,37 +2075,40 @@ async def test_driver_pack_upload_tarball_and_release_mutations(tmp_path: Path) 
     assert response.path == str(artifact_path)
 
     pack = SimpleNamespace(id="local/uploaded")
-    session = DummySession()
-    mock_packs_current = SimpleNamespace(release=SimpleNamespace(set_current_release=AsyncMock(return_value=pack)))
+    mock_packs_current = SimpleNamespace(
+        release=SimpleNamespace(set_current_release=AsyncMock(return_value=pack)),
+        session_factory=FakeSessionFactory(object()),
+    )
     with patch("app.packs.routers.uploads.build_pack_out", new=Mock(return_value={"id": pack.id})):
         assert await driver_pack_uploads.update_current_release(
             "pack",
             CurrentReleasePatch(release="1.0.0"),
             _username="admin",
-            session=session,
             packs=mock_packs_current,
         ) == {"id": "local/uploaded"}
-    assert session.committed is True
+    assert mock_packs_current.session_factory.begun == 1
 
     for error, status_code in (
         (LookupError("missing"), 404),
         (ValueError("current"), 400),
         (RuntimeError("busy"), 409),
     ):
-        mock_packs_del_err = SimpleNamespace(release=SimpleNamespace(delete_release=AsyncMock(side_effect=error)))
+        mock_packs_del_err = SimpleNamespace(
+            release=SimpleNamespace(delete_release=AsyncMock(side_effect=error)),
+            session_factory=FakeSessionFactory(object()),
+        )
         with pytest.raises(HTTPException) as exc:
-            await driver_pack_uploads.delete_release(
-                "pack", "1.0.0", _username="admin", session=DummySession(), packs=mock_packs_del_err
-            )
+            await driver_pack_uploads.delete_release("pack", "1.0.0", _username="admin", packs=mock_packs_del_err)
         assert exc.value.status_code == status_code
+        assert mock_packs_del_err.session_factory.begun == 1
 
-    delete_session = DummySession()
-    mock_packs_del_ok = SimpleNamespace(release=SimpleNamespace(delete_release=AsyncMock(return_value=None)))
-    response = await driver_pack_uploads.delete_release(
-        "pack", "1.0.0", _username="admin", session=delete_session, packs=mock_packs_del_ok
+    mock_packs_del_ok = SimpleNamespace(
+        release=SimpleNamespace(delete_release=AsyncMock(return_value=None)),
+        session_factory=FakeSessionFactory(object()),
     )
+    response = await driver_pack_uploads.delete_release("pack", "1.0.0", _username="admin", packs=mock_packs_del_ok)
     assert response.status_code == 204
-    assert delete_session.committed is True
+    assert mock_packs_del_ok.session_factory.begun == 1
 
 
 async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
@@ -2130,54 +2141,53 @@ async def test_driver_pack_router_error_mapping_and_success_paths() -> None:
             pack_id,
             driver_packs.PackPatch(state="not-a-state"),
             _username="admin",
-            session=object(),
-            packs=SimpleNamespace(lifecycle=SimpleNamespace()),
+            packs=SimpleNamespace(lifecycle=SimpleNamespace(), session_factory=FakeSessionFactory(object())),
         )
     assert exc.value.status_code == 400
 
     for error, status_code in ((LookupError("missing"), 404), (ValueError("bad transition"), 400)):
         mock_packs_lc_err = SimpleNamespace(
-            lifecycle=SimpleNamespace(transition_pack_state=AsyncMock(side_effect=error))
+            lifecycle=SimpleNamespace(transition_pack_state_txn=AsyncMock(side_effect=error)),
+            session_factory=FakeSessionFactory(object()),
         )
         with pytest.raises(HTTPException) as exc:
             await driver_packs.update_pack(
                 pack_id,
                 driver_packs.PackPatch(state="enabled"),
                 _username="admin",
-                session=object(),
                 packs=mock_packs_lc_err,
             )
         assert exc.value.status_code == status_code
+        assert mock_packs_lc_err.session_factory.begun == 1
 
     mock_packs_policy_err = SimpleNamespace(
-        catalog=SimpleNamespace(set_runtime_policy=AsyncMock(side_effect=LookupError("missing")))
+        catalog=SimpleNamespace(set_runtime_policy=AsyncMock(side_effect=LookupError("missing"))),
+        session_factory=FakeSessionFactory(object()),
     )
     with pytest.raises(HTTPException) as exc:
         await driver_packs.update_runtime_policy(
             pack_id,
             driver_packs.RuntimePolicyPatch(runtime_policy=RuntimePolicy()),
             _username="admin",
-            session=object(),
             packs=mock_packs_policy_err,
         )
     assert exc.value.status_code == 404
 
-    dummy_session = DummySession()
     mock_packs_del_err = SimpleNamespace(
-        catalog=SimpleNamespace(delete_pack=AsyncMock(side_effect=RuntimeError("in use")))
+        catalog=SimpleNamespace(delete_pack=AsyncMock(side_effect=RuntimeError("in use"))),
+        session_factory=FakeSessionFactory(object()),
     )
     with pytest.raises(HTTPException) as exc:
-        await driver_packs.delete_driver_pack(
-            pack_id, _username="admin", session=dummy_session, packs=mock_packs_del_err
-        )
+        await driver_packs.delete_driver_pack(pack_id, _username="admin", packs=mock_packs_del_err)
     assert exc.value.status_code == 409
 
-    mock_packs_del_ok = SimpleNamespace(catalog=SimpleNamespace(delete_pack=AsyncMock(return_value=None)))
-    response = await driver_packs.delete_driver_pack(
-        pack_id, _username="admin", session=dummy_session, packs=mock_packs_del_ok
+    mock_packs_del_ok = SimpleNamespace(
+        catalog=SimpleNamespace(delete_pack=AsyncMock(return_value=[])),
+        session_factory=FakeSessionFactory(object()),
     )
+    response = await driver_packs.delete_driver_pack(pack_id, _username="admin", packs=mock_packs_del_ok)
     assert response.status_code == 204
-    assert dummy_session.committed is True
+    assert mock_packs_del_ok.session_factory.begun == 1
 
 
 async def test_runs_router_parses_filters_and_maps_service_errors() -> None:
@@ -2468,17 +2478,18 @@ async def test_devices_core_router_branches() -> None:
     assert mock_ds_delete.session_factory.begun == 1, "the delete route must own exactly one boundary"
 
     mock_packs_cur_err = SimpleNamespace(
-        release=SimpleNamespace(set_current_release=AsyncMock(side_effect=LookupError("missing")))
+        release=SimpleNamespace(set_current_release=AsyncMock(side_effect=LookupError("missing"))),
+        session_factory=FakeSessionFactory(object()),
     )
     with pytest.raises(HTTPException) as exc:
         await driver_pack_uploads.update_current_release(
             "pack",
             CurrentReleasePatch(release="1.0.0"),
             _username="admin",
-            session=DummySession(),
             packs=mock_packs_cur_err,
         )
     assert exc.value.status_code == 404
+    assert mock_packs_cur_err.session_factory.begun == 1
 
     mock_packs_export_ok = SimpleNamespace(release=SimpleNamespace(export=AsyncMock(return_value=(b"data", "sha"))))
     response = await driver_pack_export.export_release(

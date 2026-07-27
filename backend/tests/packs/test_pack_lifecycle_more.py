@@ -179,19 +179,21 @@ async def test_delete_release_guards_installed_and_orphaned_platforms(
         await _release_svc.delete_release(db_session, pack_id, old_release_name)
 
 
-async def test_delete_current_release_advances_current_and_unlinks_artifact(
+async def test_delete_current_release_advances_current_and_returns_artifact_path(
     db_session: AsyncSession,
     tmp_path: Path,
 ) -> None:
     pack, _old_release, _new_release, _old_artifact, new_artifact = await _seed_pack_with_releases(db_session, tmp_path)
 
-    await _release_svc.delete_release(db_session, pack.id, "2.0.0")
+    artifact_path = await _release_svc.delete_release(db_session, pack.id, "2.0.0")
     await db_session.commit()
 
     reloaded = await db_session.get(DriverPack, pack.id)
     assert reloaded is not None
     assert reloaded.current_release == "1.0.0"
-    assert new_artifact.exists() is False
+    # The file is the caller's to remove, once the transaction has ended.
+    assert artifact_path == str(new_artifact)
+    assert new_artifact.exists() is True
 
 
 async def test_delete_release_rejects_missing_and_only_release(db_session: AsyncSession, tmp_path: Path) -> None:
@@ -239,12 +241,15 @@ async def test_delete_pack_guards_references_then_removes_pack_side_tables(
     )
     await db_session.commit()
 
-    await _catalog_svc.delete_pack(db_session, pack.id)
+    artifact_paths = await _catalog_svc.delete_pack(db_session, pack.id)
     await db_session.commit()
 
     assert await db_session.get(DriverPack, pack.id) is None
-    assert old_artifact.exists() is False
-    assert new_artifact.exists() is False
+    # Both artifacts come back as plain strings for the caller to unlink after
+    # the transaction; the service must not have touched the filesystem itself.
+    assert sorted(artifact_paths) == sorted([str(old_artifact), str(new_artifact)])
+    assert old_artifact.exists() is True
+    assert new_artifact.exists() is True
 
 
 async def test_delete_pack_missing_and_runtime_policy_update(db_session: AsyncSession, tmp_path: Path) -> None:
@@ -257,4 +262,4 @@ async def test_delete_pack_missing_and_runtime_policy_update(db_session: AsyncSe
 
     policy = RuntimePolicy(strategy="recommended")
     pack = await _catalog_svc.set_runtime_policy(db_session, "local/coverage-pack", policy)
-    assert pack.runtime_policy == {"strategy": "recommended"}
+    assert pack.runtime_policy == RuntimePolicy(strategy="recommended")

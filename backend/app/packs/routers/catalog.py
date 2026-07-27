@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import APIRouter, HTTPException, Response, status
 
 from app.auth.dependencies import AdminDep
 from app.core.dependencies import DbDep
-from app.core.http_errors import convert_not_found, found_or_404
+from app.core.http_errors import found_or_404
 from app.packs.dependencies import PackServicesDep
 from app.packs.models import PackState
 from app.packs.schemas import (
@@ -14,7 +16,6 @@ from app.packs.schemas import (
     PackPatch,
     RuntimePolicyPatch,
 )
-from app.packs.services.service import build_pack_out
 from app.settings.dependencies import SettingsServicesDep
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
@@ -49,7 +50,6 @@ async def update_pack(
     pack_id: str,
     body: PackPatch,
     _username: AdminDep,
-    session: DbDep,
     packs: PackServicesDep,
 ) -> PackOut:
     try:
@@ -57,12 +57,12 @@ async def update_pack(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid state: {body.state!r}") from exc
     try:
-        pack = await packs.lifecycle.transition_pack_state(session, pack_id, target)
+        async with packs.session_factory.begin() as db:
+            return await packs.lifecycle.transition_pack_state_txn(db, pack_id, target)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return build_pack_out(pack)
 
 
 @router.patch("/{pack_id}/policy", response_model=PackOut)
@@ -70,26 +70,30 @@ async def update_runtime_policy(
     pack_id: str,
     body: RuntimePolicyPatch,
     _username: AdminDep,
-    session: DbDep,
     packs: PackServicesDep,
 ) -> PackOut:
-    with convert_not_found(f"Pack {pack_id!r} not found"):
-        pack = await packs.catalog.set_runtime_policy(session, pack_id, body.runtime_policy)
-    return build_pack_out(pack)
+    try:
+        async with packs.session_factory.begin() as db:
+            return await packs.catalog.set_runtime_policy(db, pack_id, body.runtime_policy)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found") from exc
 
 
 @router.delete("/{pack_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_driver_pack(
     pack_id: str,
     _username: AdminDep,
-    session: DbDep,
     packs: PackServicesDep,
 ) -> Response:
     try:
-        await packs.catalog.delete_pack(session, pack_id)
+        async with packs.session_factory.begin() as db:
+            artifact_paths = await packs.catalog.delete_pack(db, pack_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await session.commit()
+    # Post-commit, so no pack row lock spans the filesystem. The metadata is
+    # already durable; a failure here is reported, not rolled back.
+    for artifact_path in artifact_paths:
+        Path(artifact_path).unlink(missing_ok=True)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -2,14 +2,16 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import func, select
 
+from app.events.models import SystemEvent
 from app.hosts.models import Host, HostStatus, OSType
-from app.packs.models import HostPackInstallation
+from app.packs.models import DriverPack, HostPackInstallation, PackState
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 @pytest.mark.asyncio
@@ -27,6 +29,54 @@ async def test_catalog_lists_pack(client: AsyncClient, db_session: AsyncSession)
         "android_tv",
         "firetv_real",
     }
+
+
+@pytest.mark.asyncio
+async def test_catalog_read_does_not_end_the_callers_transaction(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A GET route shares the request session; committing it publishes the caller's writes.
+
+    The marker row is the observable: it is flushed but deliberately not
+    committed, so any commit the read performs on the request session makes it
+    visible to every other session in the database.
+    """
+    await seed_test_packs(db_session)
+    await db_session.commit()
+    db_session.add(DriverPack(id="catalog/uncommitted-marker", display_name="Uncommitted marker"))
+    await db_session.flush()
+
+    resp = await client.get("/api/driver-packs/catalog")
+
+    assert resp.status_code == 200
+    assert db_session.in_transaction(), "the catalog read ended the request session's transaction"
+    async with db_session_maker() as peer:
+        leaked = await peer.get(DriverPack, "catalog/uncommitted-marker")
+    assert leaked is None, "the catalog read committed the caller's pending write"
+
+
+@pytest.mark.asyncio
+async def test_catalog_read_leaves_a_zero_work_draining_pack_draining(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """Drain completion belongs to the release hook and the janitor backstop."""
+    await seed_test_packs(db_session, state=PackState.draining)
+    await db_session.commit()
+    async with db_session_maker() as peer:
+        events_before = await peer.scalar(select(func.count()).select_from(SystemEvent))
+
+    resp = await client.get("/api/driver-packs/catalog")
+
+    assert resp.status_code == 200
+    async with db_session_maker() as peer:
+        states = set((await peer.execute(select(DriverPack.state))).scalars().all())
+        events_after = await peer.scalar(select(func.count()).select_from(SystemEvent))
+    assert states == {PackState.draining}, f"the catalog read completed a drain it must not touch: {states}"
+    assert events_after == events_before, "the catalog read recorded an event"
 
 
 @pytest.mark.asyncio

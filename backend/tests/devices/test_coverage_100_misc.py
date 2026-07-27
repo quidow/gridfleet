@@ -464,7 +464,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     with pytest.raises(LookupError):
         await PackLifecycleService().try_complete_drain(missing_pack_db, "missing")
     with pytest.raises(LookupError):
-        await PackLifecycleService().transition_pack_state(missing_pack_db, "missing", PackState.enabled)
+        await PackLifecycleService().transition_pack_state_txn(missing_pack_db, "missing", PackState.enabled)
 
     desired_pack = SimpleNamespace(releases=[], current_release=None)
     assert pack_desired_state_service.selected_release(desired_pack.releases, desired_pack.current_release) is None

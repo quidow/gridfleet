@@ -313,7 +313,9 @@ async def seeded_driver_packs(db_session: AsyncSession) -> None:
     from tests.packs.factories import seed_test_packs
 
     await seed_test_packs(db_session)
-    await db_session.flush()
+    # Committed, not flushed: the pack command routes open their own session
+    # from the container's factory, and a flushed-only seed is invisible to it.
+    await db_session.commit()
 
 
 @pytest.fixture

@@ -49,6 +49,11 @@ MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/hosts/router.py",
     "app/hosts/service.py",
     "app/packs/services/discovery.py",
+    # Phase 9 task 4: the pack catalog reads and the pack lifecycle commands.
+    "app/packs/routers/catalog.py",
+    "app/packs/routers/uploads.py",
+    "app/packs/services/lifecycle.py",
+    "app/packs/services/service.py",
 )
 
 # Phase-3 mixed modules: each carries a sanctioned commit boundary AND below-boundary

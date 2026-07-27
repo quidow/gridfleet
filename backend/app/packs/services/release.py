@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import io
 import tarfile
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
@@ -81,7 +80,13 @@ class PackReleaseService:
             ],
         )
 
-    async def delete_release(self, db: AsyncSession, pack_id: str, release: str) -> None:
+    async def delete_release(self, db: AsyncSession, pack_id: str, release: str) -> str | None:
+        """Delete the release row; return its artifact path for the caller to unlink.
+
+        The unlink used to happen right here, which put filesystem work inside
+        whatever transaction the caller had open. The router does it once the
+        transaction has ended.
+        """
         pack = (
             await db.execute(
                 select(DriverPack)
@@ -142,8 +147,7 @@ class PackReleaseService:
             next_current = selected_release(remaining)
             pack.current_release = next_current.release if next_current is not None else None
             await db.flush()
-        if artifact_path:
-            Path(artifact_path).unlink(missing_ok=True)
+        return artifact_path
 
     async def set_current_release(self, db: AsyncSession, pack_id: str, release: str) -> DriverPack:
         pack = (

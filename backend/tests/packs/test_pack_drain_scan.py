@@ -6,12 +6,16 @@ from app.packs.models import DriverPack, PackState
 from app.packs.services.lifecycle import PackLifecycleService
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = pytest.mark.asyncio
 
 
-async def test_complete_draining_packs_once_disables_empty_draining_pack(db_session: AsyncSession) -> None:
+async def test_complete_draining_packs_once_disables_empty_draining_pack(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The backstop scan is transaction-local; its caller makes the result durable."""
     pack = DriverPack(
         id="draining-pack",
         display_name="Draining Pack",
@@ -25,6 +29,12 @@ async def test_complete_draining_packs_once_disables_empty_draining_pack(db_sess
     changed = await PackLifecycleService().complete_draining_packs_once(db_session)
 
     assert changed == ["draining-pack"]
-    refreshed = await db_session.get(DriverPack, "draining-pack")
+    async with db_session_maker() as peer:
+        assert (await peer.get(DriverPack, "draining-pack")).state == PackState.draining, (  # type: ignore[union-attr]
+            "the scan committed on its own; the janitor stage owns that boundary"
+        )
+    await db_session.commit()
+    async with db_session_maker() as peer:
+        refreshed = await peer.get(DriverPack, "draining-pack")
     assert refreshed is not None
     assert refreshed.state == PackState.disabled

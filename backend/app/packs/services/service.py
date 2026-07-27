@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, func, select
@@ -125,6 +124,13 @@ class PackCatalogService:
         self._lifecycle = lifecycle
 
     async def list_catalog(self, db: AsyncSession) -> PackCatalog:
+        """Read the whole catalog. No writes, no boundary, no per-pack SQL.
+
+        Drain completion used to run from here, which made a GET both a writer
+        and the end of its caller's transaction; the inline release hook and the
+        janitor backstop own it now. What remains is two batched summary loads
+        whose cost does not move with the size of the fleet.
+        """
         rows = (
             (
                 await db.execute(
@@ -137,26 +143,21 @@ class PackCatalogService:
             .all()
         )
 
-        for pack in rows:
-            if pack.state == PackState.draining:
-                await self._lifecycle.try_complete_drain(db, pack.id)
-        await db.commit()
-
         runtime_summaries = await self._runtime_summaries_by_pack(db, [pack.id for pack in rows])
-        out: list[PackOut] = []
-        for pack in rows:
-            drain_info: dict[str, int] = {"active_runs": 0, "live_sessions": 0}
-            if pack.state == PackState.draining:
-                drain_info = await self._lifecycle.count_active_work_for_pack(db, pack.id)
-            out.append(
+        active_work = await self._lifecycle.summarize_active_work(
+            db, [pack.id for pack in rows if pack.state == PackState.draining]
+        )
+        return PackCatalog(
+            packs=[
                 build_pack_out(
                     pack,
                     runtime_summaries.get(pack.id, PackRuntimeSummaryOut()),
-                    active_runs=drain_info["active_runs"],
-                    live_sessions=drain_info["live_sessions"],
+                    active_runs=active_work.get(pack.id, {}).get("active_runs", 0),
+                    live_sessions=active_work.get(pack.id, {}).get("live_sessions", 0),
                 )
-            )
-        return PackCatalog(packs=out)
+                for pack in rows
+            ]
+        )
 
     async def get_pack_detail(self, db: AsyncSession, pack_id: str) -> PackOut | None:
         row = (
@@ -173,13 +174,13 @@ class PackCatalogService:
         runtime_summaries = await self._runtime_summaries_by_pack(db, [row.id])
         return build_pack_out(row, runtime_summaries.get(row.id))
 
-    async def set_runtime_policy(self, db: AsyncSession, pack_id: str, policy: RuntimePolicy) -> DriverPack:
-        pack = await db.get(DriverPack, pack_id)
-        if pack is None:
-            raise LookupError(pack_id)
-        pack.runtime_policy = policy.model_dump()
-        await db.commit()
-        reloaded = (
+    async def set_runtime_policy(self, db: AsyncSession, pack_id: str, policy: RuntimePolicy) -> PackOut:
+        """Transaction-local; the router owns the boundary.
+
+        One eager load replaces the previous load / commit / reload — the reload
+        only existed because the commit landed in the middle of the method.
+        """
+        pack = (
             await db.execute(
                 select(DriverPack)
                 .options(
@@ -187,10 +188,14 @@ class PackCatalogService:
                 )
                 .where(DriverPack.id == pack_id)
             )
-        ).scalar_one()
-        return reloaded
+        ).scalar_one_or_none()
+        if pack is None:
+            raise LookupError(pack_id)
+        pack.runtime_policy = policy.model_dump()
+        await db.flush()
+        return build_pack_out(pack)
 
-    async def delete_pack(self, db: AsyncSession, pack_id: str) -> None:
+    async def delete_pack(self, db: AsyncSession, pack_id: str) -> list[str]:
         pack = (
             await db.execute(
                 select(DriverPack)
@@ -215,15 +220,16 @@ class PackCatalogService:
                 f"{active_work['live_sessions']} live session(s) still reference it"
             )
 
-        artifact_paths = [Path(release.artifact_path) for release in pack.releases if release.artifact_path]
+        # Returned rather than unlinked here: filesystem work must not run inside
+        # the transaction that deletes the metadata. Plain strings, so nothing
+        # tied to this session crosses the boundary.
+        artifact_paths = [release.artifact_path for release in pack.releases if release.artifact_path]
 
         await db.execute(delete(HostPackDoctorResult).where(HostPackDoctorResult.pack_id == pack_id))
         await db.execute(delete(HostPackInstallation).where(HostPackInstallation.pack_id == pack_id))
         await db.delete(pack)
         await db.flush()
-
-        for artifact_path in artifact_paths:
-            artifact_path.unlink(missing_ok=True)
+        return artifact_paths
 
     async def _runtime_summaries_by_pack(
         self, db: AsyncSession, pack_ids: list[str]
