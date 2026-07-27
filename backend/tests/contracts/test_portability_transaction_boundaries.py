@@ -65,7 +65,13 @@ def test_import_bundle_module_has_no_direct_commit_or_rollback() -> None:
 
 
 def test_import_bundle_module_has_exactly_one_begin_nested_owner() -> None:
-    """``begin_nested()`` is the repository's only production savepoint, and it has one owner."""
+    """This module's ``begin_nested()`` has exactly one owner: the public per-row savepoint.
+
+    Scoped to ``import_bundle.py`` only. Other modules own their own
+    ``begin_nested()`` calls for their own reasons (e.g.
+    ``app/devices/services/groups.py``, ``app/devices/services/intent_reconciler.py``)
+    and are out of scope for this assertion.
+    """
     tree = ast.parse(MODULE_PATH.read_text(), filename=str(MODULE_PATH))
     calls = _calls_named(tree, {"begin_nested"})
     owners = {owner for _, _, owner in calls}

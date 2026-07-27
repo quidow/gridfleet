@@ -626,10 +626,12 @@ class PortabilityImportService:
     ) -> ImportCommitCreatedRow | ImportCommitFailedRow:
         """Stage and flush one device row inside its own savepoint.
 
-        The repository's only production ``begin_nested()``: a row failure
-        rolls back only this row, never the batch it shares a transaction
-        with. Translation happens only after the nested context has exited
-        (committed or rolled back) and never calls a savepoint method directly.
+        This module's only ``begin_nested()``: a row failure rolls back only
+        this row, never the batch it shares a transaction with, so per-row
+        partial success stays a public contract even when rows commit in
+        bounded batches. Translation happens only after the nested context has
+        exited (committed or rolled back) and never calls a savepoint method
+        directly.
         """
         try:
             async with db.begin_nested():
