@@ -163,16 +163,15 @@ class VerificationPreparationService:
         if normalize_error is not None:
             return await _validation_failed(job, normalize_error)
 
-        # create_device (commit=False), the device-id stamp, and the tokenized
-        # lease all commit together: a crash before commit leaves nothing, and a
-        # committed device always carries its device_id in Job.payload for resume.
+        # create_device_txn, the device-id stamp, and the tokenized lease all
+        # commit together: a crash before commit leaves nothing, and a committed
+        # device always carries its device_id in Job.payload for resume.
         try:
             async with self._session_factory.begin() as db:
-                saved = await self._crud.create_device(
+                saved = await self._crud.create_device_txn(
                     db,
                     DeviceVerificationCreate.model_validate(normalized),
                     initial_operational_state=DeviceOperationalState.verifying,
-                    commit=False,
                 )
                 device_id = saved.id
                 await _store_created_device_id(db, operation_id, device_id)

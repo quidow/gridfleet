@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 
 from app.auth.dependencies import AdminDep
 from app.core.dependencies import DbDep
-from app.core.http_errors import convert_not_found, found_or_404
+from app.core.http_errors import found_or_404
 from app.packs.dependencies import PackServicesDep
 from app.packs.models import PackState
 from app.packs.schemas import (
@@ -14,7 +14,7 @@ from app.packs.schemas import (
     PackPatch,
     RuntimePolicyPatch,
 )
-from app.packs.services.service import build_pack_out
+from app.packs.services.service import PackNotFound, PackTransitionError, unlink_pack_artifact
 from app.settings.dependencies import SettingsServicesDep
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
@@ -49,20 +49,24 @@ async def update_pack(
     pack_id: str,
     body: PackPatch,
     _username: AdminDep,
-    session: DbDep,
     packs: PackServicesDep,
 ) -> PackOut:
     try:
         target = PackState(body.state)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=f"Invalid state: {body.state!r}") from exc
+    # Caught by name, not as LookupError/ValueError: the command builds its
+    # response snapshot inside the transaction, and build_pack_out raises
+    # KeyError (malformed manifest/platform data) and pydantic ValidationError
+    # (malformed persisted policy) from in there. Those are 500s, not a 404 and
+    # not a 400 handed to a caller whose request was fine.
     try:
-        pack = await packs.lifecycle.transition_pack_state(session, pack_id, target)
-    except LookupError as exc:
+        async with packs.session_factory.begin() as db:
+            return await packs.lifecycle.transition_pack_state_txn(db, pack_id, target)
+    except PackNotFound as exc:
         raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found") from exc
-    except ValueError as exc:
+    except PackTransitionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return build_pack_out(pack)
 
 
 @router.patch("/{pack_id}/policy", response_model=PackOut)
@@ -70,26 +74,31 @@ async def update_runtime_policy(
     pack_id: str,
     body: RuntimePolicyPatch,
     _username: AdminDep,
-    session: DbDep,
     packs: PackServicesDep,
 ) -> PackOut:
-    with convert_not_found(f"Pack {pack_id!r} not found"):
-        pack = await packs.catalog.set_runtime_policy(session, pack_id, body.runtime_policy)
-    return build_pack_out(pack)
+    try:
+        async with packs.session_factory.begin() as db:
+            return await packs.catalog.set_runtime_policy(db, pack_id, body.runtime_policy)
+    except PackNotFound as exc:
+        raise HTTPException(status_code=404, detail=f"Pack {pack_id!r} not found") from exc
 
 
 @router.delete("/{pack_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_driver_pack(
     pack_id: str,
     _username: AdminDep,
-    session: DbDep,
     packs: PackServicesDep,
 ) -> Response:
     try:
-        await packs.catalog.delete_pack(session, pack_id)
+        async with packs.session_factory.begin() as db:
+            artifact_paths = await packs.catalog.delete_pack(db, pack_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await session.commit()
+    # Post-commit, so no pack row lock spans the filesystem. The deletion the
+    # caller asked for is durable either way, so a failing unlink is logged and
+    # the success status still returned (see unlink_pack_artifact).
+    for artifact_path in artifact_paths:
+        unlink_pack_artifact(artifact_path)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

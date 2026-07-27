@@ -13,7 +13,9 @@ from app.devices.services.service import DeviceCrudService
 from tests.helpers import test_event_bus as event_bus
 
 
-async def test_create_device_integrity_retry_and_mark_verified(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_create_device_txn_stamps_payload_and_leaves_integrity_error_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     db = MagicMock()
     db.rollback = AsyncMock()
     prepared = {"name": "Device"}
@@ -28,7 +30,7 @@ async def test_create_device_integrity_retry_and_mark_verified(monkeypatch: pyte
         AsyncMock(side_effect=IntegrityError("stmt", "params", Exception("dupe"))),
     )
     with pytest.raises(IntegrityError):
-        await crud.create_device(
+        await crud.create_device_txn(
             db,
             DeviceVerificationCreate(
                 name="Device",
@@ -42,22 +44,23 @@ async def test_create_device_integrity_retry_and_mark_verified(monkeypatch: pyte
 
     assert "verified_at" in prepared
     assert prepared["operational_state_last_emitted"] == DeviceOperationalState.available
-    assert ensure.await_count == 2
-    db.rollback.assert_awaited_once()
+    assert ensure.await_count == 1, "the command gates identity once and hands the race to its caller"
+    db.rollback.assert_not_awaited()
 
 
-async def test_update_device_contract_missing_and_integrity_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_update_device_txn_contract_missing_and_integrity_paths(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     db.rollback = AsyncMock()
     device_id = uuid.uuid4()
     crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
-    monkeypatch.setattr(device_service.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
-    assert await crud.update_device(db, device_id, DevicePatch(name="new")) is None
+    monkeypatch.setattr(device_service.device_locking, "lock_device_handle", AsyncMock(side_effect=NoResultFound))
+    assert await crud.update_device_txn(db, device_id, DevicePatch(name="new")) is False
 
     device = SimpleNamespace(id=device_id, verified_at="old")
-    monkeypatch.setattr(device_service.device_locking, "lock_device", AsyncMock(return_value=device))
+    locked = SimpleNamespace(device=device, assert_active=lambda _db: None)
+    monkeypatch.setattr(device_service.device_locking, "lock_device_handle", AsyncMock(return_value=locked))
     with pytest.raises(ValueError, match="generic device patch"):
-        await crud.update_device(
+        await crud.update_device_txn(
             db,
             device_id,
             DeviceVerificationUpdate(host_id=uuid.uuid4()),
@@ -76,14 +79,14 @@ async def test_update_device_contract_missing_and_integrity_paths(monkeypatch: p
     )
 
     with pytest.raises(IntegrityError):
-        await crud.update_device(db, device_id, DevicePatch(name="new"))
+        await crud.update_device_txn(db, device_id, DevicePatch(name="new"))
 
     assert device.verified_at is None
-    db.rollback.assert_awaited_once()
+    db.rollback.assert_not_awaited()
 
 
 async def test_lock_device_for_delete_missing_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     db = MagicMock()
     device_id = uuid.uuid4()
-    monkeypatch.setattr(device_service.device_locking, "lock_device", AsyncMock(side_effect=NoResultFound))
+    monkeypatch.setattr(device_service.device_locking, "lock_device_handle", AsyncMock(side_effect=NoResultFound))
     assert await device_service._lock_device_for_delete(db, device_id) is None

@@ -58,7 +58,10 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     _svc_settings_2 = FakeSettingsReader({})
     _svc_pub_2 = AsyncMock()
     _svc_maint_2 = MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+        review=build_review_service(),
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
+        session_factory=Mock(),
     )
     _svc_crud_2 = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
     loop = intent_reconciler.DeviceIntentReconcilerLoop(
@@ -80,6 +83,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
                 operator=OperatorNodeLifecycleService(
                     review=build_review_service(), settings=_svc_settings_2, publisher=event_bus
                 ),
+                session_factory=Mock(),
             ),
             presenter=DevicePresenterService(),
             test_data=TestDataService(publisher=_svc_pub_2),

@@ -972,10 +972,10 @@ async def test_update_device_acquires_row_lock(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
-    real_lock = device_service.device_locking.lock_device
+    real_lock = device_service.device_locking.lock_device_handle
     spy = AsyncMock(side_effect=real_lock)
 
-    with patch("app.devices.services.service.device_locking.lock_device", spy):
+    with patch("app.devices.services.service.device_locking.lock_device_handle", spy):
         resp = await client.patch(f"/api/devices/{device_id}", json={"name": "Locked Update"})
 
     assert resp.status_code == 200
@@ -985,18 +985,27 @@ async def test_update_device_acquires_row_lock(
 
 
 @pytest.mark.asyncio
-async def test_update_device_returns_none_when_device_missing(client: AsyncClient, db_session: AsyncSession) -> None:
+async def test_update_device_txn_reports_false_when_device_missing(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
     import uuid
 
     missing_id = uuid.uuid4()
     crud = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
-    result = await crud.update_device(
+    result = await crud.update_device_txn(
         db_session,
         missing_id,
         DevicePatch(),
         enforce_patch_contract=False,
     )
-    assert result is None
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_update_device_missing_returns_404(client: AsyncClient) -> None:
+    resp = await client.patch("/api/devices/00000000-0000-0000-0000-000000000000", json={"name": "nope"})
+    assert resp.status_code == 404
+    assert resp.json()["error"]["message"] == "Device not found"
 
 
 @pytest.mark.asyncio

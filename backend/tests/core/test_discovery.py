@@ -1,12 +1,16 @@
+import uuid
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.errors import AgentUnreachableError
-from tests.helpers import create_device_record
+from app.devices.services.identity_conflicts import DeviceIdentityConflictService
+from app.packs.services.discovery import PackDiscoveryService
+from tests.concurrency.group_lock_helpers import capture_statements
+from tests.helpers import create_device_record, seed_host_named
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 HOST_PAYLOAD = {
     "hostname": "mac-lab-01",
@@ -419,6 +423,64 @@ async def test_confirm_discovery_updates_existing_device_properties(
     assert body["verified_at"] is not None
     assert body["manufacturer"] is None
     assert body["model"] is None
+
+
+async def test_intake_candidates_resolve_identities_in_one_query(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """The intake route stops being N+1: one identity lookup, not one per candidate.
+
+    ``build_intake_candidates`` used to run a ``select(Device)`` inside its
+    per-candidate loop. The batched form has to keep answering
+    ``already_registered`` / ``registered_device_id`` per identity *and* honour
+    the host-scoped vs non-host-scoped split, so this measures the statement
+    count and re-checks both answers.
+    """
+    host = await seed_host_named(db_session, f"intake-budget-{uuid.uuid4().hex[:8]}")
+    registered = await create_device_record(
+        db_session,
+        host_id=host.id,
+        identity_value="BUDGET-3",
+        connection_target="BUDGET-3",
+        name="Registered",
+        pack_id="appium-xcuitest",
+        platform_id="ios",
+        identity_scheme="apple_udid",
+        identity_scope="global",
+        os_version="17.4",
+    )
+    candidates = tuple(
+        {
+            "pack_id": "appium-xcuitest",
+            "platform_id": "ios",
+            "identity_scheme": "apple_udid",
+            "identity_scope": "global",
+            "identity_value": f"BUDGET-{index}",
+            "suggested_name": f"Phone {index}",
+            "detected_properties": {"connection_target": f"BUDGET-{index}", "os_version": "17.4"},
+            "runnable": True,
+        }
+        for index in range(8)
+    )
+
+    svc = PackDiscoveryService(
+        agent_get_pack_devices=AsyncMock(return_value={"candidates": []}),
+        circuit_breaker=MagicMock(),
+        serializer=MagicMock(),
+        identity_guard=DeviceIdentityConflictService(),
+    )
+    async with db_session_maker() as db, capture_statements(db) as statements:
+        result = await svc.build_intake_candidates(db, host.id, candidates)
+
+    device_reads = [stmt for stmt in statements if "from devices" in " ".join(stmt.lower().split())]
+    assert len(device_reads) == 1, (
+        f"build_intake_candidates issued {len(device_reads)} device reads for {len(candidates)} candidates: "
+        f"{device_reads}"
+    )
+    assert len(result) == 8
+    assert [item.already_registered for item in result] == [False, False, False, True, False, False, False, False]
+    assert result[3].registered_device_id == registered.id
 
 
 async def test_discover_agent_unreachable(client: AsyncClient) -> None:

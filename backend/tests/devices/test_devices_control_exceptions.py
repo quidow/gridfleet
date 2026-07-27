@@ -15,12 +15,12 @@ from app.devices.routers import control as devices_control
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.service import DeviceCrudService
-from tests.fakes import FakeSettingsReader
+from tests.fakes import FakeSessionFactory, FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -56,9 +56,23 @@ def _device_services() -> SimpleNamespace:
     return SimpleNamespace(crud=AsyncMock(), publisher=event_bus)
 
 
+def _appium_services(reconciler_agent: object, session: object) -> SimpleNamespace:
+    """The reconnect route now owns the node lever's transaction and its lock."""
+    return SimpleNamespace(reconciler_agent=reconciler_agent, session_factory=FakeSessionFactory(session))
+
+
+def _patch_node_lock(device: object) -> object:
+    """Hand the route a lock proof over *device* without touching a database."""
+    return patch(
+        "app.devices.locking.lock_device_handle",
+        new=AsyncMock(return_value=SimpleNamespace(device=device, assert_active=lambda _db: None)),
+    )
+
+
 @pytest.mark.db
 async def test_reconnect_persists_session_viability_clear_before_intent_reconcile(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
     seeded_driver_packs: None,
 ) -> None:
@@ -85,8 +99,9 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
     )
     db_session.add(node)
     await db_session.flush()
+    await db_session.commit()
     mock_ra = AsyncMock()
-    mock_ra.restart_node = AsyncMock(return_value=node)
+    mock_ra.restart_node_txn = AsyncMock(return_value=node)
     with (
         patch(
             "app.devices.services.link_repair.pack_device_lifecycle_action",
@@ -102,7 +117,7 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
             ),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
-            appium_services=SimpleNamespace(reconciler_agent=mock_ra),
+            appium_services=SimpleNamespace(reconciler_agent=mock_ra, session_factory=db_session_maker),
         )
 
     assert result["success"] is True
@@ -131,17 +146,18 @@ async def test_reconnect_node_manager_error_returns_502() -> None:
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
+        _patch_node_lock(device),
         pytest.raises(HTTPException) as exc,
     ):
         ra_restart_err = AsyncMock()
-        ra_restart_err.restart_node = AsyncMock(side_effect=NodeManagerError("restart failed"))
+        ra_restart_err.restart_node_txn = AsyncMock(side_effect=NodeManagerError("restart failed"))
         await devices_control.reconnect_device(
             device_id,
             db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
-            appium_services=SimpleNamespace(reconciler_agent=ra_restart_err),
+            appium_services=_appium_services(ra_restart_err, db),
         )  # type: ignore[arg-type]
 
     assert exc.value.status_code == 502
@@ -164,17 +180,18 @@ async def test_reconnect_port_conflict_error_returns_502() -> None:
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
+        _patch_node_lock(device),
         pytest.raises(HTTPException) as exc,
     ):
         ra_start_err = AsyncMock()
-        ra_start_err.start_node = AsyncMock(side_effect=NodePortConflictError("port occupied"))
+        ra_start_err.start_node_txn = AsyncMock(side_effect=NodePortConflictError("port occupied"))
         await devices_control.reconnect_device(
             device_id,
             db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
-            appium_services=SimpleNamespace(reconciler_agent=ra_start_err),
+            appium_services=_appium_services(ra_start_err, db),
         )  # type: ignore[arg-type]
 
     assert exc.value.status_code == 502
@@ -205,6 +222,7 @@ async def test_reconnect_inner_http_400_propagates_unchanged() -> None:
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
+        _patch_node_lock(device),
         pytest.raises(HTTPException) as exc,
     ):
         await devices_control.reconnect_device(
@@ -213,7 +231,7 @@ async def test_reconnect_inner_http_400_propagates_unchanged() -> None:
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
-            appium_services=SimpleNamespace(reconciler_agent=AsyncMock()),
+            appium_services=_appium_services(AsyncMock(), db),
         )  # type: ignore[arg-type]
 
     # Must be 400, NOT 502
@@ -236,15 +254,16 @@ async def test_reconnect_unexpected_exception_bubbles() -> None:
             new=AsyncMock(return_value={"success": True}),
         ),
         patch.object(IntentService, "revoke_intents_and_reconcile", new=AsyncMock()),
+        _patch_node_lock(device),
         pytest.raises(RuntimeError, match="unexpected boom"),
     ):
         ra_boom = AsyncMock()
-        ra_boom.restart_node = AsyncMock(side_effect=RuntimeError("unexpected boom"))
+        ra_boom.restart_node_txn = AsyncMock(side_effect=RuntimeError("unexpected boom"))
         await devices_control.reconnect_device(
             device_id,
             db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
-            appium_services=SimpleNamespace(reconciler_agent=ra_boom),
+            appium_services=_appium_services(ra_boom, db),
         )  # type: ignore[arg-type]

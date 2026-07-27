@@ -35,7 +35,7 @@ from app.devices.services.service import DeviceCrudService
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -169,6 +169,20 @@ async def capture_statements(session: AsyncSession) -> AsyncIterator[list[str]]:
     """
     assert not session.in_transaction(), "capture_statements requires a session with no active transaction"
     statements: list[str] = []
+    detach = pin_statement_listener(session, statements)
+    try:
+        yield statements
+    finally:
+        detach()
+
+
+def pin_statement_listener(session: AsyncSession, sink: list[str]) -> Callable[[], None]:
+    """Install the pinned listener pair on *session*; returns the detach callable.
+
+    Split out of :func:`capture_statements` so a session handed out by a factory
+    — one no test body can wrap in an ``async with`` — records through the same
+    pin instead of a second, subtly different recorder.
+    """
     # Single-element holder rather than a set: a connection this session has
     # released is no longer ours, and matching it would re-admit the pool
     # pollution the pin exists to prevent.
@@ -186,7 +200,7 @@ async def capture_statements(session: AsyncSession) -> AsyncIterator[list[str]]:
         executemany: bool,
     ) -> None:
         if conn is own_connection[0]:
-            statements.append(statement)
+            sink.append(statement)
 
     bind = session.bind
     assert bind is not None
@@ -194,8 +208,9 @@ async def capture_statements(session: AsyncSession) -> AsyncIterator[list[str]]:
     sync_session = session.sync_session
     event.listen(sync_session, "after_begin", track_begin)
     event.listen(sync_engine, "before_cursor_execute", listener)
-    try:
-        yield statements
-    finally:
+
+    def detach() -> None:
         event.remove(sync_engine, "before_cursor_execute", listener)
         event.remove(sync_session, "after_begin", track_begin)
+
+    return detach

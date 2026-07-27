@@ -35,20 +35,43 @@ MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/hosts/router_agent.py",
     "app/hosts/service_resource_telemetry.py",
     "app/hosts/service_status_push.py",
+    # Phase 9 task 1: device persistence, test-data, and config writers.
+    "app/devices/services/write.py",
+    "app/devices/services/service.py",
+    "app/devices/services/test_data.py",
+    "app/settings/service_config.py",
+    # Phase 9 task 2: maintenance, bulk, and the three operator node actions.
+    "app/devices/services/bulk.py",
+    "app/devices/services/maintenance.py",
+    "app/appium_nodes/services/reconciler_agent.py",
+    "app/appium_nodes/routers/nodes.py",
+    # Phase 9 task 3: host commands and the pack discovery effects.
+    "app/hosts/router.py",
+    "app/hosts/service.py",
+    "app/packs/services/discovery.py",
+    # Phase 9 task 4: the pack catalog reads and the pack lifecycle commands.
+    "app/packs/routers/catalog.py",
+    "app/packs/routers/uploads.py",
+    "app/packs/services/lifecycle.py",
+    "app/packs/services/service.py",
+    # Phase 9 task 5: the settings mutations, the last of the phase's 16 files.
+    "app/settings/service.py",
 )
 
 # Phase-3 mixed modules: each carries a sanctioned commit boundary AND below-boundary
 # `*_locked` domain helpers that must never commit. A whole-file zero-commit assertion
 # cannot apply, so every commit/rollback must live inside an allowlisted function.
+#
+# Phase 9 emptied this of its own entries: `app/appium_nodes/services/reconciler_agent.py`
+# was the last one, and task 2 moved its three operator commands out to their router.
+# Every path left below is scheduler/job work that Phase 10 owns, and Phase 10's
+# repository-wide guard is what finally retires the dict.
 SANCTIONED_COMMIT_BOUNDARIES = {
     "app/appium_nodes/services/node_health.py": {"fold_host_nodes"},
     "app/devices/services/connectivity.py": {"fold_host_devices"},
     "app/lifecycle/services/actions.py": {"complete_auto_stop", "handle_node_crash"},
     "app/lifecycle/services/policy.py": {"handle_health_failure", "handle_session_finished"},
     "app/devices/services/health.py": set(),  # fully clean; no commit/rollback anywhere
-    # Phase 8: observation paths are transaction-local. These three operator
-    # commands keep their boundary until Phase 9 migrates their routers.
-    "app/appium_nodes/services/reconciler_agent.py": {"start_node", "stop_node", "restart_node"},
 }
 
 

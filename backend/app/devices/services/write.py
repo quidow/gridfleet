@@ -519,13 +519,17 @@ def stage_device_record(db: AsyncSession, payload: Mapping[str, Any]) -> Device:
 
 
 async def create_device_record(db: AsyncSession, payload: Mapping[str, Any]) -> Device:
+    """Stage the row and flush it. The caller's transaction owns the outcome.
+
+    The flush applies the uuid PK default and surfaces an ``IntegrityError``
+    inside the caller's transaction, where it can still be handled.
+    """
     device = stage_device_record(db, payload)
-    await db.commit()
-    await db.refresh(device)
+    await db.flush()
     return device
 
 
 async def persist_device_record(db: AsyncSession, device: Device) -> Device:
-    await db.commit()
-    await db.refresh(device)
+    """Flush the pending mutations on *device*. The caller's transaction commits."""
+    await db.flush()
     return device

@@ -112,7 +112,10 @@ async def test_start_node_with_verification_caller_skips_readiness(
             review=build_review_service(), settings=_svc_settings, publisher=event_bus
         ),
     )
-    node = await svc.start_node(db_session, device, caller="verification")
+    from app.devices import locking as device_locking
+
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    node = await svc.start_node_txn(db_session, locked, caller="verification")
     assert node.desired_state is AppiumDesiredState.running
 
 

@@ -1,14 +1,20 @@
+import uuid
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from sqlalchemy import func, select, text
+from sqlalchemy.exc import DBAPIError, NoResultFound
 
+from app.events.models import SystemEvent
+from app.settings.models import ConfigAuditLog
 from app.settings.service_config import SettingsConfigService
-from tests.helpers import create_device_record
+from tests.helpers import create_device_record, record_device_lock_proofs
+from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
@@ -108,7 +114,9 @@ async def test_config_history(client: AsyncClient, db_session: AsyncSession, def
     assert len(history) == 2
 
 
-async def test_merge_device_config_coerces_bool_fields(db_session: AsyncSession, default_host_id: str) -> None:
+async def test_merge_device_config_coerces_bool_fields(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], default_host_id: str
+) -> None:
     device = await create_device_record(
         db_session,
         host_id=default_host_id,
@@ -128,5 +136,86 @@ async def test_merge_device_config_coerces_bool_fields(db_session: AsyncSession,
         patch("app.settings.service_config.resolve_pack_for_device", return_value=("p", "plat")),
         patch("app.settings.service_config.resolve_pack_platform", AsyncMock(return_value=resolved)),
     ):
-        result = await service.merge_device_config(db_session, device, {"prefer_devicectl": "true"})
+        async with db_session_maker() as command_db, command_db.begin():
+            result = await service.merge_device_config(command_db, device.id, {"prefer_devicectl": "true"})
     assert result["prefer_devicectl"] is True
+
+
+async def test_merge_config_missing_device_returns_404(client: AsyncClient) -> None:
+    """The command's ``NoResultFound`` maps to the body the deleted pre-lock produced."""
+    resp = await client.patch(f"/api/devices/{uuid.uuid4()}/config", json={"a": 1})
+    assert resp.status_code == 404
+    assert resp.json()["error"]["message"] == "Device not found"
+
+
+async def test_merge_device_config_locks_the_device_exactly_once(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    default_host_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="CFG-LOCK-001",
+        connection_target="CFG-LOCK-001",
+        name="Config Lock Device",
+        pack_id=DEVICE_PAYLOAD["pack_id"],
+        platform_id=DEVICE_PAYLOAD["platform_id"],
+        identity_scheme=DEVICE_PAYLOAD["identity_scheme"],
+        identity_scope=DEVICE_PAYLOAD["identity_scope"],
+        os_version="14",
+    )
+    proofs = record_device_lock_proofs(monkeypatch)
+
+    service = SettingsConfigService(publisher=event_bus)
+    async with db_session_maker() as command_db, command_db.begin():
+        merged = await service.merge_device_config(command_db, device.id, {"a": 1}, "op")
+
+    assert proofs == [device.id], "merge_device_config must take exactly one Device aggregate lock"
+    assert merged == {"a": 1}
+
+
+async def test_merge_device_config_rejects_a_missing_device(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    service = SettingsConfigService(publisher=Mock())
+    with pytest.raises(NoResultFound):
+        async with db_session_maker() as command_db, command_db.begin():
+            await service.merge_device_config(command_db, uuid.uuid4(), {"a": 1})
+
+
+async def test_merge_device_config_rolls_back_mutation_audit_row_and_event(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], default_host_id: str
+) -> None:
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="CFG-ROLLBACK-001",
+        connection_target="CFG-ROLLBACK-001",
+        name="Config Rollback Device",
+        pack_id=DEVICE_PAYLOAD["pack_id"],
+        platform_id=DEVICE_PAYLOAD["platform_id"],
+        identity_scheme=DEVICE_PAYLOAD["identity_scheme"],
+        identity_scope=DEVICE_PAYLOAD["identity_scope"],
+        os_version="14",
+    )
+    service = SettingsConfigService(publisher=event_bus)
+
+    with pytest.raises(DBAPIError):
+        async with db_session_maker() as command_db, command_db.begin():
+            await service.merge_device_config(command_db, device.id, {"gone": True}, "op")
+            # A real aborting statement, not a patched side effect: the config
+            # mutation, the audit row, and the outbox row die as one unit.
+            await command_db.execute(text("SELECT 1 / 0"))
+
+    await db_session.refresh(device)
+    assert device.device_config == {}, "the config mutation outlived its rolled-back transaction"
+    audit_rows = await db_session.scalar(
+        select(func.count()).select_from(ConfigAuditLog).where(ConfigAuditLog.device_id == device.id)
+    )
+    assert audit_rows == 0, "audit row outlived its rolled-back transaction"
+    events = await db_session.scalar(
+        select(func.count()).select_from(SystemEvent).where(SystemEvent.type == "config.updated")
+    )
+    assert events == 0, "outbox row outlived its rolled-back transaction"

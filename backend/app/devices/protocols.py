@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from app.devices.schemas.filters import DeviceQueryFilters
     from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.devices.services.device_health_fold_context import LockedDeviceFold
+    from app.devices.services.maintenance import RecoveryRequest
     from app.runs.models import TestRun
     from app.sessions.viability_types import SessionViabilityCheckedBy
 
@@ -48,14 +49,31 @@ class MaintenanceProtocol(Protocol):
     async def enter_maintenance(
         self,
         db: AsyncSession,
-        device: Device,
+        device_id: uuid.UUID,
         *,
-        commit: bool = ...,
         allow_reserved: bool = ...,
         maintenance_reason: str = ...,
-    ) -> Device: ...
-    async def exit_maintenance(self, db: AsyncSession, device: Device, *, commit: bool = ...) -> Device: ...
-    async def schedule_device_recovery(self, db: AsyncSession, device_id: uuid.UUID) -> None: ...
+    ) -> None: ...
+    async def enter_maintenance_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        allow_reserved: bool = ...,
+        maintenance_reason: str = ...,
+    ) -> None: ...
+    async def exit_maintenance(self, db: AsyncSession, device_id: uuid.UUID) -> RecoveryRequest | None: ...
+    async def exit_maintenance_locked(self, db: AsyncSession, locked: LockedDevice) -> RecoveryRequest | None: ...
+
+    async def schedule_device_recovery(self, device_id: uuid.UUID) -> None:
+        """Enqueue the durable recovery job a committed maintenance exit owes.
+
+        Best-effort by contract: it must not raise. The state mutation has already
+        committed by the time a caller reaches this, so an enqueue failure has to
+        be logged and dropped — device_connectivity_loop is the fallback. Callers
+        therefore do not guard it.
+        """
+        ...
 
 
 class DeviceCrudProtocol(Protocol):
@@ -65,14 +83,13 @@ class DeviceCrudProtocol(Protocol):
     async def prepare_device_update_payload(
         self, db: AsyncSession, device: Device, data: DevicePatch | DeviceVerificationUpdate
     ) -> dict[str, Any]: ...
-    async def create_device(
+    async def create_device_txn(
         self,
         db: AsyncSession,
         data: DeviceVerificationCreate,
         *,
         mark_verified: bool = ...,
         initial_operational_state: DeviceOperationalState = ...,
-        commit: bool = ...,
     ) -> Device: ...
     async def list_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> list[Device]: ...
     async def list_devices_paginated(
@@ -80,15 +97,15 @@ class DeviceCrudProtocol(Protocol):
     ) -> tuple[list[Device], int]: ...
     async def count_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> int: ...
     async def get_device(self, db: AsyncSession, device_id: uuid.UUID) -> Device | None: ...
-    async def update_device(
+    async def update_device_txn(
         self,
         db: AsyncSession,
         device_id: uuid.UUID,
         data: DevicePatch | DeviceVerificationUpdate,
         *,
         enforce_patch_contract: bool = ...,
-    ) -> Device | None: ...
-    async def delete_device(self, db: AsyncSession, device_id: uuid.UUID) -> bool: ...
+    ) -> bool: ...
+    async def delete_device_txn(self, db: AsyncSession, device_id: uuid.UUID) -> bool: ...
 
 
 class SessionViabilityProbe(Protocol):
@@ -150,8 +167,12 @@ class NodeConvergence(Protocol):
 
 
 class RemoteNodeManager(Protocol):
-    async def start_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
-    async def stop_node(self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller = ...) -> AppiumNode: ...
+    async def start_node_txn(
+        self, db: AsyncSession, locked: LockedDevice, *, caller: DesiredStateCaller = ...
+    ) -> AppiumNode: ...
+    async def stop_node_txn(
+        self, db: AsyncSession, locked: LockedDevice, *, caller: DesiredStateCaller = ...
+    ) -> AppiumNode: ...
 
 
 class OperatorNodeLifecycleProtocol(Protocol):

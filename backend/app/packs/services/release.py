@@ -4,7 +4,6 @@ import asyncio
 import hashlib
 import io
 import tarfile
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
@@ -16,6 +15,7 @@ from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation
 from app.packs.schemas import PackReleaseOut, PackReleasesOut
 from app.packs.services.ingest import ingest_pack_tarball
 from app.packs.services.release_ordering import parse_release_key, selected_release
+from app.packs.services.service import PackNotFound
 from app.packs.services.storage import PackStorageError
 
 if TYPE_CHECKING:
@@ -81,7 +81,13 @@ class PackReleaseService:
             ],
         )
 
-    async def delete_release(self, db: AsyncSession, pack_id: str, release: str) -> None:
+    async def delete_release(self, db: AsyncSession, pack_id: str, release: str) -> str | None:
+        """Delete the release row; return its artifact path for the caller to unlink.
+
+        The unlink used to happen right here, which put filesystem work inside
+        whatever transaction the caller had open. The router does it once the
+        transaction has ended.
+        """
         pack = (
             await db.execute(
                 select(DriverPack)
@@ -142,8 +148,7 @@ class PackReleaseService:
             next_current = selected_release(remaining)
             pack.current_release = next_current.release if next_current is not None else None
             await db.flush()
-        if artifact_path:
-            Path(artifact_path).unlink(missing_ok=True)
+        return artifact_path
 
     async def set_current_release(self, db: AsyncSession, pack_id: str, release: str) -> DriverPack:
         pack = (
@@ -154,9 +159,9 @@ class PackReleaseService:
             )
         ).scalar_one_or_none()
         if pack is None:
-            raise LookupError(f"Pack {pack_id!r} not found")
+            raise PackNotFound(f"Pack {pack_id!r} not found")
         if not any(row.release == release for row in pack.releases):
-            raise LookupError(f"Pack {pack_id!r} release {release!r} not found")
+            raise PackNotFound(f"Pack {pack_id!r} release {release!r} not found")
         pack.current_release = release
         await db.flush()
         return pack

@@ -1,4 +1,9 @@
-"""Contract tests for settings.changed event queueing."""
+"""Contract tests for settings.changed event queueing.
+
+The four mutations own their own boundary, so they take no session: they commit
+on the factory ``db_session_maker`` handed them through ``configure_store_refresh``
+and the staged event becomes deliverable at that commit.
+"""
 
 from __future__ import annotations
 
@@ -9,14 +14,14 @@ from tests.helpers import dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 async def test_update_queues_settings_changed(
-    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    await settings_service.update(db_session, "general.session_viability_timeout_sec", 30, publisher=event_bus)
+    await settings_service.update("general.session_viability_timeout_sec", 30, publisher=event_bus)
     await dispatch_committed_events()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]
@@ -25,10 +30,10 @@ async def test_update_queues_settings_changed(
 
 
 async def test_bulk_update_queues_one_event(
-    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    await settings_service.bulk_update(db_session, {"general.session_viability_timeout_sec": 45}, publisher=event_bus)
+    await settings_service.bulk_update({"general.session_viability_timeout_sec": 45}, publisher=event_bus)
     await dispatch_committed_events()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]
@@ -37,10 +42,10 @@ async def test_bulk_update_queues_one_event(
 
 
 async def test_reset_queues_event(
-    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    await settings_service.reset(db_session, "general.session_viability_timeout_sec", publisher=event_bus)
+    await settings_service.reset("general.session_viability_timeout_sec", publisher=event_bus)
     await dispatch_committed_events()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]
@@ -49,10 +54,10 @@ async def test_reset_queues_event(
 
 
 async def test_reset_all_queues_event(
-    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     event_bus_capture: list[tuple[str, dict[str, Any]]],
 ) -> None:
-    await settings_service.reset_all(db_session, publisher=event_bus)
+    await settings_service.reset_all(publisher=event_bus)
     await dispatch_committed_events()
 
     changed = [p for n, p in event_bus_capture if n == "settings.changed"]

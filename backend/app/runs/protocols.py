@@ -7,21 +7,28 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.devices.locking import LockedDevice
     from app.devices.models import Device
     from app.devices.models.reservation import DeviceReservation
     from app.runs.models import TestRun
 
 
 class MaintenanceWriter(Protocol):
-    async def enter_maintenance(
+    """The narrow maintenance view the run-failure escalation needs.
+
+    Only the locked helper: the escalation already holds the Device aggregate
+    lock inside its own transaction, so it must never re-acquire it or open a
+    second boundary.
+    """
+
+    async def enter_maintenance_locked(
         self,
         db: AsyncSession,
-        device: Device,
+        locked: LockedDevice,
         *,
-        commit: bool = ...,
         allow_reserved: bool = ...,
         maintenance_reason: str = ...,
-    ) -> Device: ...
+    ) -> None: ...
 
 
 class DeviceDeferredStop(Protocol):

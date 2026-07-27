@@ -94,8 +94,9 @@ async def test_start_stop_restart_node_guard_paths(
         ),
     )
     device = await _loaded_device(db_session, db_host, "start-stop-guards")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     with pytest.raises(NodeManagerError, match="No running node"):
-        await svc.stop_node(db_session, device)
+        await svc.stop_node_txn(db_session, locked)
 
     monkeypatch.setattr(
         "app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", AsyncMock(return_value=False)
@@ -105,19 +106,19 @@ async def test_start_stop_restart_node_guard_paths(
         AsyncMock(return_value="not ready"),
     )
     with pytest.raises(NodeManagerError, match="not ready"):
-        await svc.start_node(db_session, device)
+        await svc.start_node_txn(db_session, locked)
 
     monkeypatch.setattr(
         "app.appium_nodes.services.reconciler_agent.is_ready_for_use_async", AsyncMock(return_value=True)
     )
     node = AppiumNode(device_id=device.id, port=4723, pid=1, active_connection_target="active")
     db_session.add(node)
-    await db_session.commit()
-    device.appium_node = node
+    await db_session.flush()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     with pytest.raises(NodeManagerError, match="already running"):
-        await svc.start_node(db_session, device)
+        await svc.start_node_txn(db_session, locked)
 
-    restarted = await svc.restart_node(db_session, device)
+    restarted = await svc.restart_node_txn(db_session, locked)
     assert restarted.restart_requested_at is not None
 
 
@@ -279,12 +280,14 @@ async def test_start_and_restart_guard_branches(monkeypatch: pytest.MonkeyPatch)
     db = MagicMock()
     db.refresh = AsyncMock()
     hostless = SimpleNamespace(id=uuid.uuid4(), host_id=None, appium_node=None)
+    hostless_lock = SimpleNamespace(device=hostless, assert_active=lambda _db: None)
     monkeypatch.setattr(node_agent, "is_ready_for_use_async", AsyncMock(return_value=True))
     with pytest.raises(NodeManagerError, match="has no host assigned"):
-        await svc.start_node(db, hostless)
+        await svc.start_node_txn(db, hostless_lock)  # type: ignore[arg-type]
 
     start = AsyncMock(return_value="started")
-    with mock_patch.object(node_agent.ReconcilerAgentService, "start_node", start):
-        result = await svc.restart_node(db, SimpleNamespace(appium_node=None))
+    nodeless_lock = SimpleNamespace(device=SimpleNamespace(appium_node=None), assert_active=lambda _db: None)
+    with mock_patch.object(node_agent.ReconcilerAgentService, "start_node_txn", start):
+        result = await svc.restart_node_txn(db, nodeless_lock)  # type: ignore[arg-type]
     assert result == "started"
     start.assert_awaited_once()

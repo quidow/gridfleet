@@ -26,7 +26,10 @@ async def _create_online_host(db_session: AsyncSession) -> Host:
         status=HostStatus.online,
     )
     db_session.add(host)
-    await db_session.flush()
+    # Committed, not flushed: the doctor route reads the host on its own short
+    # session, which cannot see another session's uncommitted insert.
+    await db_session.commit()
+    await db_session.refresh(host)
     return host
 
 
@@ -39,7 +42,10 @@ async def _create_offline_host(db_session: AsyncSession) -> Host:
         status=HostStatus.offline,
     )
     db_session.add(host)
-    await db_session.flush()
+    # Committed, not flushed: the doctor route reads the host on its own short
+    # session, which cannot see another session's uncommitted insert.
+    await db_session.commit()
+    await db_session.refresh(host)
     return host
 
 
@@ -47,6 +53,9 @@ async def _create_offline_host(db_session: AsyncSession) -> Host:
 async def test_trigger_doctor_returns_404_for_unknown_host(client: AsyncClient) -> None:
     resp = await client.post("/api/hosts/00000000-0000-0000-0000-000000000000/driver-packs/appium-uiautomator2/doctor")
     assert resp.status_code == 404
+    # Lowercase, matching this route's sibling GET /{host_id}/driver-packs. The
+    # detail is part of the response contract, so pin it rather than the code alone.
+    assert resp.json()["error"]["message"] == "host not found"
 
 
 @pytest.mark.db
@@ -60,7 +69,7 @@ async def test_trigger_doctor_returns_409_for_offline_host(client: AsyncClient, 
 async def test_trigger_doctor_proxies_to_agent_and_persists(client: AsyncClient, db_session: AsyncSession) -> None:
     host = await _create_online_host(db_session)
     db_session.add(DriverPack(id="appium-uiautomator2", display_name="UiAutomator2", maintainer=""))
-    await db_session.flush()
+    await db_session.commit()
     agent_checks: list[dict[str, Any]] = [
         {"check_id": "adb", "ok": True, "message": "adb found"},
         {"check_id": "java", "ok": False, "message": "java not found"},

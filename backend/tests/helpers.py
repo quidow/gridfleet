@@ -12,6 +12,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.models import ControlPlaneStateEntry
 from app.core.observability import BACKGROUND_LOOP_NAMES, LOOP_HEARTBEAT_NAMESPACE
+from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
@@ -24,10 +25,12 @@ from app.runs.models import RunState, TestRun
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
+    import pytest
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.type_defs import SessionFactory
+    from app.devices.locking import LockedDevice
     from app.runs.schemas import DeviceRequirement
 
 # Shared test-owned EventBus instance. Replaces the removed production singleton.
@@ -250,6 +253,26 @@ async def create_reservation(
     db_session.add(res)
     await db_session.flush()
     return res
+
+
+def record_device_lock_proofs(monkeypatch: pytest.MonkeyPatch) -> list[uuid.UUID]:
+    """Record the device id behind every ``LockedDevice`` a command mints, in order.
+
+    Wraps ``app.devices.locking.lock_device_handle`` and asserts each proof is
+    owned by the active transaction, so a test can assert "exactly one Device
+    aggregate lock per command" instead of trusting the call graph.
+    """
+    proofs: list[uuid.UUID] = []
+    real_lock = device_locking.lock_device_handle
+
+    async def spy(db: AsyncSession, device_id: uuid.UUID, **kwargs: Any) -> LockedDevice:  # noqa: ANN401
+        locked = await real_lock(db, device_id, **kwargs)
+        locked.assert_active(db)
+        proofs.append(locked.device.id)
+        return locked
+
+    monkeypatch.setattr(device_locking, "lock_device_handle", spy)
+    return proofs
 
 
 async def dispatch_committed_events(bus: EventBus = test_event_bus) -> None:

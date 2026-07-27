@@ -87,7 +87,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
         def _override_device_services() -> DeviceServices:
             sf = async_sessionmaker(db_session_maker.kw["bind"], class_=AsyncSession, expire_on_commit=False)
             _maintenance_svc = MaintenanceService(
-                review=build_review_service(), settings=settings_service, publisher=event_bus
+                review=build_review_service(), settings=settings_service, publisher=event_bus, session_factory=sf
             )
             _crud_svc = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
             return DeviceServices(
@@ -108,6 +108,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                     operator=OperatorNodeLifecycleService(
                         review=build_review_service(), settings=settings_service, publisher=event_bus
                     ),
+                    session_factory=sf,
                 ),
                 presenter=DevicePresenterService(),
                 test_data=TestDataService(publisher=event_bus),
@@ -151,6 +152,7 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
             return SettingsServices(
                 service=settings_service,
                 config=SettingsConfigService(publisher=event_bus),
+                session_factory=db_session_maker,
             )
 
         def _override_run_services() -> RunServices:
@@ -173,7 +175,10 @@ async def test_bulk_maintenance_does_not_orphan_run_create_reservations(
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
                 maintenance=MaintenanceService(
-                    review=build_review_service(), settings=settings_service, publisher=event_bus
+                    review=build_review_service(),
+                    settings=settings_service,
+                    publisher=event_bus,
+                    session_factory=db_session_maker,
                 ),
                 lifecycle_actions=AsyncMock(),
                 reservation=RunReservationService(review=build_review_service()),

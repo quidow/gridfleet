@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 
+from app.devices import locking as device_locking
 from app.devices.services import readiness as device_readiness
 from app.packs.services.capability import coerce_device_config_fields
 from app.packs.services.platform_resolver import resolve_pack_platform
@@ -74,10 +75,20 @@ class SettingsConfigService:
     async def merge_device_config(
         self,
         db: AsyncSession,
-        device: Device,
+        device_id: uuid.UUID,
         partial_config: dict[str, Any],
         changed_by: str | None = None,
     ) -> dict[str, Any]:
+        """Deep-merge *partial_config* into the device config inside the caller's transaction.
+
+        Takes the Device aggregate lock once and stages the mutation, the audit
+        row, and the event under that single proof. Raises ``NoResultFound`` when
+        the device does not exist, which the router maps to the same 404 body its
+        old pre-lock produced.
+        """
+        locked = await device_locking.lock_device_handle(db, device_id)
+        locked.assert_active(db)
+        device = locked.device
         previous = device.device_config or {}
         merged = _deep_merge(previous, partial_config)
         merged = await _coerce_for_device(db, device, merged)
@@ -101,8 +112,7 @@ class SettingsConfigService:
                 "changed_by": changed_by,
             },
         )
-        await db.commit()
-        await db.refresh(device)
+        await db.flush()
         return copy.deepcopy(device.device_config or {})
 
     async def get_config_history(self, db: AsyncSession, device_id: uuid.UUID, limit: int = 50) -> list[ConfigAuditLog]:

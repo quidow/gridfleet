@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+import uuid
+from dataclasses import dataclass
+from datetime import datetime  # Pydantic needs the runtime type.
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
-from app.hosts.models import Host, HostStatus
+from app.devices.services.groups import constraint_name as integrity_constraint_name
+from app.hosts.models import Host, HostStatus, OSType  # Pydantic needs the runtime types.
 
 if TYPE_CHECKING:
-    import uuid
-
+    from sqlalchemy.exc import IntegrityError
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
@@ -24,6 +27,76 @@ MIN_ORCHESTRATION_CONTRACT_VERSION = 7
 # Fallback for hosts created without a port; enrollment overwrites it with the
 # agent's real AGENT_AGENT_PORT on the first registration refresh.
 DEFAULT_AGENT_PORT = 5100
+# ``Host.hostname`` is declared unique=True, index=True, and the Postgres naming
+# convention ("ix": "%(column_0_label)s_idx") renders that index as
+# ``hosts_hostname_idx``. Registration discriminates on this name so an
+# unrelated integrity failure propagates instead of degrading to a re-register.
+# ``test_hostname_conflict_constant_matches_the_live_database`` pins the value
+# against what the running database actually reports.
+HOSTNAME_UNIQUE_INDEX = "hosts_hostname_idx"
+
+
+def is_hostname_conflict(exc: IntegrityError) -> bool:
+    return integrity_constraint_name(exc) == HOSTNAME_UNIQUE_INDEX
+
+
+class HostCommandSnapshot(BaseModel):
+    """Immutable projection of the Host columns a router response reads.
+
+    A host command's transaction is closed by the time its route serialises, so
+    the response is built from this rather than from the ORM row the command
+    session owned. It carries exactly what ``_serialize_host`` touches — the
+    ``HostRead`` column set plus the three liveness facts — and no relationship.
+    """
+
+    model_config = ConfigDict(frozen=True, from_attributes=True)
+
+    id: uuid.UUID
+    hostname: str
+    ip: str
+    os_type: OSType
+    agent_port: int
+    status: HostStatus
+    agent_version: str | None
+    capabilities: dict[str, Any] | None
+    tool_env: dict[str, str] | None
+    missing_prerequisites: list[str]
+    last_heartbeat: datetime | None
+    created_at: datetime
+    os_version: str | None
+    kernel_version: str | None
+    cpu_arch: str | None
+    cpu_model: str | None
+    cpu_cores: int | None
+    total_memory_mb: int | None
+    total_disk_gb: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class HostTarget:
+    """The only value a doctor / tool-status / discovery remote call receives.
+
+    Scalars, copied inside a short transaction that then ends: no agent call in
+    this domain ever runs while a session is open or a row lock is held.
+    ``current_boot_id`` travels with it so a write phase can recheck that the
+    boot which produced the remote payload is still the registered one.
+    """
+
+    host_id: uuid.UUID
+    hostname: str
+    ip: str
+    agent_port: int
+    current_boot_id: uuid.UUID | None
+
+    @classmethod
+    def from_host(cls, host: Host) -> HostTarget:
+        return cls(
+            host_id=host.id,
+            hostname=host.hostname,
+            ip=host.ip,
+            agent_port=host.agent_port,
+            current_boot_id=host.current_boot_id,
+        )
 
 
 def _apply_host_info(host: Host, host_info: HostHardwareInfo | None) -> None:
@@ -100,18 +173,22 @@ def update_missing_prerequisites_from_health(host: Host, missing_prerequisites: 
 
 
 class HostCrudService:
+    """Transaction-local host mutators. Every method assumes the caller's
+    transaction is already open and leaves the boundary to it: mutate, flush,
+    queue events, and return an immutable snapshot built before the caller's
+    transaction ends."""
+
     def __init__(self, *, publisher: EventPublisher, settings: SettingsReader) -> None:
         self._publisher: EventPublisher = publisher
         self._settings: SettingsReader = settings
 
-    async def create_host(self, db: AsyncSession, data: HostCreate) -> Host:
+    async def create_host(self, db: AsyncSession, data: HostCreate) -> HostCommandSnapshot:
         payload = data.model_dump()
         payload["agent_port"] = payload["agent_port"] or DEFAULT_AGENT_PORT
         host = Host(**payload)
         db.add(host)
-        await db.commit()
-        await db.refresh(host)
-        return host
+        await db.flush()
+        return HostCommandSnapshot.model_validate(host)
 
     async def list_hosts(self, db: AsyncSession) -> list[Host]:
         stmt = select(Host).order_by(Host.hostname)
@@ -125,17 +202,33 @@ class HostCrudService:
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def load_host_target(self, db: AsyncSession, host_id: uuid.UUID) -> HostTarget | None:
+        """Copy the scalars a remote call needs, so the session can close first."""
+        host = (await db.execute(select(Host).where(Host.id == host_id))).scalar_one_or_none()
+        return None if host is None else HostTarget.from_host(host)
+
     async def delete_host(self, db: AsyncSession, host_id: uuid.UUID) -> bool:
-        host = await self.get_host(db, host_id)
+        # Lock before the dependent read so a device cannot be attached between
+        # the check and the delete. ``devices`` stays eager-loaded: the
+        # relationship cascades in Python, and an unloaded collection would be
+        # lazy-loaded during flush.
+        stmt = (
+            select(Host)
+            .where(Host.id == host_id)
+            .options(selectinload(Host.devices))
+            .with_for_update(of=Host)
+            .execution_options(populate_existing=True)
+        )
+        host = (await db.execute(stmt)).scalar_one_or_none()
         if host is None:
             return False
         if host.devices:
             raise ValueError("Cannot delete host while devices are still assigned")
         await db.delete(host)
-        await db.commit()
+        await db.flush()
         return True
 
-    async def _apply_reregister(self, db: AsyncSession, host: Host, data: HostRegister) -> Host:
+    def _apply_reregister(self, host: Host, data: HostRegister) -> None:
         host.ip = data.ip
         host.os_type = data.os_type
         if data.agent_port is not None:
@@ -148,12 +241,20 @@ class HostCrudService:
         # agent_version / capabilities are push-owned runtime facts; registration
         # never writes them (capabilities is only the 426 gate input above).
         _apply_host_info(host, data.host_info)
-        await db.commit()
-        await db.refresh(host)
-        return host
 
-    async def register_host(self, db: AsyncSession, data: HostRegister) -> tuple[Host, bool]:
-        """Register or re-register a host. Returns (host, is_new)."""
+    async def register_host(self, db: AsyncSession, data: HostRegister) -> tuple[HostCommandSnapshot, bool]:
+        """One registration attempt. Returns (snapshot, is_new).
+
+        The insert can still lose a race to a concurrent peer that commits the
+        same hostname; that ``IntegrityError`` leaves the caller's transaction
+        unusable, so it propagates and the caller retries through
+        :meth:`reregister_host` on a *fresh* transaction.
+
+        ``hosts/router.py`` also calls :func:`validate_orchestration_contract`
+        ahead of both this attempt and the conflict fallback — deliberately, as
+        defence-in-depth for direct callers of this method. Neither copy guards
+        the other; do not delete one on the assumption that it does.
+        """
         validate_orchestration_contract(data.capabilities, host_label=data.hostname)
         # FOR UPDATE: the boot-fence write below must serialize against a
         # concurrent status push for the same host (which also locks the row),
@@ -163,7 +264,9 @@ class HostCrudService:
         host = result.scalar_one_or_none()
 
         if host is not None:
-            return await self._apply_reregister(db, host, data), False
+            self._apply_reregister(host, data)
+            await db.flush()
+            return HostCommandSnapshot.model_validate(host), False
 
         # New registration
         status = HostStatus.online if self._settings.get("agent.auto_accept_hosts") else HostStatus.pending
@@ -178,20 +281,7 @@ class HostCrudService:
         )
         _apply_host_info(host, data.host_info)
         db.add(host)
-        try:
-            await db.flush()
-        except IntegrityError:
-            # A concurrent peer (e.g. a heartbeat-driven re-register racing the
-            # operator-initiated registration) committed the same hostname
-            # between our unlocked SELECT and our INSERT. Drop the
-            # half-written transient row, refetch the existing host, and
-            # degrade to the re-register branch.
-            await db.rollback()
-            result = await db.execute(select(Host).where(Host.hostname == data.hostname).with_for_update())
-            existing = result.scalar_one_or_none()
-            if existing is None:
-                raise
-            return await self._apply_reregister(db, existing, data), False
+        await db.flush()
         self._publisher.queue_for_session(
             db,
             "host.registered",
@@ -201,11 +291,32 @@ class HostCrudService:
                 "status": host.status.value,
             },
         )
-        await db.commit()
-        await db.refresh(host)
-        return host, True
+        return HostCommandSnapshot.model_validate(host), True
 
-    async def approve_host(self, db: AsyncSession, host_id: uuid.UUID) -> Host | None:
+    async def reregister_host(self, db: AsyncSession, data: HostRegister) -> HostCommandSnapshot | None:
+        """Reapply a registration onto the row a racing peer won.
+
+        Runs in a transaction the caller opened *after* the losing attempt's
+        transaction was fully rolled back and closed. The lock is retaken here:
+        nothing carries over from the failed attempt. ``None`` means the winner
+        has since disappeared, which the caller reports as the same conflict.
+
+        PRECONDITION: *data* has already passed
+        :func:`validate_orchestration_contract`. This method does not re-run the
+        426 gate — it is only reachable after an attempt on the same payload
+        cleared it, and ``hosts/router.py`` runs the gate before either
+        transaction so that ordering is visible at the call site rather than
+        implied here.
+        """
+        stmt = select(Host).where(Host.hostname == data.hostname).with_for_update()
+        host = (await db.execute(stmt)).scalar_one_or_none()
+        if host is None:
+            return None
+        self._apply_reregister(host, data)
+        await db.flush()
+        return HostCommandSnapshot.model_validate(host)
+
+    async def approve_host(self, db: AsyncSession, host_id: uuid.UUID) -> HostCommandSnapshot | None:
         """Approve a pending host. Returns None if not found or not pending."""
         # Acquire SELECT ... FOR UPDATE so a concurrent reject_host (which
         # deletes the row) cannot land between the predicate check and the
@@ -230,9 +341,8 @@ class HostCrudService:
             },
             severity=_host_status_severity(old_status, "online"),
         )
-        await db.commit()
-        await db.refresh(host)
-        return host
+        await db.flush()
+        return HostCommandSnapshot.model_validate(host)
 
     async def reject_host(self, db: AsyncSession, host_id: uuid.UUID) -> bool:
         """Reject a pending host (deletes it). Returns False if not found or not pending."""
@@ -242,5 +352,16 @@ class HostCrudService:
         if host is None or host.status != HostStatus.pending:
             return False
         await db.delete(host)
-        await db.commit()
+        await db.flush()
         return True
+
+    async def update_tool_env(self, db: AsyncSession, host_id: uuid.UUID, env: dict[str, str]) -> dict[str, str]:
+        """Replace the per-host tool environment under the Host row lock.
+
+        Raises ``NoResultFound`` when the host is gone; the route translates it.
+        """
+        stmt = select(Host).where(Host.id == host_id).with_for_update()
+        host = (await db.execute(stmt)).scalar_one()
+        host.tool_env = env or None
+        await db.flush()
+        return dict(host.tool_env or {})

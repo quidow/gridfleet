@@ -29,6 +29,7 @@ from app.runs.service_allocator import RunCreateResult
 from app.runs.service_lifecycle import RunCommandResult
 from app.runs.service_lifecycle_failures import CooldownResult, PreparationFailureResult
 from app.verification import router as devices_verification
+from tests.fakes import FakeSessionFactory
 
 
 def _run(state: RunState = RunState.active) -> SimpleNamespace:
@@ -457,6 +458,7 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
             serialize_projected_device=MagicMock(return_value={"id": str(device_id)}),
             serialize_device_detail=AsyncMock(return_value={"detail": str(device_id)}),
         ),
+        session_factory=FakeSessionFactory(db),
     )
     monkeypatch.setattr(
         devices_core,
@@ -475,22 +477,22 @@ async def test_devices_core_router_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     listed_plain = await devices_core.list_devices(filters, limit=None, offset=None, db=db, device_services=_mock_ds)
     assert listed_plain == [{"id": str(device_id)}]
 
-    _mock_crud.update_device = AsyncMock(side_effect=DeviceIdentityConflictError("conflict"))
+    _mock_crud.update_device_txn = AsyncMock(side_effect=DeviceIdentityConflictError("conflict"))
     with pytest.raises(HTTPException) as conflict:
         await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, device_services=_mock_ds)
     assert conflict.value.status_code == 409
-    _mock_crud.update_device = AsyncMock(side_effect=ValueError("bad"))
+    _mock_crud.update_device_txn = AsyncMock(side_effect=ValueError("bad"))
     with pytest.raises(HTTPException) as invalid:
         await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, device_services=_mock_ds)
     assert invalid.value.status_code == 422
-    _mock_crud.update_device = AsyncMock(return_value=None)
+    _mock_crud.update_device_txn = AsyncMock(return_value=False)
     with pytest.raises(HTTPException) as missing:
         await devices_core.update_device(device_id, DevicePatch(name="new"), db=db, device_services=_mock_ds)
     assert missing.value.status_code == 404
 
-    _mock_crud.delete_device = AsyncMock(return_value=False)
+    _mock_crud.delete_device_txn = AsyncMock(return_value=False)
     with pytest.raises(HTTPException):
-        await devices_core.delete_device(device_id, db=db, device_services=_mock_ds)
+        await devices_core.delete_device(device_id, device_services=_mock_ds)
 
     monkeypatch.setattr(devices_core, "get_device_or_404", AsyncMock(return_value=device))
     assert await devices_core.get_device(device_id, db=db, device_services=_mock_ds) == {"detail": str(device_id)}

@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from importlib import import_module
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from pydantic import ValidationError
@@ -464,7 +464,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     with pytest.raises(LookupError):
         await PackLifecycleService().try_complete_drain(missing_pack_db, "missing")
     with pytest.raises(LookupError):
-        await PackLifecycleService().transition_pack_state(missing_pack_db, "missing", PackState.enabled)
+        await PackLifecycleService().transition_pack_state_txn(missing_pack_db, "missing", PackState.enabled)
 
     desired_pack = SimpleNamespace(releases=[], current_release=None)
     assert pack_desired_state_service.selected_release(desired_pack.releases, desired_pack.current_release) is None
@@ -481,15 +481,15 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     monkeypatch.setattr(
         pack_discovery_service.platform_label_service, "load_platform_label_map", AsyncMock(return_value={})
     )
-    result = await _PackDiscoveryService(
+    discovery_service = _PackDiscoveryService(
         agent_get_pack_devices=DummyClient().get_pack_devices,
         circuit_breaker=Mock(),
         serializer=_DevicePresenterService(),
         identity_guard=DeviceIdentityConflictService(),
-    ).discover_devices(
-        discovery_db,
-        SimpleNamespace(id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100),
     )
+    target = SimpleNamespace(host_id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100)
+    candidates = await discovery_service.fetch_pack_candidates(target)
+    result = await discovery_service.classify_discovery(discovery_db, target.host_id, candidates)
     assert result.new_devices == []
 
     assert (
@@ -582,18 +582,22 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         def add(self, _obj: object) -> None:
             return None
 
-        async def commit(self) -> None:
-            return None
-
-        async def refresh(self, _obj: object) -> None:
+        async def flush(self) -> None:
             return None
 
     test_data_db = TestDataDb()
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", Mock())
     device = SimpleNamespace(id=uuid.uuid4(), name="device", test_data={"a": 1})
-    assert await test_data_service.TestDataService(publisher=event_bus).replace_device_test_data(
-        test_data_db, device, {"b": 2}, changed_by="operator"
-    ) == {"b": 2}
+    locked = SimpleNamespace(device=device, assert_active=lambda _db: None)
+    # Scoped, not monkeypatch: ``device_locking`` is shared, and a test-long patch
+    # would hand this stub to every other locker in this function.
+    with patch(
+        "app.devices.services.test_data.device_locking.lock_device_handle",
+        AsyncMock(return_value=locked),
+    ):
+        assert await test_data_service.TestDataService(publisher=event_bus).replace_device_test_data(
+            test_data_db, device.id, {"b": 2}, changed_by="operator"
+        ) == {"b": 2}
 
     host_db = AsyncMock()
     host_db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: None))

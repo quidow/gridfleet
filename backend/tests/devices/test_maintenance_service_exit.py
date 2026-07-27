@@ -1,14 +1,18 @@
 """D3: exit_maintenance must enqueue a recovery job."""
 
+from __future__ import annotations
+
+import asyncio
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.devices import locking as device_locking
-from app.devices.models import DeviceOperationalState
+from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import maintenance as maintenance_service
+from app.devices.services.lifecycle_policy_state import state as lifecycle_state
 from app.devices.services.maintenance import MaintenanceService
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
@@ -17,14 +21,26 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
 
 
+def _service(session_factory: async_sessionmaker[AsyncSession]) -> MaintenanceService:
+    return MaintenanceService(
+        review=build_review_service(),
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
+        session_factory=session_factory,
+    )
+
+
 async def test_exit_maintenance_enqueues_recovery_job(
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -35,43 +51,100 @@ async def test_exit_maintenance_enqueues_recovery_job(
         operational_state=DeviceOperationalState.offline,
         lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
+    await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).exit_maintenance(db_session, locked)
+    service = _service(db_session_maker)
+    async with db_session_maker.begin() as command_db:
+        recovery = await service.exit_maintenance(command_db, device.id)
+    assert recovery is not None
+    await service.schedule_device_recovery(recovery.device_id)
 
-    rows = (await db_session.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()
+    async with db_session_maker() as verify:
+        rows = (await verify.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()
     assert len(rows) == 1
     payload = rows[0].payload
     assert payload["device_id"] == str(device.id)
     assert payload["source"] == "exit_maintenance"
 
 
+async def test_exit_maintenance_recovery_enqueue_runs_after_the_command_transaction(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The enqueue session must be able to lock the device the exit just released.
+
+    ``create_job`` owns its own commit, so the enqueue cannot share the
+    maintenance transaction. Proving the row lock is free is a stronger check than
+    inspecting ``in_transaction()``: it fails on a still-open peer session too.
+    """
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="exit-recovery-after-commit",
+        operational_state=DeviceOperationalState.offline,
+        lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
+    )
+    await db_session.commit()
+
+    observed: dict[str, object] = {}
+    real_schedule = maintenance_service._schedule_device_recovery
+
+    async def observing_schedule(recovery_db: AsyncSession, device_id: uuid.UUID) -> None:
+        observed["enqueue_session_in_transaction"] = recovery_db.in_transaction()
+        async with db_session_maker() as probe:
+            try:
+                await asyncio.wait_for(device_locking.lock_device(probe, device_id), timeout=1.0)
+                observed["row_lock_free"] = True
+            except TimeoutError:
+                observed["row_lock_free"] = False
+            finally:
+                await probe.rollback()
+        await real_schedule(recovery_db, device_id)
+
+    monkeypatch.setattr(maintenance_service, "_schedule_device_recovery", observing_schedule)
+
+    service = _service(db_session_maker)
+    async with db_session_maker.begin() as command_db:
+        recovery = await service.exit_maintenance(command_db, device.id)
+    assert recovery is not None
+    await service.schedule_device_recovery(recovery.device_id)
+
+    assert observed.get("row_lock_free") is True, (
+        "the maintenance transaction was still holding the device row when recovery was enqueued"
+    )
+    assert observed["enqueue_session_in_transaction"] is False, (
+        "the recovery enqueue must start from a fresh session with no open transaction"
+    )
+    async with db_session_maker() as verify:
+        rows = (await verify.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()
+    assert len(rows) == 1
+
+
 async def test_exit_maintenance_enqueue_failure_does_not_propagate(
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Regression: exit_maintenance must not raise when schedule_device_recovery fails.
+    """Regression: a failed recovery enqueue must not undo a committed exit.
 
-    Before the fix, exit_maintenance(commit=True) committed the device-state
-    mutation and THEN called schedule_device_recovery. If create_job raised,
-    the exception propagated — the operator got a 500 while the device was
-    already out of maintenance (state mutation committed) but had no recovery
-    job scheduled. The device was stranded until the next
+    The state mutation has already committed by the time the enqueue runs, so an
+    exception here would hand the operator a 500 for a device that really did
+    leave maintenance, with no recovery job scheduled — stranded until the next
     device_connectivity_loop tick.
 
-    After the fix, the exception is swallowed with a WARNING log, and the
-    committed device state mutation is preserved.
+    The failure injected is a real aborting statement on the enqueue session, not
+    a patched ``side_effect``: an aborted transaction is the shape a transient DB
+    error actually takes, and it is the shape ``create_job`` would fail in.
 
-    NOTE: spy on ``logger.warning`` directly instead of going through
-    ``caplog`` or a handler attached to the maintenance_service logger.
-    Both of those routes go through stdlib logging filtering
-    (``Logger.isEnabledFor``, ``Logger.disabled``, parent-logger state)
-    and other tests running in the same xdist worker can leave that state
-    in a configuration where the WARNING record never reaches handlers —
-    which has produced a flake on CI. Spying on the call site bypasses the
-    pipeline entirely and verifies the contract directly.
+    NOTE: spy on ``logger.warning`` directly instead of going through ``caplog``
+    or a handler attached to the maintenance_service logger. Both of those routes
+    go through stdlib logging filtering (``Logger.isEnabledFor``,
+    ``Logger.disabled``, parent-logger state) and other tests running in the same
+    xdist worker can leave that state in a configuration where the WARNING record
+    never reaches handlers — which has produced a flake on CI. Spying on the call
+    site bypasses the pipeline entirely and verifies the contract directly.
     """
     device = await create_device(
         db_session,
@@ -80,43 +153,39 @@ async def test_exit_maintenance_enqueue_failure_does_not_propagate(
         operational_state=DeviceOperationalState.offline,
         lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
+    await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
+    async def failing_schedule(recovery_db: AsyncSession, _device_id: uuid.UUID) -> None:
+        await recovery_db.execute(text("SELECT 1 / 0"))
 
-    mock_schedule = AsyncMock(side_effect=RuntimeError("simulated transient DB error"))
+    service = _service(db_session_maker)
+    async with db_session_maker.begin() as command_db:
+        recovery = await service.exit_maintenance(command_db, device.id)
+    assert recovery is not None
+
     with (
-        patch("app.devices.services.maintenance._schedule_device_recovery", new=mock_schedule),
+        patch("app.devices.services.maintenance._schedule_device_recovery", new=failing_schedule),
         patch.object(maintenance_service.logger, "warning") as warning_spy,
     ):
-        # Must NOT raise even though schedule_device_recovery raises.
-        result = await MaintenanceService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-        ).exit_maintenance(db_session, locked)
+        # Must NOT raise even though the enqueue statement fails.
+        await service.schedule_device_recovery(recovery.device_id)
 
-    # Sanity: the patched mock actually intercepted the call. If this fires,
-    # the warning-call assertion below would also fail but for a different
-    # reason — fail loudly here so the cause is unambiguous.
-    assert mock_schedule.await_count == 1, "schedule_device_recovery patch did not intercept the call"
+    async with db_session_maker() as verify:
+        row = (await verify.execute(select(Device).where(Device.id == device.id))).scalar_one()
+        jobs = (await verify.execute(select(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY))).scalars().all()
 
-    # State mutation must be committed regardless of enqueue failure.
-    # hold is now derived by the reconciler (Task 7+8); check the signal is cleared.
-    assert result.lifecycle_policy_state is not None
-    assert result.lifecycle_policy_state.get("maintenance_reason") is None, (
-        "maintenance_reason must be cleared (committed) even when enqueue fails"
+    assert lifecycle_state(row).get("maintenance_reason") is None, (
+        "maintenance_reason must stay cleared (committed) even when the enqueue fails"
     )
     # After Task 10: exit_maintenance registers a verification intent, so the
-    # reconciler derives verifying (not offline). The important check is that
-    # maintenance_reason is cleared (committed) even when enqueue fails.
-    assert result.operational_state_last_emitted in (
+    # reconciler derives verifying (not offline).
+    assert row.operational_state_last_emitted in (
         DeviceOperationalState.offline,
         DeviceOperationalState.verifying,
-    ), (
-        "operational_state must be offline or verifying after exit_maintenance, "
-        f"got {result.operational_state_last_emitted}"
-    )
+    ), f"unexpected operational state after exit_maintenance: {row.operational_state_last_emitted}"
+    assert jobs == []
 
-    # A warning must have been logged so ops can triage.
-    assert warning_spy.called, "exit_maintenance must call logger.warning when recovery enqueue fails"
+    assert warning_spy.called, "a failed recovery enqueue must call logger.warning so ops can triage"
     warning_args, _ = warning_spy.call_args
     assert "exit_maintenance" in warning_args[0], (
         f"warning message must mention exit_maintenance (got: {warning_args[0]!r})"

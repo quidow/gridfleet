@@ -20,6 +20,7 @@ from app.devices.services.lifecycle_policy_state import (
 )
 from app.hosts.models import Host, HostStatus
 from app.lifecycle.services import remediation_log
+from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from tests.helpers import create_device_record, create_host
 from tests.packs.factories import seed_test_packs
 
@@ -320,14 +321,16 @@ async def test_restart_node_closes_sessions_before_poke(
     remote_manager_client: AsyncMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Neither the route's DbDep session nor converge_device_now's own read
-    session may still be in a transaction when the wake-hint poke fires.
+    """No session the restart route touched may still be in a transaction when
+    the wake-hint poke fires: not the command session that owns the boundary, and
+    not converge_device_now's own read session.
 
     Catches ReconcilerAgentService.restart_node's post-commit db.refresh(node),
     which used to reopen an implicit transaction on the route's session ahead
     of the poke (expire_on_commit=False already leaves the committed values
     loaded, so that refresh was redundant)."""
     from app.appium_nodes.services import reconciler as appium_reconciler
+    from app.devices import locking as device_locking
 
     device = await _create_device(db_session, default_host_id)
     device_id = device["id"]
@@ -355,6 +358,15 @@ async def test_restart_node_closes_sessions_before_poke(
 
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_row", capturing_fetch_desired_row)
 
+    command_sessions: list[AsyncSession] = []
+    real_lock_handle = device_locking.lock_device_handle
+
+    async def capturing_lock_handle(lock_db: AsyncSession, lock_device_id: uuid.UUID, **kwargs: object) -> object:
+        command_sessions.append(lock_db)
+        return await real_lock_handle(lock_db, lock_device_id, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(device_locking, "lock_device_handle", capturing_lock_handle)
+
     # Record state rather than asserting here: the router wraps
     # converge_device_now in a best-effort try/except, which would silently
     # swallow an AssertionError raised from inside this callback.
@@ -366,6 +378,9 @@ async def test_restart_node_closes_sessions_before_poke(
             captured_sessions and captured_sessions[-1].in_transaction()
         )
         poke_observations["route_session_in_transaction"] = db_session.in_transaction()
+        poke_observations["command_session_in_transaction"] = bool(
+            command_sessions and command_sessions[-1].in_transaction()
+        )
 
     monkeypatch.setattr(appium_reconciler, "poke_node_refresh_target", observing_poke)
 
@@ -379,6 +394,10 @@ async def test_restart_node_closes_sessions_before_poke(
     )
     assert not poke_observations["route_session_in_transaction"], (
         "the route's DbDep session must be closed before the poke"
+    )
+    assert command_sessions, "the restart route must lock the device on its own command session"
+    assert not poke_observations["command_session_in_transaction"], (
+        "the command session's transaction must have ended before the poke"
     )
 
 
@@ -832,3 +851,137 @@ async def test_readiness_downgrade_blocks_node_start(
     start_resp = await client.post(f"/api/devices/{device['id']}/node/start")
     assert start_resp.status_code == 409
     assert "verification succeeds" in start_resp.json()["error"]["message"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 9: the routes own the boundary; the two fallbacks keep their own caller
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def operator_start_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """Record ``(caller, reason)`` for every ``request_start`` the routes drive."""
+    calls: list[tuple[str, str]] = []
+    real_request_start = OperatorNodeLifecycleService.request_start
+
+    async def spy(
+        self: OperatorNodeLifecycleService,
+        db: AsyncSession,
+        device: Device,
+        *,
+        caller: str,
+        reason: str,
+    ) -> AppiumNode:
+        calls.append((caller, reason))
+        return await real_request_start(self, db, device, caller=caller, reason=reason)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(OperatorNodeLifecycleService, "request_start", spy)
+    return calls
+
+
+async def test_start_route_fallback_recovers_through_the_restart_caller(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    operator_start_calls: list[tuple[str, str]],
+) -> None:
+    """start on a desired-running-but-down node recovers via restart, keeping ``operator_restart``.
+
+    The route-level fallback used to re-enter the restart route, which passes
+    ``caller="operator_restart"``; the service-level restart fallback then forwards
+    that caller unchanged into ``request_start``. ``caller`` is interpolated into the
+    desired-state reason, so collapsing the two fallbacks onto one caller value
+    would silently rewrite operator intent reasons.
+    """
+    device = await _create_device(db_session, default_host_id, operational_state="offline")
+    device_id = device["id"]
+    host = await db_session.get(Host, uuid.UUID(default_host_id))
+    assert host is not None
+    host.status = HostStatus.online
+    db_session.add(
+        AppiumNode(
+            device_id=uuid.UUID(device_id),
+            port=4723,
+            pid=None,
+            active_connection_target=None,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.post(f"/api/devices/{device_id}/node/start")
+
+    assert resp.status_code == 200
+    assert operator_start_calls == [("operator_restart", "operator_restart start requested")]
+
+
+async def test_restart_route_fallback_downgrades_to_the_start_caller(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    operator_start_calls: list[tuple[str, str]],
+) -> None:
+    """restart with no desired-running node falls back to start, downgrading the caller.
+
+    The route-level fallback used to re-enter the start route, which passes
+    ``caller="operator_route"`` — a deliberate downgrade from ``operator_restart``
+    that the reason string has to keep reporting.
+    """
+    device = await _create_device(db_session, default_host_id, operational_state="available")
+    device_id = device["id"]
+
+    resp = await client.post(f"/api/devices/{device_id}/node/restart")
+
+    assert resp.status_code == 200
+    assert operator_start_calls == [("operator_route", "operator_route start requested")]
+
+
+async def test_node_routes_leave_the_request_session_untouched(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """No request-session pre-lock survives: the command owns the only Device lock.
+
+    A pre-lock on the request session plus a second lock from the command's own
+    session is a guaranteed self-deadlock, so the route must not open a request
+    transaction at all.
+    """
+    device = await _create_device(db_session, default_host_id, operational_state="available")
+    device_id = device["id"]
+    await db_session.commit()
+    assert not db_session.in_transaction()
+
+    resp = await client.post(f"/api/devices/{device_id}/node/start")
+
+    assert resp.status_code == 200
+    assert not db_session.in_transaction(), (
+        "the node route left a transaction open on the request session — a pre-lock survived"
+    )
+
+
+async def test_stop_route_maps_service_node_manager_error_to_400(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A desired-running but unobserved node passes the route gate and fails in the service."""
+    device = await _create_device(db_session, default_host_id)
+    device_id = device["id"]
+    db_session.add(
+        AppiumNode(
+            device_id=uuid.UUID(device_id),
+            port=4723,
+            pid=None,
+            active_connection_target=None,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+        )
+    )
+    await db_session.commit()
+
+    resp = await client.post(f"/api/devices/{device_id}/node/stop")
+
+    assert resp.status_code == 400
+    assert resp.json()["error"]["message"] == f"No running node for device {device_id}"

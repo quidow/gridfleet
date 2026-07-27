@@ -43,7 +43,10 @@ def _make_failure_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunF
         settings=_settings,
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+            review=build_review_service(),
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
+            session_factory=session_factory,
         ),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),

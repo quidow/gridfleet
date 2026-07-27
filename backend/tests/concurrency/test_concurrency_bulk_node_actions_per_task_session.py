@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import event, select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices import locking as device_locking
@@ -21,6 +21,7 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.devices.locking import LockedDevice
     from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.db]
@@ -33,8 +34,8 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
     db_host: Host,
 ) -> None:
     """`bulk_start_nodes` must give each device task its own AsyncSession so
-    that one device's intermediate commit does not release `FOR UPDATE` on
-    the other devices in the batch."""
+    that one device's commit does not release `FOR UPDATE` on the other
+    devices in the batch."""
 
     device_a = await create_device(
         db_session,
@@ -56,21 +57,26 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
 
     b_manager_entered = asyncio.Event()
     a_committed = asyncio.Event()
+    racer_probed = asyncio.Event()
     release_b = asyncio.Event()
     racer_acquired_b = asyncio.Event()
 
-    async def fake_start_node(db: AsyncSession, dev: Device, caller: str, *, operator: object) -> AppiumNode:
+    async def fake_start_node(db: AsyncSession, locked: LockedDevice, caller: str, *, operator: object) -> AppiumNode:
+        _ = caller, operator
+        dev = locked.device
         if dev.id == device_b_id:
-            # The bulk helper calls the service only after acquiring B's
-            # row lock. Holding here makes the lock window observable.
+            # The bulk helper calls the action only after acquiring B's row lock.
+            # Holding here makes the lock window observable.
             b_manager_entered.set()
             await release_b.wait()
         elif dev.id == device_a_id:
             await asyncio.wait_for(b_manager_entered.wait(), timeout=3.0)
-            # Simulate mark_node_started's intermediate commit. In the
-            # buggy shared-session path, this releases A and B's locks.
-            await db.commit()
-            a_committed.set()
+            # Gate the racer on A's COMMIT, not on a sleep after A's action
+            # returns. session_factory.begin() commits in __aexit__, after this
+            # function has already returned, so a wall-clock guess here degrades
+            # into a vacuous pass on a loaded runner: the racer would probe before
+            # A committed and find B's lock held for the wrong reason.
+            event.listen(db.sync_session, "after_commit", lambda _s: a_committed.set(), once=True)
 
         node = AppiumNode(
             device_id=dev.id,
@@ -88,13 +94,13 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
     monkeypatch.setattr(bulk_service, "_bulk_start_one", fake_start_node)
 
     async def racer() -> None:
-        await a_committed.wait()
+        await asyncio.wait_for(a_committed.wait(), timeout=3.0)
         async with db_session_maker() as racer_db:
             try:
-                # Pre-fix: the shared db committed in FakeNodeManager above
-                # released device_b's FOR UPDATE; this lock returns immediately.
-                # Post-fix: device_b's per-task session still holds the lock,
-                # so this should block until release_b lets B commit.
+                # Pre-fix: A's commit on the shared session released device_b's
+                # FOR UPDATE and this lock returned immediately.
+                # Post-fix: device_b's per-task session still holds the lock, so
+                # this blocks until release_b lets B commit.
                 locked = await asyncio.wait_for(
                     device_locking.lock_device(racer_db, device_b_id),
                     timeout=0.3,
@@ -107,6 +113,7 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
                 # Expected post-fix: per-task session holds B's lock during A's gate.
                 with contextlib.suppress(Exception):
                     await racer_db.rollback()
+        racer_probed.set()
 
     async def runner() -> dict[str, object]:
         _settings_runner = FakeSettingsReader({})
@@ -119,22 +126,23 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
             operator=OperatorNodeLifecycleService(
                 review=build_review_service(), settings=_settings_runner, publisher=event_bus
             ),
-        ).bulk_start_nodes(db_session, [device_a_id, device_b_id])
+            session_factory=db_session_maker,
+        ).bulk_start_nodes([device_a_id, device_b_id])
 
     runner_task = asyncio.create_task(runner())
     racer_task = asyncio.create_task(racer())
 
-    await asyncio.wait_for(a_committed.wait(), timeout=3.0)
-    # Give the racer a chance to attempt B's lock under the gate.
-    await asyncio.sleep(0.5)
+    # Release B only once the racer has finished its probe — no sleep anywhere in
+    # the handshake, so a slow runner cannot let B commit before the probe runs.
+    await asyncio.wait_for(racer_probed.wait(), timeout=10.0)
     release_b.set()
     result, _ = await asyncio.wait_for(asyncio.gather(runner_task, racer_task), timeout=10.0)
 
     assert not racer_acquired_b.is_set(), (
         "racer acquired device_b's FOR UPDATE while bulk_start_nodes was "
-        "still in flight - the shared AsyncSession's intermediate commit "
-        "released every locked row in the batch. Each per-task call must "
-        "use its own AsyncSession so locks stay scoped per device."
+        "still in flight - one item's commit released every locked row in the "
+        "batch. Each per-item call must use its own AsyncSession so locks stay "
+        "scoped per device."
     )
     assert result["failed"] == 0, f"bulk_start_nodes reported failures: {result}"
 
@@ -143,3 +151,61 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
     assert device_b_row.operational_state_last_emitted != DeviceOperationalState.offline, (
         "racer's offline write landed on device_b - confirms shared-session lock release"
     )
+
+
+async def test_bulk_start_nodes_gives_each_item_its_own_open_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Every item runs on a distinct session that is inside its own transaction.
+
+    ``session_factory.begin()`` owns the unwind, so the item body must never see a
+    session it shares with a peer (one peer's commit would drop the other's lock)
+    nor a session with no transaction open (the lock proof would be unowned)."""
+    devices = [
+        await create_device(
+            db_session,
+            host_id=db_host.id,
+            name=f"bulk-own-session-{index}",
+            operational_state=DeviceOperationalState.available,
+            verified=True,
+        )
+        for index in range(3)
+    ]
+    await db_session.commit()
+
+    seen: list[tuple[int, bool, bool]] = []
+
+    async def recording_start(db: AsyncSession, locked: LockedDevice, caller: str, *, operator: object) -> AppiumNode:
+        _ = caller, operator
+        seen.append((id(db), db.in_transaction(), locked._session is db))
+        node = AppiumNode(
+            device_id=locked.device.id,
+            port=4740 + len(seen),
+            desired_state=AppiumDesiredState.running,
+            desired_port=4740 + len(seen),
+        )
+        db.add(node)
+        await db.flush()
+        return node
+
+    monkeypatch.setattr(bulk_service, "_bulk_start_one", recording_start)
+
+    _settings = FakeSettingsReader({})
+    result = await BulkOperationsService(
+        publisher=event_bus,
+        settings=_settings,
+        circuit_breaker=MagicMock(),
+        maintenance=MagicMock(),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
+        operator=OperatorNodeLifecycleService(review=build_review_service(), settings=_settings, publisher=event_bus),
+        session_factory=db_session_maker,
+    ).bulk_start_nodes([device.id for device in devices])
+
+    assert result["failed"] == 0, result
+    assert len(seen) == 3
+    assert len({session_id for session_id, _, _ in seen}) == 3, f"items shared a session: {seen}"
+    assert all(in_transaction for _, in_transaction, _ in seen), f"an item ran outside a transaction: {seen}"
+    assert all(owns_proof for _, _, owns_proof in seen), f"a lock proof came from another session: {seen}"

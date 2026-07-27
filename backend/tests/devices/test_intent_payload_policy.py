@@ -177,7 +177,10 @@ async def test_cooldown_intent_payload_shape(
         settings=_test_settings,
         circuit_breaker=_test_cb,
         maintenance=MaintenanceService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
+            review=build_review_service(),
+            settings=FakeSettingsReader({}),
+            publisher=event_bus,
+            session_factory=db_session_maker,
         ),
         lifecycle_actions=AsyncMock(),
         reservation=RunReservationService(review=build_review_service()),
@@ -237,14 +240,15 @@ async def test_operator_start_intent_payload_shape(
     )
     await db_session.commit()
 
-    # lock_device eager-loads appium_node and host, which _bulk_start_one accesses
-    # synchronously via device.appium_node.  Without eager loading the attribute
-    # access triggers a lazy load in an async context and raises MissingGreenlet.
-    device = await device_locking.lock_device(db_session, device.id)
+    # lock_device_handle eager-loads appium_node and host, which _bulk_start_one
+    # accesses synchronously via locked.device.appium_node.  Without eager loading
+    # the attribute access triggers a lazy load in an async context and raises
+    # MissingGreenlet.
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await _bulk_start_one(
         db_session,
-        device,
-        caller="operator",
+        locked,
+        "operator",
         operator=OperatorNodeLifecycleService(
             review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
         ),

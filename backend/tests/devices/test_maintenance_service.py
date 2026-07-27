@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
@@ -17,15 +19,29 @@ from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
 
 
+def _service(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    publisher: EventPublisher | None = None,
+) -> MaintenanceService:
+    return MaintenanceService(
+        review=build_review_service(),
+        settings=FakeSettingsReader({}),
+        publisher=publisher or event_bus,
+        session_factory=session_factory,
+    )
+
+
 async def test_enter_maintenance_emits_operational_state_changed_and_audit_row(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     """Entering maintenance must emit device.operational_state_changed (SSE) and record a
@@ -40,10 +56,7 @@ async def test_enter_maintenance_emits_operational_state_changed_and_audit_row(
     await db_session.commit()
 
     publisher = AsyncMock(spec=EventPublisher)
-    locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=publisher
-    ).enter_maintenance(db_session, locked)
+    await _service(db_session_maker, publisher=publisher).enter_maintenance(db_session, device.id)
 
     emitted = [call.args[1] for call in publisher.queue_for_session.call_args_list]
     assert "device.operational_state_changed" in emitted
@@ -54,6 +67,7 @@ async def test_enter_maintenance_emits_operational_state_changed_and_audit_row(
 
 async def test_enter_maintenance_bus_event_is_uncaused(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     """The device.operational_state_changed bus event for a maintenance entry carries the
@@ -68,10 +82,7 @@ async def test_enter_maintenance_bus_event_is_uncaused(
     await db_session.commit()
 
     publisher = AsyncMock(spec=EventPublisher)
-    locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=publisher
-    ).enter_maintenance(db_session, locked)
+    await _service(db_session_maker, publisher=publisher).enter_maintenance(db_session, device.id)
 
     op_calls = [
         call
@@ -86,6 +97,7 @@ async def test_enter_maintenance_bus_event_is_uncaused(
 
 async def test_enter_maintenance_records_row_with_operator_reason_even_when_busy(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     """The maintenance_entered row is written at fact-write time by the service — even while a
@@ -101,10 +113,9 @@ async def test_enter_maintenance_records_row_with_operator_reason_even_when_busy
     db_session.add(Session(session_id="maint-busy-1", device_id=device.id, status=SessionStatus.running))
     await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=AsyncMock(spec=EventPublisher)
-    ).enter_maintenance(db_session, locked, maintenance_reason="Battery swap")
+    await _service(db_session_maker, publisher=AsyncMock(spec=EventPublisher)).enter_maintenance(
+        db_session, device.id, maintenance_reason="Battery swap"
+    )
 
     rows = (
         (
@@ -128,6 +139,7 @@ async def test_enter_maintenance_records_row_with_operator_reason_even_when_busy
 
 async def test_reenter_maintenance_updates_reason_without_second_row(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     """Calling enter_maintenance while already in maintenance updates the reason fact but must
@@ -140,13 +152,9 @@ async def test_reenter_maintenance_updates_reason_without_second_row(
     )
     await db_session.commit()
 
-    svc = MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=AsyncMock(spec=EventPublisher)
-    )
-    locked = await device_locking.lock_device(db_session, device.id)
-    await svc.enter_maintenance(db_session, locked, maintenance_reason="First reason")
-    locked = await device_locking.lock_device(db_session, device.id)
-    await svc.enter_maintenance(db_session, locked, maintenance_reason="Second reason")
+    svc = _service(db_session_maker, publisher=AsyncMock(spec=EventPublisher))
+    await svc.enter_maintenance(db_session, device.id, maintenance_reason="First reason")
+    await svc.enter_maintenance(db_session, device.id, maintenance_reason="Second reason")
 
     rows = (
         (
@@ -165,6 +173,7 @@ async def test_reenter_maintenance_updates_reason_without_second_row(
 
 async def test_exit_maintenance_records_maintenance_exited_row(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     device = await create_device(
@@ -177,10 +186,7 @@ async def test_exit_maintenance_records_maintenance_exited_row(
     )
     await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=AsyncMock(spec=EventPublisher)
-    ).exit_maintenance(db_session, locked)
+    await _service(db_session_maker, publisher=AsyncMock(spec=EventPublisher)).exit_maintenance(db_session, device.id)
 
     rows = (
         (
@@ -199,6 +205,7 @@ async def test_exit_maintenance_records_maintenance_exited_row(
 
 async def test_enter_maintenance_rejects_reserved_device_by_default(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     from tests.helpers import create_reservation
@@ -212,17 +219,15 @@ async def test_enter_maintenance_rejects_reserved_device_by_default(
     await create_reservation(db_session, device_id=device.id)
     await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
     with pytest.raises(ValueError) as exc:
-        await MaintenanceService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-        ).enter_maintenance(db_session, locked)
+        await _service(db_session_maker).enter_maintenance(db_session, device.id)
 
     assert "reserved" in str(exc.value).lower()
 
 
 async def test_enter_maintenance_rejects_device_with_reservation_row_no_hold(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     """Reserved guard must use the reservation row, not device.hold.
@@ -241,17 +246,15 @@ async def test_enter_maintenance_rejects_device_with_reservation_row_no_hold(
     await create_reservation(db_session, device_id=device.id)
     await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
     with pytest.raises(ValueError) as exc:
-        await MaintenanceService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-        ).enter_maintenance(db_session, locked)
+        await _service(db_session_maker).enter_maintenance(db_session, device.id)
 
     assert "reserved" in str(exc.value).lower()
 
 
 async def test_enter_maintenance_allows_reserved_when_explicitly_overridden(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     from tests.helpers import create_reservation
@@ -265,18 +268,17 @@ async def test_enter_maintenance_allows_reserved_when_explicitly_overridden(
     await create_reservation(db_session, device_id=device.id)
     await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
-    result = await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).enter_maintenance(db_session, locked, allow_reserved=True)
+    await _service(db_session_maker).enter_maintenance(db_session, device.id, allow_reserved=True)
 
     # hold is now derived by the reconciler (Task 7+8); check the signal instead
-    assert result.lifecycle_policy_state is not None
-    assert result.lifecycle_policy_state.get("maintenance_reason") is not None
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("maintenance_reason") is not None
 
 
 async def test_enter_maintenance_succeeds_for_available_device(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     device = await create_device(
@@ -287,18 +289,17 @@ async def test_enter_maintenance_succeeds_for_available_device(
     )
     await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
-    result = await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).enter_maintenance(db_session, locked)
+    await _service(db_session_maker).enter_maintenance(db_session, device.id)
 
     # hold is now derived by the reconciler (Task 7+8); check the signal instead
-    assert result.lifecycle_policy_state is not None
-    assert result.lifecycle_policy_state.get("maintenance_reason") is not None
+    await db_session.refresh(device)
+    assert device.lifecycle_policy_state is not None
+    assert device.lifecycle_policy_state.get("maintenance_reason") is not None
 
 
 async def test_exit_maintenance_preserves_active_backoff(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     """An active backoff window describes a real remediation condition that is
@@ -325,9 +326,7 @@ async def test_exit_maintenance_preserves_active_backoff(
         )
     await db_session.commit()
 
-    await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).exit_maintenance(db_session, device)
+    await _service(db_session_maker).exit_maintenance(db_session, device.id)
     await db_session.refresh(device)
 
     assert device.lifecycle_policy_state is not None
@@ -339,10 +338,12 @@ async def test_exit_maintenance_preserves_active_backoff(
     assert ladder.attempts == 3
 
 
-async def test_enter_and_exit_maintenance_commit_false_branches(
+async def test_enter_then_exit_maintenance_flushes_without_ending_the_transaction(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
+    """Both commands mutate and flush only; a second exit still rejects."""
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -353,23 +354,33 @@ async def test_enter_and_exit_maintenance_commit_false_branches(
 
     from app.devices.services.lifecycle_policy_state import state as ps
 
-    svc = MaintenanceService(review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus)
-    result = await svc.enter_maintenance(db_session, device, commit=False)
+    svc = _service(db_session_maker)
+    await svc.enter_maintenance(db_session, device.id)
+    await db_session.refresh(device)
     # hold is derived by the reconciler (Task 7+8); check the signal instead
-    assert ps(result).get("maintenance_reason") is not None
+    assert ps(device).get("maintenance_reason") is not None
 
-    result = await svc.exit_maintenance(db_session, device, commit=False)
-    assert ps(result).get("maintenance_reason") is None
+    recovery = await svc.exit_maintenance(db_session, device.id)
+    await db_session.refresh(device)
+    assert ps(device).get("maintenance_reason") is None
+    assert recovery is not None and recovery.device_id == device.id
+    assert db_session.in_transaction(), "the maintenance commands must leave the boundary to the caller"
 
     with pytest.raises(ValueError, match="not in maintenance"):
-        await svc.exit_maintenance(db_session, device, commit=False)
+        await svc.exit_maintenance(db_session, device.id)
 
 
-async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
+async def test_exit_maintenance_defers_the_recovery_enqueue_to_its_caller(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """``exit_maintenance`` must not enqueue inside the caller's transaction.
+
+    ``job_queue.create_job`` commits, so running it here would commit the
+    caller's half-finished transaction with it.
+    """
     device = await create_device(
         db_session,
         host_id=db_host.id,
@@ -379,22 +390,25 @@ async def test_exit_maintenance_schedules_recovery_and_swallows_enqueue_failure(
     )
     await db_session.commit()
 
-    svc = MaintenanceService(review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus)
     schedule = AsyncMock()
     monkeypatch.setattr(maintenance_service, "_schedule_device_recovery", schedule)
-    await svc.exit_maintenance(db_session, device)
-    schedule.assert_awaited_once_with(db_session, device.id)
 
-    from app.devices.services.lifecycle_policy_state import set_maintenance_reason
+    svc = _service(db_session_maker)
+    recovery = await svc.exit_maintenance(db_session, device.id)
 
-    set_maintenance_reason(device, "Operator entered maintenance")
-    await db_session.commit()
-    schedule.side_effect = RuntimeError("queue down")
-    await svc.exit_maintenance(db_session, device)
+    assert recovery is not None and recovery.device_id == device.id
+    schedule.assert_not_awaited()
+
+    await svc.schedule_device_recovery(recovery.device_id)
+    schedule.assert_awaited_once()
+    enqueue_session = schedule.await_args.args[0]
+    assert enqueue_session is not db_session, "the enqueue must run on its own short session"
+    assert schedule.await_args.args[1] == device.id
 
 
 async def test_enter_maintenance_stores_maintenance_reason(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     device = await create_device(
@@ -405,10 +419,7 @@ async def test_enter_maintenance_stores_maintenance_reason(
     )
     await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
-    await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).enter_maintenance(db_session, locked, maintenance_reason="Cooldown escalation")
+    await _service(db_session_maker).enter_maintenance(db_session, device.id, maintenance_reason="Cooldown escalation")
 
     await db_session.refresh(device)
     assert device.lifecycle_policy_state is not None
@@ -417,6 +428,7 @@ async def test_enter_maintenance_stores_maintenance_reason(
 
 async def test_exit_maintenance_clears_maintenance_reason(
     db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
     db_host: Host,
 ) -> None:
     device = await create_device(
@@ -440,10 +452,73 @@ async def test_exit_maintenance_clears_maintenance_reason(
     )
     await db_session.commit()
 
-    await MaintenanceService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).exit_maintenance(db_session, device)
+    await _service(db_session_maker).exit_maintenance(db_session, device.id)
     await db_session.refresh(device)
 
     assert device.lifecycle_policy_state is not None
     assert device.lifecycle_policy_state.get("maintenance_reason") is None
+
+
+# ---------------------------------------------------------------------------
+# Phase 9: the locked helpers are transaction-local and proof-gated
+# ---------------------------------------------------------------------------
+
+
+async def test_maintenance_locked_helpers_leave_the_callers_transaction_open(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maintenance-txn-local",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+    await db_session.commit()
+
+    service = MaintenanceService(
+        review=build_review_service(),
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
+        session_factory=db_session_maker,
+    )
+    async with db_session_maker.begin() as command_db:
+        locked = await device_locking.lock_device_handle(command_db, device.id)
+        await service.enter_maintenance_locked(command_db, locked)
+        assert command_db.in_transaction(), "enter_maintenance_locked must not end the caller's transaction"
+        recovery = await service.exit_maintenance_locked(command_db, locked)
+        assert command_db.in_transaction(), "exit_maintenance_locked must not end the caller's transaction"
+    assert recovery is not None
+    assert recovery.device_id == device.id
+
+
+async def test_maintenance_locked_helpers_reject_a_proof_from_a_finished_transaction(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="maintenance-stale-proof",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+    await db_session.commit()
+
+    service = MaintenanceService(
+        review=build_review_service(),
+        settings=FakeSettingsReader({}),
+        publisher=event_bus,
+        session_factory=db_session_maker,
+    )
+    async with db_session_maker.begin() as first_db:
+        stale = await device_locking.lock_device_handle(first_db, device.id)
+
+    async with db_session_maker.begin() as second_db:
+        with pytest.raises(RuntimeError, match="not owned by this active transaction"):
+            await service.enter_maintenance_locked(second_db, stale)
+        with pytest.raises(RuntimeError, match="not owned by this active transaction"):
+            await service.exit_maintenance_locked(second_db, stale)

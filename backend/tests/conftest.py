@@ -313,7 +313,9 @@ async def seeded_driver_packs(db_session: AsyncSession) -> None:
     from tests.packs.factories import seed_test_packs
 
     await seed_test_packs(db_session)
-    await db_session.flush()
+    # Committed, not flushed: the pack command routes open their own session
+    # from the container's factory, and a flushed-only seed is invisible to it.
+    await db_session.commit()
 
 
 @pytest.fixture
@@ -331,6 +333,14 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     async def override_get_db() -> AsyncGenerator[AsyncSession]:
         yield db_session
 
+    # One factory for every container that owns a command boundary. Phase 9 gives
+    # more containers a session_factory, so build it once here rather than
+    # re-deriving the same async_sessionmaker per override.
+    assert db_session.bind is not None
+    request_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+        db_session.bind, class_=AsyncSession, expire_on_commit=False
+    )
+
     def override_get_event_services() -> EventServices:
         return EventServices(  # type: ignore[arg-type]
             publisher=test_event_bus,
@@ -342,18 +352,19 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         return SettingsServices(
             service=settings_service,
             config=SettingsConfigService(publisher=test_event_bus),
+            session_factory=request_session_factory,
         )
 
     def override_get_agent_comm_services() -> AgentCommServices:
         return AgentCommServices(http_pool=test_http_pool, circuit_breaker=test_circuit_breaker)
 
     def override_get_device_services() -> DeviceServices:
-        assert db_session.bind is not None
-        sf: async_sessionmaker[AsyncSession] = async_sessionmaker(
-            db_session.bind, class_=AsyncSession, expire_on_commit=False
-        )
+        sf = request_session_factory
         _maintenance_svc = MaintenanceService(
-            review=build_review_service(), settings=settings_service, publisher=test_event_bus
+            review=build_review_service(),
+            settings=settings_service,
+            publisher=test_event_bus,
+            session_factory=sf,
         )
         _crud_svc = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=test_event_bus)
         return DeviceServices(
@@ -374,6 +385,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 operator=OperatorNodeLifecycleService(
                     review=build_review_service(), settings=settings_service, publisher=test_event_bus
                 ),
+                session_factory=sf,
             ),
             presenter=DevicePresenterService(),
             test_data=TestDataService(publisher=test_event_bus),
@@ -550,7 +562,10 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
             maintenance=MaintenanceService(
-                review=build_review_service(), settings=settings_service, publisher=test_event_bus
+                review=build_review_service(),
+                settings=settings_service,
+                publisher=test_event_bus,
+                session_factory=sf,
             ),
             lifecycle_actions=LifecyclePolicyActionsService(
                 publisher=test_event_bus,

@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 
 from app.devices.services.bulk import _bulk_severity
+from tests.fakes import FakeSessionFactory
 
 # ---------------------------------------------------------------------------
 # Unit tests for _bulk_severity helper
@@ -41,22 +42,20 @@ def test_bulk_severity_single_failure_no_successes() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_session_factory(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Patch _session_factory_from_db to return a working async context manager."""
-    mock_session = AsyncMock()
-    mock_ctx = AsyncMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_ctx.__aexit__ = AsyncMock(return_value=None)
-    mock_factory = MagicMock(return_value=mock_ctx)
-    monkeypatch.setattr("app.devices.services.bulk._session_factory_from_db", lambda _db: mock_factory)
-
+def _make_mock_session_factory(monkeypatch: pytest.MonkeyPatch) -> FakeSessionFactory:
+    """A session factory whose sessions do nothing, plus a no-op device lock."""
     import app.devices.locking as locking_mod
 
-    monkeypatch.setattr(locking_mod, "lock_device", AsyncMock(return_value=MagicMock()))
+    monkeypatch.setattr(
+        locking_mod,
+        "lock_device_handle",
+        AsyncMock(return_value=SimpleNamespace(device=MagicMock())),
+    )
+    return FakeSessionFactory(AsyncMock())
 
 
 # ---------------------------------------------------------------------------
-# Integration tests: _run_per_device_node_action passes correct severity
+# Integration tests: _run_per_device_action passes correct severity
 # ---------------------------------------------------------------------------
 
 
@@ -72,20 +71,20 @@ async def test_bulk_completed_succeeds_emits_success(
 
     fake_publisher = SimpleNamespace(publish=_fake_publish)
 
-    async def _fake_load_existing(_db: object, device_ids: list) -> list:
+    async def _fake_load_existing(_factory: object, device_ids: list) -> list:
         return list(device_ids)
 
     monkeypatch.setattr("app.devices.services.bulk._load_existing_device_ids", _fake_load_existing)
-    _make_mock_session_factory(monkeypatch)
+    factory = _make_mock_session_factory(monkeypatch)
 
     from app.devices.services import bulk as bulk_svc
 
     async def _ok_action(_db: object, _device: object, _caller: str) -> object:
         return object()
 
-    await bulk_svc._run_per_device_node_action(
-        db=MagicMock(),
-        device_ids=[uuid4()],
+    await bulk_svc._run_per_device_action(
+        factory,  # type: ignore[arg-type]
+        [uuid4()],
         operation="start_nodes",
         action_fn=_ok_action,
         caller="test",
@@ -111,20 +110,20 @@ async def test_bulk_completed_all_fail_emits_critical(
 
     fake_publisher = SimpleNamespace(publish=_fake_publish)
 
-    async def _fake_load_existing(_db: object, device_ids: list) -> list:
+    async def _fake_load_existing(_factory: object, device_ids: list) -> list:
         return list(device_ids)
 
     monkeypatch.setattr("app.devices.services.bulk._load_existing_device_ids", _fake_load_existing)
-    _make_mock_session_factory(monkeypatch)
+    factory = _make_mock_session_factory(monkeypatch)
 
     from app.devices.services import bulk as bulk_svc
 
     async def _fail_action(_db: object, _device: object, _caller: str) -> object:
         raise RuntimeError("simulated failure")
 
-    await bulk_svc._run_per_device_node_action(
-        db=MagicMock(),
-        device_ids=[uuid4()],
+    await bulk_svc._run_per_device_action(
+        factory,  # type: ignore[arg-type]
+        [uuid4()],
         operation="start_nodes",
         action_fn=_fail_action,
         caller="test",
@@ -150,11 +149,11 @@ async def test_bulk_completed_partial_emits_warning(
 
     fake_publisher = SimpleNamespace(publish=_fake_publish)
 
-    async def _fake_load_existing(_db: object, device_ids: list) -> list:
+    async def _fake_load_existing(_factory: object, device_ids: list) -> list:
         return list(device_ids)
 
     monkeypatch.setattr("app.devices.services.bulk._load_existing_device_ids", _fake_load_existing)
-    _make_mock_session_factory(monkeypatch)
+    factory = _make_mock_session_factory(monkeypatch)
 
     from app.devices.services import bulk as bulk_svc
 
@@ -166,9 +165,9 @@ async def test_bulk_completed_partial_emits_warning(
             return object()  # first device succeeds
         raise RuntimeError("second device fails")
 
-    await bulk_svc._run_per_device_node_action(
-        db=MagicMock(),
-        device_ids=[uuid4(), uuid4()],
+    await bulk_svc._run_per_device_action(
+        factory,  # type: ignore[arg-type]
+        [uuid4(), uuid4()],
         operation="start_nodes",
         action_fn=_counting_action,
         caller="test",

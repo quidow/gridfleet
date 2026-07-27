@@ -27,10 +27,11 @@ APP_ROOT = Path(__file__).resolve().parents[2] / "app"
 # the source effects actually were.
 STANDALONE_PUBLISHERS: dict[str, str] = {
     "app/hosts/router.py:_auto_discover": (
-        "host.discovery_completed -- background task: discover_devices is a read-only diff (it "
-        "SELECTs existing rows and returns candidates without writing), and the devices the payload "
-        "counts are by construction the ones not yet in the database; confirm_discovery, the write "
-        "path, runs from a different endpoint. There is no mutation for the event to ride"
+        "host.discovery_completed -- background task: classify_discovery is a read-only diff (it "
+        "SELECTs existing rows and splits the fetched candidates without writing), and the devices "
+        "the payload counts are by construction the ones not yet in the database; "
+        "confirm_discovery, the write path, runs from a different endpoint. There is no mutation "
+        "for the event to ride"
     ),
     "app/agent_comm/circuit_breaker.py:AgentCircuitBreaker.record_success": (
         "host.circuit_breaker.closed -- breaker state is process-local (self._states); there is no "
@@ -40,17 +41,10 @@ STANDALONE_PUBLISHERS: dict[str, str] = {
         "host.circuit_breaker.opened -- breaker state is process-local (self._states); there is no "
         "database mutation for the event to ride"
     ),
-    "app/devices/services/bulk.py:_run_per_device_node_action": (
-        "bulk.operation_completed (start/stop/restart) -- each per-device action commits in its own "
-        "session inside _one; the batch summary spans all of them and belongs to no single one"
-    ),
-    "app/devices/services/bulk.py:BulkOperationsService.bulk_delete": (
-        "bulk.operation_completed (delete) -- DeviceService.delete_device commits per device, so the "
-        "summary follows N already-committed transactions"
-    ),
-    "app/devices/services/bulk.py:BulkOperationsService.bulk_reconnect": (
-        "bulk.operation_completed (reconnect) -- the reconnect is a remote agent call with no database "
-        "mutation; the summary reports remote outcomes after they have all returned"
+    "app/devices/services/bulk.py:_publish_summary": (
+        "bulk.operation_completed (every bulk operation) -- each item runs in its own transaction, or "
+        "in reconnect's case is a remote agent call with no database mutation at all; the batch summary "
+        "spans all of them and belongs to no single one"
     ),
     "app/devices/services/data_cleanup.py:DataCleanupService.cleanup_old_data": (
         "system.cleanup_completed -- each delete batch commits in its own transaction; the summary "

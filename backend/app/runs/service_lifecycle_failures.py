@@ -284,20 +284,20 @@ class RunFailureService:
             await self._lifecycle_actions.record_run_escalation_failure(
                 db, locked.device, reason=reason, source=source, action=escalation_action
             )
-            await self._enter_maintenance(db, locked.device, maintenance_reason=maintenance_reason)
+            await self._enter_maintenance(db, locked, maintenance_reason=maintenance_reason)
         return escalate
 
     async def _enter_maintenance(
         self,
         db: AsyncSession,
-        device: Device,
+        locked: LockedDevice,
         *,
         maintenance_reason: str = "Operator entered maintenance",
-    ) -> Device:
-        return await self._maintenance.enter_maintenance(
+    ) -> None:
+        """Enter maintenance under the Device lock this caller already holds."""
+        await self._maintenance.enter_maintenance_locked(
             db,
-            device,
-            commit=False,
+            locked,
             allow_reserved=True,
             maintenance_reason=maintenance_reason,
         )

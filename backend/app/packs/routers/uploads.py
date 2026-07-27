@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.auth.dependencies import AdminDep
 from app.core.dependencies import DbDep
-from app.core.http_errors import convert_not_found, found_or_404
+from app.core.http_errors import found_or_404
 from app.packs.dependencies import PackServicesDep
 from app.packs.models import DriverPackRelease
 from app.packs.schemas import CurrentReleasePatch, PackOut, PackReleasesOut
@@ -21,7 +21,7 @@ from app.packs.services.ingest import (
 from app.packs.services.ingest import (
     PackIngestValidationError as PackUploadValidationError,
 )
-from app.packs.services.service import build_pack_out
+from app.packs.services.service import PackNotFound, build_pack_out, unlink_pack_artifact
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
@@ -48,25 +48,32 @@ async def _read_limited_upload(tarball: UploadFile) -> bytes:
 async def upload(
     tarball: UploadFile,
     username: AdminDep,
-    session: DbDep,
     packs: PackServicesDep,
 ) -> PackOut:
+    # Read and size-cap the body before the boundary opens: the transaction
+    # below must not span the upload stream.
     data = await _read_limited_upload(tarball)
     if not data:
         raise HTTPException(status_code=400, detail="empty tarball")
     try:
-        pack = await packs.release.upload(
-            session,
-            username=username,
-            origin_filename=tarball.filename or "unknown.tar.gz",
-            data=data,
-        )
+        async with packs.session_factory.begin() as db:
+            # Artifact storage deliberately stays inside this transaction. The
+            # ingest path takes no DriverPack row lock, the bytes are already
+            # read and capped, and splitting storage from metadata would need an
+            # artifact ledger this change does not add — so a rolled-back upload
+            # can leave an orphan file, which the next upload of the same release
+            # overwrites.
+            pack = await packs.release.upload(
+                db,
+                username=username,
+                origin_filename=tarball.filename or "unknown.tar.gz",
+                data=data,
+            )
+            return build_pack_out(pack)
     except PackUploadValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PackUploadConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await session.commit()
-    return build_pack_out(pack)
 
 
 @router.get("/{pack_id}/releases/{release}/tarball")
@@ -100,13 +107,17 @@ async def update_current_release(
     pack_id: str,
     body: CurrentReleasePatch,
     _username: AdminDep,
-    session: DbDep,
     packs: PackServicesDep,
 ) -> PackOut:
-    with convert_not_found():
-        pack = await packs.release.set_current_release(session, pack_id, body.release)
-    await session.commit()
-    return build_pack_out(pack)
+    # PackNotFound by name, not LookupError: build_pack_out runs inside the
+    # transaction and indexes persisted manifest/platform data, so a KeyError
+    # from a malformed row must stay a 500 instead of becoming a 404.
+    try:
+        async with packs.session_factory.begin() as db:
+            pack = await packs.release.set_current_release(db, pack_id, body.release)
+            return build_pack_out(pack)
+    except PackNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.delete("/{pack_id}/releases/{release}", status_code=status.HTTP_204_NO_CONTENT)
@@ -114,16 +125,20 @@ async def delete_release(
     pack_id: str,
     release: str,
     _username: AdminDep,
-    session: DbDep,
     packs: PackServicesDep,
 ) -> Response:
     try:
-        await packs.release.delete_release(session, pack_id, release)
+        async with packs.session_factory.begin() as db:
+            artifact_path = await packs.release.delete_release(db, pack_id, release)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    await session.commit()
+    # Post-commit, for the same reason as the pack delete: no transaction and no
+    # pack row lock may span filesystem deletion, and a failing unlink is logged
+    # rather than reported as a rollback that did not happen.
+    if artifact_path:
+        unlink_pack_artifact(artifact_path)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -2,29 +2,38 @@ from __future__ import annotations
 
 import io
 import tarfile
+from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import ProgrammingError
 
 from app.auth import auth_settings as process_settings
 from app.devices.models import ConnectionType, Device, DeviceType
+from app.events.models import SystemEvent
+from app.main import app
+from app.packs.dependencies import get_pack_services
 from app.packs.models import (
     DriverPack,
     DriverPackRelease,
     HostPackDoctorResult,
     HostPackInstallation,
 )
+from app.packs.services import service as pack_service
 from app.packs.services.ingest import MAX_PACK_TARBALL_BYTES
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import AsyncIterator, Iterator
 
     from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
+    from app.packs.services_container import PackServices
 
 pytestmark = pytest.mark.asyncio
 
@@ -65,6 +74,65 @@ def _tarball(release: str = "0.1.0") -> bytes:
 def pack_storage_root(tmp_path: Path) -> Path:
     """Route pack storage to a per-test writable directory."""
     return tmp_path
+
+
+class _ObservedPackSessions:
+    """Wraps the pack container's factory so a test can see its transactions.
+
+    Two things the routes owe their callers are only observable from here: that
+    a mutation runs inside a factory-owned transaction at all, and that the
+    filesystem work happens once that transaction has ended. ``fail_before_exit``
+    injects the failure as a real statement against a table that does not exist,
+    so the transaction is genuinely aborted rather than left artificially clean.
+
+    Only ``begin()`` is wrapped: no pack route takes the plain ``session_factory()``
+    read form, so a stand-in for it would be scaffolding nothing could keep honest.
+    """
+
+    def __init__(self) -> None:
+        self._inner: async_sessionmaker[AsyncSession] | None = None
+        self.sessions: list[AsyncSession] = []
+        self.fail_before_exit = False
+
+    def bind(self, inner: async_sessionmaker[AsyncSession]) -> None:
+        """Adopt the factory the container built for this request."""
+        self._inner = inner
+
+    @property
+    def _bound(self) -> async_sessionmaker[AsyncSession]:
+        assert self._inner is not None, "no request has resolved the pack container yet"
+        return self._inner
+
+    async def _inject(self, db: AsyncSession) -> None:
+        if self.fail_before_exit:
+            await db.execute(text("SELECT 1 FROM gridfleet_no_such_table"))
+
+    @asynccontextmanager
+    async def begin(self) -> AsyncIterator[AsyncSession]:
+        async with self._bound.begin() as db:
+            self.sessions.append(db)
+            yield db
+            await self._inject(db)
+
+    @property
+    def open_transactions(self) -> int:
+        return sum(1 for session in self.sessions if session.in_transaction())
+
+
+@pytest.fixture
+def observed_pack_sessions(client: AsyncClient) -> Iterator[_ObservedPackSessions]:
+    del client  # ordering only: the client fixture installs the override this wraps
+    base = app.dependency_overrides[get_pack_services]
+    observed = _ObservedPackSessions()
+
+    def _override() -> PackServices:
+        services = base()
+        observed.bind(services.session_factory)
+        return replace(services, session_factory=observed)  # type: ignore[arg-type]
+
+    app.dependency_overrides[get_pack_services] = _override
+    yield observed
+    app.dependency_overrides[get_pack_services] = base
 
 
 @pytest.fixture
@@ -376,6 +444,180 @@ async def test_delete_driver_pack_rejects_pack_with_devices(
 
     assert res.status_code == 409
     assert "1 device" in res.json()["error"]["message"]
+
+
+async def _upload(client: AsyncClient, release: str) -> None:
+    res = await client.post(
+        "/api/driver-packs/uploads",
+        files={"tarball": (f"vendor-foo-{release}.tar.gz", _tarball(release), "application/gzip")},
+    )
+    assert res.status_code == 201, res.text
+
+
+def _watch_unlinks(monkeypatch: pytest.MonkeyPatch, observed: _ObservedPackSessions) -> list[int]:
+    """Record, per ``Path.unlink`` call, how many pack transactions were open.
+
+    Armed after the uploads that seed a test, so the spy covers only the two
+    deletion paths — the upload path deliberately writes its artifact inside its
+    transaction.
+    """
+    open_at_unlink: list[int] = []
+    real_unlink = Path.unlink
+
+    def _spy(self: Path, *args: object, **kwargs: object) -> None:
+        open_at_unlink.append(observed.open_transactions)
+        real_unlink(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "unlink", _spy)
+    return open_at_unlink
+
+
+async def test_delete_pack_unlinks_artifacts_after_its_transaction(
+    client: AsyncClient,
+    observed_pack_sessions: _ObservedPackSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _upload(client, "0.1.0")
+    open_at_unlink = _watch_unlinks(monkeypatch, observed_pack_sessions)
+
+    res = await client.delete("/api/driver-packs/vendor-foo")
+
+    assert res.status_code == 204
+    assert observed_pack_sessions.sessions, "the delete route must own a factory transaction"
+    assert open_at_unlink, "the pack's artifact was never unlinked"
+    assert open_at_unlink == [0] * len(open_at_unlink), (
+        f"artifact deletion ran with {open_at_unlink} pack transaction(s) still open; "
+        "no pack lock may span filesystem deletion"
+    )
+
+
+async def test_delete_release_unlinks_artifact_after_its_transaction(
+    client: AsyncClient,
+    observed_pack_sessions: _ObservedPackSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _upload(client, "0.1.0")
+    await _upload(client, "0.2.0")
+    open_at_unlink = _watch_unlinks(monkeypatch, observed_pack_sessions)
+
+    res = await client.delete("/api/driver-packs/vendor-foo/releases/0.1.0")
+
+    assert res.status_code == 204
+    assert observed_pack_sessions.sessions, "the delete-release route must own a factory transaction"
+    assert open_at_unlink, "the release artifact was never unlinked"
+    assert open_at_unlink == [0] * len(open_at_unlink), (
+        f"artifact deletion ran with {open_at_unlink} pack transaction(s) still open"
+    )
+
+
+async def test_failed_artifact_deletion_is_logged_and_still_reports_success(
+    client: AsyncClient,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unlink is post-commit, so its failure is logged rather than surfaced.
+
+    The deletion the caller asked for is already durable; answering 500 would
+    report a rollback that did not happen and send the operator looking for a
+    pack that is gone. Read the durability half from a peer session — the request
+    session would show the deletion whether or not it was ever committed.
+
+    NOTE: spy on ``logger.warning`` directly instead of going through ``caplog``.
+    ``unlink_pack_artifact`` logs through structlog's stdlib bridge, so the record
+    has to survive stdlib filtering and propagate to the root handler ``caplog``
+    installs, and other tests running in the same xdist worker can leave that
+    state in a configuration where the WARNING record never reaches handlers —
+    which has produced a flake on CI (see
+    ``tests/devices/test_maintenance_service_exit.py``). Spying on the call site
+    bypasses the pipeline entirely and verifies the contract directly.
+    """
+    await _upload(client, "0.1.0")
+
+    def _explode(self: Path, *args: object, **kwargs: object) -> None:
+        raise PermissionError(f"cannot remove {self}")
+
+    monkeypatch.setattr(Path, "unlink", _explode)
+    with patch.object(pack_service.logger, "warning") as warning_spy:
+        res = await client.delete("/api/driver-packs/vendor-foo")
+    monkeypatch.undo()
+
+    assert res.status_code == 204, "a failing unlink must not turn a committed delete into an error"
+    assert warning_spy.called, "the orphaned artifact was not reported anywhere"
+    warning_args, _ = warning_spy.call_args
+    assert warning_args[0] == "pack_artifact_unlink_failed", (
+        f"warning message must mention pack_artifact_unlink_failed (got: {warning_args[0]!r})"
+    )
+    async with db_session_maker() as peer:
+        assert await peer.get(DriverPack, "vendor-foo") is None, (
+            "metadata deletion committed before the unlink and must stay committed"
+        )
+
+
+async def test_upload_rolls_back_metadata_and_outbox_together(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    observed_pack_sessions: _ObservedPackSessions,
+) -> None:
+    """The upload's row, its release and its outbox event share one transaction.
+
+    The artifact bytes deliberately do not: the ingest path takes no pack row
+    lock and the tarball is fully read and size-capped before the boundary
+    opens, so storage stays inside the transaction and a rolled-back upload can
+    leave an orphan file behind. That is the documented exception, asserted here
+    so it is a decision rather than a surprise.
+    """
+    observed_pack_sessions.fail_before_exit = True
+
+    with pytest.raises(ProgrammingError):
+        await client.post(
+            "/api/driver-packs/uploads",
+            files={"tarball": ("vendor-foo-0.1.0.tar.gz", _tarball("0.1.0"), "application/gzip")},
+        )
+
+    assert await db_session.get(DriverPack, "vendor-foo") is None
+    assert (await db_session.scalar(select(DriverPackRelease).where(DriverPackRelease.pack_id == "vendor-foo"))) is None
+    assert (await db_session.scalar(select(SystemEvent).where(SystemEvent.type == "driver_pack.upload"))) is None, (
+        "the outbox row survived a rolled-back upload"
+    )
+
+
+async def test_release_mutations_roll_back_on_a_pre_exit_failure(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    observed_pack_sessions: _ObservedPackSessions,
+) -> None:
+    await _upload(client, "0.1.0")
+    await _upload(client, "0.2.0")
+    doomed_release = (
+        await db_session.execute(
+            select(DriverPackRelease).where(
+                DriverPackRelease.pack_id == "vendor-foo",
+                DriverPackRelease.release == "0.1.0",
+            )
+        )
+    ).scalar_one()
+    artifact_path = doomed_release.artifact_path
+    assert artifact_path is not None
+    observed_pack_sessions.fail_before_exit = True
+
+    with pytest.raises(ProgrammingError):
+        await client.patch("/api/driver-packs/vendor-foo/releases/current", json={"release": "0.1.0"})
+    with pytest.raises(ProgrammingError):
+        await client.delete("/api/driver-packs/vendor-foo/releases/0.1.0")
+    with pytest.raises(ProgrammingError):
+        await client.delete("/api/driver-packs/vendor-foo")
+
+    db_session.expire_all()
+    pack = await db_session.get(DriverPack, "vendor-foo")
+    assert pack is not None, "a failed delete must leave the pack in place"
+    assert pack.current_release == "0.2.0", "a failed current-release switch must not stick"
+    remaining = (
+        (await db_session.execute(select(DriverPackRelease).where(DriverPackRelease.pack_id == "vendor-foo")))
+        .scalars()
+        .all()
+    )
+    assert sorted(row.release for row in remaining) == ["0.1.0", "0.2.0"]
+    assert Path(artifact_path).is_file(), "a rolled-back delete must not have unlinked the artifact"
 
 
 async def test_anonymous_caller_rejected_when_auth_enabled(

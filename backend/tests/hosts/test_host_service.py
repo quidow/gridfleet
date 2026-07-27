@@ -13,12 +13,49 @@ if TYPE_CHECKING:
 from app.devices.models import ConnectionType, DeviceType
 from app.hosts import service as host_service
 from app.hosts.models import Host, HostStatus, OSType
-from app.hosts.schemas import HostCreate, HostRegister
-from app.hosts.service import HostCrudService
+from app.hosts.schemas import HostCreate, HostRead, HostRegister
+from app.hosts.service import HostCommandSnapshot, HostCrudService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 
 CAPS_V7 = {"orchestration_contract_version": 7}
+
+# The four ``HostRead`` fields ``_serialize_host`` computes from the settings
+# registry rather than from the Host row, so the snapshot must not carry them.
+ROUTER_COMPUTED_HOST_READ_FIELDS = frozenset(
+    {
+        "required_agent_version",
+        "recommended_agent_version",
+        "agent_update_available",
+        "agent_version_status",
+    }
+)
+
+
+def test_host_command_snapshot_matches_the_stored_half_of_host_read() -> None:
+    """A new Host column must not silently return its default on three routes.
+
+    ``_serialize_host`` runs ``HostRead.model_validate(host)`` against an ORM row
+    on the read routes and against a ``HostCommandSnapshot`` on create/register/
+    approve. Only 8 of ``HostRead``'s fields are required; the rest carry
+    defaults. So adding a column to ``Host`` and ``HostRead`` without adding it
+    to the snapshot makes ``POST /api/hosts``, ``POST /api/hosts/register`` and
+    ``POST /api/hosts/{id}/approve`` return the default while ``GET`` returns the
+    real value — and because both shapes serialise to the same named OpenAPI
+    schema, no consumer can see the divergence. Pin the relationship in both
+    directions so that addition fails here instead.
+    """
+    stored_fields = set(HostRead.model_fields) - ROUTER_COMPUTED_HOST_READ_FIELDS
+    snapshot_fields = set(HostCommandSnapshot.model_fields)
+
+    assert set(HostRead.model_fields) - snapshot_fields == ROUTER_COMPUTED_HOST_READ_FIELDS, (
+        "HostRead has fields the command snapshot cannot supply, so the command routes would "
+        "serialise their defaults: "
+        f"{sorted(set(HostRead.model_fields) - snapshot_fields - ROUTER_COMPUTED_HOST_READ_FIELDS)}"
+    )
+    assert snapshot_fields == stored_fields, (
+        f"the command snapshot carries fields HostRead no longer reads: {sorted(snapshot_fields - stored_fields)}"
+    )
 
 
 def test_validate_orchestration_contract_ignores_unknown_capability_keys() -> None:
@@ -232,7 +269,9 @@ async def test_approve_and_reject_host_only_work_for_pending(db_session: AsyncSe
     assert await svc.approve_host(db_session, online.id) is None
 
     assert await svc.reject_host(db_session, reject_me.id) is True
-    assert db_session.in_transaction() is False
+    # Transaction-local: the caller's transaction is still open and still owns
+    # the decision to commit. reject_host has not ended it.
+    assert db_session.in_transaction() is True
     assert await svc.reject_host(db_session, online.id) is False
 
 

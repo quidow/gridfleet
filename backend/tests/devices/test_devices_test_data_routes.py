@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import uuid
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tests.helpers import create_device_record
+from tests.helpers import create_device_record, dispatch_committed_events
 
 if TYPE_CHECKING:
     from httpx2 import AsyncClient
@@ -37,6 +38,36 @@ async def test_put_replaces_and_audits(client: AsyncClient, db_session: AsyncSes
     rows = history.json()
     assert len(rows) == 1
     assert rows[0]["new_test_data"] == {"a": 1}
+
+
+async def test_put_and_patch_missing_device_return_404(client: AsyncClient) -> None:
+    """The command's ``NoResultFound`` maps to the body the deleted pre-lock produced."""
+    missing = uuid.uuid4()
+    for call in (client.put, client.patch):
+        resp = await call(f"/api/devices/{missing}/test_data", json={"v": 1})
+        assert resp.status_code == 404
+        assert resp.json()["error"]["message"] == "Device not found"
+
+
+async def test_put_dispatches_test_data_updated_after_commit(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    db_host: Host,
+    event_bus_capture: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """Handlers run off the committed row, so they see the JSON the route returned."""
+    device = await create_device_record(db_session, host_id=db_host.id, identity_value="udid-rt-ev", name="dev-ev")
+    event_bus_capture.clear()
+
+    resp = await client.put(f"/api/devices/{device.id}/test_data", json={"v": 1})
+    assert resp.status_code == 200
+    await dispatch_committed_events()
+
+    updated = [payload for name, payload in event_bus_capture if name == "test_data.updated"]
+    assert len(updated) == 1
+    assert updated[0]["device_id"] == str(device.id)
+    await db_session.refresh(device)
+    assert device.test_data == {"v": 1}
 
 
 async def test_patch_deep_merges(client: AsyncClient, db_session: AsyncSession, db_host: Host) -> None:

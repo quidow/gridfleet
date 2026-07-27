@@ -252,7 +252,8 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
 
     assert await crud.get_device(db_session, available.id) is not None
     assert (
-        await crud.update_device(db_session, __import__("uuid").uuid4(), object(), enforce_patch_contract=False) is None
+        await crud.update_device_txn(db_session, __import__("uuid").uuid4(), object(), enforce_patch_contract=False)
+        is False
     )
 
-    assert await crud.delete_device(db_session, __import__("uuid").uuid4()) is False
+    assert await crud.delete_device_txn(db_session, __import__("uuid").uuid4()) is False

@@ -189,14 +189,17 @@ async def test_pack_catalog_and_detail_use_runtime_summaries_and_drain_counts() 
         patch.object(PackLifecycleService, "try_complete_drain", new=AsyncMock()) as complete_drain,
         patch.object(
             PackLifecycleService,
-            "count_active_work_for_pack",
-            new=AsyncMock(return_value={"active_runs": 2, "live_sessions": 1}),
-        ),
+            "summarize_active_work",
+            new=AsyncMock(return_value={"local/pack": {"active_runs": 2, "live_sessions": 1}}),
+        ) as summarize,
     ):
         catalog = await PackCatalogService(lifecycle=PackLifecycleService()).list_catalog(session)  # type: ignore[arg-type]
 
-    assert session.committed is True
-    complete_drain.assert_awaited_once()
+    # The catalog read is pure: it neither ends the caller's transaction nor
+    # completes a drain, and it asks for active work once for the whole page.
+    assert session.committed is False
+    complete_drain.assert_not_awaited()
+    summarize.assert_awaited_once_with(session, ["local/pack"])
     assert catalog.packs[0].active_runs == 2
     assert catalog.packs[0].live_sessions == 1
 

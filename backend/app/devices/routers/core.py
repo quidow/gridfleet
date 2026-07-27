@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import STANDARD_ERROR_RESPONSES
-from app.core.http_errors import found_or_404
 from app.core.timeutil import now_utc
 from app.devices.dependencies import DeviceServicesDep
 
@@ -161,18 +160,25 @@ async def update_device(
     device_id: uuid.UUID, data: DevicePatch, db: DbDep, device_services: DeviceServicesDep
 ) -> dict[str, Any]:
     try:
-        device = await device_services.crud.update_device(db, device_id, data)
+        async with device_services.session_factory.begin() as command_db:
+            updated = await device_services.crud.update_device_txn(command_db, device_id, data)
     except DeviceIdentityConflictError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
-    device = found_or_404(device, "Device not found")
+    if not updated:
+        raise HTTPException(status_code=404, detail="Device not found")
+    # Post-commit re-serialization on the request session: serialize_device runs
+    # several read projections, and pulling them into the write transaction would
+    # hold the Device FOR UPDATE across all of them for no behavioral gain.
+    device = await get_device_or_404(device_id, db, device_services.crud)
     return await device_services.presenter.serialize_device(db, device)
 
 
 @router.delete("/{device_id}", status_code=204)
-async def delete_device(device_id: uuid.UUID, db: DbDep, device_services: DeviceServicesDep) -> None:
-    deleted = await device_services.crud.delete_device(db, device_id)
+async def delete_device(device_id: uuid.UUID, device_services: DeviceServicesDep) -> None:
+    async with device_services.session_factory.begin() as command_db:
+        deleted = await device_services.crud.delete_device_txn(command_db, device_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Device not found")
 

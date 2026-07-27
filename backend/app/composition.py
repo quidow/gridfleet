@@ -126,6 +126,7 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
     settings_services = SettingsServices(
         service=settings_svc,
         config=SettingsConfigService(publisher=bus),
+        session_factory=session_factory,
     )
     agent_comm_services = AgentCommServices(
         http_pool=http_pool,
@@ -183,7 +184,9 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
         PropertyRefreshService(discovery=pack_discovery_svc),
         HostResourceTelemetryService(settings=settings_svc),
     )
-    maintenance_svc = MaintenanceService(settings=settings_svc, publisher=bus, review=review_svc)
+    maintenance_svc = MaintenanceService(
+        settings=settings_svc, publisher=bus, review=review_svc, session_factory=session_factory
+    )
     crud_svc = DeviceCrudService(identity=identity_conflict_svc, publisher=bus)
     connectivity_svc, remediation_runner_svc = (
         ConnectivityService(
@@ -212,6 +215,7 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
         maintenance=maintenance_svc,
         crud=crud_svc,
         operator=operator_node_lifecycle_svc,
+        session_factory=session_factory,
         pool=http_pool,
     )
 

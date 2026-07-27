@@ -5,8 +5,9 @@ from fastapi import APIRouter, Query
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_400, RESPONSES_401, RESPONSES_404
+from app.core.http_errors import convert_missing_row
 from app.devices.dependencies import DeviceServicesDep
-from app.devices.routers.helpers import get_device_for_update_or_404, get_device_or_404
+from app.devices.routers.helpers import get_device_or_404
 from app.devices.schemas.test_data import TestDataAuditEntryRead, TestDataPayload, TestDataRead
 
 router = APIRouter(tags=["devices-test-data"], responses={**RESPONSES_400, **RESPONSES_401, **RESPONSES_404})
@@ -22,22 +23,24 @@ async def get_test_data(device_id: uuid.UUID, db: DbDep, device_services: Device
 async def replace_test_data(
     device_id: uuid.UUID,
     payload: TestDataPayload,
-    db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
-    device = await get_device_for_update_or_404(device_id, db)
-    return await device_services.test_data.replace_device_test_data(db, device, payload.root)
+    # No pre-lock on the request session: the command locks the same row from its
+    # own session, and holding both would deadlock until a statement timeout.
+    with convert_missing_row("Device not found"):
+        async with device_services.session_factory.begin() as db:
+            return await device_services.test_data.replace_device_test_data(db, device_id, payload.root)
 
 
 @router.patch("/{device_id}/test_data", response_model=TestDataRead)
 async def merge_test_data(
     device_id: uuid.UUID,
     payload: TestDataPayload,
-    db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
-    device = await get_device_for_update_or_404(device_id, db)
-    return await device_services.test_data.merge_device_test_data(db, device, payload.root)
+    with convert_missing_row("Device not found"):
+        async with device_services.session_factory.begin() as db:
+            return await device_services.test_data.merge_device_test_data(db, device_id, payload.root)
 
 
 @router.get("/{device_id}/test_data/history", response_model=list[TestDataAuditEntryRead])

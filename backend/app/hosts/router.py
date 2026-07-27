@@ -11,10 +11,9 @@ from sqlalchemy.exc import IntegrityError
 
 from app.agent_comm import operations as agent_operations
 from app.agent_comm.dependencies import AgentCommServicesDep
-from app.core.database import async_session
 from app.core.dependencies import DbDep
 from app.core.error_responses import STANDARD_ERROR_RESPONSES
-from app.core.http_errors import found_or_404
+from app.core.http_errors import convert_missing_row, found_or_404
 from app.core.timeutil import now_utc
 from app.devices.dependencies import DeviceServicesDep
 from app.devices.services import platform_label as platform_label_service
@@ -41,18 +40,23 @@ from app.hosts.schemas import (
     HostToolStatusRead,
     IntakeCandidateRead,
 )
+from app.hosts.service import HostTarget
 from app.packs import schemas as pack_schemas
 from app.packs.dependencies import PackServicesDep
+from app.packs.services.discovery import StaleHostGenerationError
 from app.settings.dependencies import SettingsServicesDep
 
 if TYPE_CHECKING:
-    from app.core.type_defs import AsyncTaskFactory
+    from collections.abc import Mapping
+
+    from app.core.type_defs import AsyncTaskFactory, SessionFactory
     from app.events.protocols import EventPublisher
     from app.events.services_container import EventServices
-    from app.hosts.service import HostCrudService
+    from app.hosts.service import HostCommandSnapshot, HostCrudService
     from app.hosts.services_container import HostServices
     from app.packs.protocols import PackDiscoveryProtocol
     from app.packs.services_container import PackServices
+    from app.settings.services_container import SettingsServices
 
 HOST_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
 # Default Host Detail telemetry window when the client sends no since/until.
@@ -85,10 +89,11 @@ def _schedule_host_acceptance_tasks(
         event_services.publisher,
         pack_services.discovery,
         host_services.crud,
+        host_services.session_factory,
     )
 
 
-def _serialize_host(host: Host, settings_services: SettingsServicesDep) -> dict[str, Any]:
+def _serialize_host(host: Host | HostCommandSnapshot, settings_services: SettingsServicesDep) -> dict[str, Any]:
     min_version = settings_services.service.get("agent.min_version")
     required_version = host_versioning.normalize_agent_version_setting(min_version)
     rec_version = settings_services.service.get("agent.recommended_version")
@@ -107,38 +112,93 @@ def _serialize_host(host: Host, settings_services: SettingsServicesDep) -> dict[
     return payload
 
 
+async def _load_host_target(host_services: HostServices, host_id: uuid.UUID) -> HostTarget:
+    """Copy the scalars an agent call needs, then let the read session close.
+
+    Everything downstream of this — the dial and any write transaction that
+    follows it — works from the returned value, so no session and no row lock
+    survives into the network call.
+    """
+    async with host_services.session_factory() as db:
+        target = await host_services.crud.load_host_target(db, host_id)
+    return found_or_404(target, "Host not found")
+
+
+async def _online_host_target(
+    host_services: HostServices,
+    settings_services: SettingsServices,
+    host_id: uuid.UUID,
+    *,
+    missing_detail: str,
+    offline_status: int,
+    offline_detail: str,
+) -> HostTarget:
+    """The liveness-gated variant, for routes that refuse to dial an offline host.
+
+    Both details are parameters because the two callers disagree on each of
+    them: the doctor route's missing-host body is lowercase and its offline
+    status is 409; tool status uses sentence case and 400. Those are the bodies
+    their clients already see, so neither is normalised here.
+    """
+    offline_after = settings_services.service.get_float("general.host_offline_after_sec")
+    online = False
+    async with host_services.session_factory() as db:
+        host = await db.get(Host, host_id)
+        target = None if host is None else HostTarget.from_host(host)
+        if host is not None:
+            online = host_online(host, offline_after_sec=offline_after)
+    resolved = found_or_404(target, missing_detail)
+    if not online:
+        raise HTTPException(status_code=offline_status, detail=offline_detail)
+    return resolved
+
+
 async def _auto_discover(
     host_id: uuid.UUID,
     publisher: EventPublisher,
     discovery: PackDiscoveryProtocol,
     crud: HostCrudService,
+    session_factory: SessionFactory,
 ) -> None:
-    """Background task: trigger device discovery for a newly accepted host."""
+    """Background task: trigger device discovery for a newly accepted host.
+
+    Takes the host container's factory rather than the module-global session so
+    the same prepare/dial/classify split — and the tests that observe it — apply
+    to the one discovery caller that runs outside a request.
+    """
     try:
-        async with async_session() as db:
-            host = await crud.get_host(db, host_id)
-            if host is None:
-                return
-            result = await discovery.discover_devices(db, host)
-            if result.new_devices:
-                # Standalone summary: source effects have already committed or are in-memory.
-                await publisher.publish(
-                    "host.discovery_completed",
-                    {
-                        "host_id": str(host_id),
-                        "hostname": host.hostname,
-                        "new_device_count": len(result.new_devices),
-                    },
-                )
+        async with session_factory() as db:
+            target = await crud.load_host_target(db, host_id)
+        if target is None:
+            return
+        candidates = await discovery.fetch_pack_candidates(target)
+        async with session_factory() as db:
+            result = await discovery.classify_discovery(db, target.host_id, candidates)
+        if result.new_devices:
+            # Standalone summary: the classification is read-only and every
+            # source effect has already committed.
+            await publisher.publish(
+                "host.discovery_completed",
+                {
+                    "host_id": str(host_id),
+                    "hostname": target.hostname,
+                    "new_device_count": len(result.new_devices),
+                },
+            )
     except Exception:
         logger.exception("Auto-discovery failed for host %s", host_id)
+
+
+async def _register_host_txn(host_services: HostServices, data: HostRegister) -> tuple[HostCommandSnapshot, bool]:
+    """One registration attempt inside its own transaction."""
+    async with host_services.session_factory.begin() as db:
+        return await host_services.crud.register_host(db, data)
 
 
 @router.post("/register", response_model=HostRead)
 async def register_host(
     data: HostRegister,
     response: Response,
-    db: DbDep,
     host_services: HostServicesDep,
     event_services: EventServicesDep,
     settings_services: SettingsServicesDep,
@@ -146,11 +206,26 @@ async def register_host(
     pack_services: PackServicesDep,
 ) -> dict[str, Any]:
     try:
-        host, is_new = await host_services.crud.register_host(db, data)
-    except IntegrityError:
-        raise HTTPException(status_code=409, detail="Host registration conflict") from None
+        # Hoisted ahead of the attempt so the orchestration-contract gate visibly
+        # precedes *both* transactions: the fallback below reapplies the same
+        # payload and does not re-validate it.
+        host_service.validate_orchestration_contract(data.capabilities, host_label=data.hostname)
+        host, is_new = await _register_host_txn(host_services, data)
     except ValueError as exc:
         raise HTTPException(status_code=426, detail=str(exc)) from None
+    except IntegrityError as exc:
+        if not host_service.is_hostname_conflict(exc):
+            raise HTTPException(status_code=409, detail="Host registration conflict") from None
+        # A concurrent peer (e.g. a heartbeat-driven re-register racing the
+        # operator-initiated registration) committed the same hostname between
+        # our locked SELECT and our INSERT. The attempt's transaction is already
+        # rolled back and its session closed by the context above; the fallback
+        # opens a fresh one and retakes the Host lock from scratch.
+        async with host_services.session_factory.begin() as db:
+            existing = await host_services.crud.reregister_host(db, data)
+        if existing is None:
+            raise HTTPException(status_code=409, detail="Host registration conflict") from None
+        host, is_new = existing, False
 
     if not is_new:
         # A re-registering agent is live evidence the backend can reach it again. If its
@@ -177,13 +252,14 @@ async def register_host(
 @router.post("/{host_id}/approve", response_model=HostRead)
 async def approve_host(
     host_id: uuid.UUID,
-    db: DbDep,
     host_services: HostServicesDep,
     event_services: EventServicesDep,
     settings_services: SettingsServicesDep,
     pack_services: PackServicesDep,
 ) -> dict[str, Any]:
-    host = found_or_404(await host_services.crud.approve_host(db, host_id), "Host not found or not pending")
+    async with host_services.session_factory.begin() as db:
+        approved = await host_services.crud.approve_host(db, host_id)
+    host = found_or_404(approved, "Host not found or not pending")
     _schedule_host_acceptance_tasks(
         host.id,
         event_services=event_services,
@@ -194,18 +270,20 @@ async def approve_host(
 
 
 @router.post("/{host_id}/reject", status_code=204)
-async def reject_host(host_id: uuid.UUID, db: DbDep, host_services: HostServicesDep) -> None:
-    rejected = await host_services.crud.reject_host(db, host_id)
+async def reject_host(host_id: uuid.UUID, host_services: HostServicesDep) -> None:
+    async with host_services.session_factory.begin() as db:
+        rejected = await host_services.crud.reject_host(db, host_id)
     if not rejected:
         raise HTTPException(status_code=404, detail="Host not found or not pending")
 
 
 @router.post("", response_model=HostRead, status_code=201)
 async def create_host(
-    data: HostCreate, db: DbDep, host_services: HostServicesDep, settings_services: SettingsServicesDep
+    data: HostCreate, host_services: HostServicesDep, settings_services: SettingsServicesDep
 ) -> dict[str, Any]:
     try:
-        host = await host_services.crud.create_host(db, data)
+        async with host_services.session_factory.begin() as db:
+            host = await host_services.crud.create_host(db, data)
     except IntegrityError:
         raise HTTPException(status_code=409, detail="Host with this hostname already exists") from None
     return _serialize_host(host, settings_services)
@@ -288,26 +366,30 @@ async def host_driver_packs(
 async def trigger_driver_doctor(
     host_id: uuid.UUID,
     pack_id: str,
-    db: DbDep,
+    host_services: HostServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
     pack_services: PackServicesDep,
 ) -> list[pack_schemas.HostPackDoctorOut]:
-    host = found_or_404(await db.get(Host, host_id), "host not found")
-    offline_after = settings_services.service.get_float("general.host_offline_after_sec")
-    if not host_online(host, offline_after_sec=offline_after):
-        raise HTTPException(status_code=409, detail="host must be online to run doctor checks")
+    target = await _online_host_target(
+        host_services,
+        settings_services,
+        host_id,
+        missing_detail="host not found",
+        offline_status=409,
+        offline_detail="host must be online to run doctor checks",
+    )
 
     checks = await agent_operations.pack_doctor(
-        host.ip,
-        host.agent_port,
+        target.ip,
+        target.agent_port,
         pack_id,
         circuit_breaker=agent_comm.circuit_breaker,
         pool=agent_comm.http_pool,
     )
 
-    await pack_services.status.persist_doctor_results(db, host_id, pack_id, checks)
-    await db.commit()
+    async with pack_services.session_factory.begin() as db:
+        await pack_services.status.persist_doctor_results(db, host_id, pack_id, checks)
 
     return [
         pack_schemas.HostPackDoctorOut(
@@ -353,75 +435,92 @@ async def get_host_resource_telemetry(
 @router.get("/{host_id}/tools/status", response_model=HostToolStatusRead)
 async def get_host_tool_status(
     host_id: uuid.UUID,
-    db: DbDep,
     host_services: HostServicesDep,
     settings_services: SettingsServicesDep,
     agent_comm: AgentCommServicesDep,
 ) -> dict[str, Any]:
-    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
-    offline_after = settings_services.service.get_float("general.host_offline_after_sec")
-    if not host_online(host, offline_after_sec=offline_after):
-        raise HTTPException(status_code=400, detail="Host must be online to fetch tool status")
+    target = await _online_host_target(
+        host_services,
+        settings_services,
+        host_id,
+        missing_detail="Host not found",
+        offline_status=400,
+        offline_detail="Host must be online to fetch tool status",
+    )
     return await get_agent_tool_status(
-        host.ip,
-        host.agent_port,
+        target.ip,
+        target.agent_port,
         circuit_breaker=agent_comm.circuit_breaker,
         pool=agent_comm.http_pool,
     )
 
 
 @router.delete("/{host_id}", status_code=204)
-async def delete_host(host_id: uuid.UUID, db: DbDep, host_services: HostServicesDep) -> None:
+async def delete_host(host_id: uuid.UUID, host_services: HostServicesDep) -> None:
     try:
-        deleted = await host_services.crud.delete_host(db, host_id)
+        async with host_services.session_factory.begin() as db:
+            deleted = await host_services.crud.delete_host(db, host_id)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     if not deleted:
         raise HTTPException(status_code=404, detail="Host not found")
 
 
+async def _fetch_candidates(
+    host_services: HostServices, pack_services: PackServices, host_id: uuid.UUID
+) -> tuple[HostTarget, tuple[Mapping[str, Any], ...]]:
+    """Prepare, then dial. Both discovery reads and the confirm write start here."""
+    target = await _load_host_target(host_services, host_id)
+    return target, await pack_services.discovery.fetch_pack_candidates(target)
+
+
 @router.post("/{host_id}/discover", response_model=DiscoveryResult)
 async def discover_devices(
     host_id: uuid.UUID,
-    db: DbDep,
     host_services: HostServicesDep,
     pack_services: PackServicesDep,
 ) -> DiscoveryResult:
-    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
-    return await pack_services.discovery.discover_devices(db, host)
+    target, candidates = await _fetch_candidates(host_services, pack_services, host_id)
+    async with pack_services.session_factory() as db:
+        return await pack_services.discovery.classify_discovery(db, target.host_id, candidates)
 
 
 @router.get("/{host_id}/intake-candidates", response_model=list[IntakeCandidateRead])
 async def intake_candidates(
     host_id: uuid.UUID,
-    db: DbDep,
     host_services: HostServicesDep,
     pack_services: PackServicesDep,
 ) -> list[IntakeCandidateRead]:
-    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
-    return await pack_services.discovery.list_intake_candidates(db, host)
+    target, candidates = await _fetch_candidates(host_services, pack_services, host_id)
+    async with pack_services.session_factory() as db:
+        return await pack_services.discovery.build_intake_candidates(db, target.host_id, candidates)
 
 
 @router.post("/{host_id}/discover/confirm", response_model=DiscoveryConfirmResult)
 async def confirm_discovery(
     host_id: uuid.UUID,
     data: DiscoveryConfirm,
-    db: DbDep,
     host_services: HostServicesDep,
     pack_services: PackServicesDep,
 ) -> DiscoveryConfirmResult:
-    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
-    # Re-run discovery to get fresh data for validation
-    result = await pack_services.discovery.discover_devices(db, host)
+    # Confirmation is twice-removed from the agent: it re-dials for fresh
+    # validation data and then writes. Prepare and dial first, so the write
+    # transaction below opens only once the network call has returned.
+    target, candidates = await _fetch_candidates(host_services, pack_services, host_id)
     try:
-        return await pack_services.discovery.confirm_discovery(
-            db,
-            host,
-            data.add_identity_values,
-            data.remove_identity_values,
-            result,
-        )
-    except DeviceIdentityConflictError as exc:
+        # Only a genuinely absent Host row becomes a 404 here. A boot rotation is
+        # a recoverable conflict on a host that still exists, so it keeps the 409
+        # lane alongside the identity conflict rather than reading as a deletion.
+        with convert_missing_row("Host not found"):
+            async with pack_services.session_factory.begin() as db:
+                return await pack_services.discovery.confirm_discovery(
+                    db,
+                    target,
+                    candidates,
+                    data.add_identity_values,
+                    data.remove_identity_values,
+                )
+    except (StaleHostGenerationError, DeviceIdentityConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
@@ -445,10 +544,9 @@ async def get_host_tool_env(host_id: uuid.UUID, db: DbDep, host_services: HostSe
 async def put_host_tool_env(
     host_id: uuid.UUID,
     body: HostToolEnvUpdate,
-    db: DbDep,
     host_services: HostServicesDep,
 ) -> dict[str, Any]:
-    host = found_or_404(await host_services.crud.get_host(db, host_id), "Host not found")
-    host.tool_env = body.env if body.env else None
-    await db.commit()
-    return {"env": host.tool_env or {}}
+    with convert_missing_row("Host not found"):
+        async with host_services.session_factory.begin() as db:
+            env = await host_services.crud.update_tool_env(db, host_id, body.env)
+    return {"env": env}

@@ -242,7 +242,9 @@ class VerificationExecutionService:
                 return stop_error
 
         try:
-            async with self._session_factory() as db:
+            # ``start_node_txn`` no longer owns a boundary, so this command does:
+            # the operation lease and the node start commit together or not at all.
+            async with self._session_factory.begin() as db:
                 lock = await lock_verification_operation(
                     db, device_id=effect.device_id, operation_id=effect.operation_id
                 )
@@ -254,7 +256,7 @@ class VerificationExecutionService:
                         superseded=True,
                     )
                 locked, _lease = lock
-                node = await self._node_manager.start_node(db, locked.device, caller="verification")
+                node = await self._node_manager.start_node_txn(db, locked, caller="verification")
                 node_id = node.id
         except NodeManagerError as exc:
             detail = str(exc)
@@ -434,7 +436,7 @@ class VerificationExecutionService:
             if effect.mode == "create":
                 cleanup_error = await _stop_verification_node_if_running(job, db, device, node)
                 # Device deletion cascades to DeviceIntent rows, so the lease dies with it.
-                await self._failure_finalizers.crud.delete_device(db, effect.device_id)
+                await self._failure_finalizers.crud.delete_device_txn(db, effect.device_id)
                 if cleanup_error is not None:
                     return VerificationExecutionOutcome(status="failed", error=cleanup_error, device_id=None)
                 return VerificationExecutionOutcome(status="failed", error=error, device_id=None)
