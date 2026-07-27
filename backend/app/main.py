@@ -173,10 +173,8 @@ def _build_janitor(app_services: AppServices) -> JanitorLoop:
 
     async def _pack_drain_stage(db: AsyncSession) -> None:
         # Backstop only: release paths complete drains inline (event-driven).
-        # The scan is transaction-local, so the stage owns its boundary until
-        # Phase 10 gives the janitor a command boundary of its own.
-        await app_services.packs.lifecycle.complete_draining_packs_once(db)
-        await db.commit()
+        async with db.begin():
+            await app_services.packs.lifecycle.complete_draining_packs_once(db)
 
     async def _release_rollout_stage(db: AsyncSession) -> None:
         await run_release_rollout_stage(db, publisher=app_services.events.publisher)

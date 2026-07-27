@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,6 +11,10 @@ import pytest
 import app.main as main_module
 from app.core import observability
 from app.core.observability import BACKGROUND_LOOP_NAMES
+from tests.fakes import FakeSessionFactory, RecordingSessionFactory
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # Loops started in main.py's lifespan that are intentionally NOT readiness-gated.
 # Adding a loop here is a deliberate decision — document why in the PR that does so.
@@ -182,16 +187,7 @@ async def test_flush_background_loop_snapshots_writes_set_many_once() -> None:
 
     store = AsyncMock()
     store.set_many = AsyncMock()
-    db = AsyncMock()
-
-    class _Ctx:
-        async def __aenter__(self) -> AsyncMock:
-            return db
-
-        async def __aexit__(self, *_: object) -> bool:
-            return False
-
-    factory = _Ctx  # plain callable returning the CM
+    factory = FakeSessionFactory(AsyncMock())
 
     with patch("app.core.observability._control_plane_state_store", return_value=store):
         written = await observability.flush_background_loop_snapshots(factory)
@@ -201,7 +197,6 @@ async def test_flush_background_loop_snapshots_writes_set_many_once() -> None:
     namespace, payload = store.set_many.await_args.args[1], store.set_many.await_args.args[2]
     assert namespace == observability.LOOP_HEARTBEAT_NAMESPACE
     assert set(payload.keys()) == {"heartbeat", "session_sync", "node_health"}
-    db.commit.assert_awaited_once()
 
 
 async def test_flush_is_noop_when_no_snapshots() -> None:
@@ -227,16 +222,7 @@ async def test_flush_skips_when_no_changes_since_last_flush() -> None:
 
     store = AsyncMock()
     store.set_many = AsyncMock()
-    db = AsyncMock()
-
-    class _Ctx:
-        async def __aenter__(self) -> AsyncMock:
-            return db
-
-        async def __aexit__(self, *_: object) -> bool:
-            return False
-
-    factory = _Ctx  # plain callable returning the CM
+    factory = FakeSessionFactory(AsyncMock())
 
     with patch("app.core.observability._control_plane_state_store", return_value=store):
         first = await observability.flush_background_loop_snapshots(factory)
@@ -252,16 +238,7 @@ async def test_flush_remains_dirty_on_failure() -> None:
 
     store = AsyncMock()
     store.set_many = AsyncMock(side_effect=RuntimeError("db down"))
-    db = AsyncMock()
-
-    class _Ctx:
-        async def __aenter__(self) -> AsyncMock:
-            return db
-
-        async def __aexit__(self, *_: object) -> bool:
-            return False
-
-    factory = _Ctx  # plain callable returning the CM
+    factory = FakeSessionFactory(AsyncMock())
 
     with patch("app.core.observability._control_plane_state_store", return_value=store):
         with pytest.raises(RuntimeError):
@@ -273,6 +250,42 @@ async def test_flush_remains_dirty_on_failure() -> None:
         written = await observability.flush_background_loop_snapshots(factory)
 
     assert written == 1
+
+
+async def test_flush_rolls_back_through_begin_context_and_retries_the_same_snapshot(
+    db_session_maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A real write, not a mock: ``set_many``'s own INSERT executes for real, then
+    the hook raises. The rollback that discards it is the ``begin()`` context's
+    own exit, not an explicit ``db.rollback()`` call anywhere in production code.
+    """
+    observability._heartbeat_buffer.update("heartbeat", interval_seconds=15.0)
+    factory = RecordingSessionFactory(db_session_maker)
+
+    async def boom(_db: AsyncSession, _statement: str) -> None:
+        raise RuntimeError("boom")
+
+    factory.hook = boom
+
+    with pytest.raises(RuntimeError):
+        await observability.flush_background_loop_snapshots(factory)
+
+    # factory.begun only increments inside RecordingSessionFactory.begin(), never
+    # inside a bare factory() call -- this is what pins the flush to persisting
+    # through session_factory.begin() rather than an un-scoped session.
+    assert factory.begun == 1
+    assert not factory.sessions[0].in_transaction()
+    async with db_session_maker() as verify:
+        assert await observability.get_background_loop_snapshots(verify) == {}
+
+    factory.hook = None
+    written = await observability.flush_background_loop_snapshots(factory)
+
+    assert factory.begun == 2
+    assert written == 1
+    async with db_session_maker() as verify:
+        snapshots = await observability.get_background_loop_snapshots(verify)
+    assert snapshots["heartbeat"]["interval_seconds"] == 15.0
 
 
 def test_loop_heartbeat_freshness_signal_uses_next_expected_at() -> None:
