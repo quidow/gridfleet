@@ -20,6 +20,7 @@ import pytest
 from app.runs import service_reaper as _service_reaper
 from app.runs.models import RunState, TestRun
 from app.runs.service_reaper import reap_stale_runs
+from tests.concurrency.group_lock_helpers import capture_statements
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -59,8 +60,12 @@ async def test_reaper_expires_run_after_concurrent_heartbeat_refresh(
             await side.commit()
         return await original_lock(db, rid)  # type: ignore[arg-type]
 
-    with patch.object(_service_reaper, "get_run_for_update", side_effect=_refresh_then_lock):
-        await reap_stale_runs(db_session, lifecycle=AsyncMock())
+    # Pinned to db_session's own connection: the concurrent refresh above runs
+    # on a side-channel session, and a bare engine-level listener would also
+    # pick up its UPDATE, which is not the statement this assertion is about.
+    async with capture_statements(db_session) as statements:
+        with patch.object(_service_reaper, "get_run_for_update", side_effect=_refresh_then_lock):
+            await reap_stale_runs(db_session, lifecycle=AsyncMock())
 
     # Re-read the run on a fresh session so we observe the persisted state,
     # not the in-memory ORM cache.
@@ -72,3 +77,10 @@ async def test_reaper_expires_run_after_concurrent_heartbeat_refresh(
         assert refreshed.state == RunState.active, (
             f"Reaper expired run despite fresh heartbeat: state={refreshed.state}"
         )
+
+    # The "no longer stale under the lock" branch drops the lock via the
+    # candidate's `db.begin()` context exit; it must never also issue DML.
+    dml = [
+        statement for statement in statements if statement.strip().upper().startswith(("UPDATE", "DELETE", "INSERT"))
+    ]
+    assert dml == [], f"the not-stale-anymore recheck must issue no DML, got {dml}"
