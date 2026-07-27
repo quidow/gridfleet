@@ -110,7 +110,6 @@ async def test_reconnect_persists_session_viability_clear_before_intent_reconcil
     ):
         result = await devices_control.reconnect_device(
             device.id,
-            db=db_session,
             device_services=SimpleNamespace(
                 crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 publisher=event_bus,
@@ -153,7 +152,6 @@ async def test_reconnect_node_manager_error_returns_502() -> None:
         ra_restart_err.restart_node_txn = AsyncMock(side_effect=NodeManagerError("restart failed"))
         await devices_control.reconnect_device(
             device_id,
-            db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
@@ -187,7 +185,6 @@ async def test_reconnect_port_conflict_error_returns_502() -> None:
         ra_start_err.start_node_txn = AsyncMock(side_effect=NodePortConflictError("port occupied"))
         await devices_control.reconnect_device(
             device_id,
-            db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
@@ -227,7 +224,6 @@ async def test_reconnect_inner_http_400_propagates_unchanged() -> None:
     ):
         await devices_control.reconnect_device(
             device_id,
-            db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),
@@ -261,7 +257,6 @@ async def test_reconnect_unexpected_exception_bubbles() -> None:
         ra_boom.restart_node_txn = AsyncMock(side_effect=RuntimeError("unexpected boom"))
         await devices_control.reconnect_device(
             device_id,
-            db=db,
             device_services=_device_services(),
             settings_services=_settings_services(),
             agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),

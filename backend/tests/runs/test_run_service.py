@@ -115,6 +115,9 @@ async def test_force_release_clears_deferred_stop(
         db_session, device, source="device_checks", reason="ADB not responsive"
     )
     assert result == "deferred"
+    # The helper is transaction-local; publish it before the release command opens
+    # its own sessions and reaches for the same device row.
+    await db_session.commit()
     assert (await remediation_log.load_ladder(db_session, device.id)).deferred_stop_pending is True
 
     test_release = RunReleaseService(

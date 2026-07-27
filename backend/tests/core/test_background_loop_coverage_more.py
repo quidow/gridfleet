@@ -31,7 +31,7 @@ from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, AsyncIterator
 
 
 class _Observation:
@@ -130,9 +130,15 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
             # None pack_id keeps load_pack_catalog a no-op for this deleted-device probe.
             return [(node, None)]
 
+    @asynccontextmanager
+    async def _transaction() -> AsyncIterator[None]:
+        yield None
+
     db = AsyncMock()
     db.execute = AsyncMock(return_value=Result())
-    db.commit = AsyncMock()
+    # ``begin()`` is a context manager on a real AsyncSession; a bare AsyncMock
+    # attribute would hand back an un-awaited coroutine instead.
+    db.begin = Mock(side_effect=_transaction)
     monkeypatch.setattr(node_health.device_locking, "lock_device_handle", AsyncMock(side_effect=NoResultFound))
 
     from tests.fakes import FakeSettingsReader
@@ -159,4 +165,7 @@ async def test_node_health_check_skips_device_deleted_after_probe(monkeypatch: p
         },
     )
 
-    db.commit.assert_awaited_once()
+    # Two transactions: the inventory read, then the item transaction the vanished
+    # device exits with no DML of its own. Neither is a bare ``commit()`` any more.
+    assert db.begin.call_count == 2
+    db.commit.assert_not_awaited()

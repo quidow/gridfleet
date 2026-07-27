@@ -25,7 +25,13 @@ from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from tests.bench_instrumentation import CommitTap, install_async_session_callsite_profiler
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device, create_reserved_run, dispatch_committed_events, seed_host_and_device
+from tests.helpers import (
+    committed_session,
+    create_device,
+    create_reserved_run,
+    dispatch_committed_events,
+    seed_host_and_device,
+)
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -121,7 +127,10 @@ async def test_unhealthy_fold_preserves_transition_artifacts_and_order(
     )
     assert before_counts == (0, 0)
 
-    assert await service.fold_host_devices(db_session, device.host_id, section, boot_id=_BOOT_ID) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), device.host_id, section, boot_id=_BOOT_ID)
+        is True
+    )
     await dispatch_committed_events()
 
     device_events = (
@@ -303,7 +312,10 @@ async def test_unhealthy_fold_preserves_transition_artifacts_and_order(
     first_delivery_counts = (len(device_events), len(system_events))
     assert first_delivery_counts == (5, 3)
 
-    assert await service.fold_host_devices(db_session, device.host_id, section, boot_id=_BOOT_ID) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), device.host_id, section, boot_id=_BOOT_ID)
+        is True
+    )
     await dispatch_committed_events()
     redelivery_counts = (
         await db_session.scalar(
@@ -348,7 +360,10 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
 
     monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", fail_after_mutations)
 
-    assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is False
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host_id, section, boot_id=_BOOT_ID)
+        is False
+    )
     await dispatch_committed_events()
 
     async with db_session_maker() as verify:
@@ -413,7 +428,9 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
         )
 
     monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", original)
-    assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host_id, section, boot_id=_BOOT_ID) is True
+    )
     await dispatch_committed_events()
 
     async with db_session_maker() as verify:
@@ -484,7 +501,9 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
     ]
     assert first_history == ["failure_observed", "auto_stop_commissioned", "auto_stopped"]
 
-    assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host_id, section, boot_id=_BOOT_ID) is True
+    )
     await dispatch_committed_events()
     async with db_session_maker() as verify:
         redelivered_node = (
@@ -581,7 +600,10 @@ async def test_unhealthy_fold_failure_keeps_prior_device_and_retries_remaining_d
             raise RuntimeError("sentinel middle-device failure")
 
     monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", fail_middle)
-    assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is False
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host_id, section, boot_id=_BOOT_ID)
+        is False
+    )
     await dispatch_committed_events()
 
     async with db_session_maker() as verify:
@@ -631,7 +653,9 @@ async def test_unhealthy_fold_failure_keeps_prior_device_and_retries_remaining_d
     assert after_failure[final_id].device_checks_fold_applied_revision == _REVISION
 
     monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", original)
-    assert await service.fold_host_devices(db_session, host_id, section, boot_id=_BOOT_ID) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host_id, section, boot_id=_BOOT_ID) is True
+    )
     await dispatch_committed_events()
 
     async with db_session_maker() as verify:
@@ -669,7 +693,7 @@ async def test_unhealthy_fold_failure_keeps_prior_device_and_retries_remaining_d
     assert all(item.device_checks_fold_applied_revision == _REVISION for item in completed.values())
 
 
-async def test_unhealthy_fold_uses_one_commit_and_no_general_device_relock(
+async def test_unhealthy_fold_uses_one_transition_commit_and_no_general_device_relock(
     db_session: AsyncSession,
     unhealthy_fold: tuple[ConnectivityService, Device, AppiumNode, dict[str, Any]],
     monkeypatch: pytest.MonkeyPatch,
@@ -680,6 +704,8 @@ async def test_unhealthy_fold_uses_one_commit_and_no_general_device_relock(
     lock_device_spy = AsyncMock(wraps=device_locking.lock_device)
     monkeypatch.setattr(device_locking, "lock_device", lock_device_spy)
     engine = db_session.bind.sync_engine
+    # Publish the fixture's seed before arming so its commit is not counted.
+    await committed_session(db_session)
     event.listen(engine, "commit", commit_tap)
     try:
         assert await service.fold_host_devices(db_session, device.host_id, section, boot_id=_BOOT_ID) is True
@@ -687,7 +713,10 @@ async def test_unhealthy_fold_uses_one_commit_and_no_general_device_relock(
     finally:
         event.remove(engine, "commit", commit_tap)
 
-    assert commit_tap.count == 1
+    # Two: the fold's inventory read, which writes nothing, and the one transaction
+    # that carries the whole unhealthy transition for this device. The transition
+    # itself still lands in a single commit — that is what this pins.
+    assert commit_tap.count == 2
     lock_device_spy.assert_not_awaited()
     device_events = list(
         (

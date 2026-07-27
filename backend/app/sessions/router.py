@@ -145,13 +145,16 @@ async def kill_session(
 async def update_session_status(
     session_id: str,
     data: SessionStatusUpdate,
-    db: DbDep,
     session_services: SessionServicesDep,
 ) -> Session:
-    session = found_or_404(
-        await session_services.crud.update_session_status(db, session_id, data.status), "Session not found"
-    )
-    # ``update_session_status`` is transaction-local (no commit); the entry
-    # point owns the boundary for the request-scoped session.
-    await db.commit()
+    # ``update_session_status`` is transaction-local (no commit) and reaches the
+    # deferred-stop chain, so the boundary is this route's own — not the
+    # request-scoped session's, which carries work this route never authored.
+    # The factory is built with ``expire_on_commit=False``, and ``SessionRead``
+    # projects only scalar columns, so the row still serializes once the context
+    # has exited.
+    async with session_services.session_factory.begin() as db:
+        session = found_or_404(
+            await session_services.crud.update_session_status(db, session_id, data.status), "Session not found"
+        )
     return session

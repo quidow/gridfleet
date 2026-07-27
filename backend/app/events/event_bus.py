@@ -775,41 +775,47 @@ class EventBus:
         poll_session_factory = self._poll_session_factory
         if poll_session_factory is None:
             return
+        # The gap lookup gets a session of its own, closed before the scan opens
+        # one. A failing ``_GAP_LOOKUP_SQL`` aborts its session's transaction, and
+        # scoping it this way is what lets that abort die with the context instead
+        # of being repaired by hand on a session the scan still has to use.
+        #
+        # The emptiness check duplicates ``_resolve_pending_gaps``' own early
+        # return on purpose: without it the steady-state tick, which has no gaps
+        # at all, would check out a second connection to run nothing.
+        if self._pending_gaps:
+            async with poll_session_factory() as gap_db:
+                try:
+                    gap_rows = await self._resolve_pending_gaps(gap_db)
+                except (SQLAlchemyError, TimeoutError) as exc:
+                    # TimeoutError alongside SQLAlchemyError: a command_timeout cutoff
+                    # (POLL_STATEMENT_TIMEOUT_SEC) surfaces from asyncpg as a bare
+                    # TimeoutError, which SQLAlchemy does not wrap once an execution
+                    # context exists -- see the comment at POLL_STATEMENT_TIMEOUT_SEC.
+                    # Catching only SQLAlchemyError let a timed-out gap lookup take
+                    # the withdrawn ``return`` path below by accident, aborting the
+                    # whole poll instead of just the gap dispatch.
+                    #
+                    # Skip only the gap-row dispatch this tick, then carry on. This
+                    # first shipped as ``return``, which quietly made one statement a
+                    # precondition for all delivery: a deterministically failing
+                    # ``_GAP_LOOKUP_SQL`` froze the frontier, so nothing new was ever
+                    # polled, and no gap retired either -- retirement runs after that
+                    # query -- so the condition sustained itself and the poller
+                    # degraded to listener-only until a restart.
+                    #
+                    # The guarantee worth keeping is the gap set's *integrity*, and
+                    # it is untouched: nothing on this path mutates
+                    # ``_pending_gaps``, so the next poll retries exactly the same
+                    # ids. What was traded away is the stronger "change nothing at
+                    # all", which bought correctness for the gap set at the cost of
+                    # every other row's delivery.
+                    logger.warning("Could not resolve outbox gaps (%s); scanning forward without them", exc)
+                    gap_rows = []
+                # Dispatched before the scan: if the scan then fails, these rows are
+                # already in the dedupe map and the retry will not duplicate them.
+                self._dispatch_new_rows(gap_rows)
         async with poll_session_factory() as db:
-            try:
-                gap_rows = await self._resolve_pending_gaps(db)
-            except (SQLAlchemyError, TimeoutError) as exc:
-                # TimeoutError alongside SQLAlchemyError: a command_timeout cutoff
-                # (POLL_STATEMENT_TIMEOUT_SEC) surfaces from asyncpg as a bare
-                # TimeoutError, which SQLAlchemy does not wrap once an execution
-                # context exists -- see the comment at POLL_STATEMENT_TIMEOUT_SEC.
-                # Catching only SQLAlchemyError let a timed-out gap lookup take
-                # the withdrawn ``return`` path below by accident, aborting the
-                # whole poll instead of just the gap dispatch.
-                #
-                # Skip only the gap-row dispatch this tick, then carry on. This
-                # first shipped as ``return``, which quietly made one statement a
-                # precondition for all delivery: a deterministically failing
-                # ``_GAP_LOOKUP_SQL`` froze the frontier, so nothing new was ever
-                # polled, and no gap retired either -- retirement runs after that
-                # query -- so the condition sustained itself and the poller
-                # degraded to listener-only until a restart.
-                #
-                # The guarantee worth keeping is the gap set's *integrity*, and
-                # it is untouched: nothing on this path mutates
-                # ``_pending_gaps``, so the next poll retries exactly the same
-                # ids. What was traded away is the stronger "change nothing at
-                # all", which bought correctness for the gap set at the cost of
-                # every other row's delivery.
-                logger.warning("Could not resolve outbox gaps (%s); scanning forward without them", exc)
-                gap_rows = []
-                # The failed statement leaves this session's transaction
-                # aborted, so the scan below would fail too. Rolling back costs
-                # nothing here -- the poll only ever reads.
-                await db.rollback()
-            # Dispatched before the scan: if the scan then fails, these rows are
-            # already in the dedupe map and the retry will not duplicate them.
-            self._dispatch_new_rows(gap_rows)
             rows, observed, frontier = await self._scan_window(db)
         self._dispatch_new_rows(rows)
         self._record_new_gaps(observed, frontier)

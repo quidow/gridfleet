@@ -33,6 +33,20 @@ if TYPE_CHECKING:
     from app.devices.locking import LockedDevice
     from app.runs.schemas import DeviceRequirement
 
+
+async def committed_session(db: AsyncSession) -> AsyncSession:
+    """Publish the caller's seed, then hand the same session back.
+
+    The status folds open transactions of their own (an inventory read, then one
+    per work item), and the StatusFoldLoop always gives them a session it just
+    opened. Tests reuse the shared ``db_session`` fixture instead, so the seed
+    they staged has to be committed first — ``db.begin()`` refuses to nest into an
+    open implicit transaction.
+    """
+    await db.commit()
+    return db
+
+
 # Shared test-owned EventBus instance. Replaces the removed production singleton.
 # All test files should import this instead of the old ``from app.events import event_bus``.
 test_event_bus = EventBus()

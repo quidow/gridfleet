@@ -30,7 +30,7 @@ from tests.fakes import FakeSettingsReader, build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
 
@@ -202,6 +202,9 @@ async def test_fold_replay_is_idempotent(db_session: AsyncSession, db_host: Host
     assert first_since is not None
     assert node.health_state == "error"
 
+    # The refresh above autobegins on the shared fixture session; the fold's
+    # inventory read opens a transaction of its own and cannot nest into one.
+    await db_session.commit()
     await _service(settings=settings).fold_host_nodes(db_session, device.host_id, section)
     await db_session.refresh(node)
     assert node.health_failing_since == first_since
@@ -376,3 +379,80 @@ async def test_ack_recovery_and_receipt_roll_back_together(
     node_locks = [sql for sql in statements if "FROM appium_nodes" in sql and "FOR UPDATE" in sql]
     assert len(device_locks) == 1, device_locks
     assert len(node_locks) == 1, node_locks
+
+
+async def test_fold_returns_the_caller_session_with_no_open_transaction(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    """The inventory read owns a transaction of its own.
+
+    Without one the fold's node SELECT autobegins on the caller's session, and a
+    section with no per-node work leaves that implicit read transaction open on
+    return — so the caller's next ``db.begin()`` raises ``InvalidRequestError``.
+    """
+    device, _node = await _running_node(db_session, db_host, name="Inventory Only", identity="nh-inventory", port=4796)
+    assert db_session.in_transaction() is False
+
+    settled = await _service(settings=FakeSettingsReader({})).fold_host_nodes(db_session, device.host_id, _section())
+
+    assert settled is True
+    assert db_session.in_transaction() is False, "the inventory read left an implicit transaction on the caller"
+    async with db_session.begin():
+        pass
+
+
+async def test_fold_settles_each_node_in_its_own_transaction(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """One settled node per transaction: a failed peer is contained, not shared.
+
+    Fails the middle node of three and reads the verdict back through a *different*
+    session, so the assertion is about durability rather than about identity-map
+    state left on the folding session.
+    """
+    nodes: list[AppiumNode] = []
+    for index in range(3):
+        _device, node = await _running_node(
+            db_session,
+            db_host,
+            name=f"Isolation {index}",
+            identity=f"nh-isolation-{index}",
+            port=4810 + index,
+        )
+        nodes.append(node)
+    # The fold orders by device_id, so the middle node in that order is the one to
+    # fail. Snapshot the ids now: a contained rollback expires every loaded row.
+    ordered = sorted((node.device_id for node in nodes), key=str)
+    doomed_device_id = ordered[1]
+    service = _service(
+        settings=FakeSettingsReader({"general.node_fail_window_sec": 60, "appium_reconciler.restart_window_sec": 300})
+    )
+    real_process = service._process_node_health
+
+    async def fail_the_middle_node(
+        db: AsyncSession, node: AppiumNode, locked: object, snapshot: object, **kwargs: object
+    ) -> object:
+        outcome = await real_process(db, node, locked, snapshot, **kwargs)  # type: ignore[arg-type]
+        if node.device_id == doomed_device_id:
+            raise RuntimeError("late node-health failure")
+        return outcome
+
+    service._process_node_health = fail_the_middle_node  # type: ignore[assignment, method-assign]
+
+    section = _section(*[_entry(node, running=False) for node in nodes])
+    settled = await service.fold_host_nodes(db_session, db_host.id, section)
+
+    assert settled is False
+    async with db_session_maker() as verify:
+        durable = dict(
+            (
+                await verify.execute(
+                    select(AppiumNode.device_id, AppiumNode.health_state).where(AppiumNode.device_id.in_(ordered))
+                )
+            ).all()
+        )
+    assert durable[ordered[0]] == "error", "the settled peer before the failure was not durable"
+    assert durable[doomed_device_id] is None, "the failed node's write escaped its own transaction"
+    assert durable[ordered[2]] == "error", "the failure stopped a later node from settling"

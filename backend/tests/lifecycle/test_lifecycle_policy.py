@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -353,7 +353,7 @@ async def test_handle_health_failure_locked_defers_without_commit(
         event.remove(db_session.sync_session, "after_commit", count_commit)
 
 
-async def test_handle_health_failure_compatibility_wrapper_locks_and_commits_both_branches(
+async def test_handle_health_failure_compatibility_wrapper_locks_both_branches_without_committing(
     db_session: AsyncSession,
     db_host: Host,
     monkeypatch: pytest.MonkeyPatch,
@@ -393,7 +393,7 @@ async def test_handle_health_failure_compatibility_wrapper_locks_and_commits_bot
             )
             == "stopped"
         )
-        assert commits == 1
+        assert commits == 0, "the wrapper is transaction-local; the boundary is its caller's"
         assert any(call.args[1] == stopped.id for call in lock_spy.await_args_list)
 
         lock_spy.reset_mock()
@@ -406,8 +406,12 @@ async def test_handle_health_failure_compatibility_wrapper_locks_and_commits_bot
             )
             == "deferred"
         )
-        assert commits == 2
+        assert commits == 0
         lock_spy.assert_awaited_once_with(db_session, deferred.id, load_sessions=True)
+
+        # Both branches ride out on the caller's single boundary.
+        await db_session.commit()
+        assert commits == 1
     finally:
         event.remove(db_session.sync_session, "after_commit", count_commit)
 
@@ -2121,3 +2125,156 @@ async def test_restore_run_after_self_heal_skips_non_available_device(db_session
     assert restored is False
     res = await _reservation_row(db_session, device.id)
     assert res.excluded is True
+
+
+async def _seed_deferred_stop_device(
+    db_session: AsyncSession,
+    db_host: Host,
+    *,
+    identity: str,
+    healthy: bool,
+) -> uuid.UUID:
+    """A device parked in ``deferred_stop`` with a node row, committed and detached."""
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=identity,
+        connection_target=identity,
+        name=identity,
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.busy,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+        lifecycle_policy_state={
+            "deferred_stop": True,
+            "deferred_stop_reason": "ADB hung",
+            "deferred_stop_since": "2026-05-04T10:00:00+00:00",
+            "last_action": "auto_stop_deferred",
+            "last_failure_source": "node_health",
+            "last_failure_reason": "ADB hung",
+            "recovery_suppressed_reason": None,
+        },
+    )
+    db_session.add(device)
+    await db_session.flush()
+    await _append_deferred_stop(db_session, device, reason="ADB hung")
+    db_session.add(
+        AppiumNode(
+            device_id=device.id,
+            port=4900 + (hash(identity) % 80),
+            desired_state=AppiumDesiredState.running,
+            desired_port=4900 + (hash(identity) % 80),
+            pid=0,
+            active_connection_target="",
+        )
+    )
+    await db_session.commit()
+
+    health_svc = DeviceHealthService(publisher=event_bus)
+    await health_svc.apply_node_state_transition(
+        db_session,
+        device,
+        health_running=healthy,
+        health_state=None if healthy else "error",
+        mark_offline=False,
+    )
+    await health_svc.update_device_checks(db_session, device, healthy=healthy, summary="seed")
+    await db_session.commit()
+    return device.id
+
+
+async def test_handle_session_finished_leaves_the_recovery_commit_to_its_caller(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """The healthy branch clears the deferred stop but must not publish it itself.
+
+    The helper used to commit behind its caller's back, so a caller transaction
+    that failed *after* the call still left the cleared intent durable. Here the
+    caller raises after the helper returns; the clear must die with it.
+    """
+    device_id = await _seed_deferred_stop_device(db_session, db_host, identity="lifecycle-caller-heals", healthy=True)
+
+    with pytest.raises(RuntimeError, match="caller failed"):
+        async with db_session_maker.begin() as caller_db:
+            device = await caller_db.get(Device, device_id)
+            assert device is not None
+            outcome = await _make_svc(publisher=event_bus).handle_session_finished(caller_db, device)
+            assert outcome is DeferredStopOutcome.NO_PENDING_OR_RECOVERED
+            raise RuntimeError("caller failed")
+
+    async with db_session_maker() as verify:
+        assert (await remediation_log.load_ladder(verify, device_id)).deferred_stop_pending is True
+
+
+async def test_handle_session_finished_leaves_the_auto_stop_commit_to_its_caller(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """Same contract for the ``complete_auto_stop`` branch, which had two commits."""
+    device_id = await _seed_deferred_stop_device(db_session, db_host, identity="lifecycle-caller-stops", healthy=False)
+
+    with pytest.raises(RuntimeError, match="caller failed"):
+        async with db_session_maker.begin() as caller_db:
+            device = await caller_db.get(Device, device_id)
+            assert device is not None
+            outcome = await _make_svc(publisher=Mock()).handle_session_finished(caller_db, device)
+            assert outcome is DeferredStopOutcome.AUTO_STOPPED
+            raise RuntimeError("caller failed")
+
+    async with db_session_maker() as verify:
+        assert (await remediation_log.load_ladder(verify, device_id)).deferred_stop_pending is True
+        # ``complete_auto_stop``'s own writes died with the caller too.
+        assert (
+            await verify.scalar(
+                select(func.count())
+                .select_from(DeviceRemediationLogEntry)
+                .where(
+                    DeviceRemediationLogEntry.device_id == device_id,
+                    DeviceRemediationLogEntry.action == remediation_log.ACTION_AUTO_STOPPED,
+                )
+            )
+            == 0
+        )
+
+
+async def test_handle_health_failure_leaves_the_commit_to_its_caller(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+) -> None:
+    """``handle_health_failure`` is the wired session-viability escalation handler."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="lifecycle-caller-health-failure",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+    device_id = device.id
+    await db_session.commit()
+
+    with pytest.raises(RuntimeError, match="caller failed"):
+        async with db_session_maker.begin() as caller_db:
+            reloaded = await caller_db.get(Device, device_id)
+            assert reloaded is not None
+            verdict = await _make_svc(publisher=Mock()).handle_health_failure(
+                caller_db, reloaded, source="session_viability", reason="probe failed"
+            )
+            assert verdict == "stopped"
+            raise RuntimeError("caller failed")
+
+    async with db_session_maker() as verify:
+        assert (
+            await verify.scalar(
+                select(func.count())
+                .select_from(DeviceRemediationLogEntry)
+                .where(DeviceRemediationLogEntry.device_id == device_id)
+            )
+            == 0
+        )

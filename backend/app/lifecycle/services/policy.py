@@ -313,9 +313,7 @@ class LifecyclePolicyService:
         if updated.decision_facts.in_maintenance:
             return "suppressed"
         if updated.ladder.deferred_stop_pending:
-            await db.commit()
             return "deferred"
-        await db.commit()
         return "stopped"
 
     async def handle_health_failure_locked(
@@ -437,12 +435,6 @@ class LifecyclePolicyService:
                 source=ladder.last_failure_source or "session",
                 reason="Session finished while device was healthy",
             )
-            # Mirror the AUTO_STOPPED branch (which commits via ``complete_auto_stop``):
-            # commit the cleared intent here so callers do not need to know about the
-            # internal helper contract. Without this commit, request-scoped sessions
-            # (FastAPI ``get_db``) close before the cleared state is persisted, and
-            # the dashboard keeps rendering stale ``deferred_stop``.
-            await db.commit()
             return DeferredStopOutcome.NO_PENDING_OR_RECOVERED
 
         reason = ladder.deferred_stop_reason or ladder.last_failure_reason or "Health-driven stop pending"

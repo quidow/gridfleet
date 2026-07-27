@@ -426,10 +426,12 @@ class RunTeardownService:
         await self._run_deferred_stops(cleanup_ids)
 
     async def _run_deferred_stops(self, device_ids: list[uuid.UUID]) -> None:
-        if not device_ids:
-            return
-        async with self._session_factory() as db:
-            await self._release.complete_deferred_stops_post_commit(db, device_ids)
+        # One transaction per device: the deferred stop used to commit inside
+        # ``complete_auto_stop``, so a device that raises must still leave its
+        # settled peers durable.
+        for device_id in device_ids:
+            async with self._session_factory.begin() as db:
+                await self._release.complete_deferred_stops_post_commit(db, [device_id])
 
     async def _fail_job(self, operation_id: uuid.UUID, error: str) -> None:
         async with self._session_factory.begin() as db:

@@ -34,7 +34,12 @@ from app.lifecycle.services.policy import LifecyclePolicyService
 from app.packs.models import DriverPack, PackState
 from app.runs.service_reservation import RunReservationService
 from tests.fakes import FakeSettingsReader
-from tests.helpers import build_connectivity_service, seed_host_and_device, seed_host_with_devices
+from tests.helpers import (
+    build_connectivity_service,
+    committed_session,
+    seed_host_and_device,
+    seed_host_with_devices,
+)
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -124,7 +129,10 @@ async def _fold_health_once(
         reported_at=reported_at.isoformat(),
         health=health,
     )
-    assert await service.fold_host_devices(db_session, host_id, section, boot_id=uuid.uuid4()) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host_id, section, boot_id=uuid.uuid4())
+        is True
+    )
 
 
 async def test_device_has_device_health_fold_receipt_columns(db_session: AsyncSession) -> None:
@@ -161,7 +169,9 @@ async def test_fold_applies_healthy_and_advances_receipt(
         ],
     }
     service = build_connectivity_service(db_session_maker)
-    settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
+    settled = await service.fold_host_devices(
+        await committed_session(db_session), host.id, section, boot_id=uuid.uuid4()
+    )
     assert settled is True
     await db_session.refresh(device)
     assert device.device_checks_healthy is True
@@ -240,7 +250,10 @@ async def test_fold_loads_one_decision_snapshot_per_applied_device(
         health=DeviceHealthService(publisher=event_bus),
     )
 
-    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host.id, section, boot_id=uuid.uuid4())
+        is True
+    )
 
     loaded_device_ids = {call.args[1].device.id for call in loader.await_args_list}
     assert healthy_one.id in loaded_device_ids
@@ -270,7 +283,7 @@ async def test_fold_acquires_one_fold_owned_health_lock_per_processed_device(
     service = build_connectivity_service(db_session_maker)
 
     settled = await service.fold_host_devices(
-        db_session,
+        await committed_session(db_session),
         host.id,
         _healthy_fold_section(device_ids, revision=revision),
         boot_id=uuid.uuid4(),
@@ -297,7 +310,7 @@ async def test_fold_snapshots_only_fold_owned_control_state_namespaces(
     service = build_connectivity_service(db_session_maker)
 
     settled = await service.fold_host_devices(
-        db_session,
+        await committed_session(db_session),
         host.id,
         _healthy_fold_section(device_ids, revision=revision),
         boot_id=uuid.uuid4(),
@@ -357,7 +370,7 @@ async def test_fold_discards_presence_changes_from_rolled_back_device(
 
     service._apply_device_health = fail_first  # type: ignore[method-assign]
     settled = await service.fold_host_devices(
-        db_session,
+        await committed_session(db_session),
         host.id,
         _healthy_fold_section([bad_id, good_id], revision=revision),
         boot_id=uuid.uuid4(),
@@ -404,7 +417,7 @@ async def test_fold_sees_repair_attempt_committed_after_presence_preload(
     service = build_connectivity_service(db_session_maker)
 
     settled = await service.fold_host_devices(
-        db_session,
+        await committed_session(db_session),
         host.id,
         _healthy_fold_section([device.id], revision=revision),
         boot_id=uuid.uuid4(),
@@ -455,7 +468,9 @@ async def test_fold_preloads_pack_catalog_once_for_multiple_devices(
     monkeypatch.setattr(fold_context, "load_pack_catalog", load_packs)
 
     service = build_connectivity_service(db_session_maker)
-    settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
+    settled = await service.fold_host_devices(
+        await committed_session(db_session), host.id, section, boot_id=uuid.uuid4()
+    )
 
     assert settled is True
     receipt_rows = (
@@ -672,7 +687,9 @@ async def test_fold_terminal_noop_on_unknown_presence_advances_receipt(
         ],
     }
     service = build_connectivity_service(db_session_maker)
-    settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
+    settled = await service.fold_host_devices(
+        await committed_session(db_session), host.id, section, boot_id=uuid.uuid4()
+    )
     assert settled is True  # deliberate no-op, but the generation is consumed
     await db_session.refresh(device)
     assert device.device_checks_fold_applied_revision == revision  # marker advanced
@@ -702,7 +719,10 @@ async def test_fold_applies_observed_health_when_presence_gather_is_incomplete(
     }
     service = build_connectivity_service(db_session_maker)
 
-    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host.id, section, boot_id=uuid.uuid4())
+        is True
+    )
     await db_session.refresh(device)
 
     # Discovery completeness gates only absence. A successful direct health
@@ -739,7 +759,10 @@ async def test_fold_ignores_presence_absent_when_health_probe_errored(
     }
     service = build_connectivity_service(db_session_maker)
 
-    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host.id, section, boot_id=uuid.uuid4())
+        is True
+    )
     await db_session.refresh(device)
 
     assert device.device_checks_healthy is None  # no health axis write from an absent, unprobed device
@@ -775,7 +798,10 @@ async def test_fold_keeps_registered_device_healthy_when_discovery_reports_absen
     }
     service = build_connectivity_service(db_session_maker)
 
-    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host.id, section, boot_id=uuid.uuid4())
+        is True
+    )
     await db_session.refresh(device)
 
     assert device.device_checks_healthy is True
@@ -818,7 +844,10 @@ async def test_fold_consumes_pre_maintenance_observation_without_health_or_remed
     monkeypatch.setattr(conn_mod, "enqueue_device_health_remediation", enqueue)
     service = build_connectivity_service(db_session_maker)
 
-    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host.id, section, boot_id=uuid.uuid4())
+        is True
+    )
     await db_session.refresh(device)
 
     assert device.device_checks_healthy is None
@@ -900,7 +929,9 @@ async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
         side_effect=fail_first_attempt_for_one_device
     )
 
-    settled_result = await service.fold_host_devices(db_session, host_id, section, boot_id=boot_id)
+    settled_result = await service.fold_host_devices(
+        await committed_session(db_session), host_id, section, boot_id=boot_id
+    )
     assert settled_result is False  # one device retryable -> host watermark held by the loop
 
     await db_session.refresh(failed)
@@ -924,7 +955,7 @@ async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
         > 0
     )
 
-    replayed = await service.fold_host_devices(db_session, host_id, section, boot_id=boot_id)
+    replayed = await service.fold_host_devices(await committed_session(db_session), host_id, section, boot_id=boot_id)
     assert replayed is True
     await db_session.refresh(failed)
     await db_session.refresh(settled)
@@ -957,7 +988,10 @@ async def test_fold_ignores_device_absent_from_gather(
         ],
     }
     service = build_connectivity_service(db_session_maker)
-    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is True
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host.id, section, boot_id=uuid.uuid4())
+        is True
+    )
     await db_session.refresh(omitted)
     assert omitted.device_checks_fold_applied_revision == 0  # never touched — "not gathered", not absent
     assert omitted.device_checks_healthy is None
@@ -996,7 +1030,9 @@ async def test_stale_device_fold_does_not_override_fresh_synchronous_write(
         ],
     }
     service = build_connectivity_service(db_session_maker)
-    settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
+    settled = await service.fold_host_devices(
+        await committed_session(db_session), host.id, section, boot_id=uuid.uuid4()
+    )
     assert settled is True  # the device settles (marker advances) ...
     await db_session.refresh(device)
     assert device.device_checks_healthy is False  # ... but the stale healthy verdict LOST the guard
@@ -1060,7 +1096,9 @@ async def test_stale_failing_fold_enqueues_remediation_that_self_cancels(
     service = build_connectivity_service(db_session_maker)
     enqueue = AsyncMock(return_value=uuid.uuid4())
     monkeypatch.setattr(conn_mod, "enqueue_device_health_remediation", enqueue)
-    settled = await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4())
+    settled = await service.fold_host_devices(
+        await committed_session(db_session), host.id, section, boot_id=uuid.uuid4()
+    )
     assert settled is True
     # A stale FAILING observation that transiently wins enqueues exactly one repeat-safe
     # remediation job (reconnect); the job worker's current-fact recheck (A3) cancels it
@@ -1115,7 +1153,7 @@ async def test_fold_healthy_offline_device_prepares_one_recovery_job(
         health={"healthy": True, "checks": []},
     )
 
-    assert await connectivity.fold_host_devices(db_session, host.id, section) is True
+    assert await connectivity.fold_host_devices(await committed_session(db_session), host.id, section) is True
     await db_session.refresh(device)
     generation = recovery_generation(device)
     assert generation is not None
@@ -1130,7 +1168,7 @@ async def test_fold_healthy_offline_device_prepares_one_recovery_job(
         reported_at=now_utc().isoformat(),
         health={"healthy": True, "checks": []},
     )
-    assert await connectivity.fold_host_devices(db_session, host.id, second) is True
+    assert await connectivity.fold_host_devices(await committed_session(db_session), host.id, second) is True
     assert (
         await db_session.scalar(select(func.count()).select_from(Job).where(Job.kind == JOB_KIND_DEVICE_RECOVERY)) == 1
     )
@@ -1165,7 +1203,7 @@ async def test_fold_rollback_after_recovery_prepare_leaves_no_state(
         reported_at=now_utc().isoformat(),
         health={"healthy": True, "checks": []},
     )
-    assert await connectivity.fold_host_devices(db_session, host.id, section) is False
+    assert await connectivity.fold_host_devices(await committed_session(db_session), host.id, section) is False
 
     await db_session.refresh(device)
     assert recovery_generation(device) is None
@@ -1216,7 +1254,10 @@ async def test_fold_rollback_discards_the_failure_fact_and_its_remediation_job_t
             "recommended_action": "reconnect",
         },
     )
-    assert await service.fold_host_devices(db_session, host.id, section, boot_id=uuid.uuid4()) is False
+    assert (
+        await service.fold_host_devices(await committed_session(db_session), host.id, section, boot_id=uuid.uuid4())
+        is False
+    )
 
     await db_session.refresh(device)
     assert device.device_checks_healthy is not False
@@ -1224,3 +1265,84 @@ async def test_fold_rollback_discards_the_failure_fact_and_its_remediation_job_t
     assert device.device_checks_fold_applied_revision != revision
     jobs = (await db_session.execute(select(Job).where(Job.remediation_device_id == device_id))).scalars().all()
     assert jobs == []
+
+
+async def test_fold_returns_the_caller_session_with_no_open_transaction(db_session: AsyncSession) -> None:
+    """The inventory read (and the fold scope it builds) own a transaction of their own.
+
+    Without one the device SELECT autobegins on the caller's session, and a section
+    with no per-device work leaves that implicit read transaction open on return —
+    so the caller's next ``db.begin()`` raises ``InvalidRequestError``.
+    """
+    host, _devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-inventory")
+    await db_session.commit()
+    assert db_session.in_transaction() is False
+
+    settled = await _loop_service().fold_host_devices(
+        await committed_session(db_session),
+        host.id,
+        {"reported_at": now_utc().isoformat(), "complete_gather": True, "devices": []},
+    )
+
+    assert settled is True
+    assert db_session.in_transaction() is False, "the inventory read left an implicit transaction on the caller"
+    async with db_session.begin():
+        pass
+
+
+async def test_fold_settles_each_device_in_its_own_transaction(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
+) -> None:
+    """One settled device per transaction: a failed peer is contained, not shared.
+
+    Fails the middle device of three and reads the verdicts back through a
+    *different* session, so the assertion is about durability rather than about
+    identity-map state left on the folding session.
+    """
+    host, devices = await seed_host_with_devices(db_session, count=3, identity_prefix="fold-isolation")
+    await db_session.commit()
+    ordered = sorted(device.id for device in devices)  # the fold orders by Device.id
+    doomed_id = ordered[1]
+    revision = await next_observation_revision(db_session)
+    await db_session.commit()
+
+    lifecycle_policy = MagicMock()
+
+    async def fail_the_middle_device(
+        db: AsyncSession, locked: LockedDevice, snapshot: DeviceDecisionSnapshot, **kwargs: object
+    ) -> None:
+        if locked.device.id == doomed_id:
+            raise RuntimeError("late lifecycle failure")
+
+    lifecycle_policy.handle_health_failure_locked = AsyncMock(side_effect=fail_the_middle_device)
+    service = _loop_service(lifecycle_policy=lifecycle_policy)
+
+    section: dict[str, Any] = {
+        "reported_at": now_utc().isoformat(),
+        "section_sequence": 9,
+        OBSERVATION_REVISION_KEY: revision,
+        "complete_gather": True,
+        "devices": [
+            {
+                "device_id": str(device_id),
+                "probe_status": "observed",
+                "presence": "present",
+                "health": {"healthy": False, "checks": [{"check_id": "ping", "ok": False}]},
+                "lifecycle_state": {"status": "unsupported", "value": None},
+            }
+            for device_id in ordered
+        ],
+    }
+
+    settled = await service.fold_host_devices(
+        await committed_session(db_session), host.id, section, boot_id=uuid.uuid4()
+    )
+
+    assert settled is False
+    async with db_session_maker() as verify:
+        durable = dict(
+            (await verify.execute(select(Device.id, Device.device_checks_healthy).where(Device.id.in_(ordered)))).all()
+        )
+    assert durable[ordered[0]] is False, "the settled peer before the failure was not durable"
+    assert durable[doomed_id] is None, "the failed device's write escaped its own transaction"
+    assert durable[ordered[2]] is False, "the failure stopped a later device from settling"

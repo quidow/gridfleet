@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
@@ -21,6 +22,8 @@ from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
     import uuid
+    from collections.abc import AsyncIterator, Callable
+    from contextlib import AbstractAsyncContextManager as AsyncContextManager
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -36,6 +39,33 @@ def _maintenance(session_factory: async_sessionmaker[AsyncSession]) -> Maintenan
         publisher=event_bus,
         session_factory=session_factory,
     )
+
+
+class _WatchFirstCommit:
+    """Session factory shim that reports the commit of the *first* ``begin()``.
+
+    The route owns its own transactions now, so the choreography below can no
+    longer watch the caller's session for the viability write. The first
+    ``begin()`` the route opens is that write; the node lever's own transaction
+    follows and is deliberately not watched.
+    """
+
+    def __init__(self, factory: async_sessionmaker[AsyncSession], on_commit: Callable[[], None]) -> None:
+        self._factory = factory
+        self._on_commit = on_commit
+        self._armed = True
+
+    def __call__(self) -> AsyncContextManager[AsyncSession]:
+        return self._factory()
+
+    @contextlib.asynccontextmanager
+    async def begin(self) -> AsyncIterator[AsyncSession]:
+        async with self._factory() as session:
+            if self._armed:
+                self._armed = False
+                event.listen(session.sync_session, "after_commit", lambda _s: self._on_commit(), once=True)
+            async with session.begin():
+                yield session
 
 
 async def _seed_reconnectable_device(db_session: AsyncSession, host_id: str) -> Device:
@@ -101,21 +131,19 @@ async def test_reconnect_does_not_stomp_maintenance_that_commits_mid_call(
     monkeypatch.setattr("app.devices.services.link_repair.pack_device_lifecycle_action", fake_lifecycle_action)
 
     async def reconnect() -> None:
-        async with db_session_maker() as session:
-            await devices_control.reconnect_device(
-                device_id,
-                db=session,
-                device_services=SimpleNamespace(  # type: ignore[arg-type]
-                    crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-                    publisher=event_bus,
-                ),
-                settings_services=SimpleNamespace(service=FakeSettingsReader({})),  # type: ignore[arg-type]
-                agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),  # type: ignore[arg-type]
-                appium_services=SimpleNamespace(  # type: ignore[arg-type]
-                    reconciler_agent=SimpleNamespace(restart_node_txn=fake_restart_node_txn),
-                    session_factory=db_session_maker,
-                ),
-            )
+        await devices_control.reconnect_device(
+            device_id,
+            device_services=SimpleNamespace(  # type: ignore[arg-type]
+                crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
+                publisher=event_bus,
+            ),
+            settings_services=SimpleNamespace(service=FakeSettingsReader({})),  # type: ignore[arg-type]
+            agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),  # type: ignore[arg-type]
+            appium_services=SimpleNamespace(  # type: ignore[arg-type]
+                reconciler_agent=SimpleNamespace(restart_node_txn=fake_restart_node_txn),
+                session_factory=db_session_maker,
+            ),
+        )
 
     async def enter_maintenance_mid_call() -> None:
         await asyncio.wait_for(agent_call_entered.wait(), timeout=5.0)
@@ -213,22 +241,19 @@ async def test_reconnect_node_lever_queues_behind_a_device_row_holder(
         return locked.device.appium_node
 
     async def reconnect() -> None:
-        async with db_session_maker() as session:
-            event.listen(session.sync_session, "after_commit", lambda _s: viability_committed.set(), once=True)
-            await devices_control.reconnect_device(
-                device_id,
-                db=session,
-                device_services=SimpleNamespace(  # type: ignore[arg-type]
-                    crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-                    publisher=event_bus,
-                ),
-                settings_services=SimpleNamespace(service=FakeSettingsReader({})),  # type: ignore[arg-type]
-                agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),  # type: ignore[arg-type]
-                appium_services=SimpleNamespace(  # type: ignore[arg-type]
-                    reconciler_agent=SimpleNamespace(restart_node_txn=fake_restart_node_txn),
-                    session_factory=db_session_maker,
-                ),
-            )
+        await devices_control.reconnect_device(
+            device_id,
+            device_services=SimpleNamespace(  # type: ignore[arg-type]
+                crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
+                publisher=event_bus,
+            ),
+            settings_services=SimpleNamespace(service=FakeSettingsReader({})),  # type: ignore[arg-type]
+            agent_comm=SimpleNamespace(circuit_breaker=Mock(), http_pool=None),  # type: ignore[arg-type]
+            appium_services=SimpleNamespace(  # type: ignore[arg-type]
+                reconciler_agent=SimpleNamespace(restart_node_txn=fake_restart_node_txn),
+                session_factory=_WatchFirstCommit(db_session_maker, viability_committed.set),
+            ),
+        )
 
     async def peer() -> None:
         await asyncio.wait_for(agent_call_entered.wait(), timeout=5.0)
