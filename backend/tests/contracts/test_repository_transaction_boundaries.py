@@ -459,6 +459,14 @@ REMOTE_EFFECT_OWNER_REGISTRY: frozenset[RemoteEffectOwner] = frozenset(
     }
 )
 
+# The set can grow but never shrink. Nine entries, contributed by:
+#   Phase 4 (2): grid/router_internal._finalize_interrupted_create, sessions/service_kill._perform_kill_effect
+#   Phase 8/9 (4): the four hosts/router agent dials
+#   Phase 10 (3): remediation_job._dispatch, recovery_job._run_probe, recovery_job._wait_for_node_running
+# Equality with EFFECT_ENTRY_POINTS is impossible (51 lexical entry points vs 9
+# with runtime tests), so this floor is what stops the set silently emptying.
+REMOTE_EFFECT_OWNER_FLOOR = 9
+
 
 def relative_module(path: Path) -> str:
     return str(path.relative_to(BACKEND_ROOT))
@@ -742,10 +750,26 @@ def test_no_effect_runs_inside_a_transaction_block() -> None:
 
 
 def test_remote_effect_owners_are_registered_effect_entry_points() -> None:
-    """A runtime-backed entry cannot outlive the code that justified it."""
+    """A runtime-backed entry cannot outlive the code that justified it.
+
+    Subset, not equality — deliberately, and uniquely in this file. Equality is
+    impossible here: ``EFFECT_ENTRY_POINTS`` names every lexical effect entry
+    point, and only a minority of them have a runtime no-active-transaction test.
+    ``test_remote_effect_owner_registry_never_shrinks`` is the other half: this
+    one stops an entry outliving its effect, that one stops the set emptying.
+    """
     keys = {owner.key for owner in REMOTE_EFFECT_OWNER_REGISTRY}
     orphans = sorted(keys - set(EFFECT_ENTRY_POINTS))
     assert orphans == [], f"REMOTE_EFFECT_OWNER_REGISTRY names owners that make no effect call: {orphans}"
+
+
+def test_remote_effect_owner_registry_never_shrinks() -> None:
+    assert len(REMOTE_EFFECT_OWNER_REGISTRY) >= REMOTE_EFFECT_OWNER_FLOOR, (
+        f"REMOTE_EFFECT_OWNER_REGISTRY dropped to {len(REMOTE_EFFECT_OWNER_REGISTRY)} entries, below the "
+        f"floor of {REMOTE_EFFECT_OWNER_FLOOR}. A runtime-backed no-active-transaction proof was deleted "
+        "without the code that justified it being deleted — restore it, or lower the floor in the same "
+        "commit that removes the effect."
+    )
 
 
 def test_remote_effect_owner_tests_exist() -> None:
