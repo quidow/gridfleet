@@ -774,7 +774,11 @@ def test_no_effect_runs_inside_a_transaction_block() -> None:
     module outside those two locations constructs an HTTP client. The scan is
     also lexical -- an effect one call frame below a ``begin()`` block is
     invisible here, which is what the runtime-backed entries in
-    ``REMOTE_EFFECT_OWNER_REGISTRY`` exist to cover."""
+    ``REMOTE_EFFECT_OWNER_REGISTRY`` exist to cover. The transaction detector
+    (``_opens_transaction``) is also ``With``/``AsyncWith``-only, so an effect
+    inside a transaction opened through an exit stack's
+    ``enter_context``/``enter_async_context`` is not caught here either --
+    unlike ``begin_owners``, which was widened to see that shape."""
     findings = effects_inside_transactions()
     assert findings == [], (
         "one of this repository's known effect entry points (see AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / "
