@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import exists, func, or_, select, true, tuple_
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import aliased
 
@@ -23,6 +23,7 @@ from app.sessions.models import Session
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from sqlalchemy import Select
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.locking import LockedDevice
@@ -197,43 +198,44 @@ async def _load_claims_intents_and_reservation(
     )
 
 
-async def _load_current_ladder(db: AsyncSession, device_id: uuid.UUID) -> LadderState:
+def _ladder_entries_stmt(device_id: uuid.UUID) -> Select[tuple[DeviceRemediationLogEntry]]:
+    """Entries at or after the device's latest reset, in one statement.
+
+    The reset is located once, as a single ``(at, id)`` row, and compared with a
+    row-value predicate. Two structurally identical scalar subqueries — one for
+    ``at``, one for ``id`` — made Postgres locate the same reset twice inside one
+    statement.
+
+    ``LEFT JOIN ... ON true`` against a ``LIMIT 1`` subquery yields exactly one
+    row of NULLs when the device has no reset, which is what keeps the
+    "no reset yet, take the whole history" branch reachable.
+    """
     reset = aliased(DeviceRemediationLogEntry)
-    latest_reset_at = (
-        select(reset.at)
+    latest_reset = (
+        select(reset.at.label("at"), reset.id.label("id"))
         .where(reset.device_id == device_id, reset.kind == remediation_log.KIND_RESET)
         .order_by(reset.at.desc(), reset.id.desc())
         .limit(1)
-        .scalar_subquery()
+        .subquery()
     )
-    latest_reset_id = (
-        select(reset.id)
-        .where(reset.device_id == device_id, reset.kind == remediation_log.KIND_RESET)
-        .order_by(reset.at.desc(), reset.id.desc())
-        .limit(1)
-        .scalar_subquery()
-    )
-    entries = list(
-        (
-            await db.execute(
-                select(DeviceRemediationLogEntry)
-                .where(
-                    DeviceRemediationLogEntry.device_id == device_id,
-                    or_(
-                        latest_reset_at.is_(None),
-                        DeviceRemediationLogEntry.at > latest_reset_at,
-                        and_(
-                            DeviceRemediationLogEntry.at == latest_reset_at,
-                            DeviceRemediationLogEntry.id >= latest_reset_id,
-                        ),
-                    ),
-                )
-                .order_by(DeviceRemediationLogEntry.at, DeviceRemediationLogEntry.id)
-            )
+    return (
+        select(DeviceRemediationLogEntry)
+        .select_from(DeviceRemediationLogEntry)
+        .outerjoin(latest_reset, true())
+        .where(
+            DeviceRemediationLogEntry.device_id == device_id,
+            or_(
+                latest_reset.c.at.is_(None),
+                tuple_(DeviceRemediationLogEntry.at, DeviceRemediationLogEntry.id)
+                >= tuple_(latest_reset.c.at, latest_reset.c.id),
+            ),
         )
-        .scalars()
-        .all()
+        .order_by(DeviceRemediationLogEntry.at, DeviceRemediationLogEntry.id)
     )
+
+
+async def _load_current_ladder(db: AsyncSession, device_id: uuid.UUID) -> LadderState:
+    entries = list((await db.execute(_ladder_entries_stmt(device_id))).scalars().all())
     return remediation_log.derive_ladder(entries)
 
 

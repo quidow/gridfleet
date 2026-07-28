@@ -5,12 +5,14 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
+from sqlalchemy.dialects import postgresql
+from sqlalchemy.orm import aliased
 
 from app.devices import locking as device_locking
-from app.devices.models import DeviceIntent, DeviceReservation, ExclusionKind
+from app.devices.models import DeviceIntent, DeviceRemediationLogEntry, DeviceReservation, ExclusionKind
 from app.devices.services.decision import parse_command
-from app.devices.services.decision_snapshot import IntentSnapshot, load_device_decision_snapshot
+from app.devices.services.decision_snapshot import IntentSnapshot, _ladder_entries_stmt, load_device_decision_snapshot
 from app.devices.services.intent_types import CommandKind
 from app.devices.services.readiness import preloaded_pack_catalog
 from app.lifecycle.services import remediation_log
@@ -18,10 +20,13 @@ from app.packs.services.catalog_view import load_pack_catalog
 from app.runs.models import RunState, TestRun
 from app.sessions.models import Session, SessionStatus
 from tests.concurrency.group_lock_helpers import capture_statements
-from tests.helpers import seed_host_and_running_node
+from tests.helpers import create_device, seed_host_and_running_node
 
 if TYPE_CHECKING:
+    from sqlalchemy import Select
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from app.hosts.models import Host
 
 pytestmark = [pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
 
@@ -45,6 +50,12 @@ def test_parse_command_accepts_immutable_intent_snapshot() -> None:
     assert command.source == intent.source
     assert command.restart_requested_at == now
     assert command.reason_detail == "operator"
+
+
+def test_the_ladder_statement_locates_the_reset_once() -> None:
+    """One reset lookup per statement, not two structurally identical ones."""
+    compiled = str(_ladder_entries_stmt(uuid.uuid4()).compile(dialect=postgresql.dialect()))
+    assert compiled.count("LIMIT") == 1, f"the reset is located more than once:\n{compiled}"
 
 
 async def test_locked_snapshot_matches_current_facts_in_three_reads(
@@ -238,3 +249,102 @@ async def test_snapshot_self_heals_when_the_preloaded_catalog_lacks_the_pack(
 
     assert len([sql for sql in statements if "driver_pack" in sql]) == 1
     assert snapshot.is_ready_for_use is True
+
+
+def _legacy_ladder_entries_stmt(device_id: uuid.UUID) -> Select[tuple[DeviceRemediationLogEntry]]:
+    """Verbatim copy of the pre-change two-subquery statement from
+    ``git show HEAD~1:backend/app/devices/services/decision_snapshot.py``
+    (``_load_current_ladder``, before it was split into ``_ladder_entries_stmt``).
+
+    Kept permanently as the independent second derivation the parity test below
+    compares against — do not collapse this with ``_ladder_entries_stmt`` or
+    import the production statement here; that would make the parity test
+    compare the new code against itself.
+    """
+    reset = aliased(DeviceRemediationLogEntry)
+    latest_reset_at = (
+        select(reset.at)
+        .where(reset.device_id == device_id, reset.kind == remediation_log.KIND_RESET)
+        .order_by(reset.at.desc(), reset.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    latest_reset_id = (
+        select(reset.id)
+        .where(reset.device_id == device_id, reset.kind == remediation_log.KIND_RESET)
+        .order_by(reset.at.desc(), reset.id.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    return (
+        select(DeviceRemediationLogEntry)
+        .where(
+            DeviceRemediationLogEntry.device_id == device_id,
+            or_(
+                latest_reset_at.is_(None),
+                DeviceRemediationLogEntry.at > latest_reset_at,
+                and_(
+                    DeviceRemediationLogEntry.at == latest_reset_at,
+                    DeviceRemediationLogEntry.id >= latest_reset_id,
+                ),
+            ),
+        )
+        .order_by(DeviceRemediationLogEntry.at, DeviceRemediationLogEntry.id)
+    )
+
+
+async def _seed_ladder_shape(db_session: AsyncSession, device_id: uuid.UUID, shape: str) -> None:
+    """Build one of the five reset arrangements the ladder statement must handle."""
+    base = datetime.now(UTC)
+
+    def add(offset: int, *, kind: str, action: str) -> None:
+        db_session.add(
+            DeviceRemediationLogEntry(
+                device_id=device_id,
+                kind=kind,
+                source="test",
+                action=action,
+                reason=None,
+                backoff_until=None,
+                at=base + timedelta(seconds=offset),
+            )
+        )
+
+    if shape == "no-entries":
+        pass
+    elif shape == "no-reset":
+        add(0, kind=remediation_log.KIND_FAILURE, action="failure_observed")
+        add(1, kind=remediation_log.KIND_ACTION, action="recovery_started")
+    elif shape == "reset-then-entries":
+        add(0, kind=remediation_log.KIND_FAILURE, action="failure_observed")
+        add(1, kind=remediation_log.KIND_RESET, action="operator_reset")
+        add(2, kind=remediation_log.KIND_ACTION, action="recovery_started")
+    elif shape == "reset-is-last":
+        add(0, kind=remediation_log.KIND_FAILURE, action="failure_observed")
+        add(1, kind=remediation_log.KIND_RESET, action="operator_reset")
+    elif shape == "two-resets":
+        add(0, kind=remediation_log.KIND_FAILURE, action="failure_observed")
+        add(1, kind=remediation_log.KIND_RESET, action="operator_reset")
+        add(2, kind=remediation_log.KIND_ACTION, action="recovery_started")
+        add(3, kind=remediation_log.KIND_RESET, action="operator_reset")
+        add(4, kind=remediation_log.KIND_ACTION, action="recovery_started")
+    else:
+        raise ValueError(f"unknown shape: {shape}")
+    await db_session.flush()
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ["no-entries", "no-reset", "reset-then-entries", "reset-is-last", "two-resets"],
+)
+async def test_ladder_matches_the_two_subquery_derivation(db_session: AsyncSession, db_host: Host, shape: str) -> None:
+    """The rewritten single-statement read selects the same entries the two-subquery
+    form did, across every reset arrangement the ladder can be in."""
+    device = await create_device(db_session, host_id=db_host.id, name=f"ladder-{shape}")
+    await _seed_ladder_shape(db_session, device.id, shape)
+    await db_session.commit()
+
+    rewritten = list((await db_session.execute(_ladder_entries_stmt(device.id))).scalars().all())
+    legacy = list((await db_session.execute(_legacy_ladder_entries_stmt(device.id))).scalars().all())
+
+    assert [entry.id for entry in rewritten] == [entry.id for entry in legacy]
