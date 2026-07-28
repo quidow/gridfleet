@@ -638,36 +638,75 @@ def effect_owners() -> list[tuple[str, str, int]]:
     return sorted(findings)
 
 
-def effects_inside_transactions() -> list[str]:
-    """Effect calls nested lexically inside a ``begin()``/``begin_nested()`` body.
+def _registers_transaction_on_a_stack(node: ast.AST) -> bool:
+    """True when *node*'s subtree hands a ``begin()`` to an exit stack.
+
+    The mirror of the second shape ``begin_owner_findings`` detects. A
+    transaction registered on a stack stays open until the stack unwinds, so
+    every statement after the registration in that block runs with it open.
+    """
+    return any(
+        isinstance(inner, ast.Call)
+        and call_tail(inner.func) in {"enter_context", "enter_async_context"}
+        and any(
+            isinstance(argument, ast.Call)
+            and isinstance(argument.func, ast.Attribute)
+            and argument.func.attr in {"begin", "begin_nested"}
+            for argument in inner.args
+        )
+        for inner in ast.walk(node)
+    )
+
+
+def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[str]:
+    """Effect calls nested inside a ``begin()``/``begin_nested()`` transaction in *tree*.
 
     Descends explicitly rather than through ``ast.walk`` because the property is
     about nesting: the ``with`` header itself is evaluated before the block is
-    entered, while a call in the body — or in a function *defined* in the body —
+    entered, while a call in the body -- or in a function *defined* in the body --
     runs with the transaction open.
+
+    Two ways in, matching ``begin_owner_findings``: a ``with``/``async with`` item,
+    and a ``begin()`` registered on an exit stack, which opens the transaction for
+    the remainder of the enclosing block rather than for a nested one. Statement
+    lists are therefore walked in order, with the flag flipping *after* the
+    registering statement -- the registration's own arguments are evaluated before
+    the transaction exists.
     """
     findings: list[str] = []
+    appium = _uses_appium_direct(tree)
+
+    def visit_body(statements: list[ast.stmt], in_transaction: bool) -> None:
+        for statement in statements:
+            visit(statement, in_transaction)
+            if not in_transaction and _registers_transaction_on_a_stack(statement):
+                in_transaction = True
+
+    def visit(node: ast.AST, in_transaction: bool) -> None:
+        if isinstance(node, ast.Call):
+            name = _effect_call_name(node, module_uses_appium_direct=appium)
+            if name is not None and in_transaction:
+                findings.append(f"{module}:{node.lineno} {name}()")
+        if isinstance(node, ast.With | ast.AsyncWith):
+            opens = any(_opens_transaction(item) for item in node.items)
+            for item in node.items:
+                visit(item.context_expr, in_transaction)
+            visit_body(node.body, in_transaction or opens)
+            return
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            visit_body(node.body, in_transaction)
+            return
+        for child in ast.iter_child_nodes(node):
+            visit(child, in_transaction)
+
+    visit(tree, False)
+    return findings
+
+
+def effects_inside_transactions() -> list[str]:
+    findings: list[str] = []
     for path in PRODUCTION:
-        module = relative_module(path)
-        tree = parse_module(path)
-        appium = _uses_appium_direct(tree)
-
-        def visit(node: ast.AST, in_transaction: bool, *, module: str = module, appium: bool = appium) -> None:
-            if isinstance(node, ast.Call):
-                name = _effect_call_name(node, module_uses_appium_direct=appium)
-                if name is not None and in_transaction:
-                    findings.append(f"{module}:{node.lineno} {name}()")
-            if isinstance(node, ast.With | ast.AsyncWith):
-                opens = any(_opens_transaction(item) for item in node.items)
-                for item in node.items:
-                    visit(item.context_expr, in_transaction)
-                for statement in node.body:
-                    visit(statement, in_transaction or opens)
-                return
-            for child in ast.iter_child_nodes(node):
-                visit(child, in_transaction)
-
-        visit(tree, False)
+        findings.extend(effects_inside_transactions_in_tree(parse_module(path), relative_module(path)))
     return findings
 
 
@@ -742,6 +781,49 @@ async def outer(db, stack):
     assert [owner for _module, owner, _lineno in owners] == ["outer", "outer"]
 
 
+def test_the_effect_check_sees_a_transaction_opened_through_an_exit_stack() -> None:
+    """An exit-stack ``begin()`` holds the same row locks an ``async with`` does.
+
+    ``begin_owners`` was widened to see this shape; the effect check was not, so
+    an agent dial inside a stack-opened transaction escaped the guard whose whole
+    purpose is stopping a remote call from running with a row lock held. No
+    module under ``app/`` uses an exit stack today, so this is the only place the
+    widened detector can be falsified.
+    """
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await stack.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+    )
+    findings = effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py")
+    assert findings == ["synthetic.py:4 agent_health()"]
+
+
+def test_the_effect_check_does_not_flag_an_effect_before_the_stack_registration() -> None:
+    """Order matters, and a stack with no ``begin()`` opens nothing.
+
+    The registration call is evaluated before the transaction exists -- the same
+    reasoning that makes a ``with`` header's own expressions out of scope -- so an
+    effect above it is not inside anything, and a stack that never receives a
+    ``begin()`` must not make its whole body look transactional.
+    """
+    before = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(ip, port)\n"
+        "        await stack.enter_async_context(db.begin())\n"
+    )
+    unrelated = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await stack.enter_async_context(db.stream())\n"
+        "        await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(before), "synthetic.py") == []
+    assert effects_inside_transactions_in_tree(ast.parse(unrelated), "synthetic.py") == []
+
+
 def test_begin_owner_kinds_are_command_or_infrastructure() -> None:
     kinds = {owner.kind for owner in BEGIN_OWNER_REGISTRY}
     assert kinds <= {"command", "infrastructure"}, f"unclassifiable begin() owner kinds: {sorted(kinds)}"
@@ -775,10 +857,9 @@ def test_no_effect_runs_inside_a_transaction_block() -> None:
     also lexical -- an effect one call frame below a ``begin()`` block is
     invisible here, which is what the runtime-backed entries in
     ``REMOTE_EFFECT_OWNER_REGISTRY`` exist to cover. The transaction detector
-    (``_opens_transaction``) is also ``With``/``AsyncWith``-only, so an effect
-    inside a transaction opened through an exit stack's
-    ``enter_context``/``enter_async_context`` is not caught here either --
-    unlike ``begin_owners``, which was widened to see that shape."""
+    sees both shapes ``begin_owners`` does -- a ``with``/``async with`` item and a
+    ``begin()`` registered on an exit stack -- so an effect under either is caught
+    here."""
     findings = effects_inside_transactions()
     assert findings == [], (
         "one of this repository's known effect entry points (see AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / "
