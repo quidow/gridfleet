@@ -26,6 +26,7 @@ from app.devices.schemas.group import (
 from app.devices.services.groups import (
     GroupKeyConflictError,
     GroupReferencedError,
+    GroupWriteResult,
     StaticGroupFiltersError,
     UnknownMemberOfError,
 )
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.devices.services_container import DeviceServices
 
 DEVICE_GROUP_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
 
@@ -58,13 +61,32 @@ async def _group_device_ids_or_404(
 
 @router.post("", response_model=DeviceGroupMutationRead, response_model_exclude_none=True, status_code=201)
 async def create_group(data: DeviceGroupCreate, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+    del db  # the command owns its own session; the count below opens a second one
     try:
-        # The service serializes stable fields before commit, avoiding a racy re-read.
-        return await device_services.groups.create_group(db, data)
+        async with device_services.session_factory.begin() as command_db:
+            created = await device_services.groups.create_group(command_db, data)
     except GroupKeyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await _with_dynamic_count(device_services, created)
+
+
+async def _with_dynamic_count(device_services: DeviceServices, written: GroupWriteResult) -> dict[str, Any]:
+    """The mutation payload, with a dynamic group's live count folded in.
+
+    A second, read-only session on purpose: the count is a fleet-wide evaluator
+    read, and running it inside the write boundary would hold the definition row
+    lock across all of it. A failed count degrades to ``None`` there and is
+    dropped from the response by ``response_model_exclude_none``.
+    """
+    payload = dict(written.payload)
+    if written.is_dynamic:
+        async with device_services.session_factory() as count_db:
+            payload["device_count"] = await device_services.groups.dynamic_device_count(
+                count_db, group_id=written.group_id, group_key=written.group_key
+            )
+    return payload
 
 
 @router.get("", response_model=list[DeviceGroupRead], response_model_exclude_none=True)
@@ -95,16 +117,21 @@ async def update_group(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
+    del db  # the command owns its own session; the count below opens a second one
     try:
-        return found_or_404(await device_services.groups.update_group(db, group_key, data), "Group not found")
+        async with device_services.session_factory.begin() as command_db:
+            written = await device_services.groups.update_group(command_db, group_key, data)
     except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await _with_dynamic_count(device_services, found_or_404(written, "Group not found"))
 
 
 @router.delete("/{group_key}", status_code=204)
 async def delete_group(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> None:
+    del db  # the command locks the same row from its own session
     try:
-        deleted = await device_services.groups.delete_group(db, group_key)
+        async with device_services.session_factory.begin() as command_db:
+            deleted = await device_services.groups.delete_group(command_db, group_key)
     except GroupReferencedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not deleted:
@@ -118,11 +145,15 @@ async def add_members(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, int]:
+    # The type read stays on the request session and deliberately takes no row
+    # lock: the command below locks the same row from its own session, and
+    # holding both would deadlock until a statement timeout.
     group_type = found_or_404(await device_services.groups.get_group_type(db, group_key), "Group not found")
     if group_type == GroupType.dynamic:
         raise HTTPException(status_code=400, detail="Cannot manually add members to a dynamic group")
-    added = found_or_404(await device_services.groups.add_members(db, group_key, body.device_ids), "Group not found")
-    return {"added": added}
+    async with device_services.session_factory.begin() as command_db:
+        added = await device_services.groups.add_members(command_db, group_key, body.device_ids)
+    return {"added": found_or_404(added, "Group not found")}
 
 
 @router.delete("/{group_key}/members")
@@ -132,13 +163,13 @@ async def remove_members(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, int]:
+    # See add_members on why the type read stays unlocked on the request session.
     group_type = found_or_404(await device_services.groups.get_group_type(db, group_key), "Group not found")
     if group_type == GroupType.dynamic:
         raise HTTPException(status_code=400, detail="Cannot manually remove members from a dynamic group")
-    removed = found_or_404(
-        await device_services.groups.remove_members(db, group_key, body.device_ids), "Group not found"
-    )
-    return {"removed": removed}
+    async with device_services.session_factory.begin() as command_db:
+        removed = await device_services.groups.remove_members(command_db, group_key, body.device_ids)
+    return {"removed": found_or_404(removed, "Group not found")}
 
 
 @router.post("/{group_key}/bulk/start-nodes", response_model=BulkOperationResult)

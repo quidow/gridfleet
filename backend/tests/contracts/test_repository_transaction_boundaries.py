@@ -4,7 +4,7 @@ Everything the phase-scoped guards asserted file by file is asserted here for
 every module under ``backend/app``, with no path prefixes, wildcards, line
 numbers or "all functions in this file" entries anywhere:
 
-* no direct ``.commit()`` / ``.rollback()`` outside ``DEFERRED_TRANSACTION_CONTROL``;
+* no direct ``.commit()`` / ``.rollback()`` anywhere, with no allowlist;
 * no ``commit`` / ``rollback`` / ``autocommit`` parameter, anywhere, at all;
 * every ``begin()`` context has a named, individually classified owner in
   ``BEGIN_OWNER_REGISTRY``;
@@ -33,29 +33,6 @@ APP_ROOT = BACKEND_ROOT / "app"
 PRODUCTION = sorted(APP_ROOT.rglob("*.py"))
 
 TRANSACTION_CONTROL_ARGUMENTS = frozenset({"commit", "rollback", "autocommit"})
-
-# Phase 11 owns these two modules. Set equality, not subset: an entry that stops
-# being true is as much a failure as a new commit somewhere else.
-#
-# ``groups.py`` keeps manual control because its writers have to preserve the
-# documented parent-before-edges lock order across live delete/import races;
-# ``recovery_job.py`` still needs the prepare/effect/finalize split remediation
-# got in Phase 10. Both are deliberate carry-over, not oversight.
-DEFERRED_TRANSACTION_CONTROL: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("app/devices/services/groups.py", "DeviceGroupsService._dynamic_device_count"),
-        ("app/devices/services/groups.py", "DeviceGroupsService._insert_group"),
-        ("app/devices/services/groups.py", "DeviceGroupsService.add_members"),
-        ("app/devices/services/groups.py", "DeviceGroupsService.create_group"),
-        ("app/devices/services/groups.py", "DeviceGroupsService.delete_group"),
-        ("app/devices/services/groups.py", "DeviceGroupsService.remove_members"),
-        ("app/devices/services/groups.py", "DeviceGroupsService.update_group"),
-        ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._clear_generation_and_fail"),
-        ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._ensure_prepared"),
-        ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._finalize_device"),
-        ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._finalize_job_row"),
-    }
-)
 
 # Three owners, each load-bearing for a *named* partial-failure behaviour. The
 # set can only shrink; a fourth savepoint anywhere fails this contract.
@@ -110,6 +87,11 @@ BEGIN_OWNER_REGISTRY: frozenset[BoundaryOwner] = frozenset(
         BoundaryOwner("app/devices/routers/control.py", "reconnect_device", "command"),
         BoundaryOwner("app/devices/routers/core.py", "delete_device", "command"),
         BoundaryOwner("app/devices/routers/core.py", "update_device", "command"),
+        BoundaryOwner("app/devices/routers/groups.py", "create_group", "command"),
+        BoundaryOwner("app/devices/routers/groups.py", "add_members", "command"),
+        BoundaryOwner("app/devices/routers/groups.py", "delete_group", "command"),
+        BoundaryOwner("app/devices/routers/groups.py", "remove_members", "command"),
+        BoundaryOwner("app/devices/routers/groups.py", "update_group", "command"),
         BoundaryOwner("app/devices/routers/test_data.py", "merge_test_data", "command"),
         BoundaryOwner("app/devices/routers/test_data.py", "replace_test_data", "command"),
         BoundaryOwner("app/hosts/router.py", "_register_host_txn", "command"),
@@ -159,6 +141,14 @@ BEGIN_OWNER_REGISTRY: frozenset[BoundaryOwner] = frozenset(
         BoundaryOwner("app/devices/services/remediation_job.py", "RemediationJobService._fail_claim", "command"),
         BoundaryOwner("app/devices/services/remediation_job.py", "RemediationJobService._finalize", "command"),
         BoundaryOwner("app/devices/services/remediation_job.py", "RemediationJobService._prepare", "command"),
+        BoundaryOwner(
+            "app/lifecycle/services/recovery_job.py",
+            "RecoveryJobService._clear_generation_and_fail",
+            "command",
+        ),
+        BoundaryOwner("app/lifecycle/services/recovery_job.py", "RecoveryJobService._ensure_prepared", "command"),
+        BoundaryOwner("app/lifecycle/services/recovery_job.py", "RecoveryJobService._finalize_device", "command"),
+        BoundaryOwner("app/lifecycle/services/recovery_job.py", "RecoveryJobService._finalize_job", "command"),
         BoundaryOwner("app/grid/session_create.py", "_fail", "command"),
         BoundaryOwner("app/grid/session_create.py", "create_and_promote", "command"),
         BoundaryOwner("app/grid/session_create.py", "mark_target_node_down", "command"),
@@ -672,22 +662,15 @@ def test_production_scan_is_not_empty() -> None:
     assert len(PRODUCTION) > 100, f"expected the whole app package, found {len(PRODUCTION)} modules"
 
 
-def test_direct_transaction_control_is_confined_to_the_deferred_registry() -> None:
+def test_no_module_takes_direct_transaction_control() -> None:
+    """Zero allowlist, of any shape. Every boundary in ``app/`` is a ``begin()``
+    context with a named owner in ``BEGIN_OWNER_REGISTRY``."""
     discovered = transaction_control_owners()
-    keys = {(module, owner) for module, owner, _lineno in discovered}
-    assert keys == set(DEFERRED_TRANSACTION_CONTROL), (
-        _drift_message("DEFERRED_TRANSACTION_CONTROL", keys, set(DEFERRED_TRANSACTION_CONTROL))
-        + f"full inventory:\n{_inventory(discovered)}"
+    assert discovered == [], (
+        "a module under app/ calls .commit() or .rollback() directly. Give the caller a "
+        "session_factory.begin() boundary and register it in BEGIN_OWNER_REGISTRY:\n"
+        f"{_inventory(discovered)}"
     )
-
-
-def test_deferred_transaction_control_names_only_the_phase11_modules() -> None:
-    """The carry-over is two modules by name, not "whatever still commits"."""
-    modules = {module for module, _owner in DEFERRED_TRANSACTION_CONTROL}
-    assert modules == {
-        "app/devices/services/groups.py",
-        "app/lifecycle/services/recovery_job.py",
-    }, f"only the two Phase 11 modules may defer transaction control; found {sorted(modules)}"
 
 
 def test_no_function_takes_a_transaction_control_argument() -> None:

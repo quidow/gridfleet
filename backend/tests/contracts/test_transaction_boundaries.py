@@ -1,9 +1,14 @@
-from __future__ import annotations
+"""The transaction-local module registry.
 
-import ast
-from pathlib import Path
+Data only. The commit/rollback property this file once asserted per listed
+module is now asserted for the whole of ``app/`` with no allowlist by
+``tests/contracts/test_repository_transaction_boundaries.py``; duplicating it
+here would give one fact two homes that can disagree. The tuple survives
+because two other contracts read it as the transaction-locality registry:
+``test_no_direct_device_state_writes.py``'s ``caller_locked`` proof mode and
+``test_phase9_domain_command_boundaries.py``'s gate.
+"""
 
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
 MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/devices/services/intent.py",
     "app/devices/services/intent_reconciler.py",
@@ -79,23 +84,3 @@ MIGRATED_TRANSACTION_LOCAL_MODULES = (
     # asserted (see tests/contracts/test_no_direct_device_state_writes.py).
     "app/lifecycle/services/remediation_log.py",
 )
-
-
-def _transaction_calls(path: Path) -> list[tuple[int, str]]:
-    tree = ast.parse(path.read_text(), filename=str(path))
-    return [
-        (node.lineno, node.func.attr)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in {"commit", "rollback"}
-    ]
-
-
-def test_migrated_transaction_local_modules_do_not_commit_or_rollback() -> None:
-    findings: dict[str, list[tuple[int, str]]] = {}
-    for relative in MIGRATED_TRANSACTION_LOCAL_MODULES:
-        calls = _transaction_calls(BACKEND_ROOT / relative)
-        if calls:
-            findings[relative] = calls
-    assert findings == {}, f"transaction-local modules must leave boundaries to commands: {findings}"

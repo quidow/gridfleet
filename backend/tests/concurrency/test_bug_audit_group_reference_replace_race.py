@@ -24,12 +24,13 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest
 
 from app.devices.models.group import DeviceGroup, GroupType
 from app.devices.schemas.group import DeviceGroupUpdate
+from app.devices.services.groups import GroupWriteResult
 from tests.concurrency.group_lock_helpers import build_groups_service, fetch_member_of_keys
 
 if TYPE_CHECKING:
@@ -76,13 +77,19 @@ async def _race_one_attempt(
     """
     service = build_groups_service()
 
-    async def replace(target: str) -> dict[str, Any] | None:
+    async def replace(target: str) -> GroupWriteResult | None:
         async with db_session_maker() as session:
-            return await service.update_group(
+            result = await service.update_group(
                 session,
                 dynamic_key,
                 DeviceGroupUpdate(filters={"member_of": [target]}),  # type: ignore[arg-type]
             )
+            # update_group no longer self-commits (Phase 11): commit here, the
+            # way the router's session_factory.begin() now does, so the
+            # winning replacement actually lands rather than rolling back at
+            # the async with exit.
+            await session.commit()
+            return result
 
     results = await asyncio.wait_for(
         asyncio.gather(replace(first), replace(second), return_exceptions=True),
@@ -91,7 +98,7 @@ async def _race_one_attempt(
     for result in results:
         assert not isinstance(result, Exception), f"an uncontested update raised {result!r}"
     references = await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key)
-    payloads = [result["filters"]["member_of"] for result in results if isinstance(result, dict)]
+    payloads = [result.payload["filters"]["member_of"] for result in results if isinstance(result, GroupWriteResult)]
     return references, payloads
 
 

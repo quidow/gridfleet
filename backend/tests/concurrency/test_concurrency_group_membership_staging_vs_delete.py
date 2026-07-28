@@ -228,7 +228,12 @@ async def test_delete_during_membership_staging_does_not_500(
     async def delete_static() -> bool:
         await _wait_for_device_commit(device_committed)
         async with db_session_maker() as session:
-            return await build_groups_service().delete_group(session, static_key)
+            result = await build_groups_service().delete_group(session, static_key)
+            # delete_group no longer self-commits (Phase 11): commit here, the
+            # way the router's session_factory.begin() now does, so the delete
+            # is actually visible to the later re-fetch.
+            await session.commit()
+            return result
 
     import_result, delete_result = await asyncio.gather(run_import(), delete_static(), return_exceptions=True)
 
@@ -285,6 +290,11 @@ async def test_delete_and_recreate_during_membership_staging_does_not_500(
         await _wait_for_device_commit(device_committed)
         async with db_session_maker() as session:
             deleted = await build_groups_service().delete_group(session, static_key)
+            # delete_group no longer self-commits (Phase 11): commit here, the
+            # way the router's session_factory.begin() now does, so a
+            # successful delete actually lands before the recreate below tries
+            # to reuse the same key.
+            await session.commit()
         if not deleted:
             return False
         async with db_session_maker() as session:
@@ -292,6 +302,11 @@ async def test_delete_and_recreate_during_membership_staging_does_not_500(
                 session,
                 DeviceGroupCreate(key=static_key, name=static_key, group_type=GroupType.static),
             )
+            # create_group no longer self-commits (Phase 11): commit here, the
+            # way the router's ``session_factory.begin()`` now does, so the
+            # recreate actually lands with a new id instead of being rolled
+            # back at the ``async with`` exit.
+            await session.commit()
         return True
 
     import_result, recreate_result = await asyncio.gather(
@@ -355,7 +370,9 @@ async def test_concurrent_add_members_during_staging_keeps_the_memberships(
                     select(Device.id).where(Device.identity_value == bundle.devices[0].identity_value)
                 )
             ).scalar_one()
-            return await build_groups_service().add_members(session, static_key, [device_id])
+            added = await build_groups_service().add_members(session, static_key, [device_id])
+            await session.commit()
+            return added
 
     import_result, add_result = await asyncio.gather(run_import(), add_the_same_member(), return_exceptions=True)
 
