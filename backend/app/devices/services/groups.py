@@ -378,9 +378,15 @@ class DeviceGroupsService:
         )
 
     async def add_members(self, db: AsyncSession, group_key: str, device_ids: list[uuid.UUID]) -> int | None:
-        # ``FOR UPDATE`` is the membership serialization point, not a redundant
-        # lock: it is what makes two concurrent add_members calls on the same
-        # group take turns (tests/concurrency/test_bug_audit_group_add_members_race.py).
+        # ``FOR UPDATE`` is not what makes a duplicate benign — ``ON CONFLICT DO
+        # NOTHING`` below does that on its own, and the bug-6 race test passes
+        # without this lock. What it buys is an authoritative read against a
+        # concurrent ``delete_group``, which locks the same row: without it the
+        # lock-free read still sees the doomed row under READ COMMITTED, the
+        # INSERT proceeds, and its foreign-key check fails once the deleter
+        # commits — a 500 where the operator should get a 404. Holding the row
+        # makes this read block and then find the tuple deleted instead
+        # (tests/concurrency/test_concurrency_group_membership_writers_vs_delete.py).
         group = await _get_group_row(db, group_key, for_update=True)
         if group is None:
             return None
@@ -410,7 +416,12 @@ class DeviceGroupsService:
         return added
 
     async def remove_members(self, db: AsyncSession, group_key: str, device_ids: list[uuid.UUID]) -> int | None:
-        # See add_members: this lock serialises concurrent membership edits.
+        # See add_members: the lock is what keeps this read authoritative against
+        # a concurrent ``delete_group``. There is no 500 to prevent on this side
+        # — deleting a child row takes no lock on the parent — but without it the
+        # DELETE matches the rows the deleter's CASCADE is about to remove anyway
+        # and the operator is told "removed 0" about a group that no longer
+        # exists, instead of getting the 404 that is true.
         group = await _get_group_row(db, group_key, for_update=True)
         if group is None:
             return None
