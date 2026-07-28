@@ -644,11 +644,20 @@ def _registers_transaction_on_a_stack(node: ast.AST) -> bool:
     The mirror of the second shape ``begin_owner_findings`` detects. A
     transaction registered on a stack stays open until the stack unwinds, so
     every statement after the registration in that block runs with it open.
+    Lambda bodies and generator-expression bodies/inner clauses are deferred;
+    lambda defaults and a generator's outermost iterable remain eager.
     """
 
     def registers(current: ast.AST) -> bool:
-        if current is not node and isinstance(current, ast.stmt | ast.Lambda):
+        if current is not node and isinstance(current, ast.stmt):
             return False
+        if isinstance(current, ast.Lambda):
+            return any(
+                default is not None and registers(default)
+                for default in (*current.args.defaults, *current.args.kw_defaults)
+            )
+        if isinstance(current, ast.GeneratorExp):
+            return registers(current.generators[0].iter)
         if (
             isinstance(current, ast.Call)
             and call_tail(current.func) in {"enter_context", "enter_async_context"}
@@ -678,7 +687,10 @@ def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[s
     the remainder of the enclosing block rather than for a nested one. Statement
     lists are therefore walked in order, with the flag flipping *after* the
     registering statement -- the registration's own arguments are evaluated before
-    the transaction exists.
+    the transaction exists. Eager call inputs propagate state, but deferred lambda
+    and generator-expression bodies do not; lambda defaults and a generator's
+    outermost iterable do. Branch states are conservatively joined, so mutually
+    exclusive runtime paths may still produce a finding.
     """
     findings: list[str] = []
     appium = _uses_appium_direct(tree)
@@ -696,6 +708,13 @@ def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[s
             if name is not None and in_transaction:
                 findings.append(f"{module}:{node.lineno} {name}()")
             return in_transaction or _registers_transaction_on_a_stack(node)
+        if isinstance(node, ast.Lambda):
+            for default in (*node.args.defaults, *node.args.kw_defaults):
+                if default is not None:
+                    in_transaction = visit(default, in_transaction)
+            return in_transaction
+        if isinstance(node, ast.GeneratorExp):
+            return visit(node.generators[0].iter, in_transaction)
         if isinstance(node, ast.With | ast.AsyncWith):
             outer_transaction = in_transaction
             for item in node.items:
@@ -951,6 +970,48 @@ def test_the_effect_check_sees_a_transaction_registered_by_its_callable() -> Non
         "        await (await stack.enter_async_context(db.begin())).agent_health(ip, port)\n"
     )
     assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:3 agent_health()"]
+
+
+def test_the_effect_check_does_not_evaluate_a_lambda_body() -> None:
+    """Lambda bodies are deferred, while defaults are evaluated at creation."""
+    deferred = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(lambda: stack.enter_async_context(db.begin()))\n"
+    )
+    eager_default = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(lambda transaction=stack.enter_context(db.begin()): transaction)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(deferred), "synthetic.py") == []
+    assert effects_inside_transactions_in_tree(ast.parse(eager_default), "synthetic.py") == [
+        "synthetic.py:3 agent_health()"
+    ]
+
+
+def test_the_effect_check_only_evaluates_a_generator_expressions_outer_iterable() -> None:
+    """Generator bodies and clauses are deferred; the outer iterable is eager."""
+    deferred_body = (
+        "async def outer(db, ip, port, values):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(stack.enter_async_context(db.begin()) for value in values)\n"
+    )
+    deferred_clause = (
+        "async def outer(db, ip, port, values):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(value for value in values if stack.enter_async_context(db.begin()))\n"
+    )
+    eager_outer_iterable = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(value for value in [await stack.enter_async_context(db.begin())])\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(deferred_body), "synthetic.py") == []
+    assert effects_inside_transactions_in_tree(ast.parse(deferred_clause), "synthetic.py") == []
+    assert effects_inside_transactions_in_tree(ast.parse(eager_outer_iterable), "synthetic.py") == [
+        "synthetic.py:3 agent_health()"
+    ]
 
 
 def test_begin_owner_kinds_are_command_or_infrastructure() -> None:
