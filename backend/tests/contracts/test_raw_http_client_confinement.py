@@ -15,9 +15,15 @@ effect scan cannot see.
 
 Detection covers the conventional ``import httpx2 as httpx`` alias plus a direct
 ``httpx.AsyncClient(...)`` / ``httpx.Client(...)`` attribute call. A differently
-aliased import, a bare-name import, subclassing, or any other indirection through
-which a client gets constructed is invisible to this check, exactly like the
-effect scan this test exists to backstop.
+aliased import (``import httpx2 as http_client``), a bare-name import,
+subclassing, or any other indirection through which a client gets constructed is
+invisible here, exactly like the effect scan this test exists to backstop.
+
+Nothing enforces the ``as httpx`` convention either: ruff's selected set has no
+``ICN`` rule, so the alias is a habit, not a constraint. Adding ``ICN`` to close
+that would be a repo-wide lint change for a bypass that has never occurred and
+that a reviewer reading ``import httpx2 as http_client`` would stop on its own;
+the decision is to disclose and leave it. Revisit if a second alias ever appears.
 """
 
 from __future__ import annotations

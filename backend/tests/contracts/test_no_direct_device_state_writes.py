@@ -142,6 +142,13 @@ def test_protected_column_written_only_by_sanctioned_modules(attr: str) -> None:
 # advances ``operational_state_last_emitted`` through the same ledger and would
 # otherwise be reachable from a third module with nothing failing (the column
 # scan passes for it, so the gap was silent).
+#
+# This is line text, not AST, and stays that way deliberately. It cannot see an
+# import-aliased call site (``from ... import emit_operational_state_transition as
+# emit``), a ``getattr(state_module, name)`` reflection, or a bare name handed to
+# ``functools.partial``. That ceiling is pre-existing and unchanged by the
+# widening from ``emit_`` to ``(emit|apply)_``; every real call site in ``app/``
+# is a direct, unaliased call, and an AST scan buys nothing until one is not.
 _CALL_RE = re.compile(r"\b(emit|apply)_operational_state_transition\s*\(")
 CALL_EXEMPT_FILES = {
     # The definition and the reconciler edge-detector call live here.

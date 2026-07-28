@@ -555,6 +555,20 @@ def begin_owner_findings(tree: ast.Module, module: str) -> list[tuple[str, str, 
     a ``with``/``async with`` item, and a ``begin()`` handed to an exit stack's
     ``enter_context``/``enter_async_context``. ``begin_nested()`` has its own
     attribute name and is checked separately.
+
+    WHAT THIS DOES NOT SEE, decided rather than patched. The stack shape is
+    matched by *name*, positionally: ``enter_async_context(cm=db.begin())``
+    (the loop reads ``node.args``, never ``node.keywords``), an aliased argument
+    (``cm = db.begin()`` then ``enter_async_context(cm)``), ``push`` and
+    ``push_async_exit``, and any indirection through another call frame all
+    escape it. The discriminator is name-only in the other direction too:
+    ``stack.enter_context(unrelated.begin())`` would be flagged as a
+    transaction. Each of those is one more shape, not the end of the class --
+    closing the class needs local dataflow, which is a phase of its own. None of
+    these shapes appears anywhere under ``app/`` today; ``grep -rn
+    "enter_async_context\\|AsyncExitStack" app/`` returning nothing is what makes
+    the disclosure sufficient, and a first exit-stack boundary landing in
+    production is the trigger to revisit it.
     """
     findings: list[tuple[str, str, int]] = []
     for node, owner in iter_owned(tree, ""):
