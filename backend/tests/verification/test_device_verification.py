@@ -2210,17 +2210,6 @@ def _valid_create_payload(host: Host) -> DeviceVerificationCreate:
     )
 
 
-async def _passthrough_normalize_for_atomicity_probe(
-    payload: dict[str, Any],
-    coords: _PackCoords,
-    *,
-    host_ip: str,
-    host_agent_port: int,
-    http_client_factory: AgentClientFactory,
-) -> tuple[dict[str, Any], None]:
-    return payload, None
-
-
 async def test_create_mode_device_id_and_lease_land_atomically(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
@@ -2256,7 +2245,7 @@ async def test_create_mode_device_id_and_lease_land_atomically(
     recorder = RecordingSessionFactory(db_session_maker)
     recorder.hook = _fail_at_the_lease_lock
     service = _preparation_service(recorder)
-    monkeypatch.setattr(service, "normalize_effect", _passthrough_normalize_for_atomicity_probe)
+    monkeypatch.setattr(service, "normalize_effect", _passthrough_normalize)
 
     operation_id = uuid.uuid4()
     with pytest.raises(Exception):  # noqa: B017 - any DBAPI error; the point is what survives
