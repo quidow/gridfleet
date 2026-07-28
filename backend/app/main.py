@@ -147,7 +147,7 @@ async def _build_and_start_app_services(
         engine=engine,
         poller_session_factory=poller_session_factory,
     )
-    svc.configure_store_refresh(session_factory)
+    svc.configure_store_refresh(session_factory, task_tracker=bus.track_task)
 
     # Initialize settings cache from DB before starting background tasks
     async with session_factory() as db:

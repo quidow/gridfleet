@@ -96,7 +96,7 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
     # The boundary is the service's own now, so the fake is the *factory*: its
     # ``begun`` counter is what used to be ``UpdateSession.committed``.
     factory = FakeSessionFactory(UpdateSession())
-    service.configure_store_refresh(factory)  # type: ignore[arg-type]
+    service.configure_store_refresh(factory, task_tracker=lambda _task: None)  # type: ignore[arg-type]
     response = await service.update("general.session_viability_timeout_sec", 11, publisher=event_bus)
     assert response["value"] == 11
     assert row.value == 11

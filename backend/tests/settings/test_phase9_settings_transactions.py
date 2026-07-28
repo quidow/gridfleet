@@ -95,7 +95,7 @@ async def service(
     settings = SettingsService()
     async with db_session_maker() as db:
         await settings.initialize(db)
-    settings.configure_store_refresh(recorder)  # type: ignore[arg-type]
+    settings.configure_store_refresh(recorder, task_tracker=lambda _task: None)  # type: ignore[arg-type]
     yield settings
     await settings.shutdown()
 

@@ -288,7 +288,7 @@ async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_
     )
     test_event_bus.configure(session_factory=session_factory, engine=setup_database)
     test_circuit_breaker._session_factory = session_factory
-    settings_service.configure_store_refresh(session_factory)
+    settings_service.configure_store_refresh(session_factory, task_tracker=test_event_bus.track_task)
     test_event_bus.register_handler(settings_service.handle_system_event)
     settings_service._cache.clear()
     settings_service._overrides.clear()
