@@ -292,6 +292,11 @@ async def test_delete_and_recreate_during_membership_staging_does_not_500(
                 session,
                 DeviceGroupCreate(key=static_key, name=static_key, group_type=GroupType.static),
             )
+            # create_group no longer self-commits (Phase 11): commit here, the
+            # way the router's ``session_factory.begin()`` now does, so the
+            # recreate actually lands with a new id instead of being rolled
+            # back at the ``async with`` exit.
+            await session.commit()
         return True
 
     import_result, recreate_result = await asyncio.gather(

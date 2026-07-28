@@ -36,12 +36,15 @@ async def test_create_group_queues_updated(
         db_session,
         DeviceGroupCreate(key="contract", name="contract", description=None),
     )
+    # create_group no longer owns the commit (Phase 11); the test is the caller
+    # here, so it owns the boundary the way the router does.
+    await db_session.commit()
     await dispatch_committed_events()
 
     events = [p for n, p in event_bus_capture if n == "device_group.updated"]
     assert len(events) == 1
     assert events[0]["action"] == "created"
-    assert events[0]["group_key"] == group["key"]
+    assert events[0]["group_key"] == group.group_key
 
 
 async def test_update_group_queues_updated(
@@ -53,10 +56,14 @@ async def test_update_group_queues_updated(
         db_session,
         DeviceGroupCreate(key="update-me", name="update-me", description=None),
     )
+    # create_group no longer commits (Phase 11): commit here so the "created"
+    # event is delivered and cleared before the update, rather than riding
+    # update_group's own commit and doubling up below.
+    await db_session.commit()
     await dispatch_committed_events()
     event_bus_capture.clear()
 
-    await svc.update_group(db_session, group["key"], DeviceGroupUpdate(name="updated-name"))
+    await svc.update_group(db_session, group.group_key, DeviceGroupUpdate(name="updated-name"))
     await dispatch_committed_events()
 
     assert [payload for name, payload in event_bus_capture if name == "device_group.updated"] == [
@@ -76,7 +83,7 @@ async def test_delete_group_queues_updated_deleted(
     await dispatch_committed_events()
     event_bus_capture.clear()
 
-    await svc.delete_group(db_session, group["key"])
+    await svc.delete_group(db_session, group.group_key)
     await dispatch_committed_events()
 
     events = [p for n, p in event_bus_capture if n == "device_group.updated"]
@@ -93,7 +100,7 @@ async def test_add_members_queues_members_changed(
     await dispatch_committed_events()
     event_bus_capture.clear()
 
-    await svc.add_members(db_session, group["key"], [device.id])
+    await svc.add_members(db_session, group.group_key, [device.id])
     await dispatch_committed_events()
 
     events = [p for n, p in event_bus_capture if n == "device_group.members_changed"]
@@ -108,11 +115,11 @@ async def test_remove_members_queues_members_changed(
     svc = _svc()
     group = await svc.create_group(db_session, DeviceGroupCreate(key="remove-members", name="remove-members"))
     _, device = await seed_host_and_device(db_session, identity="group-remove-1")
-    await svc.add_members(db_session, group["key"], [device.id])
+    await svc.add_members(db_session, group.group_key, [device.id])
     await dispatch_committed_events()
     event_bus_capture.clear()
 
-    await svc.remove_members(db_session, group["key"], [device.id])
+    await svc.remove_members(db_session, group.group_key, [device.id])
     await dispatch_committed_events()
 
     events = [p for n, p in event_bus_capture if n == "device_group.members_changed"]

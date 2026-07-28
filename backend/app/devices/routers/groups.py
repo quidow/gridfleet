@@ -26,6 +26,7 @@ from app.devices.schemas.group import (
 from app.devices.services.groups import (
     GroupKeyConflictError,
     GroupReferencedError,
+    GroupWriteResult,
     StaticGroupFiltersError,
     UnknownMemberOfError,
 )
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from uuid import UUID
 
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.devices.services_container import DeviceServices
 
 DEVICE_GROUP_ERROR_RESPONSES = STANDARD_ERROR_RESPONSES
 
@@ -58,13 +61,32 @@ async def _group_device_ids_or_404(
 
 @router.post("", response_model=DeviceGroupMutationRead, response_model_exclude_none=True, status_code=201)
 async def create_group(data: DeviceGroupCreate, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
+    del db  # the command owns its own session; the count below opens a second one
     try:
-        # The service serializes stable fields before commit, avoiding a racy re-read.
-        return await device_services.groups.create_group(db, data)
+        async with device_services.session_factory.begin() as command_db:
+            created = await device_services.groups.create_group(command_db, data)
     except GroupKeyConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await _with_dynamic_count(device_services, created)
+
+
+async def _with_dynamic_count(device_services: DeviceServices, written: GroupWriteResult) -> dict[str, Any]:
+    """The mutation payload, with a dynamic group's live count folded in.
+
+    A second, read-only session on purpose: the count is a fleet-wide evaluator
+    read, and running it inside the write boundary would hold the definition row
+    lock across all of it. A failed count degrades to ``None`` there and is
+    dropped from the response by ``response_model_exclude_none``.
+    """
+    payload = dict(written.payload)
+    if written.is_dynamic:
+        async with device_services.session_factory() as count_db:
+            payload["device_count"] = await device_services.groups.dynamic_device_count(
+                count_db, group_id=written.group_id, group_key=written.group_key
+            )
+    return payload
 
 
 @router.get("", response_model=list[DeviceGroupRead], response_model_exclude_none=True)

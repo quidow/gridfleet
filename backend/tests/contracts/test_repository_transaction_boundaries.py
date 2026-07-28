@@ -44,9 +44,7 @@ TRANSACTION_CONTROL_ARGUMENTS = frozenset({"commit", "rollback", "autocommit"})
 DEFERRED_TRANSACTION_CONTROL: frozenset[tuple[str, str]] = frozenset(
     {
         ("app/devices/services/groups.py", "DeviceGroupsService._dynamic_device_count"),
-        ("app/devices/services/groups.py", "DeviceGroupsService._insert_group"),
         ("app/devices/services/groups.py", "DeviceGroupsService.add_members"),
-        ("app/devices/services/groups.py", "DeviceGroupsService.create_group"),
         ("app/devices/services/groups.py", "DeviceGroupsService.delete_group"),
         ("app/devices/services/groups.py", "DeviceGroupsService.remove_members"),
         ("app/devices/services/groups.py", "DeviceGroupsService.update_group"),
@@ -110,6 +108,7 @@ BEGIN_OWNER_REGISTRY: frozenset[BoundaryOwner] = frozenset(
         BoundaryOwner("app/devices/routers/control.py", "reconnect_device", "command"),
         BoundaryOwner("app/devices/routers/core.py", "delete_device", "command"),
         BoundaryOwner("app/devices/routers/core.py", "update_device", "command"),
+        BoundaryOwner("app/devices/routers/groups.py", "create_group", "command"),
         BoundaryOwner("app/devices/routers/test_data.py", "merge_test_data", "command"),
         BoundaryOwner("app/devices/routers/test_data.py", "replace_test_data", "command"),
         BoundaryOwner("app/hosts/router.py", "_register_host_txn", "command"),

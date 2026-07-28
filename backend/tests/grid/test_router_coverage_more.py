@@ -14,6 +14,7 @@ from app.devices.routers import core as devices_core
 from app.devices.routers import groups as device_groups
 from app.devices.schemas.device import BulkDeviceIds, DevicePatch, DeviceVerificationCreate
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate, GroupMembershipUpdate
+from app.devices.services.groups import GroupWriteResult
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.runs import router as runs
 from app.runs.models import RunState
@@ -333,14 +334,21 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     with pytest.raises(HTTPException):
         await device_groups._group_device_ids_or_404(db, group_key, ds_empty)
 
-    # The create route returns what the service serialized inside its own
-    # transaction; there is no post-commit re-read to mock.
+    # The create route now opens its own command boundary
+    # (``session_factory.begin()``) and folds a dynamic count in on a second
+    # session; a static group (the default here) skips that second session
+    # entirely, so there is still no post-commit re-read to mock — only a
+    # session factory for the boundary itself.
     created_payload = {"key": group_key, "device_count": 0}
+    created_result = GroupWriteResult(
+        payload=created_payload, group_id=uuid.uuid4(), group_key=group_key, is_dynamic=False
+    )
     ds_create = SimpleNamespace(
+        session_factory=FakeSessionFactory(db),
         groups=SimpleNamespace(
-            create_group=AsyncMock(return_value=created_payload),
+            create_group=AsyncMock(return_value=created_result),
             get_group=AsyncMock(return_value=None),
-        )
+        ),
     )
     assert (
         await device_groups.create_group(DeviceGroupCreate(key=group_key, name="g"), db=db, device_services=ds_create)
