@@ -138,7 +138,11 @@ def test_protected_column_written_only_by_sanctioned_modules(attr: str) -> None:
     )
 
 
-_CALL_RE = re.compile(r"\bemit_operational_state_transition\s*\(")
+# Both ledger writers, not just the emitter: ``apply_operational_state_transition``
+# advances ``operational_state_last_emitted`` through the same ledger and would
+# otherwise be reachable from a third module with nothing failing (the column
+# scan passes for it, so the gap was silent).
+_CALL_RE = re.compile(r"\b(emit|apply)_operational_state_transition\s*\(")
 CALL_EXEMPT_FILES = {
     # The definition and the reconciler edge-detector call live here.
     BACKEND_APP / "devices" / "services" / "state.py",
@@ -157,14 +161,27 @@ def _scan_calls() -> list[tuple[Path, int, str]]:
     return findings
 
 
-def test_operational_state_transition_called_only_by_edge_detector() -> None:
+def test_operational_state_transition_writers_called_only_by_the_edge_detector() -> None:
     findings = _scan_calls()
     formatted = "\n".join(f"  {path}:{lineno}: {line}" for path, lineno, line in findings)
     assert not findings, (
-        "emit_operational_state_transition must only be called by the edge detector "
-        "and intent reconciler:\n"
+        "emit_operational_state_transition and apply_operational_state_transition must only be "
+        "called by the edge detector and intent reconciler:\n"
         f"{formatted}"
     )
+
+
+def test_the_call_scan_sees_both_transition_writers(tmp_path: Path) -> None:
+    """The scan must match ``apply_`` as well as ``emit_``.
+
+    ``apply_operational_state_transition`` advances the same ledger column and is
+    the writer a third module would most plausibly reach for; matching only
+    ``emit_`` left it untracked while the column scan still passed, so the gap
+    was silent.
+    """
+    for name in ("emit_operational_state_transition", "apply_operational_state_transition"):
+        assert _CALL_RE.search(f"    {name}(device, state, publisher=publisher)"), name
+    assert not _CALL_RE.search("    unrelated_operational_state_transition_helper(x)")
 
 
 # --- Phase 10: the function-level decision-fact writer map -------------------
