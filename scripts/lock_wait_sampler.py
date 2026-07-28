@@ -41,12 +41,6 @@ Stdlib only apart from ``asyncpg``, which is already a backend dependency and is
 imported lazily so ``--help`` works from any environment.
 """
 
-# ruff: noqa: UP017, UP041
-# ^ pinned to the Python floor below, file-wide rather than per line: UP017
-#   rewrites `timezone.utc` to `datetime.UTC` (3.11+) and UP041 rewrites
-#   `asyncio.TimeoutError` to the builtin (only the same object on 3.11+).
-#   Both are wrong here. A per-line noqa drifts as lines move.
-
 from __future__ import annotations
 
 import argparse

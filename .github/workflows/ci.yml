@@ -139,11 +139,11 @@ jobs:
         run: uv sync --extra dev --locked
       - name: Check formatting
         working-directory: backend
-        run: uv run --locked --extra dev ruff format --check app/ tests/
+        run: uv run --locked --extra dev ruff format --check app/ tests/ ../scripts/
 
       - name: Lint
         working-directory: backend
-        run: uv run --locked --extra dev ruff check app/ tests/
+        run: uv run --locked --extra dev ruff check app/ tests/ ../scripts/
 
       - name: Type check
         working-directory: backend

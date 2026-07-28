@@ -65,8 +65,7 @@ async def _fresh_probe(target: str, port: int) -> dict[str, Any]:
 
 async def run(args: argparse.Namespace) -> None:
     keepalive_clients: dict[str, httpx.AsyncClient] = {
-        target: httpx.AsyncClient(timeout=5.0, limits=httpx.Limits(keepalive_expiry=60))
-        for target in args.target
+        target: httpx.AsyncClient(timeout=5.0, limits=httpx.Limits(keepalive_expiry=60)) for target in args.target
     }
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -83,11 +82,7 @@ async def run(args: argparse.Namespace) -> None:
             tasks: list[asyncio.Task[dict[str, Any]]] = []
             for target in args.target:
                 tasks.append(asyncio.create_task(_fresh_probe(target, args.port)))
-                tasks.append(
-                    asyncio.create_task(
-                        probe_once(keepalive_clients[target], target, args.port, "pooled")
-                    )
-                )
+                tasks.append(asyncio.create_task(probe_once(keepalive_clients[target], target, args.port, "pooled")))
             rows = await asyncio.gather(*tasks)
             for row in rows:
                 writer.writerow(row)

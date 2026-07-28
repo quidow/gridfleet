@@ -29,11 +29,6 @@ Stdlib only apart from ``httpx`` and ``gridfleet_testkit``, which are imported
 lazily so ``--help`` works from any environment.
 """
 
-# ruff: noqa: UP017
-# ^ pinned to the Python floor below, file-wide rather than per line: UP017
-#   rewrites `timezone.utc` to `datetime.UTC`, which is 3.11+ and wrong here.
-#   A per-line noqa drifts as lines move.
-
 from __future__ import annotations
 
 import argparse
@@ -58,11 +53,13 @@ HTTP_CONFLICT = 409
 # The plan runs this from ``testkit/``, whose pyproject floor is >=3.10 and whose
 # resolved interpreter is 3.10. Nothing here may use a 3.11+ construct:
 # ``datetime.UTC``, ``tomllib``, ``except*``/``TaskGroup``, ``Self``,
-# ``StrEnum``. ``ruff --fix`` will happily rewrite ``timezone.utc`` into the
-# first of those; the file-level noqa above and
+# ``StrEnum``. ``ruff --fix`` would happily rewrite ``timezone.utc`` into the
+# first of those; ../scripts/ruff.toml's target-version = "py310" pin is what
+# stops ruff from proposing that, and
 # tests/test_lock_wait_sampler.py::test_promoted_scripts_hold_the_python_floor
-# are what stop that. (This file has no asyncio, so UP041 does not apply here —
-# lock_wait_sampler.py is the one that pins it.)
+# is the independent AST backstop that would catch it regardless. (This file
+# has no asyncio, so UP041 does not apply here — lock_wait_sampler.py is the
+# one that pins it.)
 PYTHON_FLOOR = (3, 10)
 
 
@@ -149,14 +146,14 @@ def _one_cycle(
         else:
             counters.errors += 1
             print(f"[cycle {counters.cycles}] HTTP {exc.response.status_code}: {exc}")
-    except Exception as exc:  # noqa: BLE001 — keep churning, report at end
+    except Exception as exc:  # keep churning, report at end
         counters.errors += 1
         print(f"[cycle {counters.cycles}] error: {exc}")
     finally:
         if run_id is not None:
             try:
                 client.cancel_run(run_id)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 counters.errors += 1
                 print(f"[cycle {counters.cycles}] cancel failed for {run_id}: {exc}")
 
