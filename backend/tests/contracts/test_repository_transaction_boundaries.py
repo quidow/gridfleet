@@ -690,11 +690,11 @@ def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[s
 
     def visit(node: ast.AST, in_transaction: bool) -> bool:
         if isinstance(node, ast.Call):
+            for child in ast.iter_child_nodes(node):
+                in_transaction = visit(child, in_transaction)
             name = _effect_call_name(node, module_uses_appium_direct=appium)
             if name is not None and in_transaction:
                 findings.append(f"{module}:{node.lineno} {name}()")
-            for child in ast.iter_child_nodes(node):
-                in_transaction = visit(child, in_transaction)
             return in_transaction or _registers_transaction_on_a_stack(node)
         if isinstance(node, ast.With | ast.AsyncWith):
             outer_transaction = in_transaction
@@ -930,6 +930,27 @@ def test_the_effect_check_tracks_registration_order_across_with_items() -> None:
         "        pass\n"
     )
     assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
+
+
+def test_the_effect_check_sees_a_transaction_registered_by_an_effect_argument() -> None:
+    """An effect runs after its arguments have been evaluated."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if await agent_health(await stack.enter_async_context(db.begin())):\n"
+        "            pass\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:3 agent_health()"]
+
+
+def test_the_effect_check_sees_a_transaction_registered_by_its_callable() -> None:
+    """An effect runs after its callable expression has been evaluated."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await (await stack.enter_async_context(db.begin())).agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:3 agent_health()"]
 
 
 def test_begin_owner_kinds_are_command_or_infrastructure() -> None:
