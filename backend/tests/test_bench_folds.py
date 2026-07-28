@@ -150,20 +150,35 @@ pytestmark = [
 # deliberately carries no such mark: it is a fixed 10-device fold that reads none
 # of those knobs, and behind this skip its statement-category pin had exactly zero
 # standing regression value -- the state W3.1 of the Phase 11 follow-ups names.
-bench_only = pytest.mark.skipif(not os.getenv("FOLD_BENCH"), reason="set FOLD_BENCH=1 to run the fold load benchmark")
+bench_enabled = bool(os.getenv("FOLD_BENCH"))
+bench_only = pytest.mark.skipif(not bench_enabled, reason="set FOLD_BENCH=1 to run the fold load benchmark")
 
-DEVICES = int(os.getenv("FOLD_BENCH_DEVICES", "50"))
-ITERS = int(os.getenv("FOLD_BENCH_ITERS", "3"))
-WARMUP = int(os.getenv("FOLD_BENCH_WARMUP", "1"))
-CHURN = float(os.getenv("FOLD_BENCH_CHURN", "0.0"))
-validate_benchmark_knobs(devices=DEVICES, iters=ITERS, warmup=WARMUP, churn=CHURN)
-_raw_lifecycle_mode = os.getenv("FOLD_BENCH_LIFECYCLE", "real")
-if _raw_lifecycle_mode not in ("real", "isolated"):
-    raise ValueError("FOLD_BENCH_LIFECYCLE must be 'real' or 'isolated'")
-LIFECYCLE_MODE = cast("Literal['real', 'isolated']", _raw_lifecycle_mode)
-JSON_PATH = os.getenv("FOLD_BENCH_JSON")
-EXPLAIN = bool(os.getenv("FOLD_BENCH_EXPLAIN"))
-SCENARIO = os.getenv("FOLD_BENCH_SCENARIO", "steady")
+if bench_enabled:
+    DEVICES = int(os.getenv("FOLD_BENCH_DEVICES", "50"))
+    ITERS = int(os.getenv("FOLD_BENCH_ITERS", "3"))
+    WARMUP = int(os.getenv("FOLD_BENCH_WARMUP", "1"))
+    CHURN = float(os.getenv("FOLD_BENCH_CHURN", "0.0"))
+    validate_benchmark_knobs(devices=DEVICES, iters=ITERS, warmup=WARMUP, churn=CHURN)
+    _raw_lifecycle_mode = os.getenv("FOLD_BENCH_LIFECYCLE", "real")
+    if _raw_lifecycle_mode not in ("real", "isolated"):
+        raise ValueError("FOLD_BENCH_LIFECYCLE must be 'real' or 'isolated'")
+    LIFECYCLE_MODE = cast("Literal['real', 'isolated']", _raw_lifecycle_mode)
+    JSON_PATH = os.getenv("FOLD_BENCH_JSON")
+    EXPLAIN = bool(os.getenv("FOLD_BENCH_EXPLAIN"))
+    SCENARIO = os.getenv("FOLD_BENCH_SCENARIO", "steady")
+    FLEET: tuple[TupleSpec, ...] = (
+        HOMOGENEOUS_FLEET if os.getenv("FOLD_BENCH_FLEET", "mixed") == "homogeneous" else MIXED_FLEET
+    )
+else:
+    DEVICES = 50
+    ITERS = 3
+    WARMUP = 1
+    CHURN = 0.0
+    LIFECYCLE_MODE: Literal["real", "isolated"] = "real"
+    JSON_PATH = None
+    EXPLAIN = False
+    SCENARIO = "steady"
+    FLEET = MIXED_FLEET
 
 
 @dataclass(frozen=True)
@@ -502,11 +517,6 @@ def _build_device_health_benchmark_service(
     if LIFECYCLE_MODE == "isolated":
         return build_connectivity_service(session_factory)
     return build_real_lifecycle_connectivity_service()
-
-
-FLEET: tuple[TupleSpec, ...] = (
-    HOMOGENEOUS_FLEET if os.getenv("FOLD_BENCH_FLEET", "mixed") == "homogeneous" else MIXED_FLEET
-)
 
 
 def _churn_count(n: int, churn: float) -> int:
