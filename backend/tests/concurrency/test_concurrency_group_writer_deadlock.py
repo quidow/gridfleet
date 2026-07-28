@@ -692,11 +692,13 @@ async def test_concurrent_group_writers_do_not_deadlock(
 
     async def touch_members() -> int | None:
         # A real device, so add_members takes its ``FOR UPDATE`` row lock and
-        # holds it through an actual insert and commit. That lock, not the
+        # holds it through an actual insert. That lock, not the
         # insert, is what could form a cycle — an empty device list now
         # short-circuits and would barely contend.
         async with db_session_maker() as session:
-            return await service.add_members(session, static_key, [device_id])
+            added = await service.add_members(session, static_key, [device_id])
+            await session.commit()
+            return added
 
     first_result, second_result, reference_result, delete_result, members_result = await asyncio.wait_for(
         asyncio.gather(

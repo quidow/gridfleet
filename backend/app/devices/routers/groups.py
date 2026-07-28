@@ -145,11 +145,15 @@ async def add_members(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, int]:
+    # The type read stays on the request session and deliberately takes no row
+    # lock: the command below locks the same row from its own session, and
+    # holding both would deadlock until a statement timeout.
     group_type = found_or_404(await device_services.groups.get_group_type(db, group_key), "Group not found")
     if group_type == GroupType.dynamic:
         raise HTTPException(status_code=400, detail="Cannot manually add members to a dynamic group")
-    added = found_or_404(await device_services.groups.add_members(db, group_key, body.device_ids), "Group not found")
-    return {"added": added}
+    async with device_services.session_factory.begin() as command_db:
+        added = await device_services.groups.add_members(command_db, group_key, body.device_ids)
+    return {"added": found_or_404(added, "Group not found")}
 
 
 @router.delete("/{group_key}/members")
@@ -159,13 +163,13 @@ async def remove_members(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, int]:
+    # See add_members on why the type read stays unlocked on the request session.
     group_type = found_or_404(await device_services.groups.get_group_type(db, group_key), "Group not found")
     if group_type == GroupType.dynamic:
         raise HTTPException(status_code=400, detail="Cannot manually remove members from a dynamic group")
-    removed = found_or_404(
-        await device_services.groups.remove_members(db, group_key, body.device_ids), "Group not found"
-    )
-    return {"removed": removed}
+    async with device_services.session_factory.begin() as command_db:
+        removed = await device_services.groups.remove_members(command_db, group_key, body.device_ids)
+    return {"removed": found_or_404(removed, "Group not found")}
 
 
 @router.post("/{group_key}/bulk/start-nodes", response_model=BulkOperationResult)

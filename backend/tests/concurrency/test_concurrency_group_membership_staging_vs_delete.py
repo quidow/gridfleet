@@ -370,7 +370,9 @@ async def test_concurrent_add_members_during_staging_keeps_the_memberships(
                     select(Device.id).where(Device.identity_value == bundle.devices[0].identity_value)
                 )
             ).scalar_one()
-            return await build_groups_service().add_members(session, static_key, [device_id])
+            added = await build_groups_service().add_members(session, static_key, [device_id])
+            await session.commit()
+            return added
 
     import_result, add_result = await asyncio.gather(run_import(), add_the_same_member(), return_exceptions=True)
 

@@ -108,6 +108,7 @@ async def test_add_members_queues_members_changed(
     event_bus_capture.clear()
 
     await svc.add_members(db_session, group.group_key, [device.id])
+    await db_session.commit()
     await dispatch_committed_events()
 
     events = [p for n, p in event_bus_capture if n == "device_group.members_changed"]
@@ -123,10 +124,12 @@ async def test_remove_members_queues_members_changed(
     group = await svc.create_group(db_session, DeviceGroupCreate(key="remove-members", name="remove-members"))
     _, device = await seed_host_and_device(db_session, identity="group-remove-1")
     await svc.add_members(db_session, group.group_key, [device.id])
+    await db_session.commit()
     await dispatch_committed_events()
     event_bus_capture.clear()
 
     await svc.remove_members(db_session, group.group_key, [device.id])
+    await db_session.commit()
     await dispatch_committed_events()
 
     events = [p for n, p in event_bus_capture if n == "device_group.members_changed"]

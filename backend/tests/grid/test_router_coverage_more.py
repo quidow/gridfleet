@@ -397,11 +397,12 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
         )
 
     ds_static = SimpleNamespace(
+        session_factory=FakeSessionFactory(db),
         groups=SimpleNamespace(
             get_group_type=AsyncMock(return_value=GroupType.static),
             add_members=AsyncMock(return_value=1),
             remove_members=AsyncMock(return_value=1),
-        )
+        ),
     )
     assert await device_groups.add_members(
         group_key, GroupMembershipUpdate(device_ids=[device_id]), db=db, device_services=ds_static

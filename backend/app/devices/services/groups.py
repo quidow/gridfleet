@@ -378,17 +378,15 @@ class DeviceGroupsService:
         )
 
     async def add_members(self, db: AsyncSession, group_key: str, device_ids: list[uuid.UUID]) -> int | None:
+        # ``FOR UPDATE`` is the membership serialization point, not a redundant
+        # lock: it is what makes two concurrent add_members calls on the same
+        # group take turns (tests/concurrency/test_bug_audit_group_add_members_race.py).
         group = await _get_group_row(db, group_key, for_update=True)
         if group is None:
-            # No row matched, so ``FOR UPDATE`` locked nothing — but the read
-            # opened a transaction that would otherwise sit until request
-            # teardown. End it here.
-            await db.rollback()
             return None
         if not device_ids:
-            # A row *is* locked on this path. Drop it rather than carrying it
-            # through teardown, where it blocks delete_group's DELETE flush.
-            await db.rollback()
+            # The caller's boundary ends here, so the row lock this path took is
+            # released as soon as this returns — no early rollback needed.
             return 0
         # Use INSERT ... ON CONFLICT DO NOTHING so a concurrent operator request
         # adding the same (group_id, device_id) degrades to a benign no-op
@@ -409,21 +407,14 @@ class DeviceGroupsService:
                 "device_group.members_changed",
                 {"group_key": group.key, "added": added},
             )
-        await db.commit()
         return added
 
     async def remove_members(self, db: AsyncSession, group_key: str, device_ids: list[uuid.UUID]) -> int | None:
+        # See add_members: this lock serialises concurrent membership edits.
         group = await _get_group_row(db, group_key, for_update=True)
         if group is None:
-            # See add_members: no row matched, so nothing is locked, but the open
-            # transaction still has to end here rather than at teardown.
-            await db.rollback()
             return None
         if not device_ids:
-            # Same reasoning as add_members' empty-list path: a row *is* locked
-            # here, and `device_id IN ()` provably matches nothing, so holding
-            # that lock through a no-op DELETE only delays delete_group.
-            await db.rollback()
             return 0
         stmt = delete(DeviceGroupMembership).where(
             DeviceGroupMembership.group_id == group.id, DeviceGroupMembership.device_id.in_(device_ids)
@@ -436,7 +427,6 @@ class DeviceGroupsService:
                 "device_group.members_changed",
                 {"group_key": group.key, "removed": removed},
             )
-        await db.commit()
         return removed
 
     async def get_group_device_ids(self, db: AsyncSession, group_key: str) -> list[uuid.UUID]:

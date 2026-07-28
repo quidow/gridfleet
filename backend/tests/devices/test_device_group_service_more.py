@@ -82,6 +82,7 @@ async def test_update_static_group_counts_without_loading_member_devices(db_sess
         DeviceGroupCreate(key="update-count", name="update count", group_type="static"),
     )
     await svc.add_members(db_session, group.group_key, [device.id])
+    await db_session.commit()
 
     async with capture_statements(db_session) as statements:
         updated = await svc.update_group(db_session, group.group_key, DeviceGroupUpdate(name="renamed"))
@@ -100,6 +101,7 @@ async def test_delete_static_group_leaves_membership_cascade_to_postgres(db_sess
         DeviceGroupCreate(key="delete-cascade", name="delete cascade", group_type="static"),
     )
     await svc.add_members(db_session, group.group_key, [device.id])
+    await db_session.commit()
 
     async with capture_statements(db_session) as statements:
         assert await svc.delete_group(db_session, group.group_key) is True
@@ -142,6 +144,7 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
         DeviceGroupCreate(key="tier-smoke", name="tier smoke", group_type="static"),
     )
     await svc.add_members(db_session, "tier-smoke", [device.id])
+    await db_session.commit()
     filters = DeviceGroupFilters(platform_id="android_mobile", member_of=["tier-smoke"])
     group = await svc.create_group(
         db_session,
@@ -334,19 +337,15 @@ async def test_delete_group_survives_a_non_object_filters_row(db_session: AsyncS
     assert await _svc().delete_group(db_session, "victim") is True
 
 
-async def test_remove_members_with_no_device_ids_releases_the_row_lock(db_session: AsyncSession) -> None:
-    """An empty list must not hold the group row lock through a no-op DELETE.
-
-    ``add_members`` short-circuits the same degenerate input. That row lock is
-    what ``delete_group``'s DELETE blocks on, so holding it across a statement
-    that provably matches nothing only delays an unrelated writer.
-    """
+async def test_remove_members_with_no_device_ids_leaves_the_boundary_to_the_caller(db_session: AsyncSession) -> None:
     svc = _svc()
     group = await svc.create_group(
         db_session,
         DeviceGroupCreate(key="empty-remove", name="empty remove", group_type="static"),
     )
+    await db_session.commit()
     await dispatch_committed_events()
 
     assert await svc.remove_members(db_session, group.group_key, []) == 0
-    assert not db_session.in_transaction(), "the row lock must be released, not carried to teardown"
+    assert db_session.in_transaction(), "the caller's boundary must own the row lock"
+    await db_session.commit()

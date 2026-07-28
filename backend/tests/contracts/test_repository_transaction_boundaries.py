@@ -34,17 +34,13 @@ PRODUCTION = sorted(APP_ROOT.rglob("*.py"))
 
 TRANSACTION_CONTROL_ARGUMENTS = frozenset({"commit", "rollback", "autocommit"})
 
-# Phase 11 owns these two modules. Set equality, not subset: an entry that stops
+# Phase 11 owns this carry-over. Set equality, not subset: an entry that stops
 # being true is as much a failure as a new commit somewhere else.
 #
-# ``groups.py`` keeps manual control because its writers have to preserve the
-# documented parent-before-edges lock order across live delete/import races;
 # ``recovery_job.py`` still needs the prepare/effect/finalize split remediation
-# got in Phase 10. Both are deliberate carry-over, not oversight.
+# got in Phase 10. It is deliberate carry-over, not oversight.
 DEFERRED_TRANSACTION_CONTROL: frozenset[tuple[str, str]] = frozenset(
     {
-        ("app/devices/services/groups.py", "DeviceGroupsService.add_members"),
-        ("app/devices/services/groups.py", "DeviceGroupsService.remove_members"),
         ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._clear_generation_and_fail"),
         ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._ensure_prepared"),
         ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._finalize_device"),
@@ -106,7 +102,9 @@ BEGIN_OWNER_REGISTRY: frozenset[BoundaryOwner] = frozenset(
         BoundaryOwner("app/devices/routers/core.py", "delete_device", "command"),
         BoundaryOwner("app/devices/routers/core.py", "update_device", "command"),
         BoundaryOwner("app/devices/routers/groups.py", "create_group", "command"),
+        BoundaryOwner("app/devices/routers/groups.py", "add_members", "command"),
         BoundaryOwner("app/devices/routers/groups.py", "delete_group", "command"),
+        BoundaryOwner("app/devices/routers/groups.py", "remove_members", "command"),
         BoundaryOwner("app/devices/routers/groups.py", "update_group", "command"),
         BoundaryOwner("app/devices/routers/test_data.py", "merge_test_data", "command"),
         BoundaryOwner("app/devices/routers/test_data.py", "replace_test_data", "command"),
@@ -680,12 +678,11 @@ def test_direct_transaction_control_is_confined_to_the_deferred_registry() -> No
 
 
 def test_deferred_transaction_control_names_only_the_phase11_modules() -> None:
-    """The carry-over is two modules by name, not "whatever still commits"."""
+    """The carry-over is one module by name, not "whatever still commits"."""
     modules = {module for module, _owner in DEFERRED_TRANSACTION_CONTROL}
     assert modules == {
-        "app/devices/services/groups.py",
         "app/lifecycle/services/recovery_job.py",
-    }, f"only the two Phase 11 modules may defer transaction control; found {sorted(modules)}"
+    }, f"only the Phase 11 carry-over module may defer transaction control; found {sorted(modules)}"
 
 
 def test_no_function_takes_a_transaction_control_argument() -> None:
