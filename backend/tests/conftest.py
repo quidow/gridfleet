@@ -257,7 +257,9 @@ async def reset_test_http_pool() -> AsyncGenerator[None]:
     ``AgentHttpPool`` creates clients lazily in ``get_client``, so an untouched
     pool holds nothing and this looks like a no-op -- which is exactly why it was
     missing. ``close()`` latches ``_closed``, so ``reopen()`` has to follow it or
-    the next ``get_client`` raises ``PoolClosedError``.
+    the next ``get_client`` raises ``PoolClosedError``. Setup proves isolation;
+    teardown promptly releases clients, but the residue tests cannot distinguish
+    it because the next setup performs the same reset.
     """
     await test_http_pool.close()
     await test_http_pool.reopen()
@@ -304,21 +306,25 @@ async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_
     )
     test_event_bus.configure(session_factory=session_factory, engine=setup_database)
     test_circuit_breaker._session_factory = session_factory
-    settings_service.configure_store_refresh(session_factory, task_tracker=test_event_bus.track_task)
-    test_event_bus.register_handler(settings_service.handle_system_event)
-    settings_service._cache.clear()
-    settings_service._overrides.clear()
-    settings_service._defaults.clear()
-    for key, definition in SETTINGS_REGISTRY.items():
-        default_value = resolve_default(definition)
-        settings_service._defaults[key] = default_value
-        settings_service._cache[key] = default_value
-    settings_service._cache["agent.recommended_version"] = "0.3.0"
-    yield session_factory
-    await settings_service.shutdown()
-    # Symmetric to the assignment above: the factory is bound to an engine this
-    # fixture is about to drop, and the breaker outlives every test in the worker.
-    test_circuit_breaker._session_factory = None
+    try:
+        settings_service.configure_store_refresh(session_factory, task_tracker=test_event_bus.track_task)
+        test_event_bus.register_handler(settings_service.handle_system_event)
+        settings_service._cache.clear()
+        settings_service._overrides.clear()
+        settings_service._defaults.clear()
+        for key, definition in SETTINGS_REGISTRY.items():
+            default_value = resolve_default(definition)
+            settings_service._defaults[key] = default_value
+            settings_service._cache[key] = default_value
+        settings_service._cache["agent.recommended_version"] = "0.3.0"
+        yield session_factory
+    finally:
+        try:
+            await settings_service.shutdown()
+        finally:
+            # Symmetric to the assignment above: the factory is bound to an engine this
+            # fixture is about to drop, and the breaker outlives every test in the worker.
+            test_circuit_breaker._session_factory = None
 
 
 @pytest_asyncio.fixture
