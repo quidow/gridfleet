@@ -15,6 +15,7 @@ from sqlalchemy.orm import raiseload, selectinload
 from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, DeviceOperationalState, GroupType
 from app.devices.services import presenter as presenter_module
+from app.devices.services import read_projection as read_projection_module
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration
 from app.devices.services.presenter import DevicePresenterService
@@ -312,3 +313,29 @@ async def test_projection_reads_the_pack_tables_once(
     pack_reads = [sql for sql in reads if "driver_pack" in sql.lower()]
     assert len(pack_reads) == 1, f"pack tables read {len(pack_reads)} times: {pack_reads}"
     assert projections[device.id].platform_label == "Android"
+
+
+@pytest.mark.db
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_incomplete_batch_facts_fail_with_a_named_error(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A batch loader that skips a device must name itself, not raise a bare KeyError.
+
+    The comprehension indexes three maps by device id. A KeyError from there
+    carries only a UUID, so an incident reads as "some dict is missing some
+    device" with no way to tell which loader dropped it.
+    """
+    device, _run = await _seed_projected_device(db_session, host_id=db_host.id, prefix="incomplete")
+    [loaded_device] = await _load_with_declared_graph(db_session, [device.id])
+
+    async def _drop_everything(*_args: object, **_kwargs: object) -> dict[object, object]:
+        return {}
+
+    monkeypatch.setattr(read_projection_module, "assess_devices_async", _drop_everything)
+
+    with pytest.raises(RuntimeError, match="readiness") as excinfo:
+        await load_device_read_projections(db_session, [loaded_device], now=now_utc())
+    assert str(device.id) in str(excinfo.value), "the error must name the device that was dropped"

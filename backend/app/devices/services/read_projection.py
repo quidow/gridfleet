@@ -63,6 +63,14 @@ async def load_device_read_projections(
     static_keys = await load_static_group_keys_by_device_id(db, device_ids)
     intents = await _load_intents_by_device_id(db, device_ids)
     live_ids = await _load_live_session_device_ids(db, device_ids)
+
+    _require_complete_batch(
+        device_ids,
+        ("readiness", readiness),
+        ("operational_state", states),
+        ("ladder", ladders),
+    )
+
     return {
         device.id: _build_device_read_projection(
             device,
@@ -101,6 +109,22 @@ async def _load_live_session_device_ids(db: AsyncSession, device_ids: Sequence[U
     # Session.device_id is nullable (device-less session terminalization); the IN
     # predicate already excludes NULL rows at the SQL level, this narrows the type.
     return frozenset(device_id for device_id in rows if device_id is not None)
+
+
+def _require_complete_batch(device_ids: Sequence[UUID], *facts: tuple[str, Mapping[UUID, object]]) -> None:
+    """Fail naming the loader and the devices, not with a bare ``KeyError``.
+
+    The comprehension below indexes three batch maps directly, which is the
+    right shape — every loader is contracted to answer for every id it was
+    given. This turns a broken contract into a message an operator can act on
+    instead of a UUID with no loader attached.
+    """
+    missing = {
+        name: sorted(str(device_id) for device_id in device_ids if device_id not in mapping) for name, mapping in facts
+    }
+    incomplete = {name: ids for name, ids in missing.items() if ids}
+    if incomplete:
+        raise RuntimeError(f"device read projection is missing batch facts: {incomplete}")
 
 
 def _build_device_read_projection(  # noqa: PLR0913 - one batch-loaded fact per parameter, no default to collapse
