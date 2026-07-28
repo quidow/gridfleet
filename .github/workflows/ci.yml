@@ -25,6 +25,7 @@ jobs:
       testkit: ${{ steps.filter.outputs.testkit }}
       router: ${{ steps.filter.outputs.router }}
       docker: ${{ steps.filter.outputs.docker }}
+      scripts: ${{ steps.filter.outputs.scripts }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -73,6 +74,7 @@ jobs:
           emit testkit  '^testkit/'
           emit router   '^router/'
           emit docker   '^docker/'
+          emit scripts  '^scripts/'
 
   commitlint:
     name: Commit Messages
@@ -103,7 +105,8 @@ jobs:
       needs.changes.outputs.global == 'true' ||
       needs.changes.outputs.backend == 'true' ||
       needs.changes.outputs.agent == 'true' ||
-      needs.changes.outputs.docker == 'true'
+      needs.changes.outputs.docker == 'true' ||
+      needs.changes.outputs.scripts == 'true'
     services:
       postgres:
         image: postgres:18

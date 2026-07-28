@@ -341,11 +341,12 @@ def test_promoted_scripts_hold_the_python_floor(script: Path) -> None:
       ``ast.Name`` in an ``except`` clause or a ``suppress()`` argument, covered
       by ``_bare_timeout_error_handlers``.
 
-    The file-level ``# ruff: noqa`` markers in the scripts are what stop the
-    rewrites; this test is what notices if one is removed. An earlier version of
-    this docstring claimed to cover UP041 while the scan checked only import
-    symbols — the re-reviewer caught that, and the scan was widened rather than
-    the claim narrowed.
+    ``../scripts/ruff.toml``'s ``target-version = "py310"`` pin is what stops
+    ruff from proposing the rewrites; this test is the independent AST backstop
+    that notices if a rewrite lands anyway. An earlier version of this docstring
+    claimed to cover UP041 while the scan checked only import symbols — the
+    re-reviewer caught that, and the scan was widened rather than the claim
+    narrowed.
     """
     tree = ast.parse(script.read_text(encoding="utf-8"), filename=str(script))
     found: list[str] = []
