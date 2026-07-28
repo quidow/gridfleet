@@ -23,11 +23,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from sqlalchemy import event
-
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.packs.models import DriverPack, DriverPackRelease
 from app.packs.services.release_rollout import run_release_rollout_stage
+from tests.concurrency.group_lock_helpers import capture_statements
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -87,39 +86,14 @@ async def test_pack_release_inventory_query_count_is_constant_in_fleet_size(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    assert db_session.bind is not None
-    engine = db_session.bind.sync_engine
-
     pack_reads: dict[int, int] = {}
     device_locks: dict[int, int] = {}
     totals: dict[int, int] = {}
     for generation, n in enumerate(FLEET_SIZES):
         await _seed_one_pack_per_device(db_session, db_host, n, generation)
-        entries: list[str] = []
-
-        def _listener(
-            conn: object,
-            cursor: object,
-            statement: str,
-            parameters: object,
-            context: object,
-            executemany: bool,
-            *,
-            _entries: list[str] = entries,
-        ) -> None:
-            _entries.append(" ".join(statement.split()))
-
-        # Engine-scoped on purpose: this measures a loop that drives many sessions
-        # out of a factory AND counts engine-level commits, neither of which a
-        # per-session pin can see. The listeners are attached only around the
-        # measured call, so no seeding or teardown traffic is counted. See
-        # tests/concurrency/group_lock_helpers.capture_statements for the pinned
-        # form the session-scoped budget tests use.
-        event.listen(engine, "before_cursor_execute", _listener)
-        try:
+        async with capture_statements(db_session) as raw_entries:
             await run_release_rollout_stage(db_session, publisher=event_bus)
-        finally:
-            event.remove(engine, "before_cursor_execute", _listener)
+        entries = [" ".join(statement.split()) for statement in raw_entries]
 
         # Scope to the inventory phase: everything issued before the first
         # per-candidate Device lock. Per-candidate reconcile work (a separate,
