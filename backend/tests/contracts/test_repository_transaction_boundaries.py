@@ -4,7 +4,7 @@ Everything the phase-scoped guards asserted file by file is asserted here for
 every module under ``backend/app``, with no path prefixes, wildcards, line
 numbers or "all functions in this file" entries anywhere:
 
-* no direct ``.commit()`` / ``.rollback()`` outside ``DEFERRED_TRANSACTION_CONTROL``;
+* no direct ``.commit()`` / ``.rollback()`` anywhere, with no allowlist;
 * no ``commit`` / ``rollback`` / ``autocommit`` parameter, anywhere, at all;
 * every ``begin()`` context has a named, individually classified owner in
   ``BEGIN_OWNER_REGISTRY``;
@@ -33,11 +33,6 @@ APP_ROOT = BACKEND_ROOT / "app"
 PRODUCTION = sorted(APP_ROOT.rglob("*.py"))
 
 TRANSACTION_CONTROL_ARGUMENTS = frozenset({"commit", "rollback", "autocommit"})
-
-# Phase 11 owns this carry-over. Set equality, not subset: an entry that stops
-# being true is as much a failure as a new commit somewhere else.
-#
-DEFERRED_TRANSACTION_CONTROL: frozenset[tuple[str, str]] = frozenset()
 
 # Three owners, each load-bearing for a *named* partial-failure behaviour. The
 # set can only shrink; a fourth savepoint anywhere fails this contract.
@@ -667,12 +662,14 @@ def test_production_scan_is_not_empty() -> None:
     assert len(PRODUCTION) > 100, f"expected the whole app package, found {len(PRODUCTION)} modules"
 
 
-def test_direct_transaction_control_is_confined_to_the_deferred_registry() -> None:
+def test_no_module_takes_direct_transaction_control() -> None:
+    """Zero allowlist, of any shape. Every boundary in ``app/`` is a ``begin()``
+    context with a named owner in ``BEGIN_OWNER_REGISTRY``."""
     discovered = transaction_control_owners()
-    keys = {(module, owner) for module, owner, _lineno in discovered}
-    assert keys == set(DEFERRED_TRANSACTION_CONTROL), (
-        _drift_message("DEFERRED_TRANSACTION_CONTROL", keys, set(DEFERRED_TRANSACTION_CONTROL))
-        + f"full inventory:\n{_inventory(discovered)}"
+    assert discovered == [], (
+        "a module under app/ calls .commit() or .rollback() directly. Give the caller a "
+        "session_factory.begin() boundary and register it in BEGIN_OWNER_REGISTRY:\n"
+        f"{_inventory(discovered)}"
     )
 
 
