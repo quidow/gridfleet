@@ -480,6 +480,15 @@ async def _apply_reconcile_decisions(  # noqa: PLR0913 - keyword-only snapshot f
     node_decision = decide_node_process(commands, facts)
     grid_decision = decide_grid_routing(facts)
     target_state, node_accepting_new_sessions, stop_pending = map_node_process_decision(node_decision)
+    # Findings 1, 5: re-validate at watermark-write time. A stamp minted when
+    # the node was idle may sit dormant while a higher-ranked start wins the
+    # ladder; by the time the rollout wins and carries the stamp, a session
+    # may have started, the node may have converged, or a reservation may
+    # have bound the device. Suppress the watermark in any of those cases —
+    # the node is already draining (accepting_new_sessions=False), so the
+    # stamp stays dormant and the next reconcile re-validates. Only the
+    # rollout rung (running_draining) routes a stamp to the watermark; the
+    # start rung carries its own watermark and is unaffected.
     restart_watermark = node_decision.restart_requested_at
     if (
         node_decision.desired_state == "running_draining"
@@ -492,6 +501,13 @@ async def _apply_reconcile_decisions(  # noqa: PLR0913 - keyword-only snapshot f
         )
     ):
         restart_watermark = None
+    # Universal session-safety invariant: only an explicit hard stop
+    # (``stop_mode == "hard"`` — operator force-release, bulk operator stop)
+    # may flip ``desired_state=stopped`` while a client session is active.
+    # Graceful stops AND the no-intent stop (a withdrawn device whose
+    # baseline was suppressed, F-G1) defer: the node keeps running with
+    # ``accepting_new_sessions=False`` until the session ends, then the next
+    # reconcile executes the stop.
     if (
         target_state == AppiumDesiredState.stopped
         and node_decision.stop_mode in (None, "graceful")
@@ -509,6 +525,13 @@ async def _apply_reconcile_decisions(  # noqa: PLR0913 - keyword-only snapshot f
         "stop_pending": node.stop_pending,
         "restart_requested_at": node.restart_requested_at,
     }
+    # The observed port is the single source of port truth: payload `desired_port` values are
+    # registration-time snapshots of node.port and go stale when a fallback start moves the
+    # node (observation updates node.port and clears AppiumNode.desired_port). Re-applying
+    # a stale snapshot flips desired_port against the live port on every reconcile, and the
+    # appium reconciler then force-restarts the node onto the stale port — the port-churn
+    # storm behind the N11 S13/S14 scenario failures. ``observed_port`` is the snapshot's
+    # copy of the live ``node.port``; pin that, never a payload value.
     desired_port = observed_port if target_state == AppiumDesiredState.running else None
     await write_desired_state(
         db,
