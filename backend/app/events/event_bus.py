@@ -60,6 +60,51 @@ LISTENER_LOG_BACKOFF_MAX_SEC = 60.0
 # every outage with two tracebacks instead of one.
 POLL_LOG_BACKOFF_INITIAL_SEC = float(LISTENER_POLL_INTERVAL_SEC) * 2
 POLL_LOG_BACKOFF_MAX_SEC = 60.0
+
+
+class _LogBackoff:
+    """Traceback-volume backoff for a reconnect loop.
+
+    One outage must not produce one traceback per retry per worker. The reconnect
+    delay is unchanged — only the logging is backed off — and each report carries
+    how many failures were suppressed since the last one.
+
+    ``report`` returns the suppressed count when the caller should log, or
+    ``None`` when it should stay silent.
+    """
+
+    __slots__ = ("_initial_sec", "_interval", "_last_report_at", "_max_sec", "_next_log_at", "_suppressed")
+
+    def __init__(self, *, initial_sec: float, max_sec: float) -> None:
+        self._initial_sec = initial_sec
+        self._max_sec = max_sec
+        self._interval = initial_sec
+        self._next_log_at = 0.0
+        # The last report's own timestamp, not the deadline it set. The deadline
+        # is inflated by whatever interval was in effect when it was set, so
+        # measuring the reset gap against it would make an incident's tail-end
+        # deadline look like a fresh quiet period further out than the last
+        # report actually was.
+        self._last_report_at = float("-inf")
+        self._suppressed = 0
+
+    def report(self, *, now: float) -> int | None:
+        if now < self._next_log_at:
+            # Same outage, still inside the quiet window: count it and stay silent.
+            self._suppressed += 1
+            return None
+        if now - self._last_report_at >= self._max_sec:
+            # Quiet for longer than the cap *since the last actual report* — a new
+            # incident, not the tail of the last one.
+            self._interval = self._initial_sec
+        suppressed = self._suppressed
+        self._suppressed = 0
+        self._last_report_at = now
+        self._next_log_at = now + self._interval
+        self._interval = min(self._interval * 2, self._max_sec)
+        return suppressed
+
+
 LISTENER_READY_TIMEOUT_SEC = 5.0
 HANDLER_DRAIN_TIMEOUT_SEC = 5.0
 POLL_SCAN_CHUNK_SIZE = 500
@@ -828,46 +873,20 @@ class EventBus:
         # with no engine would spin through the reconnect sleep forever.
         if self._engine is None:
             return
-        log_interval = LISTENER_LOG_BACKOFF_INITIAL_SEC
-        next_log_at = 0.0
-        # The last report's own timestamp, not the deadline it set. The deadline
-        # is inflated by whatever interval was in effect when it was set, so
-        # measuring the reset gap against it instead of against this understates
-        # nothing -- but it does the opposite of what's needed here: it makes an
-        # incident's tail-end deadline look like a fresh quiet period further out
-        # than the last report actually was. See the reset check below.
-        last_report_at = float("-inf")
-        suppressed = 0
+        backoff = _LogBackoff(initial_sec=LISTENER_LOG_BACKOFF_INITIAL_SEC, max_sec=LISTENER_LOG_BACKOFF_MAX_SEC)
         while True:
             try:
                 await self._listen_once()
             except asyncio.CancelledError:
                 raise
             except Exception:
-                now = time.monotonic()
-                if now < next_log_at:
-                    # Same outage, still inside the quiet window: count it and
-                    # stay silent. The reconnect delay is unchanged -- only the
-                    # traceback volume is backed off.
-                    suppressed += 1
-                else:
-                    if now - last_report_at >= LISTENER_LOG_BACKOFF_MAX_SEC:
-                        # Quiet for longer than the cap *since the last actual
-                        # report* -- not since the deadline it set, which is the
-                        # report time plus the interval then in effect and so
-                        # overstates how quiet things have been by up to that
-                        # interval. This is a new incident, not the tail of the
-                        # last one.
-                        log_interval = LISTENER_LOG_BACKOFF_INITIAL_SEC
+                suppressed = backoff.report(now=time.monotonic())
+                if suppressed is not None:
                     logger.exception(
                         "System event listener connection failed; reconnecting "
                         "(%d further failure(s) suppressed since the last report)",
                         suppressed,
                     )
-                    suppressed = 0
-                    last_report_at = now
-                    next_log_at = now + log_interval
-                    log_interval = min(log_interval * 2, LISTENER_LOG_BACKOFF_MAX_SEC)
             await asyncio.sleep(LISTENER_RECONNECT_DELAY_SEC)
 
     async def _listen_once(self) -> None:
@@ -904,32 +923,19 @@ class EventBus:
                     await driver_conn.remove_listener(NOTIFY_CHANNEL, callback)
 
     async def _poll_for_missed_events(self) -> None:
-        log_interval = POLL_LOG_BACKOFF_INITIAL_SEC
-        next_log_at = 0.0
-        # The last report's own timestamp, not the deadline it set -- same
-        # reasoning as the listener loop's, which see.
-        last_report_at = float("-inf")
-        suppressed = 0
+        backoff = _LogBackoff(initial_sec=POLL_LOG_BACKOFF_INITIAL_SEC, max_sec=POLL_LOG_BACKOFF_MAX_SEC)
         while True:
             try:
                 await self._dispatch_missed_events()
             except asyncio.CancelledError:
                 raise
             except Exception:
-                now = time.monotonic()
-                if now < next_log_at:
-                    suppressed += 1
-                else:
-                    if now - last_report_at >= POLL_LOG_BACKOFF_MAX_SEC:
-                        log_interval = POLL_LOG_BACKOFF_INITIAL_SEC
+                suppressed = backoff.report(now=time.monotonic())
+                if suppressed is not None:
                     logger.exception(
                         "System event poller failed (%d further failure(s) suppressed since the last report)",
                         suppressed,
                     )
-                    suppressed = 0
-                    last_report_at = now
-                    next_log_at = now + log_interval
-                    log_interval = min(log_interval * 2, POLL_LOG_BACKOFF_MAX_SEC)
             await asyncio.sleep(LISTENER_POLL_INTERVAL_SEC)
 
 

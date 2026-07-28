@@ -49,7 +49,9 @@ def main() -> None:
     parser.add_argument("--out", required=True)
     parser.add_argument("--id", default=None)
     parser.add_argument("--release", default=None)
-    parser.add_argument("--adapter-dir", type=Path, default=None, help="Optional adapter source directory to wheel into adapter/*.whl")
+    parser.add_argument(
+        "--adapter-dir", type=Path, default=None, help="Optional adapter source directory to wheel into adapter/*.whl"
+    )
     args = parser.parse_args()
 
     pack_dir = Path(args.pack_dir)

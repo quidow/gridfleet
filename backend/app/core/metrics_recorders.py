@@ -90,10 +90,6 @@ APPIUM_RECONCILER_HOST_CYCLE_SECONDS = Histogram(
     "Wall-clock duration of one host's Appium convergence cycle.",
     labelnames=("host_id",),
 )
-APPIUM_RECONCILER_ALLOCATION_COLLISIONS = Counter(
-    "appium_reconciler_allocation_collisions_total",
-    "Port allocation collisions encountered by the Appium reconciler.",
-)
 APPIUM_RECONCILER_START_FAILURES = Counter(
     "appium_reconciler_start_failures_total",
     "Agent-start failures observed by the Appium reconciler, labeled by reason.",
@@ -144,7 +140,9 @@ OUTBOX_POLL_AGE_SECONDS = Gauge(
 OUTBOX_PENDING_GAPS = Gauge(
     "outbox_pending_gaps",
     "Outbox row ids this process has observed as missing and not yet resolved or retired. "
-    "Bounded in steady state only; a recovery poll after an outage scales it with the backlog.",
+    "Bounded in steady state only. Two cases scale it with the workload instead: a recovery "
+    "poll after an outage, which scales with the backlog, and a rollback storm, where every "
+    "rolled-back transaction burns a sequence value that never becomes a row.",
 )
 ACTIVE_SSE_CONNECTIONS = Gauge(
     "active_sse_connections",

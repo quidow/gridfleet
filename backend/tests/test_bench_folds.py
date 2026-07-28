@@ -262,17 +262,28 @@ async def _verify_deep_history_untouched(db: AsyncSession, tap: QueryTap, device
     assert count == _DEEP_HISTORY_ROWS, f"healthy fold must not append to an inactive deep ladder (rows={count})"
     # Every healthy observation still loads the ladder once per device per armed
     # iteration -- but through the Phase 3 snapshot loader, and bounded to the
-    # entries *after* the latest reset. The seed ends in a terminal reset, so a
-    # ~200-row inactive history costs a bounded read returning nothing. The old
-    # assertion here demanded a full-history read from the retired
-    # ``remediation_log.load_ladder`` call site: it measured a cost Phase 3
-    # removed, against a call site the fold no longer uses.
+    # entries at or after the latest reset. The seed ends in a terminal reset, so
+    # a ~200-row inactive history costs a bounded read of exactly one row: the
+    # terminal reset itself. The old assertion here demanded a full-history read
+    # from the retired ``remediation_log.load_ladder`` call site: it measured a
+    # cost Phase 3 removed, against a call site the fold no longer uses.
     ladder_key = ("app.devices.services.decision_snapshot._load_current_ladder", "SELECT device_remediation_log")
     assert tap.callsite_counter[ladder_key] >= len(devices) * ITERS, "deep-history ladder read did not run per device"
-    full_history_rows = len(devices) * _DEEP_HISTORY_ROWS * ITERS
-    assert tap.rows[ladder_key] < full_history_rows, (
-        f"the ladder read regressed to scanning history behind the terminal reset: "
-        f"{tap.rows[ladder_key]} rows approaches the full {full_history_rows}"
+    # Exact, not a loose upper bound. The seed ends in a terminal reset and the
+    # bounded read's predicate is ``(at, id) >= (reset.at, reset.id)``, so the
+    # read returns exactly the reset row itself -- one row per device per armed
+    # iteration -- and nothing behind it. The former bound was
+    # ``< len(devices) * _DEEP_HISTORY_ROWS * ITERS``, roughly 200x looser, so a
+    # read that regressed to scanning 90% of the history still passed.
+    # Re-measure with:
+    #   FOLD_BENCH=1 FOLD_BENCH_SCENARIO=deep-history FOLD_BENCH_DEVICES=4 \
+    #   FOLD_BENCH_ITERS=2 FOLD_BENCH_WARMUP=0 FOLD_BENCH_FLEET=homogeneous \
+    #   uv run pytest -q -s tests/test_bench_folds.py::test_bench_device_health_loop_fold
+    expected_rows = len(devices) * ITERS
+    assert tap.rows[ladder_key] == expected_rows, (
+        f"the ladder read returned {tap.rows[ladder_key]} rows, expected exactly {expected_rows} "
+        f"(one terminal reset row per device per iteration). A larger number means the read regressed "
+        f"to scanning history behind the reset; a smaller one means it stopped running per device."
     )
 
 
@@ -320,9 +331,14 @@ async def _verify_claims_intact(db: AsyncSession, tap: QueryTap, devices: list[S
     )
     assert tap.callsite_counter[snapshot_key] >= len(devices) * ITERS, "claim snapshot read did not run per device"
     assert tap.rows[snapshot_key] >= (len(claimed) // 2) * ITERS, "claim snapshot read missed the seeded claims"
+    # Over the whole fleet, not the claimed half: the snapshot read runs once per
+    # locked device, so every present device's id is in the parameter set and a
+    # loop over the claimed subset alone could not fail. This is the property the
+    # parameter capture can actually prove.
     snapshot_parameters = tap.captured_parameter_values(snapshot_key)
+    unseen = sorted(d.identity for d in devices if str(d.device_id) not in snapshot_parameters)
+    assert unseen == [], f"claim snapshot did not inspect {unseen}"
     for index, seeded in enumerate(claimed):
-        assert str(seeded.device_id) in snapshot_parameters, f"claim snapshot did not inspect {seeded.identity}"
         device = await db.get(Device, seeded.device_id)
         assert device is not None
         state = await derive_operational_state(db, device, now=now_utc())

@@ -299,6 +299,12 @@ async def _measure_push(
     payload = {"host_id": str(host.id), **body}
     tap = QueryTap()
     commits = CommitTap()
+    # Engine-scoped on purpose: this measures a loop that drives many sessions
+    # out of a factory AND counts engine-level commits, neither of which a
+    # per-session pin can see. The listeners are attached only around the
+    # measured call, so no seeding or teardown traffic is counted. See
+    # tests/concurrency/group_lock_helpers.capture_statements for the pinned
+    # form the session-scoped budget tests use.
     event.listen(engine, "before_cursor_execute", tap)
     event.listen(engine, "commit", commits)
     try:
@@ -354,11 +360,15 @@ async def test_status_push_statement_and_commit_budget(
         # The per-device settlement boundary really ran: one property write each.
         assert verbs[size]["UPDATE"] >= size, f"the device_properties fold wrote nothing at {size} devices"
 
+    # Exact, not <=: STATUS_PUSH_MAX is documented as MEASURED, not derived (see
+    # the inventory above), and a <= cannot catch a regression that *removes*
+    # work — a stage silently skipped scores better than the pin. Same shape as
+    # the settle-path assertion below.
+    assert counts == STATUS_PUSH_MAX, (
+        f"confirm-path status push statement counts {counts} moved off the measured pin "
+        f"{STATUS_PUSH_MAX}: attach a captured statement inventory before updating this"
+    )
     for size in FLEET_SIZES:
-        assert counts[size] <= STATUS_PUSH_MAX[size], (
-            f"status push at {size} devices issued {counts[size]} statements, above the pinned "
-            f"{STATUS_PUSH_MAX[size]}: attach a captured statement inventory before raising this"
-        )
         assert counts[size] <= FORMULA_MAX[size], (
             f"status push at {size} devices issued {counts[size]} statements, above the Phase 8 "
             f"ceiling {FORMULA_MAX[size]} — fix the implementation, do not raise the formula"

@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
-from app.devices.models import DeviceIntent, ExclusionKind
-from app.devices.services.decision import DecisionFacts, parse_command
+from app.devices.models import DeviceIntent
+from app.devices.services.decision import DecisionFacts, parse_command, reservation_decision_axes
 from app.devices.services.group_membership import load_static_group_keys_by_device_id
 from app.devices.services.lifecycle_policy_state import in_maintenance
 from app.devices.services.lifecycle_policy_summary import freeze_reservation_context
@@ -63,6 +63,14 @@ async def load_device_read_projections(
     static_keys = await load_static_group_keys_by_device_id(db, device_ids)
     intents = await _load_intents_by_device_id(db, device_ids)
     live_ids = await _load_live_session_device_ids(db, device_ids)
+
+    _require_complete_batch(
+        device_ids,
+        ("readiness", readiness),
+        ("operational_state", states),
+        ("ladder", ladders),
+    )
+
     return {
         device.id: _build_device_read_projection(
             device,
@@ -103,6 +111,22 @@ async def _load_live_session_device_ids(db: AsyncSession, device_ids: Sequence[U
     return frozenset(device_id for device_id in rows if device_id is not None)
 
 
+def _require_complete_batch(device_ids: Sequence[UUID], *facts: tuple[str, Mapping[UUID, object]]) -> None:
+    """Fail naming the loader and the devices, not with a bare ``KeyError``.
+
+    The comprehension below indexes three batch maps directly, which is the
+    right shape — every loader is contracted to answer for every id it was
+    given. This turns a broken contract into a message an operator can act on
+    instead of a UUID with no loader attached.
+    """
+    missing = {
+        name: sorted(str(device_id) for device_id in device_ids if device_id not in mapping) for name, mapping in facts
+    }
+    incomplete = {name: ids for name, ids in missing.items() if ids}
+    if incomplete:
+        raise RuntimeError(f"device read projection is missing batch facts: {incomplete}")
+
+
 def _build_device_read_projection(  # noqa: PLR0913 - one batch-loaded fact per parameter, no default to collapse
     device: Device,
     *,
@@ -117,16 +141,12 @@ def _build_device_read_projection(  # noqa: PLR0913 - one batch-loaded fact per 
     static_group_keys: frozenset[str],
     now: datetime,
 ) -> DeviceReadProjection:
-    # exclusion_kind is a plain str from a String(16) column: compare with ==/!=,
-    # not `is` (an ExclusionKind member is never identical to the loaded str).
-    reservation_run_id = (
-        None if reservation is None or reservation.exclusion_kind == ExclusionKind.exclusion else reservation.run_id
-    )
-    cooldown_active = bool(
-        reservation
-        and reservation.exclusion_kind == ExclusionKind.cooldown
-        and reservation.excluded_until is not None
-        and reservation.excluded_until > now
+    reservation_run_id, cooldown_active, cooldown_reason = reservation_decision_axes(
+        run_id=reservation.run_id if reservation is not None else None,
+        exclusion_kind=reservation.exclusion_kind if reservation is not None else None,
+        exclusion_reason=reservation.exclusion_reason if reservation is not None else None,
+        excluded_until=reservation.excluded_until if reservation is not None else None,
+        now=now,
     )
     facts = DecisionFacts(
         in_maintenance=in_maintenance(device),
@@ -134,7 +154,7 @@ def _build_device_read_projection(  # noqa: PLR0913 - one batch-loaded fact per 
         in_service=WithdrawalFacts.from_device(device).in_service(),
         reservation_run_id=reservation_run_id,
         cooldown_active=cooldown_active,
-        cooldown_reason=reservation.exclusion_reason if cooldown_active and reservation else None,
+        cooldown_reason=cooldown_reason,
         remediation_directive=ladder.node_directive,
     )
     commands = [command for intent in intents if (command := parse_command(intent, now)) is not None]

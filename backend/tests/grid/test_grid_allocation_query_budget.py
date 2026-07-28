@@ -18,16 +18,15 @@ unchanged.
 
 from __future__ import annotations
 
-import contextlib
 import uuid
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import event, select, update
+from sqlalchemy import select, update
 
 if TYPE_CHECKING:
-    from collections.abc import Collection, Iterator
+    from collections.abc import Collection
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,35 +36,12 @@ from app.devices.services.intent import IntentService
 from app.grid.allocation import AllocationService
 from app.grid.models import GridSessionQueueTicket
 from app.runs.models import RunState, TestRun
+from tests.concurrency.group_lock_helpers import capture_statements
 from tests.helpers import seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
-
-
-@contextlib.contextmanager
-def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
-    statements: list[str] = []
-
-    def listener(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    bind = session.bind
-    assert bind is not None
-    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
-    event.listen(sync_engine, "before_cursor_execute", listener)
-    try:
-        yield statements
-    finally:
-        event.remove(sync_engine, "before_cursor_execute", listener)
 
 
 def _reads(statements: list[str]) -> list[str]:
@@ -263,7 +239,8 @@ async def test_group_routed_free_poll_has_constant_read_budget(
 ) -> None:
     ticket = await seed_no_match_poll(db_session, devices=devices, groups=groups, platforms=platforms)
     service = _service()
-    with _capture_statements(db_session) as statements:
+    await db_session.commit()
+    async with capture_statements(db_session) as statements:
         result = await service.try_allocate(db_session, ticket=ticket)
     assert result is None
     assert len(_reads(statements)) == 4, (
@@ -289,7 +266,8 @@ async def test_member_of_dynamic_group_free_poll_has_constant_read_budget(
     reference fan-out is."""
     ticket = await seed_member_of_poll(db_session, devices=devices, groups=groups, platforms=platforms)
     service = _service()
-    with _capture_statements(db_session) as statements:
+    await db_session.commit()
+    async with capture_statements(db_session) as statements:
         result = await service.try_allocate(db_session, ticket=ticket)
     assert result is None
     reads = _reads(statements)
@@ -305,9 +283,9 @@ async def test_no_group_free_poll_has_three_reads(db_session: AsyncSession) -> N
     _, _, _ = await seed_host_and_running_node(db_session, identity=f"budget-nogrp-{uuid.uuid4().hex[:8]}")
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="iOS"))
     db_session.add(ticket)
-    await db_session.flush()
+    await db_session.commit()
     service = _service()
-    with _capture_statements(db_session) as statements:
+    async with capture_statements(db_session) as statements:
         result = await service.try_allocate(db_session, ticket=ticket)
     assert result is None
     assert len(_reads(statements)) == 3, _reads(statements)
@@ -337,9 +315,9 @@ async def test_run_scoped_no_match_poll_has_five_reads(db_session: AsyncSession)
         run_id=run.id,
     )
     db_session.add(ticket)
-    await db_session.flush()
+    await db_session.commit()
     service = _service()
-    with _capture_statements(db_session) as statements:
+    async with capture_statements(db_session) as statements:
         result = await service.try_allocate(db_session, ticket=ticket)
     assert result is None
     assert len(_reads(statements)) == 5, _reads(statements)
@@ -362,9 +340,9 @@ async def test_successful_claim_adds_one_joined_lock_read_before_session_insert(
     _, _, _ = await seed_host_and_running_node(db_session, identity=f"budget-claim-{uuid.uuid4().hex[:8]}")
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)
-    await db_session.flush()
+    await db_session.commit()
     service = _service()
-    with _capture_statements(db_session) as statements:
+    async with capture_statements(db_session) as statements:
         result = await service.try_allocate(db_session, ticket=ticket)
     assert result is not None
     pre_insert_reads = _reads_before_first_session_insert(statements)
@@ -396,9 +374,9 @@ async def test_group_routed_claim_adds_one_membership_recheck_read(db_session: A
         requested_body=_body(platformName="Android", **{"gridfleet:group:claim-budget": True})
     )
     db_session.add(ticket)
-    await db_session.flush()
+    await db_session.commit()
     service = _service()
-    with _capture_statements(db_session) as statements:
+    async with capture_statements(db_session) as statements:
         result = await service.try_allocate(db_session, ticket=ticket)
     assert result is not None
     pre_insert_reads = _reads_before_first_session_insert(statements)
@@ -640,14 +618,14 @@ async def test_unresolvable_pack_pair_does_not_push_the_poll_past_its_budget(
 
     ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
     db_session.add(ticket)
-    await db_session.flush()
+    await db_session.commit()
 
     service = AllocationService(
         intent_factory=IntentService,
         publisher=event_bus,
         stereotype_provider=device_match_surface,
     )
-    with _capture_statements(db_session) as statements:
+    async with capture_statements(db_session) as statements:
         result = await service.try_allocate(db_session, ticket=ticket)
     assert result is None
     reads = _reads(statements)

@@ -9,7 +9,7 @@ import httpx2 as httpx
 import pytest
 import pytest_asyncio
 from httpx2 import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -49,7 +49,7 @@ from app.verification.services.preparation import (
 )
 from app.verification.services.runner import VerificationRunnerService
 from tests.conftest import settings_service
-from tests.fakes import build_review_service
+from tests.fakes import RecordingSessionFactory, build_review_service
 from tests.helpers import create_device_record, delete_jobs_by_kind
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
@@ -2111,6 +2111,22 @@ async def test_crash_after_health_or_probe_reuses_same_operation_id(
     assert len(rows) == 1, "resume reused the operation's device instead of creating a duplicate"
 
 
+async def _passthrough_normalize(
+    payload: dict[str, Any],
+    coords: _PackCoords,
+    *,
+    host_ip: str,
+    host_agent_port: int,
+    http_client_factory: AgentClientFactory,
+) -> tuple[dict[str, Any], None]:
+    """Skip the agent round trip: return the payload unchanged with no error.
+
+    Shared by the create-mode preparation tests, which each need the normalize
+    step out of the way to reach the write boundary under test.
+    """
+    return payload, None
+
+
 async def test_prepare_create_commits_device_and_lease_atomically(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -2153,17 +2169,6 @@ async def test_prepare_create_commits_device_and_lease_atomically(
         host_id=uuid.UUID(default_host_id),
     )
 
-    # Normalize is a remote agent call; stub it to pass the input payload straight through.
-    async def _passthrough_normalize(
-        payload: dict[str, Any],
-        coords: _PackCoords,
-        *,
-        host_ip: str,
-        host_agent_port: int,
-        http_client_factory: AgentClientFactory,
-    ) -> tuple[dict[str, Any], None]:
-        return payload, None
-
     monkeypatch.setattr(prep, "normalize_effect", _passthrough_normalize)
     monkeypatch.setattr(prep, "_write_verification_lease", AsyncMock(side_effect=RuntimeError("boom")))
 
@@ -2175,6 +2180,87 @@ async def test_prepare_create_commits_device_and_lease_atomically(
         job_row = await db.get(Job, operation_id)
     assert rows == [], "device insert must roll back with the failed lease write (atomic)"
     assert job_row is not None and "device_id" not in job_row.payload, "device_id must not be stamped on rollback"
+
+
+CREATE_NAME = "phase11-create-atomicity"
+
+
+def _preparation_service(session_factory: RecordingSessionFactory) -> VerificationPreparationService:
+    return VerificationPreparationService(
+        settings=settings_service,
+        circuit_breaker=_noop_circuit_breaker(),
+        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
+        identity=DeviceIdentityConflictService(),
+        publisher=event_bus,
+        session_factory=session_factory,  # type: ignore[arg-type]
+    )
+
+
+def _valid_create_payload(host: Host) -> DeviceVerificationCreate:
+    return DeviceVerificationCreate(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=CREATE_NAME,
+        connection_target=CREATE_NAME,
+        name=CREATE_NAME,
+        os_version="14",
+        host_id=host.id,
+    )
+
+
+async def test_create_mode_device_id_and_lease_land_atomically(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Create-mode invariant: the device row, its Job.payload device-id stamp and
+    its verification lease are one transaction.
+
+    A crash between any two of them would orphan a device in ``verifying`` that
+    the retry cannot resume — create jobs are ``max_attempts=1``, so there is no
+    second chance to fix it up. The failure is a REAL statement error inside the
+    boundary, not a patched method: a synthetic raise leaves the session clean
+    and would not exercise the aborted-transaction path.
+
+    ``create_device_txn``'s insert lands through the ORM flush, which issues its
+    INSERT straight on the connection rather than through ``session.execute`` (see
+    ``RecordingSessionFactory``'s docstring) — the recorder's hook cannot see it.
+    The next statement it *can* see is the row lock ``_write_verification_lease``
+    takes on the just-created device before writing the lease, so that is where
+    this test fails the transaction: after the device exists, before the lease
+    does.
+    """
+    monkeypatch.setattr("app.verification.services.job_state.publish", AsyncMock())
+    # db_host is only flushed on db_session; the recorder hands out sessions on
+    # their own connections, so the host must be committed to be visible to them.
+    await db_session.commit()
+
+    async def _fail_at_the_lease_lock(session: AsyncSession, statement: str) -> None:
+        if "for update" in statement and " devices" in statement:
+            await session.execute(text("SELECT no_such_function_phase11()"))
+
+    recorder = RecordingSessionFactory(db_session_maker)
+    recorder.hook = _fail_at_the_lease_lock
+    service = _preparation_service(recorder)
+    monkeypatch.setattr(service, "normalize_effect", _passthrough_normalize)
+
+    operation_id = uuid.uuid4()
+    with pytest.raises(Exception):  # noqa: B017 - any DBAPI error; the point is what survives
+        await service.prepare_create(
+            new_job(str(operation_id)),
+            operation_id,
+            _valid_create_payload(db_host),
+            http_client_factory=AsyncMock(),
+        )
+
+    db_session.expire_all()
+    devices = await db_session.scalar(select(func.count()).select_from(Device).where(Device.name == CREATE_NAME))
+    intents = await db_session.scalar(select(func.count()).select_from(DeviceIntent))
+    assert devices == 0, "the device row survived a failure inside the create boundary"
+    assert intents == 0, "the verification lease survived a failure inside the create boundary"
 
 
 async def test_prepare_create_translates_concurrent_identity_integrity_error(
@@ -2230,16 +2316,6 @@ async def test_prepare_create_translates_concurrent_identity_integrity_error(
         os_version="14",
         host_id=uuid.UUID(default_host_id),
     )
-
-    async def _passthrough_normalize(
-        payload: dict[str, Any],
-        coords: _PackCoords,
-        *,
-        host_ip: str,
-        host_agent_port: int,
-        http_client_factory: AgentClientFactory,
-    ) -> tuple[dict[str, Any], None]:
-        return payload, None
 
     monkeypatch.setattr(prep, "normalize_effect", _passthrough_normalize)
     # Simulate the DB rejecting the duplicate at flush (past the pre-insert gate).

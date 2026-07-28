@@ -13,14 +13,16 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.timeutil import now_utc
 from app.jobs import JOB_KIND_DEVICE_HEALTH_REMEDIATION, JOB_STATUS_PENDING, JOB_STATUS_RUNNING
 from app.jobs import queue as job_queue
 from app.jobs.models import Job
@@ -29,21 +31,11 @@ from tests.concurrency.group_lock_helpers import pin_statement_listener
 from tests.fakes import FakeSettingsReader, RecordingSessionFactory
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from collections.abc import AsyncIterator
 
 
 class RollbackProbeError(Exception):
     pass
-
-
-class _OrigSqlstateError(Exception):
-    def __init__(self, sqlstate: str) -> None:
-        super().__init__(sqlstate)
-        self.sqlstate = sqlstate
-
-
-def _retryable_error() -> DBAPIError:
-    return DBAPIError("stmt", {}, _OrigSqlstateError("40001"))
 
 
 def _make_minimal_service(session_factory: Any) -> DurableJobService:  # noqa: ANN401 - accepts sessionmaker or recorder
@@ -58,6 +50,29 @@ def _make_minimal_service(session_factory: Any) -> DurableJobService:  # noqa: A
         run_teardown_runner=AsyncMock(),
         session_kill_runner=AsyncMock(),
     )
+
+
+class _SnapshotFixingSessionFactory(RecordingSessionFactory):
+    """A recorder that primes each transaction with a harmless statement first.
+
+    ``claim_next_job`` issues exactly one statement per attempt (the claim
+    UPDATE itself), so there is no earlier statement in the attempt for a
+    REPEATABLE READ snapshot to fix on, and none for ``hook`` -- which only
+    fires *after* ``session.execute`` -- to interpose ahead of. Running
+    ``SELECT 1`` through the same tracked ``session.execute`` spy the base
+    class installs gives the transaction a first statement (fixing its
+    snapshot) and gives ``hook`` a point to fire *before* the real claim
+    UPDATE runs.
+    """
+
+    @asynccontextmanager
+    async def begin(self) -> AsyncIterator[AsyncSession]:
+        async with self._inner() as session:
+            self._track(session)
+            self.begun += 1
+            async with session.begin():
+                await session.execute(text("select 1"))
+                yield session
 
 
 async def test_create_job_flush_only_rolls_back_with_its_transaction(db_session: AsyncSession) -> None:
@@ -226,42 +241,68 @@ async def test_claim_next_job_orders_by_created_at_then_id_for_ties(
 async def test_claim_next_job_retries_after_a_real_serialization_failure(
     db_session_maker: async_sessionmaker[AsyncSession],
     db_session: AsyncSession,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    job = Job(
-        id=uuid.uuid4(),
-        kind="flaky",
-        status=JOB_STATUS_PENDING,
-        payload={"n": 1},
-        snapshot={},
-        scheduled_at=datetime.now(UTC) - timedelta(seconds=1),
-    )
-    db_session.add(job)
+    """A real Postgres 40001, not a constructed ``DBAPIError``.
+
+    Under REPEATABLE READ the snapshot is fixed at the transaction's first
+    statement, so a peer that claims the same row and commits in between makes
+    this transaction's claim UPDATE raise ``could not serialize access due to
+    concurrent update`` -- a driver-raised error on a genuinely aborted
+    transaction. A synthetic raise does not exercise that: it leaves the
+    session with a live transaction, so the retry's session swap is followed
+    by an ordinary ROLLBACK rather than recovery from one Postgres already
+    aborted.
+    """
+    first, second = uuid.uuid4(), uuid.uuid4()
+    base = datetime.now(UTC) - timedelta(seconds=10)
+    for index, job_id in enumerate((first, second)):
+        db_session.add(
+            Job(
+                id=job_id,
+                kind="racy",
+                status=JOB_STATUS_PENDING,
+                payload={"n": index},
+                snapshot={},
+                created_at=base + timedelta(seconds=index),
+                scheduled_at=base,
+            )
+        )
     await db_session.commit()
 
-    recorder = RecordingSessionFactory(db_session_maker, statement_pinner=pin_statement_listener)
+    peer_claimed = False
+
+    async def _let_a_peer_claim_first(session: AsyncSession, statement: str) -> None:
+        del session
+        nonlocal peer_claimed
+        # Fires on the harmless "select 1" primer, which runs before the real
+        # claim UPDATE -- not on "update jobs" itself, which is that UPDATE and
+        # is already too late to race against.
+        if peer_claimed or "update jobs" in statement:
+            return
+        peer_claimed = True
+        async with db_session_maker() as peer, peer.begin():
+            await peer.execute(
+                update(Job)
+                .where(Job.id == first)
+                .values(status=JOB_STATUS_RUNNING, started_at=now_utc())
+                .execution_options(synchronize_session=False)
+            )
+
+    repeatable_read = async_sessionmaker(
+        db_session_maker.kw["bind"].execution_options(isolation_level="REPEATABLE READ"),
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    recorder = _SnapshotFixingSessionFactory(repeatable_read)
+    recorder.hook = _let_a_peer_claim_first
     service = _make_minimal_service(recorder)
 
-    real_execute = AsyncSession.execute
-    failed_once = False
+    claim = await service.claim_next_job(kind="racy")
 
-    async def flaky_execute(self: AsyncSession, statement: Any, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
-        nonlocal failed_once
-        if not failed_once and "update jobs" in str(statement).lower():
-            failed_once = True
-            raise _retryable_error()
-        return await real_execute(self, statement, *args, **kwargs)
-
-    monkeypatch.setattr(AsyncSession, "execute", flaky_execute)
-    try:
-        claim = await service.claim_next_job(kind="flaky")
-    finally:
-        recorder.close()
-
-    assert failed_once is True
+    assert peer_claimed is True
     assert claim is not None
-    assert claim.id == job.id
-    assert recorder.begun == 2  # the failed attempt's session, then a fresh one
+    assert claim.id == second, "the retry must claim the job the peer did not take"
+    assert recorder.begun == 2, "the failed attempt's session, then a fresh one"
     assert recorder.sessions[0] is not recorder.sessions[1]
 
 

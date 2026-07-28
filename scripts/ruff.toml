@@ -1,0 +1,12 @@
+# scripts/ is a maintained tools directory, not a component: the files here run
+# against whatever Python an operator has, and two of them declare
+# PYTHON_FLOOR = (3, 10) to match testkit's floor. Pinning target-version here is
+# what makes ruff enforce that floor rather than rewrite against it — linting
+# these files under the backend's py314 config is how UP041 once rewrote
+# `except asyncio.TimeoutError` to the bare builtin, which are distinct classes
+# before 3.11.
+target-version = "py310"
+line-length = 120
+
+[lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "SIM", "RUF", "PLC0415"]

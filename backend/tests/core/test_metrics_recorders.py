@@ -23,12 +23,6 @@ def test_appium_reconciler_host_cycle_seconds_histogram_exists() -> None:
     assert sorted(histogram._labelnames) == ["host_id"]
 
 
-def test_appium_reconciler_allocation_collisions_counter_exists() -> None:
-    counter = metrics_recorders.APPIUM_RECONCILER_ALLOCATION_COLLISIONS
-    assert counter._name == "appium_reconciler_allocation_collisions"
-    assert counter._labelnames == ()
-
-
 def test_appium_reconciler_start_failures_counter_exists() -> None:
     counter = metrics_recorders.APPIUM_RECONCILER_START_FAILURES
     assert counter._name == "appium_reconciler_start_failures"

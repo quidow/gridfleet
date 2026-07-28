@@ -1,44 +1,21 @@
 from __future__ import annotations
 
-import contextlib
 import uuid
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import event
 
 from app.devices.services.intent_reconciler import ReconcileCandidate, reconcile_device_command
 from app.packs.services.catalog_view import load_pack_catalog
+from tests.concurrency.group_lock_helpers import pin_statement_listener
+from tests.fakes.session_factory import RecordingSessionFactory
 from tests.helpers import seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
-    from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 pytestmark = [pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
-
-
-@contextlib.contextmanager
-def capture_sql(engine: AsyncEngine) -> Iterator[list[str]]:
-    statements: list[str] = []
-
-    def listener(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    event.listen(engine.sync_engine, "before_cursor_execute", listener)
-    try:
-        yield statements
-    finally:
-        event.remove(engine.sync_engine, "before_cursor_execute", listener)
 
 
 async def test_steady_reconcile_has_three_reads(
@@ -55,10 +32,13 @@ async def test_steady_reconcile_has_three_reads(
 
     candidate = ReconcileCandidate(device.id, delete_expired_intents=False, clear_elapsed_cooldown=False)
     await reconcile_device_command(db_session_maker, candidate, publisher=event_bus, packs=packs)
-    engine = db_session_maker.kw["bind"]
-    with capture_sql(engine) as statements:
-        result = await reconcile_device_command(db_session_maker, candidate, publisher=event_bus, packs=packs)
+    recorder = RecordingSessionFactory(db_session_maker, statement_pinner=pin_statement_listener)
+    try:
+        result = await reconcile_device_command(recorder, candidate, publisher=event_bus, packs=packs)
+        statements = recorder.statements_for(0)
+    finally:
+        recorder.close()
 
-    reads = [sql for sql in statements if sql.lstrip().upper().startswith(("SELECT", "WITH"))]
+    reads = [sql for sql in statements if sql.startswith(("select", "with"))]
     assert result.changed is False
     assert len(reads) == 3, reads

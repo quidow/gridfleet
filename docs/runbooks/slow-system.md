@@ -53,9 +53,12 @@ means that process's poller is failing or wedged. Delivery does not stop on its
 own when it does — the listener is a separate task on a separate connection —
 so the symptom is missed events only when a `NOTIFY` is also lost.
 
-`outbox_pending_gaps` is bounded in steady state only. A large value right after
-an outage is expected: the recovery poll enumerates the whole interval it
-missed. A large value that does not fall is not.
+`outbox_pending_gaps` is bounded in steady state only. Two things scale it with
+the workload instead of an actual strand: a large value right after an outage
+is expected, since the recovery poll enumerates the whole interval it missed;
+so is a large value during a rollback storm, since every rolled-back
+transaction burns a sequence value that never becomes a row and only clears on
+the retirement bound. A large value that does not fall is not.
 
 **These gauges are per-process, and one poller is not on this port.** Every
 process runs its own poller, and the registry is single-process:

@@ -75,6 +75,12 @@ async def test_reaper_commit_and_query_budget_scales_with_candidates(db_session:
         lifecycle = AsyncMock()
         tap = QueryTap()
         commit_tap = CommitTap()
+        # Engine-scoped on purpose: counts engine-level commits via CommitTap,
+        # which the session-pinned helper cannot see. The listeners are
+        # attached only around the measured call, so no seeding or teardown
+        # traffic is counted. See tests/concurrency/group_lock_helpers.
+        # capture_statements for the pinned form the session-scoped budget
+        # tests use.
         event.listen(engine, "before_cursor_execute", tap)
         event.listen(engine, "commit", commit_tap)
         try:

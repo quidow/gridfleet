@@ -38,9 +38,9 @@ TRANSACTION_CONTROL_ARGUMENTS = frozenset({"commit", "rollback", "autocommit"})
 # set can only shrink; a fourth savepoint anywhere fails this contract.
 BEGIN_NESTED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
-        # A deleted member_of target must surface as UnknownMemberOfError rather
-        # than aborting the caller's transaction. Deferred to Phase 11 with the
-        # rest of groups.py.
+        # An UnknownMemberOfError raised while inserting member_of edges must not
+        # abort the caller's transaction, so the insert runs inside its own
+        # savepoint that can be rolled back alone. Permanent, not deferred.
         ("app/devices/services/groups.py", "_replace_member_of"),
         # A cooldown clear that fails must not abort the whole reconcile pass;
         # the savepoint keeps the other candidates' work.
@@ -459,6 +459,14 @@ REMOTE_EFFECT_OWNER_REGISTRY: frozenset[RemoteEffectOwner] = frozenset(
     }
 )
 
+# The set can grow but never shrink. Nine entries, contributed by:
+#   Phase 4 (2): grid/router_internal._finalize_interrupted_create, sessions/service_kill._perform_kill_effect
+#   Phase 8/9 (4): the four hosts/router agent dials
+#   Phase 10 (3): remediation_job._dispatch, recovery_job._run_probe, recovery_job._wait_for_node_running
+# Equality with EFFECT_ENTRY_POINTS is impossible (51 lexical entry points vs 9
+# with runtime tests), so this floor is what stops the set silently emptying.
+REMOTE_EFFECT_OWNER_FLOOR = 9
+
 
 def relative_module(path: Path) -> str:
     return str(path.relative_to(BACKEND_ROOT))
@@ -540,17 +548,17 @@ def _opens_transaction(item: ast.withitem) -> bool:
     )
 
 
-def begin_owners() -> list[tuple[str, str, int]]:
-    """``(module, qualified_function, lineno)`` for every ``async with <expr>.begin()``.
+def begin_owner_findings(tree: ast.Module, module: str) -> list[tuple[str, str, int]]:
+    """Every ``begin()`` context in *tree*, by owner.
 
-    ``begin_nested()`` has its own attribute name and is checked separately.
+    Two shapes, because both open a transaction that outlives the statement:
+    a ``with``/``async with`` item, and a ``begin()`` handed to an exit stack's
+    ``enter_context``/``enter_async_context``. ``begin_nested()`` has its own
+    attribute name and is checked separately.
     """
     findings: list[tuple[str, str, int]] = []
-    for path in PRODUCTION:
-        module = relative_module(path)
-        for node, owner in iter_owned(parse_module(path), ""):
-            if not isinstance(node, ast.With | ast.AsyncWith):
-                continue
+    for node, owner in iter_owned(tree, ""):
+        if isinstance(node, ast.With | ast.AsyncWith):
             findings.extend(
                 (module, _owner_name(owner), item.context_expr.lineno)
                 for item in node.items
@@ -558,6 +566,24 @@ def begin_owners() -> list[tuple[str, str, int]]:
                 and isinstance(item.context_expr.func, ast.Attribute)
                 and item.context_expr.func.attr == "begin"
             )
+        elif isinstance(node, ast.Call) and call_tail(node.func) in {"enter_context", "enter_async_context"}:
+            findings.extend(
+                (module, _owner_name(owner), argument.lineno)
+                for argument in node.args
+                if isinstance(argument, ast.Call)
+                and isinstance(argument.func, ast.Attribute)
+                and argument.func.attr == "begin"
+            )
+    return findings
+
+
+def begin_owners() -> list[tuple[str, str, int]]:
+    """``(module, qualified_function, lineno)`` for every ``begin()`` context, whether
+    opened by ``async with`` or handed to an exit stack. See ``begin_owner_findings``.
+    """
+    findings: list[tuple[str, str, int]] = []
+    for path in PRODUCTION:
+        findings.extend(begin_owner_findings(parse_module(path), relative_module(path)))
     return sorted(findings)
 
 
@@ -699,6 +725,23 @@ def test_every_begin_context_has_a_named_owner() -> None:
     )
 
 
+def test_begin_detection_sees_both_context_shapes() -> None:
+    """An exit-stack ``begin()`` opens the same transaction an ``async with`` does.
+
+    Reproduced during Phase 10's review: the ``With``/``AsyncWith``-only scan
+    missed ``stack.enter_async_context(db.begin())`` entirely, so a boundary
+    entered that way would have had no registry entry and nothing would fail.
+    """
+    source = """
+async def outer(db, stack):
+    async with db.begin():
+        pass
+    await stack.enter_async_context(db.begin())
+"""
+    owners = begin_owner_findings(ast.parse(source), "synthetic.py")
+    assert [owner for _module, owner, _lineno in owners] == ["outer", "outer"]
+
+
 def test_begin_owner_kinds_are_command_or_infrastructure() -> None:
     kinds = {owner.kind for owner in BEGIN_OWNER_REGISTRY}
     assert kinds <= {"command", "infrastructure"}, f"unclassifiable begin() owner kinds: {sorted(kinds)}"
@@ -724,10 +767,18 @@ def test_no_effect_runs_inside_a_transaction_block() -> None:
     AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / SUBPROCESS_NAMES / FILESYSTEM_NAMES
     (via ``_effect_call_name``), so a raw ``await client.post(...)`` inside a
     ``begin()`` block would not be caught here. That is fine today because raw
-    ``httpx2`` calls are confined to ``app/agent_comm/`` and
+    ``httpx`` calls are confined to ``app/agent_comm/`` and
     ``app/grid/appium_direct.py``, both of which route through the named tails
-    above -- but it is a property of this repository's current call sites, not
-    a guarantee this scan enforces."""
+    above -- but that confinement is no longer an observation: it is pinned by
+    ``tests/contracts/test_raw_http_client_confinement.py``, which fails if any
+    module outside those two locations constructs an HTTP client. The scan is
+    also lexical -- an effect one call frame below a ``begin()`` block is
+    invisible here, which is what the runtime-backed entries in
+    ``REMOTE_EFFECT_OWNER_REGISTRY`` exist to cover. The transaction detector
+    (``_opens_transaction``) is also ``With``/``AsyncWith``-only, so an effect
+    inside a transaction opened through an exit stack's
+    ``enter_context``/``enter_async_context`` is not caught here either --
+    unlike ``begin_owners``, which was widened to see that shape."""
     findings = effects_inside_transactions()
     assert findings == [], (
         "one of this repository's known effect entry points (see AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / "
@@ -738,10 +789,26 @@ def test_no_effect_runs_inside_a_transaction_block() -> None:
 
 
 def test_remote_effect_owners_are_registered_effect_entry_points() -> None:
-    """A runtime-backed entry cannot outlive the code that justified it."""
+    """A runtime-backed entry cannot outlive the code that justified it.
+
+    Subset, not equality — deliberately, and uniquely in this file. Equality is
+    impossible here: ``EFFECT_ENTRY_POINTS`` names every lexical effect entry
+    point, and only a minority of them have a runtime no-active-transaction test.
+    ``test_remote_effect_owner_registry_never_shrinks`` is the other half: this
+    one stops an entry outliving its effect, that one stops the set emptying.
+    """
     keys = {owner.key for owner in REMOTE_EFFECT_OWNER_REGISTRY}
     orphans = sorted(keys - set(EFFECT_ENTRY_POINTS))
     assert orphans == [], f"REMOTE_EFFECT_OWNER_REGISTRY names owners that make no effect call: {orphans}"
+
+
+def test_remote_effect_owner_registry_never_shrinks() -> None:
+    assert len(REMOTE_EFFECT_OWNER_REGISTRY) >= REMOTE_EFFECT_OWNER_FLOOR, (
+        f"REMOTE_EFFECT_OWNER_REGISTRY dropped to {len(REMOTE_EFFECT_OWNER_REGISTRY)} entries, below the "
+        f"floor of {REMOTE_EFFECT_OWNER_FLOOR}. A runtime-backed no-active-transaction proof was deleted "
+        "without the code that justified it being deleted — restore it, or lower the floor in the same "
+        "commit that removes the effect."
+    )
 
 
 def test_remote_effect_owner_tests_exist() -> None:

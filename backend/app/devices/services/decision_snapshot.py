@@ -5,13 +5,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import and_, exists, func, or_, select
+from sqlalchemy import exists, func, or_, select, true, tuple_
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import aliased
 
-from app.devices.models import DeviceIntent, DeviceRemediationLogEntry, DeviceReservation, ExclusionKind
+from app.devices.models import DeviceIntent, DeviceRemediationLogEntry, DeviceReservation
 from app.devices.services.claims import is_verification_lease_active, reservation_active
-from app.devices.services.decision import DecisionFacts
+from app.devices.services.decision import DecisionFacts, reservation_decision_axes
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.readiness import assess_device_async
 from app.devices.services.state import DeviceStateFacts, WithdrawalFacts, appium_node_stop_in_flight
@@ -23,6 +23,7 @@ from app.sessions.models import Session
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from sqlalchemy import Select
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.devices.locking import LockedDevice
@@ -197,43 +198,44 @@ async def _load_claims_intents_and_reservation(
     )
 
 
-async def _load_current_ladder(db: AsyncSession, device_id: uuid.UUID) -> LadderState:
+def _ladder_entries_stmt(device_id: uuid.UUID) -> Select[tuple[DeviceRemediationLogEntry]]:
+    """Entries at or after the device's latest reset, in one statement.
+
+    The reset is located once, as a single ``(at, id)`` row, and compared with a
+    row-value predicate. Two structurally identical scalar subqueries — one for
+    ``at``, one for ``id`` — made Postgres locate the same reset twice inside one
+    statement.
+
+    ``LEFT JOIN ... ON true`` against a ``LIMIT 1`` subquery yields exactly one
+    row of NULLs when the device has no reset, which is what keeps the
+    "no reset yet, take the whole history" branch reachable.
+    """
     reset = aliased(DeviceRemediationLogEntry)
-    latest_reset_at = (
-        select(reset.at)
+    latest_reset = (
+        select(reset.at.label("at"), reset.id.label("id"))
         .where(reset.device_id == device_id, reset.kind == remediation_log.KIND_RESET)
         .order_by(reset.at.desc(), reset.id.desc())
         .limit(1)
-        .scalar_subquery()
+        .subquery()
     )
-    latest_reset_id = (
-        select(reset.id)
-        .where(reset.device_id == device_id, reset.kind == remediation_log.KIND_RESET)
-        .order_by(reset.at.desc(), reset.id.desc())
-        .limit(1)
-        .scalar_subquery()
-    )
-    entries = list(
-        (
-            await db.execute(
-                select(DeviceRemediationLogEntry)
-                .where(
-                    DeviceRemediationLogEntry.device_id == device_id,
-                    or_(
-                        latest_reset_at.is_(None),
-                        DeviceRemediationLogEntry.at > latest_reset_at,
-                        and_(
-                            DeviceRemediationLogEntry.at == latest_reset_at,
-                            DeviceRemediationLogEntry.id >= latest_reset_id,
-                        ),
-                    ),
-                )
-                .order_by(DeviceRemediationLogEntry.at, DeviceRemediationLogEntry.id)
-            )
+    return (
+        select(DeviceRemediationLogEntry)
+        .select_from(DeviceRemediationLogEntry)
+        .outerjoin(latest_reset, true())
+        .where(
+            DeviceRemediationLogEntry.device_id == device_id,
+            or_(
+                latest_reset.c.at.is_(None),
+                tuple_(DeviceRemediationLogEntry.at, DeviceRemediationLogEntry.id)
+                >= tuple_(latest_reset.c.at, latest_reset.c.id),
+            ),
         )
-        .scalars()
-        .all()
+        .order_by(DeviceRemediationLogEntry.at, DeviceRemediationLogEntry.id)
     )
+
+
+async def _load_current_ladder(db: AsyncSession, device_id: uuid.UUID) -> LadderState:
+    entries = list((await db.execute(_ladder_entries_stmt(device_id))).scalars().all())
     return remediation_log.derive_ladder(entries)
 
 
@@ -269,18 +271,13 @@ async def load_device_decision_snapshot(
         )
         for intent in intents
     )
-    reservation_run_id = None
-    cooldown_active = False
-    cooldown_reason = None
-    if reservation is not None and reservation.exclusion_kind != ExclusionKind.exclusion:
-        reservation_run_id = reservation.run_id
-        if (
-            reservation.exclusion_kind == ExclusionKind.cooldown
-            and reservation.excluded_until is not None
-            and reservation.excluded_until > now
-        ):
-            cooldown_active = True
-            cooldown_reason = reservation.exclusion_reason
+    reservation_run_id, cooldown_active, cooldown_reason = reservation_decision_axes(
+        run_id=reservation.run_id if reservation is not None else None,
+        exclusion_kind=reservation.exclusion_kind if reservation is not None else None,
+        exclusion_reason=reservation.exclusion_reason if reservation is not None else None,
+        excluded_until=reservation.excluded_until if reservation is not None else None,
+        now=now,
+    )
 
     return DeviceDecisionSnapshot(
         intents=intents,

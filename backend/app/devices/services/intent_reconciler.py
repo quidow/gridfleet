@@ -41,6 +41,7 @@ from app.devices.services.decision import (
     decide_node_process,
     map_node_process_decision,
     parse_command,
+    reservation_decision_axes,
 )
 from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.event import record_event
@@ -293,21 +294,13 @@ async def gather_decision_facts(
             .limit(1)
         )
     ).scalar_one_or_none()
-    reservation_run_id = None
-    cooldown_active = False
-    cooldown_reason: str | None = None
-    if entry is not None and entry.exclusion_kind != ExclusionKind.exclusion:
-        # An indefinite (health-failure) exclusion removes the device from run
-        # routing entirely; a timed exclusion (cooldown) keeps the run bound
-        # but blocks new sessions — both verbatim from the retired synthesis.
-        reservation_run_id = entry.run_id
-        if (
-            entry.exclusion_kind == ExclusionKind.cooldown
-            and entry.excluded_until is not None
-            and entry.excluded_until > now
-        ):
-            cooldown_active = True
-            cooldown_reason = entry.exclusion_reason
+    reservation_run_id, cooldown_active, cooldown_reason = reservation_decision_axes(
+        run_id=entry.run_id if entry is not None else None,
+        exclusion_kind=entry.exclusion_kind if entry is not None else None,
+        exclusion_reason=entry.exclusion_reason if entry is not None else None,
+        excluded_until=entry.excluded_until if entry is not None else None,
+        now=now,
+    )
     withdrawal = WithdrawalFacts.from_device(device)
     if ladder is None:
         ladder = await remediation_log.load_ladder(db, device.id)
@@ -385,6 +378,11 @@ async def _apply_rollout_stamp(
     # without waiting for the 60 s janitor stage. The stage's revoke branch
     # remains the backstop for the no-longer-candidate cases.
     if rollout_row is not None and target_release is not None and observed_pack_release == target_release:
+        # No explicit synchronize_session: the implicit "auto" default resolves to
+        # "evaluate" for this single-column PK equality and already evicts the
+        # matched row from the identity map (measured on SQLAlchemy 2.0.51).
+        # synchronize_session=False is the one setting that would leave a ghost —
+        # this statement must not adopt it.
         await db.execute(delete(DeviceIntent).where(DeviceIntent.id == rollout_row.id))
         return tuple(row for row in stored if row.id != rollout_row.id)
     # Stamp gate: mint restart_requested_at once the rollout can safely apply.
@@ -487,6 +485,15 @@ async def _apply_reconcile_decisions(  # noqa: PLR0913 - keyword-only snapshot f
     node_decision = decide_node_process(commands, facts)
     grid_decision = decide_grid_routing(facts)
     target_state, node_accepting_new_sessions, stop_pending = map_node_process_decision(node_decision)
+    # Findings 1, 5: re-validate at watermark-write time. A stamp minted when
+    # the node was idle may sit dormant while a higher-ranked start wins the
+    # ladder; by the time the rollout wins and carries the stamp, a session
+    # may have started, the node may have converged, or a reservation may
+    # have bound the device. Suppress the watermark in any of those cases —
+    # the node is already draining (accepting_new_sessions=False), so the
+    # stamp stays dormant and the next reconcile re-validates. Only the
+    # rollout rung (running_draining) routes a stamp to the watermark; the
+    # start rung carries its own watermark and is unaffected.
     restart_watermark = node_decision.restart_requested_at
     if (
         node_decision.desired_state == "running_draining"
@@ -499,6 +506,13 @@ async def _apply_reconcile_decisions(  # noqa: PLR0913 - keyword-only snapshot f
         )
     ):
         restart_watermark = None
+    # Universal session-safety invariant: only an explicit hard stop
+    # (``stop_mode == "hard"`` — operator force-release, bulk operator stop)
+    # may flip ``desired_state=stopped`` while a client session is active.
+    # Graceful stops AND the no-intent stop (a withdrawn device whose
+    # baseline was suppressed, F-G1) defer: the node keeps running with
+    # ``accepting_new_sessions=False`` until the session ends, then the next
+    # reconcile executes the stop.
     if (
         target_state == AppiumDesiredState.stopped
         and node_decision.stop_mode in (None, "graceful")
@@ -516,6 +530,13 @@ async def _apply_reconcile_decisions(  # noqa: PLR0913 - keyword-only snapshot f
         "stop_pending": node.stop_pending,
         "restart_requested_at": node.restart_requested_at,
     }
+    # The observed port is the single source of port truth: payload `desired_port` values are
+    # registration-time snapshots of node.port and go stale when a fallback start moves the
+    # node (observation updates node.port and clears AppiumNode.desired_port). Re-applying
+    # a stale snapshot flips desired_port against the live port on every reconcile, and the
+    # appium reconciler then force-restarts the node onto the stale port — the port-churn
+    # storm behind the N11 S13/S14 scenario failures. ``observed_port`` is the snapshot's
+    # copy of the live ``node.port``; pin that, never a payload value.
     desired_port = observed_port if target_state == AppiumDesiredState.running else None
     await write_desired_state(
         db,

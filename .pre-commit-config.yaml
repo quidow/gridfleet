@@ -10,14 +10,14 @@ repos:
 
       - id: ruff-format
         name: ruff format
-        entry: bash -c 'cd backend && uv run ruff format --check app/ tests/ && cd ../agent && uv run ruff format --check agent_app/ tests/'
+        entry: bash -c 'cd backend && uv run ruff format --check app/ tests/ ../scripts/ && cd ../agent && uv run ruff format --check agent_app/ tests/'
         language: system
         types: [python]
         pass_filenames: false
 
       - id: ruff-lint
         name: ruff lint
-        entry: bash -c 'cd backend && uv run ruff check app/ tests/ && cd ../agent && uv run ruff check agent_app/ tests/'
+        entry: bash -c 'cd backend && uv run ruff check app/ tests/ ../scripts/ && cd ../agent && uv run ruff check agent_app/ tests/'
         language: system
         types: [python]
         pass_filenames: false
