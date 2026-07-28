@@ -140,7 +140,9 @@ OUTBOX_POLL_AGE_SECONDS = Gauge(
 OUTBOX_PENDING_GAPS = Gauge(
     "outbox_pending_gaps",
     "Outbox row ids this process has observed as missing and not yet resolved or retired. "
-    "Bounded in steady state only; a recovery poll after an outage scales it with the backlog.",
+    "Bounded in steady state only. Two cases scale it with the workload instead: a recovery "
+    "poll after an outage, which scales with the backlog, and a rollback storm, where every "
+    "rolled-back transaction burns a sequence value that never becomes a row.",
 )
 ACTIVE_SSE_CONNECTIONS = Gauge(
     "active_sse_connections",
