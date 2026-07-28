@@ -2111,6 +2111,22 @@ async def test_crash_after_health_or_probe_reuses_same_operation_id(
     assert len(rows) == 1, "resume reused the operation's device instead of creating a duplicate"
 
 
+async def _passthrough_normalize(
+    payload: dict[str, Any],
+    coords: _PackCoords,
+    *,
+    host_ip: str,
+    host_agent_port: int,
+    http_client_factory: AgentClientFactory,
+) -> tuple[dict[str, Any], None]:
+    """Skip the agent round trip: return the payload unchanged with no error.
+
+    Shared by the create-mode preparation tests, which each need the normalize
+    step out of the way to reach the write boundary under test.
+    """
+    return payload, None
+
+
 async def test_prepare_create_commits_device_and_lease_atomically(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -2152,17 +2168,6 @@ async def test_prepare_create_commits_device_and_lease_atomically(
         os_version="14",
         host_id=uuid.UUID(default_host_id),
     )
-
-    # Normalize is a remote agent call; stub it to pass the input payload straight through.
-    async def _passthrough_normalize(
-        payload: dict[str, Any],
-        coords: _PackCoords,
-        *,
-        host_ip: str,
-        host_agent_port: int,
-        http_client_factory: AgentClientFactory,
-    ) -> tuple[dict[str, Any], None]:
-        return payload, None
 
     monkeypatch.setattr(prep, "normalize_effect", _passthrough_normalize)
     monkeypatch.setattr(prep, "_write_verification_lease", AsyncMock(side_effect=RuntimeError("boom")))
@@ -2322,16 +2327,6 @@ async def test_prepare_create_translates_concurrent_identity_integrity_error(
         os_version="14",
         host_id=uuid.UUID(default_host_id),
     )
-
-    async def _passthrough_normalize(
-        payload: dict[str, Any],
-        coords: _PackCoords,
-        *,
-        host_ip: str,
-        host_agent_port: int,
-        http_client_factory: AgentClientFactory,
-    ) -> tuple[dict[str, Any], None]:
-        return payload, None
 
     monkeypatch.setattr(prep, "normalize_effect", _passthrough_normalize)
     # Simulate the DB rejecting the duplicate at flush (past the pre-insert gate).
