@@ -101,6 +101,12 @@ async def test_event_bearing_fold_performs_one_commit(
     tap = QueryTap()
     commits = CommitTap()
     engine = db_session.bind.sync_engine
+    # Engine-scoped on purpose: this measures a loop that drives many sessions
+    # out of a factory AND counts engine-level commits, neither of which a
+    # per-session pin can see. The listeners are attached only around the
+    # measured call, so no seeding or teardown traffic is counted. See
+    # tests/concurrency/group_lock_helpers.capture_statements for the pinned
+    # form the session-scoped budget tests use.
     event.listen(engine, "before_cursor_execute", tap)
     event.listen(engine, "commit", commits)
     tap.armed = False

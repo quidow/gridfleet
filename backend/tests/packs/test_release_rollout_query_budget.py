@@ -109,6 +109,12 @@ async def test_pack_release_inventory_query_count_is_constant_in_fleet_size(
         ) -> None:
             _entries.append(" ".join(statement.split()))
 
+        # Engine-scoped on purpose: this measures a loop that drives many sessions
+        # out of a factory AND counts engine-level commits, neither of which a
+        # per-session pin can see. The listeners are attached only around the
+        # measured call, so no seeding or teardown traffic is counted. See
+        # tests/concurrency/group_lock_helpers.capture_statements for the pinned
+        # form the session-scoped budget tests use.
         event.listen(engine, "before_cursor_execute", _listener)
         try:
             await run_release_rollout_stage(db_session, publisher=event_bus)
