@@ -90,10 +90,6 @@ APPIUM_RECONCILER_HOST_CYCLE_SECONDS = Histogram(
     "Wall-clock duration of one host's Appium convergence cycle.",
     labelnames=("host_id",),
 )
-APPIUM_RECONCILER_ALLOCATION_COLLISIONS = Counter(
-    "appium_reconciler_allocation_collisions_total",
-    "Port allocation collisions encountered by the Appium reconciler.",
-)
 APPIUM_RECONCILER_START_FAILURES = Counter(
     "appium_reconciler_start_failures_total",
     "Agent-start failures observed by the Appium reconciler, labeled by reason.",
