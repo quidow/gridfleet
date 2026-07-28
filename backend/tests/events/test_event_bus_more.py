@@ -714,7 +714,9 @@ async def test_poll_failure_logging_backs_off_during_an_outage(caplog: pytest.Lo
         await dead_engine.dispose()
 
     reports = [record for record in caplog.records if "poller failed" in record.getMessage()]
-    assert len(reports) == 1, f"expected one report for a burst of 5 failures, got {len(reports)}"
+    # Six, not five: ``counting_sleep`` cancels on the sixth sleep, which means six
+    # iterations already failed and logged-or-suppressed before the loop unwound.
+    assert len(reports) == 1, f"expected one report for a burst of 6 failures, got {len(reports)}"
     # This project's structlog config never formats %-style positional args into
     # the text ``caplog`` captures (no ``PositionalArgumentsFormatter`` in the
     # processor chain) -- ``record.msg`` is the raw structlog event dict, and the
@@ -724,6 +726,35 @@ async def test_poll_failure_logging_backs_off_during_an_outage(caplog: pytest.Lo
     # before anything has been suppressed, so a future reader must not "fix"
     # this to 4.
     assert reports[0].msg["positional_args"] == (0,)
+
+
+async def test_poll_loop_reraises_a_cancellation_raised_by_the_poll_itself() -> None:
+    """A cancellation raised from inside the dispatch call reaches the caller.
+
+    The outage test above cancels through the patched ``asyncio.sleep``, which
+    sits outside the ``try`` -- so it never raises from inside the ``try`` the
+    way this test does.
+
+    Verified by temporarily deleting the ``except asyncio.CancelledError: raise``
+    clause and re-running this test: it still passed. ``asyncio.CancelledError``
+    has derived from ``BaseException``, not ``Exception``, since Python 3.8, so
+    the broad ``except Exception:`` below it was never going to catch it either
+    way -- the explicit clause is documentary here, not load-bearing. What this
+    test does pin: a cancellation raised inside the dispatch call is not logged
+    or counted by the backoff bookkeeping, and it reaches the caller intact.
+    """
+    bus = EventBus()
+    bus.configure(session_factory=None, engine=cast("AsyncEngine", object()))
+
+    async def _cancelled() -> None:
+        raise asyncio.CancelledError
+
+    with (
+        patch.object(bus, "_dispatch_missed_events", new=_cancelled),
+        patch("app.events.event_bus.asyncio.sleep", new=AsyncMock()),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await bus._poll_for_missed_events()
 
 
 def test_log_backoff_suppresses_inside_the_window_and_reports_the_count() -> None:
