@@ -724,10 +724,14 @@ def test_no_effect_runs_inside_a_transaction_block() -> None:
     AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / SUBPROCESS_NAMES / FILESYSTEM_NAMES
     (via ``_effect_call_name``), so a raw ``await client.post(...)`` inside a
     ``begin()`` block would not be caught here. That is fine today because raw
-    ``httpx2`` calls are confined to ``app/agent_comm/`` and
+    ``httpx`` calls are confined to ``app/agent_comm/`` and
     ``app/grid/appium_direct.py``, both of which route through the named tails
-    above -- but it is a property of this repository's current call sites, not
-    a guarantee this scan enforces."""
+    above -- but that confinement is no longer an observation: it is pinned by
+    ``tests/contracts/test_raw_http_client_confinement.py``, which fails if any
+    module outside those two locations constructs an HTTP client. The scan is
+    also lexical -- an effect one call frame below a ``begin()`` block is
+    invisible here, which is what the runtime-backed entries in
+    ``REMOTE_EFFECT_OWNER_REGISTRY`` exist to cover."""
     findings = effects_inside_transactions()
     assert findings == [], (
         "one of this repository's known effect entry points (see AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / "
