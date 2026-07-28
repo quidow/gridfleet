@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.events import Event, EventBus
+from app.events.event_bus import _LogBackoff
 from app.events.models import SystemEvent
 from tests.helpers import drain_handlers, recent_events
 
@@ -723,3 +724,26 @@ async def test_poll_failure_logging_backs_off_during_an_outage(caplog: pytest.Lo
     # before anything has been suppressed, so a future reader must not "fix"
     # this to 4.
     assert reports[0].msg["positional_args"] == (0,)
+
+
+def test_log_backoff_suppresses_inside_the_window_and_reports_the_count() -> None:
+    """The listener and poll loops maintain identical bookkeeping; this is the one copy."""
+    backoff = _LogBackoff(initial_sec=2.0, max_sec=60.0)
+
+    assert backoff.report(now=0.0) == 0, "the onset report fires before anything is suppressed"
+    assert backoff.report(now=1.0) is None, "inside the window"
+    assert backoff.report(now=2.0) == 1, "one suppressed failure carried into the next report"
+
+
+def test_log_backoff_resets_after_a_quiet_period_measured_from_the_last_report() -> None:
+    """The reset reference point is the last report's own timestamp, not the deadline it set.
+
+    The deadline is the report time plus the interval then in effect, so measuring
+    against it would make an incident's tail-end look like a fresh quiet period.
+    """
+    backoff = _LogBackoff(initial_sec=2.0, max_sec=60.0)
+    assert backoff.report(now=0.0) == 0
+    assert backoff.report(now=2.0) == 0
+    assert backoff.report(now=64.0) == 0
+    assert backoff.report(now=68.0) == 0
+    assert backoff.report(now=70.0) is None
