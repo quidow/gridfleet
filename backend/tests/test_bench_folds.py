@@ -262,11 +262,11 @@ async def _verify_deep_history_untouched(db: AsyncSession, tap: QueryTap, device
     assert count == _DEEP_HISTORY_ROWS, f"healthy fold must not append to an inactive deep ladder (rows={count})"
     # Every healthy observation still loads the ladder once per device per armed
     # iteration -- but through the Phase 3 snapshot loader, and bounded to the
-    # entries *after* the latest reset. The seed ends in a terminal reset, so a
-    # ~200-row inactive history costs a bounded read returning nothing. The old
-    # assertion here demanded a full-history read from the retired
-    # ``remediation_log.load_ladder`` call site: it measured a cost Phase 3
-    # removed, against a call site the fold no longer uses.
+    # entries at or after the latest reset. The seed ends in a terminal reset, so
+    # a ~200-row inactive history costs a bounded read of exactly one row: the
+    # terminal reset itself. The old assertion here demanded a full-history read
+    # from the retired ``remediation_log.load_ladder`` call site: it measured a
+    # cost Phase 3 removed, against a call site the fold no longer uses.
     ladder_key = ("app.devices.services.decision_snapshot._load_current_ladder", "SELECT device_remediation_log")
     assert tap.callsite_counter[ladder_key] >= len(devices) * ITERS, "deep-history ladder read did not run per device"
     # Exact, not a loose upper bound. The seed ends in a terminal reset and the
