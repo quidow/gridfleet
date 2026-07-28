@@ -12,6 +12,12 @@ This pins that premise. Outside those two locations, ``httpx.AsyncClient`` and
 operation, or an exception class in an ``except`` clause -- but may never be
 instantiated. Constructing one is how a module would start issuing requests the
 effect scan cannot see.
+
+Detection covers the conventional ``import httpx2 as httpx`` alias plus a direct
+``httpx.AsyncClient(...)`` / ``httpx.Client(...)`` attribute call. A differently
+aliased import, a bare-name import, subclassing, or any other indirection through
+which a client gets constructed is invisible to this check, exactly like the
+effect scan this test exists to backstop.
 """
 
 from __future__ import annotations
@@ -21,7 +27,9 @@ from pathlib import Path
 
 BACKEND_APP = Path(__file__).resolve().parents[2] / "app"
 CLIENT_NAMES = frozenset({"AsyncClient", "Client"})
-HTTP_MODULE_PREFIXES = ("httpx", "httpx2")
+# The real package is ``httpx2`` (see pyproject.toml), always imported ``as httpx``; every
+# name starting with "httpx2" already starts with "httpx", so a second prefix would be dead weight.
+HTTP_MODULE_PREFIX = "httpx"
 RAW_CLIENT_OWNERS = ("app/agent_comm/", "app/grid/appium_direct.py")
 
 
@@ -31,7 +39,7 @@ def _constructs_a_raw_client(node: ast.AST) -> bool:
     if node.func.attr not in CLIENT_NAMES:
         return False
     base = node.func.value
-    return isinstance(base, ast.Name) and base.id.startswith(HTTP_MODULE_PREFIXES)
+    return isinstance(base, ast.Name) and base.id.startswith(HTTP_MODULE_PREFIX)
 
 
 def test_the_detector_separates_construction_from_reference() -> None:
