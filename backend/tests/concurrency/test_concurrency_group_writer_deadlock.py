@@ -60,7 +60,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from app.devices.models.group import DeviceGroup, DeviceGroupMemberOf, GroupType
 from app.devices.schemas.group import DeviceGroupCreate, DeviceGroupUpdate
 from app.devices.services import groups as group_service
-from app.devices.services.groups import GroupReferencedError, UnknownMemberOfError
+from app.devices.services.groups import GroupReferencedError, GroupWriteResult, UnknownMemberOfError
 from tests.concurrency.group_lock_helpers import (
     build_groups_service,
     capture_statements,
@@ -272,7 +272,10 @@ async def test_no_edge_can_be_committed_once_the_delete_has_started(
 
     async def delete_static() -> bool:
         async with db_session_maker() as session:
-            return await service.delete_group(session, static_key)
+            deleted = await service.delete_group(session, static_key)
+            assert session.in_transaction(), "delete_group must leave its successful write for the caller to commit"
+            await session.commit()
+            return deleted
 
     delete_result = await asyncio.wait_for(delete_static(), timeout=COORDINATED_TIMEOUT_SEC)
     arm_result = await asyncio.wait_for(
@@ -327,7 +330,7 @@ async def test_edge_armed_immediately_before_the_parent_delete_does_not_deadlock
     deleter_pid: list[int] = []
     armer: list[asyncio.Task[Any]] = []
 
-    async def arm_and_replace() -> dict[str, Any] | None:
+    async def arm_and_replace() -> GroupWriteResult | None:
         # Commit the edge from a peer, then hand it to a *second* transaction —
         # the holder the previous argument missed.
         async with db_session_maker() as peer:
@@ -370,7 +373,10 @@ async def test_edge_armed_immediately_before_the_parent_delete_does_not_deadlock
     async def delete_static() -> bool:
         async with db_session_maker() as session:
             _arm_before_the_parent_delete(session)
-            return await service.delete_group(session, static_key)
+            deleted = await service.delete_group(session, static_key)
+            assert session.in_transaction(), "delete_group must leave its successful write for the caller to commit"
+            await session.commit()
+            return deleted
 
     delete_result: bool | BaseException
     try:
@@ -446,6 +452,8 @@ async def test_definition_writers_lock_parents_before_touching_edges(
             DeviceGroupUpdate(filters={"member_of": [static_key]}),  # type: ignore[arg-type]
         )
     assert updated is not None
+    assert db_session.in_transaction(), "update_group must leave its successful write for the caller to commit"
+    await db_session.commit()
     lock_index = _first_index(
         statements,
         predicate=lambda s: "for key share" in s.lower() and "device_groups" in s.lower(),
@@ -495,7 +503,10 @@ async def test_concurrent_duplicate_deletes_report_exactly_one_success(
 
     async def delete_static() -> bool:
         async with db_session_maker() as session:
-            return await service.delete_group(session, static_key)
+            deleted = await service.delete_group(session, static_key)
+            assert session.in_transaction(), "delete_group must leave its successful write for the caller to commit"
+            await session.commit()
+            return deleted
 
     results = await asyncio.wait_for(
         asyncio.gather(delete_static(), delete_static(), return_exceptions=True),
@@ -541,13 +552,18 @@ async def test_a_peer_cannot_delete_and_recreate_the_target_underneath_a_delete(
     async def delete_and_recreate() -> None:
         async with db_session_maker() as session:
             peer_pid.append(await _backend_pid(session))
-            peer_delete.append(await service.delete_group(session, static_key))
+            deleted = await service.delete_group(session, static_key)
+            assert session.in_transaction(), "delete_group must leave its successful write for the caller to commit"
+            peer_delete.append(deleted)
+            await session.commit()
         if peer_delete[0]:
             async with db_session_maker() as session:
                 await service.create_group(
                     session,
                     DeviceGroupCreate(key=static_key, name=static_key, group_type=GroupType.static),
                 )
+                assert session.in_transaction(), "create_group must leave its successful write for the caller to commit"
+                await session.commit()
 
     async def preflight(db: AsyncSession, group_id: uuid.UUID) -> list[str]:
         nonlocal calls
@@ -561,7 +577,10 @@ async def test_a_peer_cannot_delete_and_recreate_the_target_underneath_a_delete(
 
     async def delete_static() -> bool:
         async with db_session_maker() as session:
-            return await service.delete_group(session, static_key)
+            deleted = await service.delete_group(session, static_key)
+            assert session.in_transaction(), "delete_group must leave its successful write for the caller to commit"
+            await session.commit()
+            return deleted
 
     delete_result = await asyncio.wait_for(delete_static(), timeout=COORDINATED_TIMEOUT_SEC)
     await asyncio.wait_for(asyncio.gather(*peer_task), timeout=COORDINATED_TIMEOUT_SEC)
@@ -642,25 +661,34 @@ async def test_concurrent_group_writers_do_not_deadlock(
     device_id = device.id
     service = build_groups_service()
 
-    async def touch(group_key: str) -> dict[str, Any] | None:
+    async def touch(group_key: str) -> GroupWriteResult | None:
         async with db_session_maker() as session:
-            return await service.update_group(
+            updated = await service.update_group(
                 session,
                 group_key,
                 DeviceGroupUpdate(description=f"touched-{uuid.uuid4().hex[:6]}"),
             )
+            assert session.in_transaction(), "update_group must leave its successful write for the caller to commit"
+            await session.commit()
+            return updated
 
-    async def replace_reference() -> dict[str, Any] | None:
+    async def replace_reference() -> GroupWriteResult | None:
         async with db_session_maker() as session:
-            return await service.update_group(
+            updated = await service.update_group(
                 session,
                 dynamic_key,
                 DeviceGroupUpdate(filters={"member_of": [static_key]}),  # type: ignore[arg-type]
             )
+            assert session.in_transaction(), "update_group must leave its successful write for the caller to commit"
+            await session.commit()
+            return updated
 
     async def delete_static() -> bool:
         async with db_session_maker() as session:
-            return await service.delete_group(session, static_key)
+            deleted = await service.delete_group(session, static_key)
+            assert session.in_transaction(), "delete_group must leave its successful write for the caller to commit"
+            await session.commit()
+            return deleted
 
     async def touch_members() -> int | None:
         # A real device, so add_members takes its ``FOR UPDATE`` row lock and
@@ -688,8 +716,8 @@ async def test_concurrent_group_writers_do_not_deadlock(
     # Absence of a database error is not enough on its own: if every writer
     # failed for some unrelated reason, the loop above would still pass.
     for key, result in ((first_key, first_result), (second_key, second_result)):
-        assert isinstance(result, dict), f"an update on an uncontended group must commit, got {result!r}"
-        assert result["key"] == key
+        assert isinstance(result, GroupWriteResult), f"an update on an uncontended group must commit, got {result!r}"
+        assert result.payload["key"] == key
 
     static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
     references = await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key)

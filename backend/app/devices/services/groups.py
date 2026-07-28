@@ -169,37 +169,6 @@ class DeviceGroupsService:
             is_dynamic=group.group_type == GroupType.dynamic,
         )
 
-    async def _dynamic_device_count(self, db: AsyncSession, group: DeviceGroup) -> int | None:
-        """``update_group``'s own post-commit count read.
-
-        Kept alongside the router-owned :meth:`dynamic_device_count` because
-        ``update_group`` still owns its transaction end to end (Phase 11 has not
-        converted it yet) and calls this on the same session it just committed
-        on, guarded by the same in-transaction check it always had. A sibling
-        task retires this method when it converts ``update_group``.
-        """
-        if db.in_transaction():
-            raise RuntimeError("dynamic device counts must run outside definition transactions")
-        try:
-            references = await load_member_of_keys(db, [group.id])
-            devices = await _load_devices_in_scope(db, [group], references)
-            index = await load_group_membership_index(
-                db,
-                groups=[group],
-                devices=devices,
-                member_of_keys_by_dynamic_group_id=references,
-            )
-            return len(index.device_ids(group.key))
-        except Exception:
-            # Runs before the ``finally`` below, so ``group`` is still populated
-            # here; the rollback that would expire it has not happened yet.
-            logger.exception("device_group_dynamic_count_failed", extra={"group_key": group.key})
-            return None
-        finally:
-            # These reads autobegin a transaction the caller never commits.
-            if db.in_transaction():
-                await db.rollback()
-
     async def dynamic_device_count(self, db: AsyncSession, *, group_id: uuid.UUID, group_key: str) -> int | None:
         """A dynamic group's live member count, or ``None`` when the read fails.
 
@@ -326,97 +295,87 @@ class DeviceGroupsService:
         group = await _get_group_row(db, group_key)
         return None if group is None else group.group_type
 
-    async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> dict[str, Any] | None:
-        try:
-            group = await _load_group_for_mutation(db, group_key)
-            if group is None:
-                return None
-            updates = data.model_dump(exclude_unset=True)
-            replaces_filters = "filters" in updates
-            targets, member_of_keys = await _resolve_update_references(
-                db, group, data, replaces_filters=replaces_filters
+    async def update_group(self, db: AsyncSession, group_key: str, data: DeviceGroupUpdate) -> GroupWriteResult | None:
+        """Apply one group update inside the caller's transaction, or ``None`` for an unknown key."""
+        group = await _load_group_for_mutation(db, group_key)
+        if group is None:
+            return None
+        updates = data.model_dump(exclude_unset=True)
+        replaces_filters = "filters" in updates
+        targets, member_of_keys = await _resolve_update_references(db, group, data, replaces_filters=replaces_filters)
+        if replaces_filters:
+            group.filters = _dump_native_filters(data.filters)
+            updates.pop("filters")
+        for field, value in updates.items():
+            setattr(group, field, value)
+        self._publisher.queue_for_session(
+            db,
+            "device_group.updated",
+            {"group_key": group.key, "action": "updated"},
+        )
+        await db.flush()
+        if replaces_filters and group.group_type == GroupType.dynamic:
+            await _replace_member_of(db, group.id, targets)
+        await db.refresh(group)
+        is_static = _is_static(group)
+        if is_static:
+            count_stmt = select(func.count(DeviceGroupMembership.device_id)).where(
+                DeviceGroupMembership.group_id == group.id
             )
-            if replaces_filters:
-                group.filters = _dump_native_filters(data.filters)
-                updates.pop("filters")
-            for field, value in updates.items():
-                setattr(group, field, value)
-            self._publisher.queue_for_session(
-                db,
-                "device_group.updated",
-                {"group_key": group.key, "action": "updated"},
-            )
-            await db.flush()
-            if replaces_filters and group.group_type == GroupType.dynamic:
-                await _replace_member_of(db, group.id, targets)
-            await db.refresh(group)
-            is_static = _is_static(group)
-            if is_static:
-                count_stmt = select(func.count(DeviceGroupMembership.device_id)).where(
-                    DeviceGroupMembership.group_id == group.id
-                )
-                device_count = int(await db.scalar(count_stmt) or 0)
-            else:
-                device_count = 0
-            payload = _serialize_group(group, device_count=device_count, member_of_keys=member_of_keys)
-            await db.commit()
-        finally:
-            # See create_group: the commit above is the only path that leaves no
-            # transaction behind. The unknown-key return and every typed
-            # rejection would otherwise strand one until request teardown.
-            if db.in_transaction():
-                await db.rollback()
-        if not is_static:
-            payload["device_count"] = await self._dynamic_device_count(db, group)
-        return payload
+            device_count = int(await db.scalar(count_stmt) or 0)
+        else:
+            device_count = 0
+        return GroupWriteResult(
+            payload=_serialize_group(group, device_count=device_count, member_of_keys=member_of_keys),
+            group_id=group.id,
+            group_key=group.key,
+            is_dynamic=not is_static,
+        )
 
     async def delete_group(self, db: AsyncSession, group_key: str) -> bool:
-        try:
-            # ``FOR UPDATE`` before anything else reads, and it is doing three
-            # jobs at once.
-            #
-            # Ordering: it is the parent half of the parent-before-edge rule
-            # every group-definition writer follows (see ``_replace_member_of``).
-            # Taking it here, rather than letting the ``DELETE`` take it later,
-            # is what keeps this writer from holding a ``device_groups`` row
-            # while a reference writer holds a ``device_group_member_of`` tuple
-            # and each waits for the other's.
-            #
-            # Exclusion: inserting a reference to this group requires
-            # ``FOR KEY SHARE`` on this row, which conflicts. So no edge can be
-            # committed against it from here on, the dependent read below sees
-            # every edge that will ever exist for this delete, and the
-            # ``ON DELETE RESTRICT`` foreign key cannot fire.
-            #
-            # Identity: the row is matched by key but deleted by id. Holding it
-            # is what stops a peer from deleting and recreating the key
-            # underneath us, which would leave the ``DELETE`` matching nothing
-            # while this call still reported success. A peer that got there
-            # first makes this read return no row at all — EvalPlanQual re-checks
-            # the locked tuple and finds it deleted — so a concurrent duplicate
-            # delete gets the 404 it should rather than a second success.
-            group = await _get_group_row(db, group_key, for_update=True)
-            if group is None:
-                return False
-            # Bound before the ``finally`` below, which rolls back to the *root*
-            # and expires every loaded row on the way out.
-            group_id = group.id
-            dependents = await _dependent_dynamic_keys(db, group_id)
-            if dependents:
-                raise GroupReferencedError(dependents)
-            await db.execute(delete(DeviceGroup).where(DeviceGroup.id == group_id))
-            self._publisher.queue_for_session(
-                db,
-                "device_group.updated",
-                {"group_key": group_key, "action": "deleted"},
-            )
-            await db.commit()
-            return True
-        finally:
-            # See create_group. The GroupReferencedError path in particular
-            # leaves a live transaction holding the target's row lock.
-            if db.in_transaction():
-                await db.rollback()
+        # ``FOR UPDATE`` before anything else reads, and it is doing three
+        # jobs at once.
+        #
+        # Ordering: it is the parent half of the parent-before-edge rule
+        # every group-definition writer follows (see ``_replace_member_of``).
+        # Taking it here, rather than letting the ``DELETE`` take it later,
+        # is what keeps this writer from holding a ``device_groups`` row
+        # while a reference writer holds a ``device_group_member_of`` tuple
+        # and each waits for the other's.
+        #
+        # Exclusion: inserting a reference to this group requires
+        # ``FOR KEY SHARE`` on this row, which conflicts. So no edge can be
+        # committed against it from here on, the dependent read below sees
+        # every edge that will ever exist for this delete, and the
+        # ``ON DELETE RESTRICT`` foreign key cannot fire.
+        #
+        # Identity: the row is matched by key but deleted by id. Holding it
+        # is what stops a peer from deleting and recreating the key
+        # underneath us, which would leave the ``DELETE`` matching nothing
+        # while this call still reported success. A peer that got there
+        # first makes this read return no row at all — EvalPlanQual re-checks
+        # the locked tuple and finds it deleted — so a concurrent duplicate
+        # delete gets the 404 it should rather than a second success.
+        group = await _get_group_row(db, group_key, for_update=True)
+        if group is None:
+            return False
+        group_id = group.id
+        dependents = await _dependent_dynamic_keys(db, group_id)
+        if dependents:
+            # Raised inside the caller's transaction; the caller's ``begin()``
+            # block releases this row lock on the way out.
+            raise GroupReferencedError(dependents)
+        await db.execute(delete(DeviceGroup).where(DeviceGroup.id == group_id))
+        self._queue_deleted_event(db, group_key)
+        return True
+
+    def _queue_deleted_event(self, db: AsyncSession, group_key: str) -> None:
+        """Named seam so a test can inject a failure between the DELETE and the commit."""
+        self._publisher.queue_for_session(
+            db,
+            "device_group.updated",
+            {"group_key": group_key, "action": "deleted"},
+        )
 
     async def add_members(self, db: AsyncSession, group_key: str, device_ids: list[uuid.UUID]) -> int | None:
         group = await _get_group_row(db, group_key, for_update=True)

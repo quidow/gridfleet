@@ -37,7 +37,7 @@ from sqlalchemy import func, inspect, select
 from app.devices.models.group import DeviceGroup, DeviceGroupMemberOf, GroupType
 from app.devices.schemas.group import DeviceGroupUpdate
 from app.devices.services import groups as group_service
-from app.devices.services.groups import GroupReferencedError, UnknownMemberOfError
+from app.devices.services.groups import GroupReferencedError, GroupWriteResult, UnknownMemberOfError
 from tests.concurrency.group_lock_helpers import (
     assert_no_dangling_reference,
     build_groups_service,
@@ -165,14 +165,20 @@ async def test_edge_committed_first_refuses_the_delete(
     service = build_groups_service()
     staged = asyncio.Event()
 
-    async def add_first_reference() -> dict[str, Any] | None:
+    async def add_first_reference() -> GroupWriteResult | None:
         async with db_session_maker() as session:
             _signal_once_the_edge_is_staged(session, static_id, staged)
-            return await service.update_group(
+            result = await service.update_group(
                 session,
                 dynamic_key,
                 DeviceGroupUpdate(filters={"member_of": [static_key]}),  # type: ignore[arg-type]
             )
+            # update_group no longer self-commits (Phase 11): commit here, the
+            # way the router's session_factory.begin() now does, so the
+            # staged reference actually lands before the deleter — blocked on
+            # its FOR KEY SHARE — resumes and finds it.
+            await session.commit()
+            return result
 
     async def delete_static() -> bool:
         await _wait(staged, label="deleter")
@@ -222,7 +228,7 @@ async def test_target_deleted_after_resolution_refuses_the_update(
 
     monkeypatch.setattr(group_service, "_resolve_static_member_of", resolve_then_wait)
 
-    async def add_first_reference() -> dict[str, Any] | None:
+    async def add_first_reference() -> GroupWriteResult | None:
         async with db_session_maker() as session:
             return await service.update_group(
                 session,
@@ -234,7 +240,12 @@ async def test_target_deleted_after_resolution_refuses_the_update(
         await _wait(resolved, label="deleter")
         try:
             async with db_session_maker() as session:
-                return await service.delete_group(session, static_key)
+                result = await service.delete_group(session, static_key)
+                # delete_group no longer self-commits (Phase 11): commit here,
+                # the way the router's session_factory.begin() now does, so a
+                # successful delete is actually durable for the later re-fetch.
+                await session.commit()
+                return result
         finally:
             deleted.set()
 
@@ -302,17 +313,27 @@ async def test_unsynchronised_update_and_delete_reach_a_consistent_state(
     static_key, dynamic_key, _static_id = await _seed_unreferenced_pair(db_session)
     service = build_groups_service()
 
-    async def add_first_reference() -> dict[str, Any] | None:
+    async def add_first_reference() -> GroupWriteResult | None:
         async with db_session_maker() as session:
-            return await service.update_group(
+            result = await service.update_group(
                 session,
                 dynamic_key,
                 DeviceGroupUpdate(filters={"member_of": [static_key]}),  # type: ignore[arg-type]
             )
+            # update_group no longer self-commits (Phase 11): commit here, the
+            # way the router's session_factory.begin() now does. Without it a
+            # winning update would roll back at the async with exit and report
+            # a reference that was never actually written.
+            await session.commit()
+            return result
 
     async def delete_static() -> bool:
         async with db_session_maker() as session:
-            return await service.delete_group(session, static_key)
+            result = await service.delete_group(session, static_key)
+            # See add_first_reference: the same reasoning applies to a
+            # winning delete.
+            await session.commit()
+            return result
 
     update_result, delete_result = await asyncio.wait_for(
         asyncio.gather(add_first_reference(), delete_static(), return_exceptions=True),

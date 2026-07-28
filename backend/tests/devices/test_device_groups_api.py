@@ -12,10 +12,10 @@ from tests.helpers import create_device_record, create_host
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-    from app.devices.schemas.group import DeviceGroupUpdate
 
 HOST_PAYLOAD = {
     "hostname": "group-host",
@@ -976,22 +976,21 @@ async def test_update_group_survives_a_peer_delete_landing_after_the_commit(
 ) -> None:
     from app.devices.services.groups import DeviceGroupsService
 
-    created = await _create_group(client, key="updated-then-deleted")
-    original_update = DeviceGroupsService.update_group
+    created = await _create_group(client, key="updated-then-deleted", group_type="dynamic")
+    original_count = DeviceGroupsService.dynamic_device_count
 
-    async def update_then_delete(
+    async def count_then_delete(
         self: DeviceGroupsService,
         db: AsyncSession,
+        *,
+        group_id: UUID,
         group_key: str,
-        data: DeviceGroupUpdate,
-    ) -> dict[str, Any] | None:
-        result = await original_update(self, db, group_key, data)
-        assert result is not None
-        async with db_session_maker() as peer:
+    ) -> int | None:
+        async with db_session_maker.begin() as peer:
             assert await self.delete_group(peer, group_key) is True
-        return result
+        return await original_count(self, db, group_id=group_id, group_key=group_key)
 
-    monkeypatch.setattr(DeviceGroupsService, "update_group", update_then_delete)
+    monkeypatch.setattr(DeviceGroupsService, "dynamic_device_count", count_then_delete)
 
     response = await client.patch(f"/api/device-groups/{created['key']}", json={"name": "Updated"})
 

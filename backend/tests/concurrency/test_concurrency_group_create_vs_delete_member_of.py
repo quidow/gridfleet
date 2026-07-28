@@ -253,7 +253,13 @@ async def test_target_deleted_after_resolution_refuses_the_create(
         await _wait(resolved, label="deleter")
         try:
             async with db_session_maker() as session:
-                return await service.delete_group(session, static_key)
+                result = await service.delete_group(session, static_key)
+                # delete_group no longer self-commits (Phase 11): commit here,
+                # the way the router's session_factory.begin() now does, so a
+                # successful delete is actually durable before the creator's
+                # blocked INSERT resumes against it.
+                await session.commit()
+                return result
         finally:
             deleted.set()
 
@@ -308,7 +314,15 @@ async def test_unsynchronised_create_and_delete_reach_a_consistent_state(
 
     async def delete_static() -> bool:
         async with db_session_maker() as session:
-            return await service.delete_group(session, static_key)
+            result = await service.delete_group(session, static_key)
+            # delete_group no longer self-commits (Phase 11): commit here, the
+            # way the router's session_factory.begin() now does. Without it,
+            # the (True, True) end state — the edge landed and stuck — is
+            # unreachable on the delete side too: a delete that "won" the race
+            # would roll back at the async with exit and report success for a
+            # group that was never actually removed.
+            await session.commit()
+            return result
 
     create_result, delete_result = await asyncio.wait_for(
         asyncio.gather(create_dynamic(), delete_static(), return_exceptions=True),
@@ -355,25 +369,23 @@ async def test_rejected_writers_leave_no_open_transaction(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Every rejecting or empty-handed group write must end its own transaction.
+    """Every rejecting or empty-handed group write must leave its transaction for the caller to close.
 
-    ``delete_group``, ``update_group`` (both unconverted this task) autobegin
-    one on their first statement. A writer that returns ``None``/``False`` or
-    raises a typed rejection without committing leaves it open until the
-    session closes — for an API request, until after response serialization,
-    where ``idle_in_transaction_session_timeout`` is the only thing that ends
-    it. The sibling race tests all call the service inside
+    ``delete_group`` and ``update_group`` (Phase 11) no longer self-clean, the
+    same way ``create_group`` stopped in the sibling task: a writer that
+    returns ``None``/``False`` or raises a typed rejection leaves its
+    autobegun transaction open, deferring to the caller's boundary the way its
+    success path already does. On a hand-started session with no wrapping
+    ``begin()`` — the shape every call below uses — that means the
+    transaction stays **open** across all four calls, not closed; this flips
+    to ``False`` if either writer's ``finally: rollback`` is reintroduced. The
+    sibling race tests all call the service inside
     ``async with db_session_maker() as session``, whose exit rolls back and
     would hide this; these assert *while the session is still open*.
 
-    ``create_group`` (Phase 11) no longer self-cleans, so "leaves no open
-    transaction" is no longer true of it in isolation — that is now the
-    *caller's* boundary's job. Its assertion below is re-pointed to the new,
-    falsifiable property: on a hand-started session with no wrapping
-    ``begin()``, a rejection leaves the transaction **open** (this flips to
-    ``False`` if the conversion is reverted, since the old ``create_group``
-    rolled back internally), and once a caller's boundary actually unwinds it,
-    nothing durable survives.
+    ``create_group`` pins the same property one level down below: on a
+    rejection, nothing has unwound its transaction either, and only the
+    caller's own explicit rollback discards the partial work.
     """
     static_key, dynamic_key, static_id = await _seed_static(db_session)
     dynamic = DeviceGroup(key=dynamic_key, name=dynamic_key, group_type=GroupType.dynamic)
@@ -387,13 +399,19 @@ async def test_rejected_writers_leave_no_open_transaction(
     async with db_session_maker() as session:
         with pytest.raises(GroupReferencedError):
             await service.delete_group(session, static_key)
-        assert not session.in_transaction(), "a refused delete_group left its transaction open"
+        assert session.in_transaction(), (
+            "a refused delete_group must leave its transaction open for the caller's boundary to unwind"
+        )
 
         assert await service.delete_group(session, missing) is False
-        assert not session.in_transaction(), "delete_group on an unknown key left its read transaction open"
+        assert session.in_transaction(), (
+            "delete_group on an unknown key must leave its read transaction open for the caller to close"
+        )
 
         assert await service.update_group(session, missing, DeviceGroupUpdate(description="x")) is None
-        assert not session.in_transaction(), "update_group on an unknown key left its read transaction open"
+        assert session.in_transaction(), (
+            "update_group on an unknown key must leave its read transaction open for the caller to close"
+        )
 
         with pytest.raises(UnknownMemberOfError):
             await service.update_group(
@@ -401,7 +419,9 @@ async def test_rejected_writers_leave_no_open_transaction(
                 dynamic_key,
                 DeviceGroupUpdate(filters={"member_of": [missing]}),  # type: ignore[arg-type]
             )
-        assert not session.in_transaction(), "a refused update_group left its transaction open"
+        assert session.in_transaction(), (
+            "a refused update_group must leave its transaction open for the caller's boundary to unwind"
+        )
 
     other_key = f"other-{uuid.uuid4().hex[:8]}"
     async with db_session_maker() as session:
@@ -430,7 +450,7 @@ async def test_rejected_writers_leave_no_open_transaction(
     assert surviving == 0, "a rejected create_group must not leave a group row behind once the caller unwinds"
 
 
-async def test_dynamic_device_count_leaves_its_transaction_for_the_caller_to_close(
+async def test_public_count_leaves_its_transaction_for_the_caller_to_close(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -451,10 +471,11 @@ async def test_dynamic_device_count_leaves_its_transaction_for_the_caller_to_clo
     ``begin()`` block the same way its rejections do (see
     ``test_rejected_writers_leave_no_open_transaction``).
 
-    ``update_group``'s own count read (unconverted this task, via the private
-    ``_dynamic_device_count``) is the opposite case on purpose: it still
-    self-cleans, so its assertion still checks the transaction is closed by
-    the time its call returns, unchanged from before this task.
+    ``update_group`` (Phase 11) no longer computes a device count of its own
+    at all — the router folds it in afterwards through this same
+    ``dynamic_device_count`` — so its assertion below is re-pointed the same
+    way: the transaction it autobegins stays open for the caller to close,
+    where it used to be checked closed.
     """
     static_key, dynamic_key, _static_id = await _seed_static(db_session)
     service = build_groups_service()
@@ -487,7 +508,9 @@ async def test_dynamic_device_count_leaves_its_transaction_for_the_caller_to_clo
     async with db_session_maker() as session:
         updated = await service.update_group(session, dynamic_key, DeviceGroupUpdate(description="relabelled"))
         assert updated is not None
-        assert not session.in_transaction(), "the update path's dynamic device count left its reads in a transaction"
+        assert session.in_transaction(), (
+            "update_group must leave its transaction open for the caller's boundary to close"
+        )
 
     # The failure branch matters more than the success one: it returns ``None``
     # from an ``except`` clause, so the ``finally`` is the only thing that can
@@ -509,8 +532,11 @@ async def test_dynamic_device_count_leaves_its_transaction_for_the_caller_to_clo
         # rollback expires every loaded row and ``group`` is about to be read
         # attribute-by-attribute from a synchronous context.
         await session.commit()
-        assert await service._dynamic_device_count(session, group) is None, "the poisoned filters must have raised"
-        assert not session.in_transaction(), "a failed dynamic device count left its reads in a transaction"
+        count = await service.dynamic_device_count(session, group_id=group.id, group_key=group.key)
+        assert count is None, "the poisoned filters must have raised"
+        assert session.in_transaction(), (
+            "a failed dynamic device count must still leave its reads open for the caller to close"
+        )
 
 
 async def test_capture_statements_does_not_open_a_transaction(db_session: AsyncSession) -> None:

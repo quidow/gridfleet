@@ -101,3 +101,30 @@ async def test_create_dynamic_group_reports_null_count_when_the_count_read_fails
         select(func.count()).select_from(DeviceGroup).where(DeviceGroup.key == dynamic_key)
     )
     assert surviving == 1, "the group must have been committed anyway"
+
+
+async def test_delete_group_failure_leaves_the_group_intact(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raise after the DELETE statement must leave the group row alive.
+
+    The delete is issued before the event is queued, so an exception between the
+    two is the interleaving that would otherwise commit a delete whose event
+    never fired.
+    """
+    key = f"phase11-delete-{uuid.uuid4().hex[:8]}"
+    await _make_static(client, key)
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("injected post-delete failure")
+
+    monkeypatch.setattr(groups_module.DeviceGroupsService, "_queue_deleted_event", _boom)
+
+    with pytest.raises(RuntimeError, match="injected post-delete failure"):
+        await client.delete(f"/api/device-groups/{key}")
+
+    db_session.expire_all()
+    surviving = await db_session.scalar(select(func.count()).select_from(DeviceGroup).where(DeviceGroup.key == key))
+    assert surviving == 1, "a failed delete_group committed the DELETE anyway"

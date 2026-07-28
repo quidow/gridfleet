@@ -63,7 +63,10 @@ async def test_update_group_queues_updated(
     await dispatch_committed_events()
     event_bus_capture.clear()
 
-    await svc.update_group(db_session, group.group_key, DeviceGroupUpdate(name="updated-name"))
+    updated = await svc.update_group(db_session, group.group_key, DeviceGroupUpdate(name="updated-name"))
+    assert updated is not None
+    assert db_session.in_transaction(), "update_group must leave event publication for the caller's commit"
+    await db_session.commit()
     await dispatch_committed_events()
 
     assert [payload for name, payload in event_bus_capture if name == "device_group.updated"] == [
@@ -80,10 +83,14 @@ async def test_delete_group_queues_updated_deleted(
         db_session,
         DeviceGroupCreate(key="to-delete", name="to-delete", description=None),
     )
+    await db_session.commit()
     await dispatch_committed_events()
     event_bus_capture.clear()
 
-    await svc.delete_group(db_session, group.group_key)
+    deleted = await svc.delete_group(db_session, group.group_key)
+    assert deleted
+    assert db_session.in_transaction(), "delete_group must leave event publication for the caller's commit"
+    await db_session.commit()
     await dispatch_committed_events()
 
     events = [p for n, p in event_bus_capture if n == "device_group.updated"]

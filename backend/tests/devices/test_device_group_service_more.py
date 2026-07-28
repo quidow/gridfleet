@@ -64,9 +64,9 @@ async def test_static_group_membership_counts_and_idempotent_changes(db_session:
         DeviceGroupUpdate(name="static phones updated", description="renamed"),
     )
     assert updated is not None
-    assert updated["name"] == "static phones updated"
-    assert updated["description"] == "renamed"
-    assert updated["device_count"] == 1
+    assert updated.payload["name"] == "static phones updated"
+    assert updated.payload["description"] == "renamed"
+    assert updated.payload["device_count"] == 1
 
     assert await svc.delete_group(db_session, group.group_key) is True
     assert await svc.delete_group(db_session, group.group_key) is False
@@ -87,7 +87,7 @@ async def test_update_static_group_counts_without_loading_member_devices(db_sess
         updated = await svc.update_group(db_session, group.group_key, DeviceGroupUpdate(name="renamed"))
 
     assert updated is not None
-    assert updated["device_count"] == 1
+    assert updated.payload["device_count"] == 1
     normalized = [" ".join(statement.lower().split()) for statement in statements]
     assert not [statement for statement in normalized if " from devices " in statement], statements
 
@@ -167,8 +167,8 @@ async def test_dynamic_group_resolves_and_counts_via_device_filters(db_session: 
         DeviceGroupUpdate(filters=DeviceGroupFilters(platform_id="ios")),
     )
     assert updated is not None
-    assert updated["filters"] == {"platform_id": "ios"}
-    assert updated["device_count"] == 0
+    assert updated.payload["filters"] == {"platform_id": "ios"}
+    assert updated.payload["device_count"] == 0
     # No iOS device is seeded, so membership is empty after the filter change.
     assert await svc.get_group_device_ids(db_session, group.group_key) == []
 

@@ -372,13 +372,17 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
     with pytest.raises(HTTPException):
         await device_groups.get_group(group_key, db=db, device_services=ds_none)
 
-    ds_update_none = SimpleNamespace(groups=SimpleNamespace(update_group=AsyncMock(return_value=None)))
+    ds_update_none = SimpleNamespace(
+        session_factory=FakeSessionFactory(db), groups=SimpleNamespace(update_group=AsyncMock(return_value=None))
+    )
     with pytest.raises(HTTPException):
         await device_groups.update_group(
             group_key, DeviceGroupUpdate(name="new"), db=db, device_services=ds_update_none
         )
 
-    ds_delete_false = SimpleNamespace(groups=SimpleNamespace(delete_group=AsyncMock(return_value=False)))
+    ds_delete_false = SimpleNamespace(
+        session_factory=FakeSessionFactory(db), groups=SimpleNamespace(delete_group=AsyncMock(return_value=False))
+    )
     with pytest.raises(HTTPException):
         await device_groups.delete_group(group_key, db=db, device_services=ds_delete_false)
 

@@ -117,16 +117,21 @@ async def update_group(
     db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
+    del db  # the command owns its own session; the count below opens a second one
     try:
-        return found_or_404(await device_services.groups.update_group(db, group_key, data), "Group not found")
+        async with device_services.session_factory.begin() as command_db:
+            written = await device_services.groups.update_group(command_db, group_key, data)
     except (StaticGroupFiltersError, UnknownMemberOfError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return await _with_dynamic_count(device_services, found_or_404(written, "Group not found"))
 
 
 @router.delete("/{group_key}", status_code=204)
 async def delete_group(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> None:
+    del db  # the command locks the same row from its own session
     try:
-        deleted = await device_services.groups.delete_group(db, group_key)
+        async with device_services.session_factory.begin() as command_db:
+            deleted = await device_services.groups.delete_group(command_db, group_key)
     except GroupReferencedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not deleted:

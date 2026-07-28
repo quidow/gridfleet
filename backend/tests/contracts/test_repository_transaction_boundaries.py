@@ -43,11 +43,8 @@ TRANSACTION_CONTROL_ARGUMENTS = frozenset({"commit", "rollback", "autocommit"})
 # got in Phase 10. Both are deliberate carry-over, not oversight.
 DEFERRED_TRANSACTION_CONTROL: frozenset[tuple[str, str]] = frozenset(
     {
-        ("app/devices/services/groups.py", "DeviceGroupsService._dynamic_device_count"),
         ("app/devices/services/groups.py", "DeviceGroupsService.add_members"),
-        ("app/devices/services/groups.py", "DeviceGroupsService.delete_group"),
         ("app/devices/services/groups.py", "DeviceGroupsService.remove_members"),
-        ("app/devices/services/groups.py", "DeviceGroupsService.update_group"),
         ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._clear_generation_and_fail"),
         ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._ensure_prepared"),
         ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._finalize_device"),
@@ -109,6 +106,8 @@ BEGIN_OWNER_REGISTRY: frozenset[BoundaryOwner] = frozenset(
         BoundaryOwner("app/devices/routers/core.py", "delete_device", "command"),
         BoundaryOwner("app/devices/routers/core.py", "update_device", "command"),
         BoundaryOwner("app/devices/routers/groups.py", "create_group", "command"),
+        BoundaryOwner("app/devices/routers/groups.py", "delete_group", "command"),
+        BoundaryOwner("app/devices/routers/groups.py", "update_group", "command"),
         BoundaryOwner("app/devices/routers/test_data.py", "merge_test_data", "command"),
         BoundaryOwner("app/devices/routers/test_data.py", "replace_test_data", "command"),
         BoundaryOwner("app/hosts/router.py", "_register_host_txn", "command"),

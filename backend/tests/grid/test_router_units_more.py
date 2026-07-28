@@ -43,6 +43,7 @@ from app.devices.schemas.device import (
     DeviceVerificationCreate,
     DeviceVerificationUpdate,
 )
+from app.devices.services.groups import GroupWriteResult
 from app.devices.services.identity_conflicts import DeviceIdentityConflictError
 from app.devices.services.intent import IntentService
 from app.events import Event
@@ -270,7 +271,9 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
     group_key = "group"
     device_id = uuid.uuid4()
 
-    ds_update_none = SimpleNamespace(groups=SimpleNamespace(update_group=AsyncMock(return_value=None)))
+    ds_update_none = SimpleNamespace(
+        session_factory=FakeSessionFactory(object()), groups=SimpleNamespace(update_group=AsyncMock(return_value=None))
+    )
     with pytest.raises(HTTPException) as exc:
         await device_groups.update_group(
             group_key,
@@ -279,19 +282,25 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
             device_services=ds_update_none,
         )
     assert exc.value.status_code == 404
-    updated_group = {"key": group_key}
+    updated_group = GroupWriteResult(
+        payload={"key": group_key}, group_id=uuid.uuid4(), group_key=group_key, is_dynamic=False
+    )
     ds_update_ok = SimpleNamespace(
+        session_factory=FakeSessionFactory(object()),
         groups=SimpleNamespace(
             update_group=AsyncMock(return_value=updated_group),
             get_group=AsyncMock(return_value={"key": group_key}),
-        )
+        ),
     )
-    assert await device_groups.update_group(
-        group_key,
-        device_groups.DeviceGroupUpdate(name="new"),
-        db=object(),
-        device_services=ds_update_ok,
-    ) == {"key": group_key}
+    assert (
+        await device_groups.update_group(
+            group_key,
+            device_groups.DeviceGroupUpdate(name="new"),
+            db=object(),
+            device_services=ds_update_ok,
+        )
+        == updated_group.payload
+    )
     ds_update_ok.groups.get_group.assert_not_awaited()
 
     ds_members_none = SimpleNamespace(groups=SimpleNamespace(get_group_type=AsyncMock(return_value=None)))
