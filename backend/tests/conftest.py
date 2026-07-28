@@ -251,6 +251,22 @@ async def reset_test_circuit_breaker(_test_circuit_breaker: AgentCircuitBreaker)
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def reset_test_http_pool() -> AsyncGenerator[None]:
+    """Hand every test an empty pool, and take its clients back afterwards.
+
+    ``AgentHttpPool`` creates clients lazily in ``get_client``, so an untouched
+    pool holds nothing and this looks like a no-op -- which is exactly why it was
+    missing. ``close()`` latches ``_closed``, so ``reopen()`` has to follow it or
+    the next ``get_client`` raises ``PoolClosedError``.
+    """
+    await test_http_pool.close()
+    await test_http_pool.reopen()
+    yield
+    await test_http_pool.close()
+    await test_http_pool.reopen()
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def reset_process_config() -> AsyncGenerator[None]:
     from app.agent_comm import agent_settings
     from app.auth import auth_settings
@@ -300,6 +316,9 @@ async def db_session_maker(setup_database: AsyncEngine) -> AsyncGenerator[async_
     settings_service._cache["agent.recommended_version"] = "0.3.0"
     yield session_factory
     await settings_service.shutdown()
+    # Symmetric to the assignment above: the factory is bound to an engine this
+    # fixture is about to drop, and the breaker outlives every test in the worker.
+    test_circuit_breaker._session_factory = None
 
 
 @pytest_asyncio.fixture
