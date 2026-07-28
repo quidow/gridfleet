@@ -378,6 +378,11 @@ async def _apply_rollout_stamp(
     # without waiting for the 60 s janitor stage. The stage's revoke branch
     # remains the backstop for the no-longer-candidate cases.
     if rollout_row is not None and target_release is not None and observed_pack_release == target_release:
+        # No explicit synchronize_session: the implicit "auto" default resolves to
+        # "evaluate" for this single-column PK equality and already evicts the
+        # matched row from the identity map (measured on SQLAlchemy 2.0.51).
+        # synchronize_session=False is the one setting that would leave a ghost —
+        # this statement must not adopt it.
         await db.execute(delete(DeviceIntent).where(DeviceIntent.id == rollout_row.id))
         return tuple(row for row in stored if row.id != rollout_row.id)
     # Stamp gate: mint restart_requested_at once the rollout can safely apply.
