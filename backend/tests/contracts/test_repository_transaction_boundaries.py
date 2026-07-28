@@ -638,24 +638,31 @@ def effect_owners() -> list[tuple[str, str, int]]:
     return sorted(findings)
 
 
-def _registers_transaction_on_a_stack(node: ast.AST) -> bool:
-    """True when *node*'s subtree hands a ``begin()`` to an exit stack.
+def _registers_transaction_on_a_stack(node: ast.stmt) -> bool:
+    """True when *node*'s executable subtree hands a ``begin()`` to an exit stack.
 
     The mirror of the second shape ``begin_owner_findings`` detects. A
     transaction registered on a stack stays open until the stack unwinds, so
     every statement after the registration in that block runs with it open.
     """
-    return any(
-        isinstance(inner, ast.Call)
-        and call_tail(inner.func) in {"enter_context", "enter_async_context"}
-        and any(
-            isinstance(argument, ast.Call)
-            and isinstance(argument.func, ast.Attribute)
-            and argument.func.attr in {"begin", "begin_nested"}
-            for argument in inner.args
-        )
-        for inner in ast.walk(node)
-    )
+
+    def registers(current: ast.AST) -> bool:
+        if current is not node and isinstance(current, ast.stmt | ast.Lambda):
+            return False
+        if (
+            isinstance(current, ast.Call)
+            and call_tail(current.func) in {"enter_context", "enter_async_context"}
+            and any(
+                isinstance(argument, ast.Call)
+                and isinstance(argument.func, ast.Attribute)
+                and argument.func.attr in {"begin", "begin_nested"}
+                for argument in current.args
+            )
+        ):
+            return True
+        return any(registers(child) for child in ast.iter_child_nodes(current))
+
+    return registers(node)
 
 
 def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[str]:
@@ -695,6 +702,21 @@ def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[s
             return
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             visit_body(node.body, in_transaction)
+            return
+        if isinstance(node, ast.If | ast.For | ast.AsyncFor | ast.While):
+            visit_body(node.body, in_transaction)
+            visit_body(node.orelse, in_transaction)
+            return
+        if isinstance(node, ast.Try | ast.TryStar):
+            visit_body(node.body, in_transaction)
+            for handler in node.handlers:
+                visit_body(handler.body, in_transaction)
+            visit_body(node.orelse, in_transaction)
+            visit_body(node.finalbody, in_transaction)
+            return
+        if isinstance(node, ast.Match):
+            for case in node.cases:
+                visit_body(case.body, in_transaction)
             return
         for child in ast.iter_child_nodes(node):
             visit(child, in_transaction)
@@ -822,6 +844,30 @@ def test_the_effect_check_does_not_flag_an_effect_before_the_stack_registration(
     )
     assert effects_inside_transactions_in_tree(ast.parse(before), "synthetic.py") == []
     assert effects_inside_transactions_in_tree(ast.parse(unrelated), "synthetic.py") == []
+
+
+def test_the_effect_check_tracks_a_stack_registration_within_an_if_body() -> None:
+    """A registration opens the rest of its own compound statement body."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if True:\n"
+        "            await stack.enter_async_context(db.begin())\n"
+        "            await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
+
+
+def test_the_effect_check_ignores_a_stack_registration_inside_a_nested_definition() -> None:
+    """Defining a function does not execute its exit-stack registration."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        async def register():\n"
+        "            await stack.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == []
 
 
 def test_begin_owner_kinds_are_command_or_infrastructure() -> None:
