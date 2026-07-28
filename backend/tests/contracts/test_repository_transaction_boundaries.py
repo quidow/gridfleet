@@ -38,9 +38,9 @@ TRANSACTION_CONTROL_ARGUMENTS = frozenset({"commit", "rollback", "autocommit"})
 # set can only shrink; a fourth savepoint anywhere fails this contract.
 BEGIN_NESTED_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
     {
-        # A deleted member_of target must surface as UnknownMemberOfError rather
-        # than aborting the caller's transaction. Deferred to Phase 11 with the
-        # rest of groups.py.
+        # An UnknownMemberOfError raised while inserting member_of edges must not
+        # abort the caller's transaction, so the insert runs inside its own
+        # savepoint that can be rolled back alone. Permanent, not deferred.
         ("app/devices/services/groups.py", "_replace_member_of"),
         # A cooldown clear that fails must not abort the whole reconcile pass;
         # the savepoint keeps the other candidates' work.
