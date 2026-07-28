@@ -408,7 +408,9 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                     publisher=AsyncMock(),
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(
-                        publisher=AsyncMock(),
+                        # ``EventPublisher.queue_for_session`` is sync; a bare AsyncMock
+                        # returns an un-awaited coroutine from actions.py's crash path.
+                        publisher=AsyncMock(queue_for_session=Mock()),
                         reservation=RunReservationService(review=build_review_service()),
                         incidents=LifecycleIncidentService(),
                     ),
