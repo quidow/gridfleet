@@ -548,17 +548,17 @@ def _opens_transaction(item: ast.withitem) -> bool:
     )
 
 
-def begin_owners() -> list[tuple[str, str, int]]:
-    """``(module, qualified_function, lineno)`` for every ``async with <expr>.begin()``.
+def begin_owner_findings(tree: ast.Module, module: str) -> list[tuple[str, str, int]]:
+    """Every ``begin()`` context in *tree*, by owner.
 
-    ``begin_nested()`` has its own attribute name and is checked separately.
+    Two shapes, because both open a transaction that outlives the statement:
+    a ``with``/``async with`` item, and a ``begin()`` handed to an exit stack's
+    ``enter_context``/``enter_async_context``. ``begin_nested()`` has its own
+    attribute name and is checked separately.
     """
     findings: list[tuple[str, str, int]] = []
-    for path in PRODUCTION:
-        module = relative_module(path)
-        for node, owner in iter_owned(parse_module(path), ""):
-            if not isinstance(node, ast.With | ast.AsyncWith):
-                continue
+    for node, owner in iter_owned(tree, ""):
+        if isinstance(node, ast.With | ast.AsyncWith):
             findings.extend(
                 (module, _owner_name(owner), item.context_expr.lineno)
                 for item in node.items
@@ -566,6 +566,24 @@ def begin_owners() -> list[tuple[str, str, int]]:
                 and isinstance(item.context_expr.func, ast.Attribute)
                 and item.context_expr.func.attr == "begin"
             )
+        elif isinstance(node, ast.Call) and call_tail(node.func) in {"enter_context", "enter_async_context"}:
+            findings.extend(
+                (module, _owner_name(owner), argument.lineno)
+                for argument in node.args
+                if isinstance(argument, ast.Call)
+                and isinstance(argument.func, ast.Attribute)
+                and argument.func.attr == "begin"
+            )
+    return findings
+
+
+def begin_owners() -> list[tuple[str, str, int]]:
+    """``(module, qualified_function, lineno)`` for every ``begin()`` context, whether
+    opened by ``async with`` or handed to an exit stack. See ``begin_owner_findings``.
+    """
+    findings: list[tuple[str, str, int]] = []
+    for path in PRODUCTION:
+        findings.extend(begin_owner_findings(parse_module(path), relative_module(path)))
     return sorted(findings)
 
 
@@ -705,6 +723,23 @@ def test_every_begin_context_has_a_named_owner() -> None:
     assert keys == registered, (
         _drift_message("BEGIN_OWNER_REGISTRY", keys, registered) + f"full inventory:\n{_inventory(discovered)}"
     )
+
+
+def test_begin_detection_sees_both_context_shapes() -> None:
+    """An exit-stack ``begin()`` opens the same transaction an ``async with`` does.
+
+    Reproduced during Phase 10's review: the ``With``/``AsyncWith``-only scan
+    missed ``stack.enter_async_context(db.begin())`` entirely, so a boundary
+    entered that way would have had no registry entry and nothing would fail.
+    """
+    source = """
+async def outer(db, stack):
+    async with db.begin():
+        pass
+    await stack.enter_async_context(db.begin())
+"""
+    owners = begin_owner_findings(ast.parse(source), "synthetic.py")
+    assert [owner for _module, owner, _lineno in owners] == ["outer", "outer"]
 
 
 def test_begin_owner_kinds_are_command_or_infrastructure() -> None:
