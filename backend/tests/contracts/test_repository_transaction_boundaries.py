@@ -638,7 +638,7 @@ def effect_owners() -> list[tuple[str, str, int]]:
     return sorted(findings)
 
 
-def _registers_transaction_on_a_stack(node: ast.stmt) -> bool:
+def _registers_transaction_on_a_stack(node: ast.AST) -> bool:
     """True when *node*'s executable subtree hands a ``begin()`` to an exit stack.
 
     The mirror of the second shape ``begin_owner_findings`` detects. A
@@ -683,13 +683,12 @@ def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[s
     findings: list[str] = []
     appium = _uses_appium_direct(tree)
 
-    def visit_body(statements: list[ast.stmt], in_transaction: bool) -> None:
+    def visit_body(statements: list[ast.stmt], in_transaction: bool) -> bool:
         for statement in statements:
-            visit(statement, in_transaction)
-            if not in_transaction and _registers_transaction_on_a_stack(statement):
-                in_transaction = True
+            in_transaction = visit(statement, in_transaction)
+        return in_transaction
 
-    def visit(node: ast.AST, in_transaction: bool) -> None:
+    def visit(node: ast.AST, in_transaction: bool) -> bool:
         if isinstance(node, ast.Call):
             name = _effect_call_name(node, module_uses_appium_direct=appium)
             if name is not None and in_transaction:
@@ -699,27 +698,48 @@ def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[s
             for item in node.items:
                 visit(item.context_expr, in_transaction)
             visit_body(node.body, in_transaction or opens)
-            return
+            return in_transaction
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             visit_body(node.body, in_transaction)
-            return
+            return in_transaction
         if isinstance(node, ast.If | ast.For | ast.AsyncFor | ast.While):
-            visit_body(node.body, in_transaction)
-            visit_body(node.orelse, in_transaction)
-            return
+            if isinstance(node, ast.If | ast.While):
+                visit(node.test, in_transaction)
+                after_header = in_transaction or _registers_transaction_on_a_stack(node.test)
+            else:
+                visit(node.target, in_transaction)
+                visit(node.iter, in_transaction)
+                after_header = (
+                    in_transaction
+                    or _registers_transaction_on_a_stack(node.target)
+                    or _registers_transaction_on_a_stack(node.iter)
+                )
+            return visit_body(node.body, after_header) or visit_body(node.orelse, after_header)
         if isinstance(node, ast.Try | ast.TryStar):
-            visit_body(node.body, in_transaction)
+            body_transaction = visit_body(node.body, in_transaction)
+            handler_transactions: list[bool] = []
             for handler in node.handlers:
-                visit_body(handler.body, in_transaction)
-            visit_body(node.orelse, in_transaction)
-            visit_body(node.finalbody, in_transaction)
-            return
+                handler_transaction = body_transaction
+                if handler.type is not None:
+                    visit(handler.type, handler_transaction)
+                    handler_transaction = handler_transaction or _registers_transaction_on_a_stack(handler.type)
+                handler_transactions.append(visit_body(handler.body, handler_transaction))
+            else_transaction = visit_body(node.orelse, body_transaction)
+            return visit_body(node.finalbody, body_transaction or any(handler_transactions) or else_transaction)
         if isinstance(node, ast.Match):
+            visit(node.subject, in_transaction)
+            subject_transaction = in_transaction or _registers_transaction_on_a_stack(node.subject)
+            case_transactions: list[bool] = []
             for case in node.cases:
-                visit_body(case.body, in_transaction)
-            return
+                case_transaction = subject_transaction
+                if case.guard is not None:
+                    visit(case.guard, case_transaction)
+                    case_transaction = case_transaction or _registers_transaction_on_a_stack(case.guard)
+                case_transactions.append(visit_body(case.body, case_transaction))
+            return any(case_transactions) or subject_transaction
         for child in ast.iter_child_nodes(node):
             visit(child, in_transaction)
+        return in_transaction or (isinstance(node, ast.stmt) and _registers_transaction_on_a_stack(node))
 
     visit(tree, False)
     return findings
@@ -868,6 +888,29 @@ def test_the_effect_check_ignores_a_stack_registration_inside_a_nested_definitio
         "        await agent_health(ip, port)\n"
     )
     assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == []
+
+
+def test_the_effect_check_scans_compound_headers_inside_a_transaction() -> None:
+    """A compound header is evaluated while its enclosing transaction is open."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with db.begin():\n"
+        "        if await agent_health(ip, port):\n"
+        "            pass\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:3 agent_health()"]
+
+
+def test_the_effect_check_keeps_a_branch_registered_transaction_open_afterwards() -> None:
+    """An exit-stack transaction can outlive the branch that registered it."""
+    source = (
+        "async def outer(db, ip, port, ready):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if ready:\n"
+        "            await stack.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
 
 
 def test_begin_owner_kinds_are_command_or_infrastructure() -> None:
