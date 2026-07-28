@@ -163,9 +163,15 @@ class VerificationPreparationService:
         if normalize_error is not None:
             return await _validation_failed(job, normalize_error)
 
-        # create_device_txn, the device-id stamp, and the tokenized lease all
-        # commit together: a crash before commit leaves nothing, and a committed
-        # device always carries its device_id in Job.payload for resume.
+        # INVARIANT (create-mode atomicity): create_device_txn, the device-id
+        # stamp and the tokenized lease are one transaction. Splitting them
+        # re-opens the Phase 4 crash window — a crash between two of them orphans
+        # a device in ``verifying`` that the retry cannot resume, and create jobs
+        # are max_attempts=1 so there is no second attempt to fix it up. A crash
+        # before this commit leaves nothing; a committed device always carries
+        # its device_id in Job.payload for _resume_created_device to find.
+        # Pinned by tests/verification/test_device_verification.py::
+        # test_create_mode_device_id_and_lease_land_atomically.
         try:
             async with self._session_factory.begin() as db:
                 saved = await self._crud.create_device_txn(
