@@ -265,7 +265,7 @@ def _legacy_ladder_entries_stmt(device_id: uuid.UUID) -> Select[tuple[DeviceReme
 
 
 async def _seed_ladder_shape(db_session: AsyncSession, device_id: uuid.UUID, shape: str) -> None:
-    """Build one of the five reset arrangements the ladder statement must handle."""
+    """Build one of the six reset arrangements the ladder statement must handle."""
     base = datetime.now(UTC)
 
     def add(offset: int, *, kind: str, action: str) -> None:
@@ -299,6 +299,17 @@ async def _seed_ladder_shape(db_session: AsyncSession, device_id: uuid.UUID, sha
         add(2, kind=remediation_log.KIND_ACTION, action="recovery_started")
         add(3, kind=remediation_log.KIND_RESET, action="operator_reset")
         add(4, kind=remediation_log.KIND_ACTION, action="recovery_started")
+    elif shape == "reset-tied-with-entry":
+        # Mirrors app/lifecycle/services/actions.py's record_run_escalation_failure:
+        # append_reset then append_failure make two independent now_utc() calls,
+        # and at carries no unique constraint, so the reset and the entry right
+        # after it can land on the exact same instant. The tied entry still
+        # happened after the reset, so the (at, id) row-value comparison has to
+        # pick it up on the id half alone -- unlike every shape above, where two
+        # distinct rows never share an identical at.
+        add(0, kind=remediation_log.KIND_FAILURE, action="failure_observed")
+        add(1, kind=remediation_log.KIND_RESET, action="operator_reset")
+        add(1, kind=remediation_log.KIND_FAILURE, action="failure_observed")
     else:
         raise ValueError(f"unknown shape: {shape}")
     await db_session.flush()
@@ -306,7 +317,7 @@ async def _seed_ladder_shape(db_session: AsyncSession, device_id: uuid.UUID, sha
 
 @pytest.mark.parametrize(
     "shape",
-    ["no-entries", "no-reset", "reset-then-entries", "reset-is-last", "two-resets"],
+    ["no-entries", "no-reset", "reset-then-entries", "reset-is-last", "two-resets", "reset-tied-with-entry"],
 )
 async def test_ladder_matches_the_two_subquery_derivation(db_session: AsyncSession, db_host: Host, shape: str) -> None:
     """The rewritten single-statement read selects the same entries the two-subquery
