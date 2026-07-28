@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -9,6 +11,9 @@ import pytest
 from app.jobs.statuses import JOB_STATUS_FAILED
 from app.lifecycle.services import recovery_job as device_recovery_job
 from tests.fakes import FakeSettingsReader
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +70,18 @@ class RecoverySessionFactory:
             return self._repeat
         return self.sessions.pop(0)
 
+    @asynccontextmanager
+    async def begin(self) -> AsyncIterator[RecoverySession]:
+        session = self()
+        session._in_txn = True
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+        else:
+            await session.commit()
+
 
 def _job_row() -> SimpleNamespace:
     return SimpleNamespace(
@@ -79,13 +96,14 @@ async def test_device_recovery_job_marks_failed_when_lock_fails() -> None:
     device_id = uuid.uuid4()
     row = _job_row()
     prepare_session = RecoverySession(row)
+    failure_session = RecoverySession(row)
 
     with patch(
         "app.lifecycle.services.recovery_job.device_locking.lock_device_handle",
         new=AsyncMock(side_effect=Exception("lock failed")),
     ):
         await device_recovery_job.RecoveryJobService(
-            session_factory=RecoverySessionFactory(prepare_session),  # type: ignore[arg-type]
+            session_factory=RecoverySessionFactory(prepare_session, failure_session),  # type: ignore[arg-type]
             publisher=Mock(),
             settings=FakeSettingsReader({}),
             lifecycle_policy=AsyncMock(),
@@ -99,7 +117,7 @@ async def test_device_recovery_job_marks_failed_when_lock_fails() -> None:
     assert row.snapshot["status"] == JOB_STATUS_FAILED
     assert f"Device {device_id}" in row.snapshot["error"]
     assert row.completed_at is not None
-    assert prepare_session.committed is True
+    assert failure_session.committed is True
 
 
 async def test_device_recovery_job_marks_failed_when_recovery_crashes() -> None:

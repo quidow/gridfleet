@@ -618,6 +618,10 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         async def __aexit__(self, *_args: object) -> None:
             return None
 
+        @staticmethod
+        def begin() -> RecoveryCtx:
+            return RecoveryCtx()
+
     monkeypatch.setattr(
         device_recovery_job.device_locking,
         "lock_device",

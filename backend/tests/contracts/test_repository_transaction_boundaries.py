@@ -37,16 +37,7 @@ TRANSACTION_CONTROL_ARGUMENTS = frozenset({"commit", "rollback", "autocommit"})
 # Phase 11 owns this carry-over. Set equality, not subset: an entry that stops
 # being true is as much a failure as a new commit somewhere else.
 #
-# ``recovery_job.py`` still needs the prepare/effect/finalize split remediation
-# got in Phase 10. It is deliberate carry-over, not oversight.
-DEFERRED_TRANSACTION_CONTROL: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._clear_generation_and_fail"),
-        ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._ensure_prepared"),
-        ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._finalize_device"),
-        ("app/lifecycle/services/recovery_job.py", "RecoveryJobService._finalize_job_row"),
-    }
-)
+DEFERRED_TRANSACTION_CONTROL: frozenset[tuple[str, str]] = frozenset()
 
 # Three owners, each load-bearing for a *named* partial-failure behaviour. The
 # set can only shrink; a fourth savepoint anywhere fails this contract.
@@ -155,6 +146,14 @@ BEGIN_OWNER_REGISTRY: frozenset[BoundaryOwner] = frozenset(
         BoundaryOwner("app/devices/services/remediation_job.py", "RemediationJobService._fail_claim", "command"),
         BoundaryOwner("app/devices/services/remediation_job.py", "RemediationJobService._finalize", "command"),
         BoundaryOwner("app/devices/services/remediation_job.py", "RemediationJobService._prepare", "command"),
+        BoundaryOwner(
+            "app/lifecycle/services/recovery_job.py",
+            "RecoveryJobService._clear_generation_and_fail",
+            "command",
+        ),
+        BoundaryOwner("app/lifecycle/services/recovery_job.py", "RecoveryJobService._ensure_prepared", "command"),
+        BoundaryOwner("app/lifecycle/services/recovery_job.py", "RecoveryJobService._finalize_device", "command"),
+        BoundaryOwner("app/lifecycle/services/recovery_job.py", "RecoveryJobService._finalize_job", "command"),
         BoundaryOwner("app/grid/session_create.py", "_fail", "command"),
         BoundaryOwner("app/grid/session_create.py", "create_and_promote", "command"),
         BoundaryOwner("app/grid/session_create.py", "mark_target_node_down", "command"),
@@ -675,14 +674,6 @@ def test_direct_transaction_control_is_confined_to_the_deferred_registry() -> No
         _drift_message("DEFERRED_TRANSACTION_CONTROL", keys, set(DEFERRED_TRANSACTION_CONTROL))
         + f"full inventory:\n{_inventory(discovered)}"
     )
-
-
-def test_deferred_transaction_control_names_only_the_phase11_modules() -> None:
-    """The carry-over is one module by name, not "whatever still commits"."""
-    modules = {module for module, _owner in DEFERRED_TRANSACTION_CONTROL}
-    assert modules == {
-        "app/lifecycle/services/recovery_job.py",
-    }, f"only the Phase 11 carry-over module may defer transaction control; found {sorted(modules)}"
 
 
 def test_no_function_takes_a_transaction_control_argument() -> None:

@@ -20,7 +20,9 @@ held across the Appium probe or the node-start wait:
 * ``_finalize_device`` — lock the device once, load one snapshot, and call
   ``finalize_auto_recovery_locked`` (which compares the generation before any
   write).
-* ``_finalize_job`` — mark the job row terminal in its own transaction.
+* ``_finalize_job`` — mark the job row terminal in its own transaction (also
+  the terminal path for a lock failure, on a session that failure never
+  touched).
 """
 
 from __future__ import annotations
@@ -78,6 +80,15 @@ _ALREADY_HEALTHY: dict[str, Any] = {"status": "already_healthy"}
 _STALE: dict[str, Any] = {"status": "stale"}
 
 
+class _DeviceLockFailed(Exception):  # noqa: N818 - prescribed private sentinel
+    """The device-lock statement failed, so this transaction may be aborted.
+
+    Raised to escape the phase's ``begin()`` block — which rolls back — rather
+    than writing the job row on a session whose next COMMIT would raise. Private
+    so it can never be confused with a domain error a caller might handle.
+    """
+
+
 class RecoveryJobService:
     def __init__(
         self,
@@ -95,14 +106,14 @@ class RecoveryJobService:
         self._viability = viability
 
     @staticmethod
-    async def _finalize_job_row(
-        db: AsyncSession,
+    def _stage_job_row(
         row: Job,
         *,
         status: str,
         note: str | None = None,
         error: str | None = None,
     ) -> None:
+        """Stage the job row's terminal state; the caller's boundary commits it."""
         row.status = status
         snapshot = copy.deepcopy(row.snapshot)
         snapshot["status"] = status
@@ -113,7 +124,6 @@ class RecoveryJobService:
         snapshot["finished_at"] = now_utc().isoformat()
         row.snapshot = snapshot
         row.completed_at = now_utc()
-        await db.commit()
 
     async def _ensure_prepared(  # noqa: PLR0911 - one return per terminal/proceed branch
         self,
@@ -125,74 +135,87 @@ class RecoveryJobService:
     ) -> tuple[dict[str, Any], uuid.UUID | None]:
         """Lock the device, load one snapshot, and decide the terminal/proceed path.
 
-        Returns ``(probe_result, node_id)``. A non-``None`` ``probe_result``
-        means the job is terminal without a probe (stale / already-healthy /
-        device-missing / prepare-blocked); ``node_id`` is the node to wait on
-        when a probe is needed.
+        One explicit transaction. ``db.get(Job, ...)`` is an unlocked read, and
+        every ``_stage_job_row`` call below sits textually under the
+        ``lock_device_handle`` call, so this phase never dirties a job tuple
+        above the device lock — see the Job/Device order note in
+        ``app/devices/services/remediation_job.py`` and the contract in
+        ``tests/contracts/test_remediation_job_lock_order.py``.
         """
-        async with self._session_factory() as db:
-            row = await db.get(Job, parsed_job_id)
-            try:
-                locked = await device_locking.lock_device_handle(db, device_id)
-            except NoResultFound:
-                logger.info("device_recovery: device %s no longer exists; marking job complete", device_id)
-                if row is not None:
-                    await self._finalize_job_row(db, row, status=JOB_STATUS_COMPLETED, note="Device no longer exists")
-                return ({"status": "device_missing"}, None)
-            except Exception:
-                logger.exception("device_recovery: failed to lock device %s", device_id)
-                if row is not None:
-                    await self._finalize_job_row(
-                        db, row, status=JOB_STATUS_FAILED, error=f"Device {device_id} could not be locked"
-                    )
-                return ({"status": "lock_failed"}, None)
-            snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
-            current = recovery_generation(locked.device)
-            if current is not None and current != parsed_job_id:
-                if row is not None:
-                    await self._finalize_job_row(db, row, status=JOB_STATUS_COMPLETED, note="stale generation")
-                return (_STALE, None)
-            if current == parsed_job_id:
-                node_id = locked.device.appium_node.id if locked.device.appium_node is not None else None
-                if (
-                    evaluate_operational_state(snapshot.state_facts) == DeviceOperationalState.available
-                    and snapshot.node_observed_running
-                    and not snapshot.decision_facts.in_maintenance
-                    and (snapshot.reservation is None or not snapshot.reservation.excluded)
-                ):
-                    if snapshot.ladder.episode_active:
-                        reset = await remediation_log.append_reset(
-                            db, locked.device.id, source=source, action="already_healthy", reason=reason
-                        )
-                        updated = replace(
-                            snapshot,
-                            ladder=remediation_log.advance_ladder(snapshot.ladder, reset),
-                            decision_facts=replace(snapshot.decision_facts, remediation_directive=None),
-                        )
-                        await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
-                    clear_recovery_generation(locked.device, expected=parsed_job_id)
+        try:
+            async with self._session_factory.begin() as db:
+                row = await db.get(Job, parsed_job_id)
+                try:
+                    locked = await device_locking.lock_device_handle(db, device_id)
+                except NoResultFound:
+                    # A clean "no such row" from the lock query: the transaction
+                    # is healthy, so the job row can be staged right here.
+                    logger.info("device_recovery: device %s no longer exists; marking job complete", device_id)
                     if row is not None:
-                        await self._finalize_job_row(db, row, status=JOB_STATUS_COMPLETED, note="already_healthy")
-                    return (_ALREADY_HEALTHY, None)
-                await db.commit()
-                return ({}, node_id)
-            prepared = await self._lifecycle_policy.prepare_auto_recovery_locked(
-                db,
-                locked,
-                snapshot,
-                generation=parsed_job_id,
-                source=source,
-                reason=reason,
-                enqueue_job=False,
+                        self._stage_job_row(row, status=JOB_STATUS_COMPLETED, note="Device no longer exists")
+                    return ({"status": "device_missing"}, None)
+                except Exception as exc:
+                    # A statement error, which aborts the transaction. Writing the
+                    # job row here would be staged into a transaction whose COMMIT
+                    # raises, so escape the boundary instead.
+                    raise _DeviceLockFailed from exc
+                snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
+                current = recovery_generation(locked.device)
+                if current is not None and current != parsed_job_id:
+                    if row is not None:
+                        self._stage_job_row(row, status=JOB_STATUS_COMPLETED, note="stale generation")
+                    return (_STALE, None)
+                if current == parsed_job_id:
+                    node_id = locked.device.appium_node.id if locked.device.appium_node is not None else None
+                    if (
+                        evaluate_operational_state(snapshot.state_facts) == DeviceOperationalState.available
+                        and snapshot.node_observed_running
+                        and not snapshot.decision_facts.in_maintenance
+                        and (snapshot.reservation is None or not snapshot.reservation.excluded)
+                    ):
+                        if snapshot.ladder.episode_active:
+                            reset = await remediation_log.append_reset(
+                                db, locked.device.id, source=source, action="already_healthy", reason=reason
+                            )
+                            updated = replace(
+                                snapshot,
+                                ladder=remediation_log.advance_ladder(snapshot.ladder, reset),
+                                decision_facts=replace(snapshot.decision_facts, remediation_directive=None),
+                            )
+                            await IntentService(db).reconcile_locked(
+                                locked, publisher=self._publisher, snapshot=updated
+                            )
+                        clear_recovery_generation(locked.device, expected=parsed_job_id)
+                        if row is not None:
+                            self._stage_job_row(row, status=JOB_STATUS_COMPLETED, note="already_healthy")
+                        return (_ALREADY_HEALTHY, None)
+                    return ({}, node_id)
+                prepared = await self._lifecycle_policy.prepare_auto_recovery_locked(
+                    db,
+                    locked,
+                    snapshot,
+                    generation=parsed_job_id,
+                    source=source,
+                    reason=reason,
+                    enqueue_job=False,
+                )
+                if not prepared:
+                    # The blocked path's prepare work and the job row now land in
+                    # one transaction; they used to be two commits. Strictly
+                    # stronger — a crash between them could previously leave the
+                    # device prepared with the job still pending.
+                    if row is not None:
+                        self._stage_job_row(row, status=JOB_STATUS_COMPLETED, note="recovery blocked")
+                    return ({"status": "blocked"}, None)
+                return ({}, locked.device.appium_node.id if locked.device.appium_node is not None else None)
+        except _DeviceLockFailed:
+            # ``logger.exception`` here still carries the original traceback: the
+            # sentinel was raised ``from exc``.
+            logger.exception("device_recovery: failed to lock device %s", device_id)
+            await self._finalize_job(
+                parsed_job_id, status=JOB_STATUS_FAILED, error=f"Device {device_id} could not be locked"
             )
-            if not prepared:
-                await db.commit()
-                if row is not None:
-                    await self._finalize_job_row(db, row, status=JOB_STATUS_COMPLETED, note="recovery blocked")
-                return ({"status": "blocked"}, None)
-            node_id = locked.device.appium_node.id if locked.device.appium_node is not None else None
-            await db.commit()
-            return ({}, node_id)
+            return ({"status": "lock_failed"}, None)
 
     async def _wait_for_node_running(self, node_id: uuid.UUID) -> bool:
         deadline = time.monotonic() + RECOVERY_NODE_START_WAIT_TIMEOUT_SEC
@@ -243,10 +266,10 @@ class RecoveryJobService:
         source: str,
         reason: str,
     ) -> str:
-        async with self._session_factory() as db:
+        async with self._session_factory.begin() as db:
             locked = await device_locking.lock_device_handle(db, device_id)
             snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
-            outcome = await self._lifecycle_policy.finalize_auto_recovery_locked(
+            return await self._lifecycle_policy.finalize_auto_recovery_locked(
                 db,
                 locked,
                 snapshot,
@@ -255,30 +278,31 @@ class RecoveryJobService:
                 source=source,
                 reason=reason,
             )
-            await db.commit()
-            return outcome
 
-    async def _finalize_job(self, parsed_job_id: uuid.UUID, *, note: str | None = None) -> None:
-        async with self._session_factory() as db:
+    async def _finalize_job(
+        self,
+        parsed_job_id: uuid.UUID,
+        *,
+        status: str = JOB_STATUS_COMPLETED,
+        note: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        async with self._session_factory.begin() as db:
             row = await db.get(Job, parsed_job_id)
             if row is not None:
-                await self._finalize_job_row(db, row, status=JOB_STATUS_COMPLETED, note=note)
+                self._stage_job_row(row, status=status, note=note, error=error)
 
     async def _clear_generation_and_fail(self, parsed_job_id: uuid.UUID, device_id: uuid.UUID) -> None:
-        async with self._session_factory() as db:
+        async with self._session_factory.begin() as db:
             try:
                 locked = await device_locking.lock_device_handle(db, device_id)
             except NoResultFound:
                 locked = None
             if locked is not None:
                 clear_recovery_generation(locked.device, expected=parsed_job_id)
-                await db.commit()
-        async with self._session_factory() as db:
-            row = await db.get(Job, parsed_job_id)
-            if row is not None:
-                await self._finalize_job_row(
-                    db, row, status=JOB_STATUS_FAILED, error="device_recovery job crashed unexpectedly"
-                )
+        await self._finalize_job(
+            parsed_job_id, status=JOB_STATUS_FAILED, error="device_recovery job crashed unexpectedly"
+        )
 
     async def run_device_recovery_job(self, job_id: str, payload: dict[str, Any]) -> None:
         parsed_job_id = uuid.UUID(job_id)
@@ -288,12 +312,9 @@ class RecoveryJobService:
             device_id = uuid.UUID(str(payload["device_id"]))
         except Exception:
             logger.exception("device_recovery: malformed payload for job %s", job_id)
-            async with self._session_factory() as db:
-                row = await db.get(Job, parsed_job_id)
-                if row is not None:
-                    await self._finalize_job_row(
-                        db, row, status=JOB_STATUS_FAILED, error="device_recovery job crashed unexpectedly"
-                    )
+            await self._finalize_job(
+                parsed_job_id, status=JOB_STATUS_FAILED, error="device_recovery job crashed unexpectedly"
+            )
             return
 
         try:
