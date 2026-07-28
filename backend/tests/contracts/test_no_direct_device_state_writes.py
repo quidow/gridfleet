@@ -231,7 +231,8 @@ def test_the_call_scan_sees_both_transition_writers(tmp_path: Path) -> None:
 #
 # Widening the rule to attribute assignment needs type inference the scan does
 # not have (``row.status = x`` says nothing about ``row``'s class), so this is a
-# documented gap, not a bug to patch here. Tracked as Phase 11 stream B12.
+# documented gap, not a bug to patch here. Decided, not merely tracked -- Phase 11 stream B12
+# keeps this gap rather than widening the scan; see the closeout spec's follow-up section.
 DECISION_FACT_MODELS = {
     "DeviceIntent": "device_intent",
     "Session": "live_session",
@@ -293,8 +294,10 @@ class DecisionFactWriter:
 
     ``caller_locked`` is therefore a placeholder for work not done, not a proof.
     Prefer threading a real ``LockedDevice`` when a path is touched; every
-    conversion moves an entry into a mode that actually proves something. Tracked
-    as Phase 11 stream B11.
+    conversion moves an entry into a mode that actually proves something. Decided,
+    not merely tracked: Phase 11 stream B11 keeps this mode and its disclosure
+    rather than closing it -- see the closeout spec's follow-up section for the
+    full reasoning.
     """
 
     module: str
