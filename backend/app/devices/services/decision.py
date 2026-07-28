@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 from app.appium_nodes.models import AppiumDesiredState
 from app.core.observability import get_logger
+from app.devices.models import ExclusionKind
 from app.devices.services.intent_types import VERIFICATION_OUTCOME_KEY, CommandKind
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 from app.lifecycle.services.remediation_log import DIRECTIVE_START, DIRECTIVE_STOP
@@ -128,6 +129,36 @@ def parse_command(intent: IntentLike, now: datetime) -> Command | None:
         restart_requested_at=restart_requested_at,
         reason_detail=reason_detail if isinstance(reason_detail, str) else None,
     )
+
+
+def reservation_decision_axes(
+    *,
+    run_id: uuid.UUID | None,
+    exclusion_kind: str | None,
+    exclusion_reason: str | None,
+    excluded_until: datetime | None,
+    now: datetime,
+) -> tuple[uuid.UUID | None, bool, str | None]:
+    """The three reservation-derived ``DecisionFacts`` axes, in one place.
+
+    An indefinite (health-failure) exclusion removes the device from run routing
+    entirely, so it contributes no run id; a timed exclusion (cooldown) keeps the
+    run bound but blocks new sessions while its deadline is in the future.
+
+    ``exclusion_kind`` is a plain ``str`` from a ``String(16)`` column: compare
+    with ``==``/``!=``, never ``is`` — an ``ExclusionKind`` member is never
+    identical to the loaded string.
+
+    Extracted because three paths derived these axes independently
+    (``intent_reconciler.gather_decision_facts``,
+    ``decision_snapshot.load_device_decision_snapshot``,
+    ``read_projection._build_device_read_projection``) and a byte-for-byte parity
+    test was the only thing holding them together.
+    """
+    if run_id is None or exclusion_kind == ExclusionKind.exclusion:
+        return (None, False, None)
+    cooldown_active = exclusion_kind == ExclusionKind.cooldown and excluded_until is not None and excluded_until > now
+    return (run_id, cooldown_active, exclusion_reason if cooldown_active else None)
 
 
 def decide_node_process(commands: list[Command], facts: DecisionFacts) -> NodeProcessDecision:  # noqa: PLR0911 - the precedence ladder is one return per rung

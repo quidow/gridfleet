@@ -41,6 +41,7 @@ from app.devices.services.decision import (
     decide_node_process,
     map_node_process_decision,
     parse_command,
+    reservation_decision_axes,
 )
 from app.devices.services.decision_snapshot import load_device_decision_snapshot
 from app.devices.services.event import record_event
@@ -293,21 +294,13 @@ async def gather_decision_facts(
             .limit(1)
         )
     ).scalar_one_or_none()
-    reservation_run_id = None
-    cooldown_active = False
-    cooldown_reason: str | None = None
-    if entry is not None and entry.exclusion_kind != ExclusionKind.exclusion:
-        # An indefinite (health-failure) exclusion removes the device from run
-        # routing entirely; a timed exclusion (cooldown) keeps the run bound
-        # but blocks new sessions — both verbatim from the retired synthesis.
-        reservation_run_id = entry.run_id
-        if (
-            entry.exclusion_kind == ExclusionKind.cooldown
-            and entry.excluded_until is not None
-            and entry.excluded_until > now
-        ):
-            cooldown_active = True
-            cooldown_reason = entry.exclusion_reason
+    reservation_run_id, cooldown_active, cooldown_reason = reservation_decision_axes(
+        run_id=entry.run_id if entry is not None else None,
+        exclusion_kind=entry.exclusion_kind if entry is not None else None,
+        exclusion_reason=entry.exclusion_reason if entry is not None else None,
+        excluded_until=entry.excluded_until if entry is not None else None,
+        now=now,
+    )
     withdrawal = WithdrawalFacts.from_device(device)
     if ladder is None:
         ladder = await remediation_log.load_ladder(db, device.id)

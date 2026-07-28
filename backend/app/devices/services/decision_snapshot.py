@@ -9,9 +9,9 @@ from sqlalchemy import and_, exists, func, or_, select
 from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import aliased
 
-from app.devices.models import DeviceIntent, DeviceRemediationLogEntry, DeviceReservation, ExclusionKind
+from app.devices.models import DeviceIntent, DeviceRemediationLogEntry, DeviceReservation
 from app.devices.services.claims import is_verification_lease_active, reservation_active
-from app.devices.services.decision import DecisionFacts
+from app.devices.services.decision import DecisionFacts, reservation_decision_axes
 from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.readiness import assess_device_async
 from app.devices.services.state import DeviceStateFacts, WithdrawalFacts, appium_node_stop_in_flight
@@ -269,18 +269,13 @@ async def load_device_decision_snapshot(
         )
         for intent in intents
     )
-    reservation_run_id = None
-    cooldown_active = False
-    cooldown_reason = None
-    if reservation is not None and reservation.exclusion_kind != ExclusionKind.exclusion:
-        reservation_run_id = reservation.run_id
-        if (
-            reservation.exclusion_kind == ExclusionKind.cooldown
-            and reservation.excluded_until is not None
-            and reservation.excluded_until > now
-        ):
-            cooldown_active = True
-            cooldown_reason = reservation.exclusion_reason
+    reservation_run_id, cooldown_active, cooldown_reason = reservation_decision_axes(
+        run_id=reservation.run_id if reservation is not None else None,
+        exclusion_kind=reservation.exclusion_kind if reservation is not None else None,
+        exclusion_reason=reservation.exclusion_reason if reservation is not None else None,
+        excluded_until=reservation.excluded_until if reservation is not None else None,
+        now=now,
+    )
 
     return DeviceDecisionSnapshot(
         intents=intents,
