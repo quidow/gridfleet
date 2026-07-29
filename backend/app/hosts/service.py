@@ -236,6 +236,13 @@ class HostCrudService:
         # Boot fence: a re-registering agent that carries a boot_id supersedes the
         # previous boot, so an in-flight push from the old boot is fenced. A legacy
         # agent (no boot_id) leaves the fence untouched (mixed-version safe).
+        #
+        # Diagnosing a surprise rotation: a fence rotation has been observed
+        # landing with no matching access-log line behind it, which reads as a
+        # phantom write. A client disconnecting after the handler commits but
+        # before the response is sent is one way to get there — FastAPI's
+        # TestClient is one such short-lived client. Look for a short-lived
+        # client or a test suite on that host, not only for a running agent.
         if data.boot_id is not None:
             host.current_boot_id = data.boot_id
         # agent_version / capabilities are push-owned runtime facts; registration

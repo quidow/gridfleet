@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import platform
 import socket
@@ -63,6 +64,10 @@ class RegistrationService:
         self._on_advertised_ip_change = on_advertised_ip_change
         self._refresh_interval = refresh_interval
         self._boot_id = boot_id
+        # Wake for the refresh gap in run(). Set by request_refresh() when the
+        # backend fences this boot out: re-registering rewrites the fence, so
+        # recovery costs one push cycle instead of one refresh interval.
+        self._refresh_now = asyncio.Event()
 
     def _handle_version_guidance(self, data: dict[str, Any]) -> None:
         changed = self._version_guidance.update(data)
@@ -94,6 +99,19 @@ class RegistrationService:
         self._handle_version_guidance(data)
         return data
 
+    def request_refresh(self) -> None:
+        """Ask the registration loop to re-register now instead of at the next refresh.
+
+        Rate limiting is the caller's job — see ``StatusPushLoop``, which fires
+        this at most once per rejection episode.
+        """
+        self._refresh_now.set()
+
+    async def _wait_for_refresh(self, delay: float) -> None:
+        """Wait out the refresh interval, or return early when a refresh is requested."""
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._refresh_now.wait(), timeout=delay)
+
     async def run(self, manager_url: str, agent_port: int) -> None:
         """Background task: retry registration and periodically refresh mutable host fields."""
         delay = 2.0
@@ -106,6 +124,10 @@ class RegistrationService:
         last_advertised_ip: str | None = None
 
         while True:
+            # Cleared before the attempt, never after the wait: a wake that lands
+            # while this registration is in flight must survive it. The cost is
+            # one redundant registration; the alternative is staying fenced out.
+            self._refresh_now.clear()
             try:
                 result = await self.register_once(manager_url, agent_port)
                 if result:
@@ -124,7 +146,7 @@ class RegistrationService:
                         if self._on_advertised_ip_change is not None:
                             await self._on_advertised_ip_change(advertised_ip)
                     delay = 2.0
-                    await asyncio.sleep(refresh_delay)
+                    await self._wait_for_refresh(refresh_delay)
                     continue
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code

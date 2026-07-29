@@ -9,6 +9,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings as core_settings
+from app.core.errors import AppError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.metrics_recorders import (
     HOST_PUSH_OBSERVATION_FAILURES,
@@ -42,6 +43,24 @@ class BootFenceError(Exception):
     def __init__(self, *, host_id: uuid.UUID, current: uuid.UUID, incoming: uuid.UUID) -> None:
         super().__init__(f"boot_id {incoming} superseded by {current} for host {host_id}")
         self.host_id = host_id
+
+
+class BootFenceSupersededError(AppError):
+    """The response shape of :class:`BootFenceError`: a coded 409 the agent acts on.
+
+    The agent re-registers immediately when it sees this code (rate-limited on
+    its side), which is why the code must stay fence-specific — a generic
+    ``CONFLICT`` would make it re-enrol on unrelated conflicts. The wire value
+    is spelled out on both sides of the contract: renaming it here fails
+    tests/hosts/test_status_push_boot_fence.py, and renaming it on the agent
+    fails agent/tests/test_status_push.py.
+    """
+
+    status_code = 409
+    code = "BOOT_FENCE_SUPERSEDED"
+
+    def __init__(self) -> None:
+        super().__init__("Stale or superseded boot_id")
 
 
 class SectionHashMismatchError(Exception):

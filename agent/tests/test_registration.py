@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -151,11 +152,14 @@ async def test_registration_loop_retries_after_4xx_rejection(caplog: pytest.LogC
 
 async def test_registration_loop_retries_transport_failures_with_backoff() -> None:
     sleeps: list[float] = []
+    waits: list[float] = []
 
     async def fake_sleep(delay: float) -> None:
         sleeps.append(delay)
-        if delay == 300.0:
-            raise asyncio.CancelledError
+
+    async def fake_wait(delay: float) -> None:
+        waits.append(delay)
+        raise asyncio.CancelledError
 
     service = RegistrationService(capabilities_cache=_fake_cache(), version_guidance=VersionGuidanceStore())
     with (
@@ -166,20 +170,22 @@ async def test_registration_loop_retries_transport_failures_with_backoff() -> No
             side_effect=[httpx.ConnectError("down"), {"id": "host-1", "status": "online"}],
         ) as register,
         patch("agent_app.registration.asyncio.sleep", side_effect=fake_sleep),
+        patch.object(service, "_wait_for_refresh", side_effect=fake_wait),
         pytest.raises(asyncio.CancelledError),
     ):
         await service.run("http://manager:8000", 5100)
 
     assert register.await_count == 2
-    assert sleeps == [2.0, 300.0]
+    assert sleeps == [2.0]
+    assert waits == [300.0]
 
 
 async def test_registration_loop_refreshes_successful_registration() -> None:
-    sleeps: list[float] = []
+    waits: list[float] = []
 
-    async def fake_sleep(delay: float) -> None:
-        sleeps.append(delay)
-        if len(sleeps) == 2:
+    async def fake_wait(delay: float) -> None:
+        waits.append(delay)
+        if len(waits) == 2:
             raise asyncio.CancelledError
 
     host_identity = MagicMock()
@@ -196,22 +202,22 @@ async def test_registration_loop_refreshes_successful_registration() -> None:
                 {"id": "host-1", "status": "online"},
             ],
         ) as register,
-        patch("agent_app.registration.asyncio.sleep", side_effect=fake_sleep),
+        patch.object(service, "_wait_for_refresh", side_effect=fake_wait),
         pytest.raises(asyncio.CancelledError),
     ):
         await service.run("http://manager:8000", 5100)
 
     assert register.await_count == 2
-    assert sleeps == [300.0, 300.0]
+    assert waits == [300.0, 300.0]
     assert host_identity.set.call_args_list == [call("host-1"), call("host-1")]
 
 
 async def test_registration_loop_notifies_when_advertised_ip_changes() -> None:
-    sleeps: list[float] = []
+    waits: list[float] = []
 
-    async def fake_sleep(delay: float) -> None:
-        sleeps.append(delay)
-        if len(sleeps) == 2:
+    async def fake_wait(delay: float) -> None:
+        waits.append(delay)
+        if len(waits) == 2:
             raise asyncio.CancelledError
 
     on_ip_change = AsyncMock()
@@ -228,7 +234,7 @@ async def test_registration_loop_notifies_when_advertised_ip_changes() -> None:
                 {"id": "host-1", "status": "online", "ip": "192.168.88.107"},
             ],
         ),
-        patch("agent_app.registration.asyncio.sleep", side_effect=fake_sleep),
+        patch.object(service, "_wait_for_refresh", side_effect=fake_wait),
         pytest.raises(asyncio.CancelledError),
     ):
         await service.run("http://manager:8000", 5100)
@@ -330,3 +336,31 @@ async def test_register_with_manager_logs_upgrade_guidance_once(caplog: pytest.L
 
     messages = [record.getMessage() for record in caplog.records]
     assert messages.count("Agent update available: recommended version is 0.3.0") == 1
+
+
+async def test_registration_reruns_immediately_when_a_refresh_is_requested() -> None:
+    """Layer 3: a fenced-out agent rewrites the fence in a push cycle, not a
+    refresh interval. Without the wake the second registration would be 300 s away."""
+    registered = asyncio.Event()
+    calls = 0
+
+    async def _register(*_args: object, **_kwargs: object) -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        registered.set()
+        return {"id": "host-1", "status": "online"}
+
+    service = RegistrationService(capabilities_cache=_fake_cache(), version_guidance=VersionGuidanceStore())
+    with patch.object(service, "register_once", side_effect=_register):
+        task = asyncio.create_task(service.run("http://manager:8000", 5100))
+        try:
+            await asyncio.wait_for(registered.wait(), timeout=1.0)
+            assert calls == 1
+            registered.clear()
+            service.request_refresh()
+            await asyncio.wait_for(registered.wait(), timeout=1.0)
+            assert calls == 2
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
