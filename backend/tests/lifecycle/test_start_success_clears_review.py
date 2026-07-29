@@ -10,7 +10,10 @@ import pytest
 from app.devices.models import DeviceOperationalState
 from app.devices.services.review import ReviewService
 from app.lifecycle.services import remediation_log
-from app.lifecycle.services.actions import reset_reconciler_start_failure_if_needed
+from app.lifecycle.services.actions import (
+    escalate_device_remediation_failure,
+    reset_reconciler_start_failure_if_needed,
+)
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
@@ -64,3 +67,53 @@ async def test_start_success_leaves_an_unrelated_review_flag_alone(db_session: A
     assert reset is True, "the reconciler episode should still be reset"
     assert device.review_required is True, "an unrelated shelving must survive"
     assert device.review_reason == "verification_failed"
+
+
+@pytest.mark.db
+async def test_start_success_keeps_a_verification_shelving_the_ladder_overwrote(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    """The review reason alone cannot scope the clear.
+
+    ``mark_review_required`` overwrites ``review_reason`` in place on an
+    already-flagged device, so a verification shelving that predates the ladder
+    episode ends up wearing the ladder's own reason. Clearing on that match
+    returns a device that never passed verification to the allocatable pool.
+    """
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="review-overwritten",
+        identity_value="review-overwritten-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    # 1. Verification shelves the device. No ladder attempt is written.
+    await ReviewService().mark_review_required(
+        db_session,
+        device,
+        reason="verification failed: driver did not respond",
+        source="verification",
+    )
+    await db_session.flush()
+    shelved_at = device.review_set_at
+
+    # 2. A later reconciler episode escalates past the review threshold and
+    #    overwrites the reason in place (review_set_at is deliberately kept).
+    outcome = await escalate_device_remediation_failure(
+        db_session,
+        device,
+        settings=SETTINGS,
+        source="appium_reconciler",
+        reason="port_conflict",
+    )
+    assert outcome.shelved is True
+    assert device.review_reason == "port_conflict", "the overwrite must genuinely happen"
+    assert device.review_set_at == shelved_at, "the initial flag-on time must not be refreshed"
+
+    # 3. The conflict clears and the node starts.
+    reset = await reset_reconciler_start_failure_if_needed(db_session, device)
+    await db_session.commit()
+
+    assert reset is True, "the reconciler episode should still be reset"
+    assert device.review_required is True, "a shelving that predates the episode must survive"
+    assert device.review_reason == "port_conflict"

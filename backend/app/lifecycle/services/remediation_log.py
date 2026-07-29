@@ -66,6 +66,12 @@ class LadderState:
     deferred_stop_reason: str | None = None
     deferred_stop_since: datetime | None = None
     last_restart_at: datetime | None = None
+    # ``at`` of the earliest entry in the current post-reset window — when this
+    # episode began. None while the window is empty. Callers that need to know
+    # whether some other timestamp belongs to this episode compare against it;
+    # unlike the failure reason it is derived from the append-only log, so a
+    # writer that overwrites a mutable field elsewhere cannot forge it.
+    window_started_at: datetime | None = None
 
     @property
     def armed(self) -> bool:
@@ -134,12 +140,15 @@ def derive_ladder(entries: Sequence[DeviceRemediationLogEntry]) -> LadderState:
         deferred_stop_reason=deferred_row.reason if deferred_row is not None else None,
         deferred_stop_since=deferred_row.at if deferred_row is not None else None,
         last_restart_at=last_restart_at,
+        window_started_at=window[0].at if window else None,
     )
 
 
 def advance_ladder(ladder: LadderState, entry: DeviceRemediationLogEntry) -> LadderState:
     if entry.kind == KIND_RESET:
+        # A reset empties the window, so the next entry opens the new episode.
         return LadderState(0, None, None, None, entry.action, entry.at)
+    window_started_at = ladder.window_started_at if ladder.window_started_at is not None else entry.at
     if entry.kind == KIND_ATTEMPT:
         return LadderState(
             ladder.attempts + 1,
@@ -153,6 +162,7 @@ def advance_ladder(ladder: LadderState, entry: DeviceRemediationLogEntry) -> Lad
             ladder.deferred_stop_reason,
             ladder.deferred_stop_since,
             ladder.last_restart_at,
+            window_started_at,
         )
     last_restart_at = entry.at if entry.action == ACTION_RESTART_COMMISSIONED else ladder.last_restart_at
     node_directive = ladder.node_directive
@@ -184,6 +194,7 @@ def advance_ladder(ladder: LadderState, entry: DeviceRemediationLogEntry) -> Lad
         deferred_reason,
         deferred_since,
         last_restart_at,
+        window_started_at,
     )
 
 

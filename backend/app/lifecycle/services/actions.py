@@ -503,13 +503,26 @@ async def reset_reconciler_start_failure_if_needed(
     await remediation_log.append_reset(db, device.id, source="appium_reconciler", action="start_succeeded")
     # A node that has demonstrably started is not shelved by the episode that
     # just ended: clearing the ladder without the review flag left healthy,
-    # running nodes blocked as offline. Scoped to this episode's own shelving —
-    # the escalation writes its failure reason as the review reason, so a review
-    # set by verification or an operator carries a different one and survives.
+    # running nodes blocked as offline. Scoped to this episode's own shelving.
+    #
+    # Reason alone does not scope it. ``mark_review_required`` overwrites
+    # ``review_reason`` in place when an already-flagged device is re-flagged
+    # with a different reason, so a device shelved by verification and then
+    # escalated by this ladder ends up carrying the ladder's reason — and would
+    # be silently un-shelved back into the allocatable pool with no
+    # re-verification. ``review_set_at`` is written only on the initial flag-on
+    # and that overwrite deliberately does not refresh it, so pairing it with
+    # the episode's own start (both derived from writers this path does not
+    # control) is a discriminator the overwrite cannot forge. An unknown
+    # ``review_set_at`` or an unknown episode start fails closed.
+    review_set_at = getattr(device, "review_set_at", None)
     if (
         getattr(device, "review_required", False)
         and ladder.last_failure_reason is not None
         and device.review_reason == ladder.last_failure_reason
+        and review_set_at is not None
+        and ladder.window_started_at is not None
+        and review_set_at >= ladder.window_started_at
     ):
         await ReviewService().clear_review_required(db, device, reason="start_succeeded", source="appium_reconciler")
     return True
