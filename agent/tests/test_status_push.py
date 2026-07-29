@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator  # noqa: TC003 - contextmanager signature is runtime-inspected
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx2 as httpx
 import pytest
@@ -14,6 +13,9 @@ from agent_app.http_client import close as close_shared_http_client
 from agent_app.lifespan import HttpStatusPushClient
 from agent_app.pack.host_identity import HostIdentity
 from agent_app.status_push import BootFenceRejected, StatusPushLoop
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 HOST_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -270,7 +272,13 @@ async def test_refresh_interval_floors_the_next_reregistration() -> None:
 
 @pytest.mark.asyncio
 async def test_a_later_episode_reregisters_once_the_floor_has_elapsed() -> None:
-    assert await _run_scripted_loop([True, False, True], reregister_min_interval=0.0) == 2
+    """A small positive floor so ``now - last < floor`` is actually evaluated.
+
+    The scripted loop's own push_interval (0.01s) separates the three attempts
+    by roughly two wait cycles (~0.02s) of real time, so a 0.001s floor clears
+    with a wide margin without adding an explicit sleep.
+    """
+    assert await _run_scripted_loop([True, False, True], reregister_min_interval=0.001) == 2
 
 
 @pytest.mark.asyncio
@@ -360,7 +368,6 @@ async def test_lifespan_recovers_the_fence_within_a_push_cycle(monkeypatch: pyte
     """
     from unittest.mock import AsyncMock, patch
 
-    from agent_app.host.capabilities import CapabilitiesCache
     from agent_app.lifespan import lifespan
     from agent_app.main import app
 
@@ -405,4 +412,4 @@ async def test_lifespan_recovers_the_fence_within_a_push_cycle(monkeypatch: pyte
     finally:
         await close_shared_http_client()
 
-    assert len(registrations) >= 2
+    assert len(registrations) == 2

@@ -65,7 +65,9 @@ class StatusPushLoop:
     on_boot_fence_rejected: Callable[[], None] | None = None
     # Floor between two fence-triggered re-registrations, so two agents that
     # genuinely disagree about ownership cannot ping-pong enrolments. Defaults
-    # to the registration refresh interval.
+    # to the registration refresh interval; production always passes the real
+    # value from agent_app/config.py's registration_refresh_interval_sec, which
+    # is the source of truth this default merely mirrors.
     reregister_min_interval: float = 300.0
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
     _fence_episode_active: bool = field(default=False, init=False, repr=False)
@@ -94,30 +96,43 @@ class StatusPushLoop:
     def wake(self) -> None:
         self._wake_event.set()
 
-    def _request_reregistration(self) -> None:
+    def _request_reregistration(self) -> bool:
         """Fire the re-registration hook at most once per rejection episode.
 
         An episode ends only when a push succeeds. The interval floor applies on
         top of that, so a dispute that alternates success and rejection still
-        cannot drive enrolments at push cadence.
+        cannot drive enrolments at push cadence. Returns whether the hook fired,
+        which the caller uses to decide the rejection's log level.
         """
         if self.on_boot_fence_rejected is None or self._fence_episode_active:
-            return
+            return False
         now = monotonic()
         last = self._last_fence_reregistration
         if last is not None and now - last < self.reregister_min_interval:
-            return
+            return False
         self._fence_episode_active = True
         self._last_fence_reregistration = now
-        self.on_boot_fence_rejected()
+        try:
+            self.on_boot_fence_rejected()
+        except Exception:
+            # A raising hook must not escape into run_forever: this loop has no
+            # restart watchdog (unlike the registration loop), so an escape here
+            # is a silent, permanent stop of status pushes.
+            logger.exception("boot fence re-registration hook raised")
+        return True
 
     async def run_forever(self) -> None:
         while True:
             try:
                 await self.client.post_status(await self.build_payload())
             except BootFenceRejected:
-                logger.warning("status push fenced out: this boot no longer owns the host row")
-                self._request_reregistration()
+                fired = self._request_reregistration()
+                log = logger.warning if fired else logger.debug
+                log(
+                    "status push fenced out: this boot no longer owns the host row (boot_id=%s host_id=%s)",
+                    self.boot_id,
+                    self.host_identity.get(),
+                )
             except Exception:
                 logger.exception("status push failed")
             else:
