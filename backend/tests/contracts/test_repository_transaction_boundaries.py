@@ -281,7 +281,6 @@ AGENT_EFFECT_NAMES = frozenset(
         "pack_device_health",
         "pack_device_lifecycle_action",
         "pack_doctor",
-        "poke_node_refresh",
         "poke_node_refresh_target",
         "_agent_get_pack_devices",
     }
@@ -325,7 +324,6 @@ BARE_EFFECT_NAMES = AGENT_EFFECT_NAMES | WAIT_NAMES | SUBPROCESS_NAMES | FILESYS
 # named here, which is what forces it through review.
 EFFECT_ENTRY_POINTS: frozenset[tuple[str, str]] = frozenset(
     {
-        ("app/agent_comm/node_poke.py", "poke_node_refresh"),
         ("app/agent_comm/node_poke.py", "poke_node_refresh_target"),
         ("app/appium_nodes/routers/nodes.py", "_poke_agent"),
         ("app/appium_nodes/services/heartbeat.py", "_ping_agent"),

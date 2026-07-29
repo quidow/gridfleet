@@ -31,7 +31,31 @@ if TYPE_CHECKING:
 
     from app.core.type_defs import SessionFactory
     from app.devices.locking import LockedDevice
+    from app.events.protocols import EventPublisher
+    from app.packs.services.catalog_view import PackView
     from app.runs.schemas import DeviceRequirement
+
+
+async def derive_and_apply_operational_state(
+    db: AsyncSession,
+    device: Device,
+    *,
+    now: datetime,
+    publisher: EventPublisher,
+    packs: dict[str, PackView] | None = None,
+) -> bool:
+    """Derive the operational-state projection and advance the ledger in one call.
+
+    The production edge detector lives in ``intent_reconciler``, which already
+    holds a decision snapshot and so calls ``apply_operational_state_transition``
+    directly. Tests that only care about the ledger edge want the derive+apply
+    pair, which is why it lives here instead of in ``app/`` with no production
+    caller. Callers must hold the device row lock, same as production.
+    """
+    from app.devices.services.state import apply_operational_state_transition, derive_operational_state
+
+    derived_op = await derive_operational_state(db, device, now=now, packs=packs)
+    return apply_operational_state_transition(device, derived_op, publisher=publisher)
 
 
 async def committed_session(db: AsyncSession) -> AsyncSession:

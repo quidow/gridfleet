@@ -11,7 +11,7 @@ column.
 `Device.operational_state_last_emitted` is only the event ledger: it records the last
 projected value emitted as `device.operational_state_changed`. It is not a source of
 truth for current state and is written only by
-`emit_operational_state_transition` in the locked intent reconciler path.
+`apply_operational_state_transition` in the locked intent reconciler path.
 
 ### Derivation flow
 

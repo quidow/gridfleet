@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import ANY, AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
 
-from app.agent_comm.node_poke import NodeRefreshTarget, poke_node_refresh
+from app.agent_comm.node_poke import NodeRefreshTarget
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
@@ -27,7 +27,6 @@ from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 from app.devices.services.state import derive_operational_state
 from app.lifecycle.services import remediation_log
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader
 from tests.fakes.review import build_review_service
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
@@ -475,17 +474,24 @@ async def test_graceful_stop_applies_once_session_ends(
     assert node.accepting_new_sessions is False
 
 
-async def test_pull_host_metadata_change_pokes_instead_of_staging(
+async def test_pull_host_metadata_only_change_gates_the_poke(
     db_session: AsyncSession,
     db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A metadata-only desired-state change must wake the agent with a
-    fire-and-forget poke instead of staging any delivery row."""
+    """A metadata-only delta must still gate the agent wake poke on.
+
+    ``reconcile_device`` returns True exactly when agent-visible node state
+    changed, and ``_reconcile_and_deliver`` is what turns that into the poke.
+    ``desired_state``/``desired_port`` are already at target here, so a True
+    return can only come from the ``metadata_changed`` disjunct — the branch
+    that would otherwise leave a metadata-only edit unannounced until the
+    agent's next poll.
+    """
     device = await create_device(db_session, host_id=db_host.id, name="pull-metadata")
     node = await _seed_node(db_session, device.id, generation=7)
     node.desired_state = AppiumDesiredState.running
     node.desired_port = 4723
+    node.accepting_new_sessions = False
     await db_session.commit()
     service = IntentService(db_session)
     await service.register_intents(
@@ -499,22 +505,23 @@ async def test_pull_host_metadata_change_pokes_instead_of_staging(
         ],
     )
     await db_session.commit()
-    poke = AsyncMock()
-    monkeypatch.setattr("app.agent_comm.node_poke.agent_operations.agent_nodes_refresh", poke)
 
-    await reconcile_device(db_session, device.id, publisher=event_bus)
+    changed = await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
-    await poke_node_refresh(
-        db_session, device.id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
-    )
 
-    poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, pool=None, circuit_breaker=ANY)
+    await db_session.refresh(node)
+    assert changed is True
+    assert node.accepting_new_sessions is True
+    # Pin that the metadata disjunct alone carried it: had these moved too, a
+    # True return would prove nothing about metadata-only deltas.
+    assert node.desired_state == AppiumDesiredState.running
+    assert node.desired_port == 4723
+    assert node.restart_requested_at is None
 
 
 async def test_pull_host_watermark_only_change_pokes_agent(
     db_session: AsyncSession,
     db_host: Host,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="pull-watermark")
     node = await _seed_node(db_session, device.id)
@@ -529,18 +536,13 @@ async def test_pull_host_watermark_only_change_pokes_agent(
         reason="Node health restart",
     )
     await db_session.commit()
-    poke = AsyncMock()
-    monkeypatch.setattr("app.agent_comm.node_poke.agent_operations.agent_nodes_refresh", poke)
 
-    await reconcile_device(db_session, device.id, publisher=event_bus)
+    changed = await reconcile_device(db_session, device.id, publisher=event_bus)
     await db_session.commit()
-    await poke_node_refresh(
-        db_session, device.id, settings=FakeSettingsReader(), circuit_breaker=Mock(), publisher=event_bus
-    )
 
     await db_session.refresh(node)
     assert node.restart_requested_at == entry.at
-    poke.assert_awaited_once_with(db_host.ip, db_host.agent_port, pool=None, circuit_breaker=ANY)
+    assert changed is True
 
 
 async def test_scan_rederives_stale_available_device_without_intents(

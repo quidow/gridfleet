@@ -57,7 +57,7 @@ def _make_failure_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunF
 
 @pytest.fixture(autouse=True)
 def _stub_agent_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
-    # poke_node_refresh otherwise blocks waiting for a TCP connect to the test
+    # poke_node_refresh_target otherwise blocks waiting for a TCP connect to the test
     # host IP. Cooldown flows trigger this from inline delivery and from the
     # expired-intent reconciler sweep.
     monkeypatch.setattr(

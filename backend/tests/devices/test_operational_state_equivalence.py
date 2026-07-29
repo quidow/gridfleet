@@ -12,7 +12,6 @@ from app.devices.services.fleet_capacity import _count_devices
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration, verification_intent_source
 from app.devices.services.state import (
-    emit_operational_state_transition,
     evaluate_operational_state,
     gather_device_state_facts,
     is_available_sql,
@@ -25,7 +24,7 @@ from app.devices.services.state import (
 )
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
-from tests.helpers import create_device_record, create_host
+from tests.helpers import create_device_record, create_host, derive_and_apply_operational_state
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
@@ -301,8 +300,8 @@ async def test_operational_state_edge_detector_is_exact_under_jitter(
     publisher = _RecordingPub()
     now = datetime.now(UTC)
 
-    assert await emit_operational_state_transition(db_session, device, now=now, publisher=publisher) is True
-    assert await emit_operational_state_transition(db_session, device, now=now, publisher=publisher) is False
+    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is True
+    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is False
     assert len(publisher.events) == 1
     assert publisher.events[0]["old_operational_state"] == DeviceOperationalState.offline.value
     assert publisher.events[0]["new_operational_state"] == DeviceOperationalState.available.value
@@ -310,8 +309,8 @@ async def test_operational_state_edge_detector_is_exact_under_jitter(
 
     device.lifecycle_policy_state = {"maintenance_reason": "operator"}
     await db_session.flush()
-    assert await emit_operational_state_transition(db_session, device, now=now, publisher=publisher) is True
-    assert await emit_operational_state_transition(db_session, device, now=now, publisher=publisher) is False
+    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is True
+    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is False
     assert len(publisher.events) == 2
     assert publisher.events[-1]["old_operational_state"] == DeviceOperationalState.available.value
     assert publisher.events[-1]["new_operational_state"] == DeviceOperationalState.maintenance.value

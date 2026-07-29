@@ -6,12 +6,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
-from app.devices.services.state import emit_operational_state_transition
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import (
     delete_jobs_by_kind,
+    derive_and_apply_operational_state,
     dispatch_committed_events,
     get_connectivity_control_plane_state,
     get_session_viability_control_plane_state,
@@ -111,7 +111,7 @@ async def test_operational_state_edge_publishes_only_on_change(db_session: Async
     db_session.add(device)
     await db_session.commit()
 
-    changed = await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
     assert changed is False
     await db_session.commit()
     await dispatch_committed_events()
@@ -119,7 +119,7 @@ async def test_operational_state_edge_publishes_only_on_change(db_session: Async
 
     db_session.add(Session(session_id="availability-session", device_id=device.id, status=SessionStatus.running))
     await db_session.flush()
-    changed = await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
     assert changed is True
     await db_session.commit()
     await dispatch_committed_events()

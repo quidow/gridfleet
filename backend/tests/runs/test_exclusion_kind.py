@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _stub_agent_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
-    # poke_node_refresh would attempt a real TCP connect otherwise (same stub
+    # poke_node_refresh_target would attempt a real TCP connect otherwise (same stub
     # as tests/runs/test_run_device_cooldown.py).
     monkeypatch.setattr(
         "app.agent_comm.node_poke.agent_operations.agent_nodes_refresh",

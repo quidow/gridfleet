@@ -14,8 +14,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from app.devices import locking as device_locking
-from app.devices.services.state import emit_operational_state_transition
-from tests.helpers import dispatch_committed_events, seed_host_and_device
+from tests.helpers import derive_and_apply_operational_state, dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -32,7 +31,7 @@ async def test_event_dispatches_after_commit(
     device.device_checks_healthy = False
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
-    await emit_operational_state_transition(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
+    await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
     # Pre-commit: nothing dispatched yet.
     await dispatch_committed_events()
     assert event_bus_capture == [], f"Helper must not dispatch before commit; got {event_bus_capture}"
@@ -54,7 +53,7 @@ async def test_event_dropped_on_rollback(
     device.device_checks_healthy = False
     event_bus_capture.clear()
     locked = await device_locking.lock_device(db_session, device.id)
-    await emit_operational_state_transition(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
+    await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
 
     await db_session.rollback()
     await dispatch_committed_events()
@@ -75,7 +74,7 @@ async def test_multiple_events_dispatch_in_queue_order(
     event_bus_capture.clear()
     for d in (d1, d2):
         locked = await device_locking.lock_device(db_session, d.id)
-        await emit_operational_state_transition(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
+        await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
 
     await db_session.commit()
     await dispatch_committed_events()

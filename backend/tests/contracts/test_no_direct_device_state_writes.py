@@ -138,18 +138,20 @@ def test_protected_column_written_only_by_sanctioned_modules(attr: str) -> None:
     )
 
 
-# Both ledger writers, not just the emitter: ``apply_operational_state_transition``
-# advances ``operational_state_last_emitted`` through the same ledger and would
-# otherwise be reachable from a third module with nothing failing (the column
-# scan passes for it, so the gap was silent).
+# ``apply_operational_state_transition`` is the ledger writer: it advances
+# ``operational_state_last_emitted`` and would otherwise be reachable from a
+# third module with nothing failing (the column scan passes for it, so the gap
+# was silent). The async ``emit_`` wrapper that used to sit in front of it had
+# no production caller and is gone; tests reach for the derive+apply pair
+# through ``tests.helpers.derive_and_apply_operational_state``.
 #
 # This is line text, not AST, and stays that way deliberately. It cannot see an
-# import-aliased call site (``from ... import emit_operational_state_transition as
-# emit``), a ``getattr(state_module, name)`` reflection, or a bare name handed to
-# ``functools.partial``. That ceiling is pre-existing and unchanged by the
-# widening from ``emit_`` to ``(emit|apply)_``; every real call site in ``app/``
-# is a direct, unaliased call, and an AST scan buys nothing until one is not.
-_CALL_RE = re.compile(r"\b(emit|apply)_operational_state_transition\s*\(")
+# import-aliased call site (``from ... import apply_operational_state_transition
+# as apply``), a ``getattr(state_module, name)`` reflection, or a bare name
+# handed to ``functools.partial``. That ceiling is pre-existing; every real call
+# site in ``app/`` is a direct, unaliased call, and an AST scan buys nothing
+# until one is not.
+_CALL_RE = re.compile(r"\bapply_operational_state_transition\s*\(")
 CALL_EXEMPT_FILES = {
     # The definition and the reconciler edge-detector call live here.
     BACKEND_APP / "devices" / "services" / "state.py",
@@ -172,22 +174,21 @@ def test_operational_state_transition_writers_called_only_by_the_edge_detector()
     findings = _scan_calls()
     formatted = "\n".join(f"  {path}:{lineno}: {line}" for path, lineno, line in findings)
     assert not findings, (
-        "emit_operational_state_transition and apply_operational_state_transition must only be "
-        "called by the edge detector and intent reconciler:\n"
+        "apply_operational_state_transition must only be called by the edge detector "
+        "and intent reconciler:\n"
         f"{formatted}"
     )
 
 
-def test_the_call_scan_sees_both_transition_writers() -> None:
-    """The scan must match ``apply_`` as well as ``emit_``.
+def test_the_call_scan_sees_the_transition_writer() -> None:
+    """The scan must match the ledger writer without matching lookalikes.
 
-    ``apply_operational_state_transition`` advances the same ledger column and is
-    the writer a third module would most plausibly reach for; matching only
-    ``emit_`` left it untracked while the column scan still passed, so the gap
-    was silent.
+    ``apply_operational_state_transition`` advances the ledger column and is the
+    writer a third module would most plausibly reach for; a scan that failed to
+    match it would leave that untracked while the column scan still passed, so
+    the gap would be silent.
     """
-    for name in ("emit_operational_state_transition", "apply_operational_state_transition"):
-        assert _CALL_RE.search(f"    {name}(device, state, publisher=publisher)"), name
+    assert _CALL_RE.search("    apply_operational_state_transition(device, state, publisher=publisher)")
     assert not _CALL_RE.search("    unrelated_operational_state_transition_helper(x)")
 
 
