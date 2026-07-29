@@ -8,6 +8,7 @@ bytes move with no transaction open.
 
 from __future__ import annotations
 
+import uuid
 from typing import TYPE_CHECKING
 
 from sqlalchemy import delete, update
@@ -18,48 +19,74 @@ from app.packs.models import PackArtifact, PackArtifactState
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
 
-async def reserve_artifact(db: AsyncSession, *, path: str) -> None:
+async def reserve_artifact(db: AsyncSession, *, path: str) -> tuple[uuid.UUID, datetime] | None:
     """Claim *path* for an upload whose bytes are not written yet.
 
-    Upsert, not insert: a pack+release maps to the same path forever, so a
-    re-upload -- or a retry after a crash -- meets a row that is already there.
-    The ``where`` is what keeps an ``active`` row out of the reaper's reach: if
-    a live release already names this file, demoting it to ``pending`` and then
-    dying would leave the reaper free to delete a file that is still wanted.
+    A new row or an orphan is claimed; an existing pending or active row returns
+    no claim. The returned id/timestamp pair fences activation to this attempt.
     """
+    claim_id = uuid.uuid4()
     now = now_utc()
-    await db.execute(
+    result = await db.execute(
         insert(PackArtifact)
-        .values(path=path, state=PackArtifactState.pending, state_changed_at=now)
+        .values(id=claim_id, path=path, state=PackArtifactState.pending, state_changed_at=now)
         .on_conflict_do_update(
             index_elements=[PackArtifact.path],
-            set_={"state": PackArtifactState.pending, "state_changed_at": now},
-            where=PackArtifact.state != PackArtifactState.active,
+            set_={
+                "id": claim_id,
+                "state": PackArtifactState.pending,
+                "sha256": None,
+                "size_bytes": None,
+                "state_changed_at": now,
+            },
+            where=PackArtifact.state == PackArtifactState.orphaned,
         )
+        .returning(PackArtifact.id, PackArtifact.state_changed_at)
     )
+    row = result.one_or_none()
+    return None if row is None else (row.id, row.state_changed_at)
 
 
-async def activate_artifact(db: AsyncSession, *, path: str, sha256: str, size_bytes: int) -> None:
-    """Promote a reservation to a finished file, with its identity filled in.
+async def activate_artifact(
+    db: AsyncSession,
+    *,
+    artifact_id: uuid.UUID,
+    path: str,
+    sha256: str,
+    size_bytes: int,
+    reserved_at: datetime | None,
+) -> bool:
+    """Promote the caller's reservation, or refresh the matching active artifact.
 
     Runs in the same transaction as the release metadata that names the file, so
     a release row can never point at a file whose ledger entry says it was never
     finished.
     """
-    await db.execute(
-        update(PackArtifact)
-        .where(PackArtifact.path == path)
-        .values(
+    statement = update(PackArtifact).where(PackArtifact.id == artifact_id, PackArtifact.path == path)
+    if reserved_at is None:
+        statement = statement.where(
+            PackArtifact.state == PackArtifactState.active,
+            PackArtifact.sha256 == sha256,
+        )
+    else:
+        statement = statement.where(
+            PackArtifact.state == PackArtifactState.pending,
+            PackArtifact.state_changed_at == reserved_at,
+        )
+    result = await db.execute(
+        statement.values(
             state=PackArtifactState.active,
             sha256=sha256,
             size_bytes=size_bytes,
             state_changed_at=now_utc(),
-        )
+        ).returning(PackArtifact.id)
     )
+    return result.scalar_one_or_none() is not None
 
 
 async def orphan_artifacts(db: AsyncSession, *, paths: Sequence[str]) -> None:

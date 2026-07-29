@@ -66,7 +66,12 @@ async def test_ingest_parses_and_stores_the_artifact_off_the_event_loop(monkeypa
         pack_ingest,
         "reserve_pack_upload",
         AsyncMock(
-            return_value=pack_ingest.ArtifactReservation(artifact_path="/tmp/async-pack-1.tar.gz", needs_write=True)
+            return_value=pack_ingest.ArtifactReservation(
+                artifact_path="/tmp/async-pack-1.tar.gz",
+                needs_write=True,
+                artifact_id=None,
+                reserved_at=None,
+            )
         ),
     )
     activate = AsyncMock(return_value="pack-out")

@@ -161,7 +161,7 @@ async def test_pack_ingest_existing_release_restores_missing_artifact(monkeypatc
     monkeypatch.setattr(
         pack_ingest_service,
         "reserve_pack_upload",
-        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/restored.tgz", True)),
+        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/restored.tgz", True, None, None)),
     )
     activate = AsyncMock(return_value=result)
     monkeypatch.setattr(pack_ingest_service, "activate_pack_upload", activate)
@@ -196,7 +196,7 @@ async def test_pack_ingest_existing_release_storage_error_becomes_conflict(monke
     monkeypatch.setattr(
         pack_ingest_service,
         "reserve_pack_upload",
-        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/restored.tgz", True)),
+        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/restored.tgz", True, None, None)),
     )
     storage = MagicMock()
     storage.store.side_effect = pack_ingest_service.PackStorageError("disk full")
@@ -245,7 +245,7 @@ async def test_pack_ingest_new_release_storage_and_manifest_dict_errors(monkeypa
     monkeypatch.setattr(
         pack_ingest_service,
         "reserve_pack_upload",
-        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/pack.tgz", True)),
+        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/pack.tgz", True, None, None)),
     )
 
     storage = MagicMock()
@@ -289,7 +289,7 @@ async def test_pack_ingest_existing_pack_without_release_adds_new_release(monkey
     monkeypatch.setattr(
         pack_ingest_service,
         "reserve_pack_upload",
-        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/pack.tgz", True)),
+        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/pack.tgz", True, None, None)),
     )
     activate = AsyncMock(return_value=existing)
     monkeypatch.setattr(pack_ingest_service, "activate_pack_upload", activate)

@@ -19,6 +19,8 @@ from app.packs.models import (
     DriverPack,
     DriverPackPlatform,
     DriverPackRelease,
+    PackArtifact,
+    PackArtifactState,
     PackState,
 )
 from app.packs.services.artifact_ledger import activate_artifact, reserve_artifact
@@ -29,6 +31,9 @@ from app.packs.services.storage import PackStorageError
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    import uuid
+    from datetime import datetime
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.type_defs import SessionFactory
@@ -171,10 +176,12 @@ class ParsedPack:
 
 @dataclass(frozen=True, slots=True)
 class ArtifactReservation:
-    """The path the upload claimed, and whether its bytes still have to be written."""
+    """The path, write decision, and ledger generation phase three must still own."""
 
     artifact_path: str
     needs_write: bool
+    artifact_id: uuid.UUID | None
+    reserved_at: datetime | None
 
 
 def parse_pack_tarball(data: bytes) -> ParsedPack:
@@ -228,17 +235,45 @@ async def reserve_pack_upload(
                 f"pack {parsed.pack_id!r} release {parsed.release!r} already exists with different content"
             )
         if existing.artifact_path is not None and Path(existing.artifact_path).is_file():
-            return ArtifactReservation(artifact_path=existing.artifact_path, needs_write=False)
+            return ArtifactReservation(
+                artifact_path=existing.artifact_path,
+                needs_write=False,
+                artifact_id=None,
+                reserved_at=None,
+            )
 
     artifact_path = storage.path_for(pack_id=parsed.pack_id, release=parsed.release)
-    await reserve_artifact(session, path=artifact_path)
-    return ArtifactReservation(artifact_path=artifact_path, needs_write=True)
+    claim = await reserve_artifact(session, path=artifact_path)
+    if claim is None:
+        active = (
+            await session.execute(
+                select(PackArtifact.id, PackArtifact.sha256).where(
+                    PackArtifact.path == artifact_path,
+                    PackArtifact.state == PackArtifactState.active,
+                )
+            )
+        ).one_or_none()
+        if existing is None or active is None or active.sha256 != parsed.payload_sha:
+            raise PackIngestConflictError(
+                f"pack {parsed.pack_id!r} release {parsed.release!r} already has an upload in progress"
+            )
+        artifact_id = active.id
+        reserved_at = None
+    else:
+        artifact_id, reserved_at = claim
+    return ArtifactReservation(
+        artifact_path=artifact_path,
+        needs_write=True,
+        artifact_id=artifact_id,
+        reserved_at=reserved_at,
+    )
 
 
 async def activate_pack_upload(
     session: AsyncSession,
     *,
     parsed: ParsedPack,
+    reservation: ArtifactReservation,
     record: StorageRecord | None,
     username: str,
     origin_filename: str,
@@ -251,6 +286,33 @@ async def activate_pack_upload(
             .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
         )
     ).scalar_one_or_none()
+    release_row = None if pack is None else next((row for row in pack.releases if row.release == parsed.release), None)
+    if release_row is not None and release_row.artifact_sha256 != parsed.payload_sha:
+        raise PackIngestConflictError(
+            f"pack {parsed.pack_id!r} release {parsed.release!r} already exists with different content"
+        )
+    if record is None and release_row is None:
+        raise PackIngestConflictError(
+            f"pack {parsed.pack_id!r} release {parsed.release!r} changed while the upload was in progress"
+        )
+    if record is not None:
+        if reservation.artifact_id is None or (release_row is None and reservation.reserved_at is None):
+            raise PackIngestConflictError(
+                f"pack {parsed.pack_id!r} release {parsed.release!r} changed while the upload was in progress"
+            )
+        activated = await activate_artifact(
+            session,
+            artifact_id=reservation.artifact_id,
+            path=record.path,
+            sha256=record.sha256,
+            size_bytes=record.size,
+            reserved_at=reservation.reserved_at,
+        )
+        if not activated:
+            raise PackIngestConflictError(
+                f"pack {parsed.pack_id!r} release {parsed.release!r} lost its artifact reservation"
+            )
+
     if pack is None:
         pack = DriverPack(
             id=parsed.pack_id,
@@ -263,8 +325,6 @@ async def activate_pack_upload(
         session.add(pack)
         await session.flush()
         release_row = None
-    else:
-        release_row = next((row for row in pack.releases if row.release == parsed.release), None)
     if release_row is None:
         release_row = DriverPackRelease(
             pack_id=parsed.pack_id,
@@ -284,7 +344,6 @@ async def activate_pack_upload(
     await session.flush()
 
     if record is not None:
-        await activate_artifact(session, path=record.path, sha256=record.sha256, size_bytes=record.size)
         await record_pack_upload(
             session,
             username=username,
@@ -332,6 +391,7 @@ async def ingest_pack_tarball(
         return await activate_pack_upload(
             session,
             parsed=parsed,
+            reservation=reservation,
             record=record,
             username=username,
             origin_filename=origin_filename,
