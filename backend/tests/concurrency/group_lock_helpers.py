@@ -128,20 +128,19 @@ async def assert_no_dangling_reference(
     where one of the two outcomes always makes the guard vacuous — pin the exact
     expected end state there instead.
 
-    Two checks, because a key-based one alone cannot fail. Resolving the target
-    through ``device_groups`` means a reference to a deleted id disappears from
-    the result set instead of showing up as a violation, which is exactly the
-    vacuous-guard failure mode this helper's previous body had against the JSON
-    column. The orphan read is the one that can actually catch a weakened
-    ``fk_device_group_member_of_static_group``.
+    One check, deliberately. A key-based read (including
+    :func:`fetch_member_of_keys`) resolves the target *through* ``device_groups``,
+    so a reference to a deleted id disappears from the result set instead of
+    showing up as a violation -- ``static_key not in references`` is then true by
+    construction, which is the vacuous-guard failure mode this helper's original
+    body had against the JSON column and which a second key-based half here
+    reproduced. The outer-join orphan read is the one that can actually catch a
+    weakened ``fk_device_group_member_of_static_group``.
     """
-    static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    _static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
     assert dynamic_row is not None
     orphans = await fetch_orphan_reference_ids(db_session_maker, dynamic_key=dynamic_key)
     assert not orphans, f"dynamic group {dynamic_key} references group ids that no longer exist: {orphans}"
-    if static_row is None:
-        references = await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key)
-        assert static_key not in references, f"dynamic group {dynamic_key} references deleted static group {static_key}"
 
 
 @asynccontextmanager
