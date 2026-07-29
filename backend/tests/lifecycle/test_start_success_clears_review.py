@@ -154,12 +154,12 @@ async def test_start_success_keeps_a_verification_shelving_that_landed_inside_th
 ) -> None:
     """The in-window ordering that made both timestamp proxies agree.
 
-    The episode opens FIRST, so ``window_started_at`` precedes the verification
-    shelving; then the ladder escalates past the threshold and overwrites
-    ``review_reason`` in place. Reason equality holds and
-    ``review_set_at >= window_started_at`` holds — yet the device was shelved by
-    verification, not by this ladder, and a successful start is no evidence that
-    it would pass verification now.
+    The episode opens FIRST, so it precedes the verification shelving; then the
+    ladder escalates past the threshold and overwrites ``review_reason`` in
+    place. Reason equality holds and so does ``review_set_at`` falling inside the
+    episode window — yet the device was shelved by verification, not by this
+    ladder, and a successful start is no evidence that it would pass
+    verification now.
     """
     device = await _device(db_session, db_host.id, "review-in-window")
 
@@ -169,7 +169,7 @@ async def test_start_success_keeps_a_verification_shelving_that_landed_inside_th
     )
     assert first.shelved is False
     await db_session.flush()
-    window_started_at = (await remediation_log.load_ladder(db_session, device.id)).window_started_at
+    episode_opened_at = (await remediation_log.load_ladder(db_session, device.id)).last_action_at
 
     # 2. Verification fails and shelves the device, inside the open window.
     assert (
@@ -182,9 +182,9 @@ async def test_start_success_keeps_a_verification_shelving_that_landed_inside_th
         is True
     )
     await db_session.flush()
-    assert window_started_at is not None
+    assert episode_opened_at is not None
     assert device.review_set_at is not None
-    assert device.review_set_at >= window_started_at, "the shelving must land inside the episode window"
+    assert device.review_set_at >= episode_opened_at, "the shelving must land inside the episode window"
 
     # 3. The ladder crosses the threshold on an already-flagged device: the
     #    re-flag is a no-op that only overwrites the reason in place.

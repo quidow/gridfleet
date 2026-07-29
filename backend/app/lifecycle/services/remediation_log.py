@@ -70,12 +70,6 @@ class LadderState:
     deferred_stop_reason: str | None = None
     deferred_stop_since: datetime | None = None
     last_restart_at: datetime | None = None
-    # ``at`` of the earliest entry in the current post-reset window — when this
-    # episode began. None while the window is empty. Callers that need to know
-    # whether some other timestamp belongs to this episode compare against it;
-    # unlike the failure reason it is derived from the append-only log, so a
-    # writer that overwrites a mutable field elsewhere cannot forge it.
-    window_started_at: datetime | None = None
     # True when this episode is the one that raised ``Device.review_required``
     # from off to on (an ACTION_REVIEW_SHELVED marker sits in the current
     # post-reset window). Recorded at the moment of the transition rather than
@@ -150,7 +144,6 @@ def derive_ladder(entries: Sequence[DeviceRemediationLogEntry]) -> LadderState:
         deferred_stop_reason=deferred_row.reason if deferred_row is not None else None,
         deferred_stop_since=deferred_row.at if deferred_row is not None else None,
         last_restart_at=last_restart_at,
-        window_started_at=window[0].at if window else None,
         review_shelved=any(entry.action == ACTION_REVIEW_SHELVED for entry in window),
     )
 
@@ -159,7 +152,6 @@ def advance_ladder(ladder: LadderState, entry: DeviceRemediationLogEntry) -> Lad
     if entry.kind == KIND_RESET:
         # A reset empties the window, so the next entry opens the new episode.
         return LadderState(0, None, None, None, entry.action, entry.at)
-    window_started_at = ladder.window_started_at if ladder.window_started_at is not None else entry.at
     review_shelved = ladder.review_shelved or entry.action == ACTION_REVIEW_SHELVED
     if entry.kind == KIND_ATTEMPT:
         return LadderState(
@@ -174,7 +166,6 @@ def advance_ladder(ladder: LadderState, entry: DeviceRemediationLogEntry) -> Lad
             ladder.deferred_stop_reason,
             ladder.deferred_stop_since,
             ladder.last_restart_at,
-            window_started_at,
             review_shelved,
         )
     last_restart_at = entry.at if entry.action == ACTION_RESTART_COMMISSIONED else ladder.last_restart_at
@@ -207,7 +198,6 @@ def advance_ladder(ladder: LadderState, entry: DeviceRemediationLogEntry) -> Lad
         deferred_reason,
         deferred_since,
         last_restart_at,
-        window_started_at,
         review_shelved,
     )
 

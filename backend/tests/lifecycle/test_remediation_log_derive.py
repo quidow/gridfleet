@@ -11,6 +11,7 @@ from app.lifecycle.services.remediation_log import (
     ACTION_AUTO_STOPPED,
     ACTION_RECOVERY_STARTED,
     ACTION_RESTART_COMMISSIONED,
+    ACTION_REVIEW_SHELVED,
     DIRECTIVE_START,
     DIRECTIVE_STOP,
     EMPTY_LADDER,
@@ -338,36 +339,17 @@ def test_episode_active_truth_table() -> None:
         assert derive_ladder(entries).episode_active is expected
 
 
-def test_window_started_at_tracks_the_current_episodes_first_entry() -> None:
+def test_advance_ladder_review_shelved_matches_derive_ladder() -> None:
     at = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
     entries = [
         _entry(kind="failure", at=at, action="failure_observed"),
         _entry(kind="attempt", at=at + timedelta(seconds=1), action="recovery_failed"),
-    ]
-
-    assert derive_ladder(entries).window_started_at == at
-    assert derive_ladder([]).window_started_at is None
-    # A reset empties the window; the next entry opens the new episode.
-    reset_at = at + timedelta(seconds=2)
-    assert derive_ladder([*entries, _entry(kind="reset", at=reset_at, action="self_healed")]).window_started_at is None
-    reopened = [
-        *entries,
-        _entry(kind="reset", at=reset_at, action="self_healed"),
-        _entry(kind="attempt", at=reset_at + timedelta(seconds=1), action="recovery_failed"),
-    ]
-    assert derive_ladder(reopened).window_started_at == reset_at + timedelta(seconds=1)
-
-
-def test_advance_ladder_window_start_matches_derive_ladder() -> None:
-    at = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
-    entries = [
-        _entry(kind="failure", at=at, action="failure_observed"),
-        _entry(kind="attempt", at=at + timedelta(seconds=1), action="recovery_failed"),
-        _entry(kind="action", at=at + timedelta(seconds=2), action=ACTION_AUTO_STOP_COMMISSIONED),
-        _entry(kind="reset", at=at + timedelta(seconds=3), action="self_healed"),
-        _entry(kind="attempt", at=at + timedelta(seconds=4), action="recovery_failed"),
+        _entry(kind="action", at=at + timedelta(seconds=2), action=ACTION_REVIEW_SHELVED),
+        _entry(kind="action", at=at + timedelta(seconds=3), action=ACTION_AUTO_STOP_COMMISSIONED),
+        _entry(kind="reset", at=at + timedelta(seconds=4), action="self_healed"),
+        _entry(kind="attempt", at=at + timedelta(seconds=5), action="recovery_failed"),
     ]
     ladder = EMPTY_LADDER
     for index, entry in enumerate(entries, start=1):
         ladder = advance_ladder(ladder, entry)
-        assert ladder.window_started_at == derive_ladder(entries[:index]).window_started_at
+        assert ladder.review_shelved == derive_ladder(entries[:index]).review_shelved
