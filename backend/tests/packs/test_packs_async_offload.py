@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import tarfile
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
@@ -12,37 +13,9 @@ import pytest
 from app.packs.services import ingest as pack_ingest
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncIterator, Callable
 
 pytestmark = pytest.mark.asyncio
-
-
-class _ScalarResult:
-    def __init__(self, *, one_or_none: object = None, one: object = None) -> None:
-        self._one_or_none = one_or_none
-        self._one = one
-
-    def scalar_one_or_none(self) -> object:
-        return self._one_or_none
-
-    def scalar_one(self) -> object:
-        return self._one
-
-
-class _SequenceSession:
-    def __init__(self, *results: _ScalarResult) -> None:
-        self._results = list(results)
-        self.added: list[object] = []
-        self.flushed = 0
-
-    async def execute(self, _statement: object) -> _ScalarResult:
-        return self._results.pop(0)
-
-    def add(self, obj: object) -> None:
-        self.added.append(obj)
-
-    async def flush(self) -> None:
-        self.flushed += 1
 
 
 def _tarball_with_manifest(manifest: bytes) -> bytes:
@@ -62,7 +35,15 @@ def _spy_to_thread(calls: list[str]) -> Callable[..., object]:
     return spy
 
 
-async def test_ingest_validates_tarball_and_stores_artifact_off_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+class _StubSessionFactory:
+    """A ``begin()``-only factory. The phases are stubbed, so the session is inert."""
+
+    @asynccontextmanager
+    async def begin(self) -> AsyncIterator[object]:
+        yield object()
+
+
+async def test_ingest_parses_and_stores_the_artifact_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
     monkeypatch.setattr(pack_ingest.asyncio, "to_thread", _spy_to_thread(calls))
 
@@ -81,25 +62,36 @@ async def test_ingest_validates_tarball_and_stores_artifact_off_event_loop(monke
         insecure_features=[],
     )
     monkeypatch.setattr(pack_ingest, "load_manifest_yaml", lambda _text: manifest)
-    record_upload = AsyncMock()
-    monkeypatch.setattr(pack_ingest, "record_pack_upload", record_upload)
+    monkeypatch.setattr(
+        pack_ingest,
+        "reserve_pack_upload",
+        AsyncMock(
+            return_value=pack_ingest.ArtifactReservation(
+                artifact_path="/tmp/async-pack-1.tar.gz",
+                needs_write=True,
+                artifact_id=None,
+                reserved_at=None,
+            )
+        ),
+    )
+    activate = AsyncMock(return_value="pack-out")
+    monkeypatch.setattr(pack_ingest, "activate_pack_upload", activate)
 
     class Storage:
         def store(self, *, pack_id: str, release: str, data: bytes) -> object:
-            return SimpleNamespace(path=f"/tmp/{pack_id}-{release}.tar.gz", sha256=hashlib.sha256(data).hexdigest())
+            return SimpleNamespace(
+                path=f"/tmp/{pack_id}-{release}.tar.gz", sha256=hashlib.sha256(data).hexdigest(), size=len(data)
+            )
 
-    returned_pack = SimpleNamespace(id="async-pack")
-    session = _SequenceSession(_ScalarResult(one_or_none=None), _ScalarResult(one=returned_pack))
+    result = await pack_ingest.ingest_pack_tarball(
+        _StubSessionFactory(),  # type: ignore[arg-type]
+        storage=Storage(),  # type: ignore[arg-type]
+        username="admin",
+        origin_filename="pack.tar.gz",
+        data=data,
+    )
 
-    assert (
-        await pack_ingest.ingest_pack_tarball(
-            session,
-            storage=Storage(),
-            username="admin",
-            origin_filename="pack.tar.gz",
-            data=data,
-        )
-    ) is returned_pack
-    assert "_extract_manifest_text" in calls
+    assert result == "pack-out"
+    assert "parse_pack_tarball" in calls
     assert "_store_artifact" in calls
-    record_upload.assert_awaited_once()
+    activate.assert_awaited_once()

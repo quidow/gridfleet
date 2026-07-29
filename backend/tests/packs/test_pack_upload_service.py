@@ -25,7 +25,7 @@ from app.packs.services.ingest import (
 from app.packs.services.storage import PackStorageService
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 
 _MANIFEST = """\
@@ -84,11 +84,13 @@ def _build_tarball_with_symlink() -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_upload_persists_pack_and_writes_audit(db_session: AsyncSession, tmp_path: Path) -> None:
+async def test_upload_persists_pack_and_writes_audit(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
     storage = PackStorageService(root=tmp_path)
     tarball = _build_tarball()
     pack = await upload_pack(
-        db_session,
+        db_session_maker,
         storage=storage,
         username="alice",
         origin_filename="vendor-foo-0.1.0.tar.gz",
@@ -97,7 +99,12 @@ async def test_upload_persists_pack_and_writes_audit(db_session: AsyncSession, t
     await db_session.flush()
     assert pack.id == "vendor-foo"
     assert pack.state == PackState.enabled
-    release = pack.releases[0]
+    assert pack.current_release == "0.1.0"
+    from sqlalchemy import select
+
+    from app.packs.models import DriverPackRelease
+
+    release = (await db_session.execute(select(DriverPackRelease))).scalar_one()
     assert release.release == "0.1.0"
     assert release.artifact_sha256 is not None and len(release.artifact_sha256) == 64
     assert release.artifact_path is not None
@@ -105,7 +112,9 @@ async def test_upload_persists_pack_and_writes_audit(db_session: AsyncSession, t
 
 
 @pytest.mark.asyncio
-async def test_upload_rejects_missing_manifest(db_session: AsyncSession, tmp_path: Path) -> None:
+async def test_upload_rejects_missing_manifest(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
     storage = PackStorageService(root=tmp_path)
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
@@ -114,16 +123,18 @@ async def test_upload_rejects_missing_manifest(db_session: AsyncSession, tmp_pat
         tar.addfile(info, io.BytesIO(b"hi\n\n"))
     with pytest.raises(PackUploadValidationError, match=r"manifest\.yaml"):
         await upload_pack(
-            db_session, storage=storage, username="alice", origin_filename="x.tar.gz", data=buf.getvalue()
+            db_session_maker, storage=storage, username="alice", origin_filename="x.tar.gz", data=buf.getvalue()
         )
 
 
 @pytest.mark.asyncio
-async def test_upload_rejects_oversized_tarball(db_session: AsyncSession, tmp_path: Path) -> None:
+async def test_upload_rejects_oversized_tarball(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
     storage = PackStorageService(root=tmp_path)
     with pytest.raises(PackUploadValidationError, match="tarball exceeds maximum size"):
         await upload_pack(
-            db_session,
+            db_session_maker,
             storage=storage,
             username="alice",
             origin_filename="x.tar.gz",
@@ -132,12 +143,14 @@ async def test_upload_rejects_oversized_tarball(db_session: AsyncSession, tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_upload_rejects_oversized_manifest(db_session: AsyncSession, tmp_path: Path) -> None:
+async def test_upload_rejects_oversized_manifest(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
     storage = PackStorageService(root=tmp_path)
     oversized_manifest = "x" * (MAX_PACK_MANIFEST_BYTES + 1)
     with pytest.raises(PackUploadValidationError, match=r"manifest\.yaml exceeds maximum size"):
         await upload_pack(
-            db_session,
+            db_session_maker,
             storage=storage,
             username="alice",
             origin_filename="x.tar.gz",
@@ -146,12 +159,14 @@ async def test_upload_rejects_oversized_manifest(db_session: AsyncSession, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_upload_rejects_too_many_archive_members(db_session: AsyncSession, tmp_path: Path) -> None:
+async def test_upload_rejects_too_many_archive_members(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
     storage = PackStorageService(root=tmp_path)
     extra = {f"extra-{index}.txt": b"x" for index in range(MAX_PACK_TARBALL_MEMBERS)}
     with pytest.raises(PackUploadValidationError, match="too many archive members"):
         await upload_pack(
-            db_session,
+            db_session_maker,
             storage=storage,
             username="alice",
             origin_filename="x.tar.gz",
@@ -160,11 +175,13 @@ async def test_upload_rejects_too_many_archive_members(db_session: AsyncSession,
 
 
 @pytest.mark.asyncio
-async def test_upload_rejects_archive_links(db_session: AsyncSession, tmp_path: Path) -> None:
+async def test_upload_rejects_archive_links(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
     storage = PackStorageService(root=tmp_path)
     with pytest.raises(PackUploadValidationError, match="unsupported archive member"):
         await upload_pack(
-            db_session,
+            db_session_maker,
             storage=storage,
             username="alice",
             origin_filename="x.tar.gz",
@@ -173,12 +190,14 @@ async def test_upload_rejects_archive_links(db_session: AsyncSession, tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_upload_rejects_legacy_origin_if_present(db_session: AsyncSession, tmp_path: Path) -> None:
+async def test_upload_rejects_legacy_origin_if_present(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
     storage = PackStorageService(root=tmp_path)
     with_origin = _MANIFEST + "origin: uploaded\n"
     with pytest.raises(PackUploadValidationError, match="origin"):
         await upload_pack(
-            db_session,
+            db_session_maker,
             storage=storage,
             username="alice",
             origin_filename="x.tar.gz",
@@ -187,46 +206,61 @@ async def test_upload_rejects_legacy_origin_if_present(db_session: AsyncSession,
 
 
 @pytest.mark.asyncio
-async def test_re_upload_same_bytes_is_idempotent(db_session: AsyncSession, tmp_path: Path) -> None:
+async def test_re_upload_same_bytes_is_idempotent(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
     storage = PackStorageService(root=tmp_path)
     data = _build_tarball()
-    a = await upload_pack(db_session, storage=storage, username="alice", origin_filename="x.tar.gz", data=data)
+    a = await upload_pack(db_session_maker, storage=storage, username="alice", origin_filename="x.tar.gz", data=data)
     await db_session.flush()
-    b = await upload_pack(db_session, storage=storage, username="alice", origin_filename="x.tar.gz", data=data)
+    b = await upload_pack(db_session_maker, storage=storage, username="alice", origin_filename="x.tar.gz", data=data)
     assert a.id == b.id
-    # only one release row
-    assert len(b.releases) == 1
+    assert b.current_release == "0.1.0"
+    from sqlalchemy import func, select
+
+    from app.packs.models import DriverPackRelease
+
+    assert await db_session.scalar(select(func.count()).select_from(DriverPackRelease)) == 1
 
 
 @pytest.mark.asyncio
 async def test_re_upload_with_changed_bytes_at_same_release_raises_409(
-    db_session: AsyncSession, tmp_path: Path
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
     storage = PackStorageService(root=tmp_path)
-    await upload_pack(db_session, storage=storage, username="alice", origin_filename="x.tar.gz", data=_build_tarball())
+    await upload_pack(
+        db_session_maker,
+        storage=storage,
+        username="alice",
+        origin_filename="x.tar.gz",
+        data=_build_tarball(),
+    )
     await db_session.flush()
     altered = _build_tarball(extra={"NOTES.txt": b"changed"})
     with pytest.raises(PackUploadConflictError):
-        await upload_pack(db_session, storage=storage, username="alice", origin_filename="x.tar.gz", data=altered)
+        await upload_pack(db_session_maker, storage=storage, username="alice", origin_filename="x.tar.gz", data=altered)
 
 
 @pytest.mark.asyncio
 async def test_upload_warns_when_session_discovery_missing(
-    db_session: AsyncSession, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """F3: a pack whose insecure_features lacks ':session_discovery' ingests but logs a
     non-fatal warning (orphan-session reaping is disabled for it)."""
     storage = PackStorageService(root=tmp_path)
     with caplog.at_level("WARNING", logger="app.packs.services.ingest"):
         await upload_pack(
-            db_session, storage=storage, username="alice", origin_filename="x.tar.gz", data=_build_tarball()
+            db_session_maker, storage=storage, username="alice", origin_filename="x.tar.gz", data=_build_tarball()
         )
     assert any("pack_ingest_missing_session_discovery" in r.message for r in caplog.records)
 
 
 @pytest.mark.asyncio
 async def test_upload_canonicalizes_session_discovery_into_stored_manifest(
-    db_session: AsyncSession, tmp_path: Path
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
     """Wave-5 #29: the invariant "every grid pack supports session enumeration" was
     split across a soft warn at ingest and a hard fix-up at dispatch (start_shim),
@@ -238,7 +272,9 @@ async def test_upload_canonicalizes_session_discovery_into_stored_manifest(
     from app.packs.models import DriverPackRelease
 
     storage = PackStorageService(root=tmp_path)
-    await upload_pack(db_session, storage=storage, username="alice", origin_filename="x.tar.gz", data=_build_tarball())
+    await upload_pack(
+        db_session_maker, storage=storage, username="alice", origin_filename="x.tar.gz", data=_build_tarball()
+    )
     release = (
         (await db_session.execute(select(DriverPackRelease).where(DriverPackRelease.pack_id == "vendor-foo")))
         .scalars()
@@ -248,7 +284,9 @@ async def test_upload_canonicalizes_session_discovery_into_stored_manifest(
 
 
 @pytest.mark.asyncio
-async def test_upload_preserves_existing_session_discovery_scope(db_session: AsyncSession, tmp_path: Path) -> None:
+async def test_upload_preserves_existing_session_discovery_scope(
+    db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
     """A pack already requesting the feature (any scope) is stored verbatim — no
     duplicate wildcard appended."""
     from sqlalchemy import select
@@ -258,7 +296,7 @@ async def test_upload_preserves_existing_session_discovery_scope(db_session: Asy
     storage = PackStorageService(root=tmp_path)
     manifest = _MANIFEST + 'insecure_features:\n  - "uiautomator2:session_discovery"\n'
     await upload_pack(
-        db_session,
+        db_session_maker,
         storage=storage,
         username="alice",
         origin_filename="x.tar.gz",
@@ -274,14 +312,17 @@ async def test_upload_preserves_existing_session_discovery_scope(db_session: Asy
 
 @pytest.mark.asyncio
 async def test_upload_no_warning_when_session_discovery_present(
-    db_session: AsyncSession, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """F3: a pack that requests session_discovery ingests with no missing-feature warning."""
     storage = PackStorageService(root=tmp_path)
     manifest = _MANIFEST + 'insecure_features:\n  - "*:session_discovery"\n'
     with caplog.at_level("WARNING", logger="app.packs.services.ingest"):
         await upload_pack(
-            db_session,
+            db_session_maker,
             storage=storage,
             username="alice",
             origin_filename="x.tar.gz",

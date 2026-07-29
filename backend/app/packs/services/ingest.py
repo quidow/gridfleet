@@ -5,8 +5,9 @@ import hashlib
 import io
 import logging
 import tarfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from sqlalchemy import select
@@ -18,17 +19,26 @@ from app.packs.models import (
     DriverPack,
     DriverPackPlatform,
     DriverPackRelease,
+    PackArtifact,
+    PackArtifactState,
     PackState,
 )
+from app.packs.services.artifact_ledger import activate_artifact, reserve_artifact
+from app.packs.services.service import build_pack_out
 from app.packs.services.start_shim import has_session_discovery
 from app.packs.services.storage import PackStorageError
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    import uuid
+    from datetime import datetime
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.type_defs import SessionFactory
     from app.packs.manifest import Manifest
+    from app.packs.schemas import PackOut
     from app.packs.services.storage import PackStorageService, StorageRecord
 
 
@@ -153,131 +163,236 @@ async def record_pack_upload(
     )
 
 
-async def ingest_pack_tarball(
-    session: AsyncSession,
-    *,
-    storage: PackStorageService,
-    username: str,
-    origin_filename: str,
-    data: bytes,
-) -> DriverPack:
-    manifest_text = await asyncio.to_thread(_extract_manifest_text, data)
+@dataclass(frozen=True, slots=True)
+class ParsedPack:
+    """Everything the transaction phases need, derived from the bytes alone."""
+
+    manifest: Manifest
+    manifest_dict: dict[str, Any]
+    pack_id: str
+    release: str
+    payload_sha: str
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactReservation:
+    """The path, write decision, and ledger generation phase three must still own."""
+
+    artifact_path: str
+    needs_write: bool
+    artifact_id: uuid.UUID | None
+    reserved_at: datetime | None
+
+
+def parse_pack_tarball(data: bytes) -> ParsedPack:
+    """Validate the tarball and canonicalize its manifest. Blocking; no session."""
+    manifest_text = _extract_manifest_text(data)
     try:
         manifest = load_manifest_yaml(manifest_text)
     except ManifestValidationError as exc:
         raise PackIngestValidationError(str(exc)) from exc
 
-    payload_sha = hashlib.sha256(data).hexdigest()
-    pack_id = manifest.id
-    release_id = manifest.release
+    manifest_dict = yaml.safe_load(manifest_text)
+    if not isinstance(manifest_dict, dict):
+        raise PackIngestValidationError("manifest.yaml must parse to a dictionary")
 
-    # Orphan-session reaping (session_sync's _kill_orphans) depends on Appium's
-    # session_discovery insecure feature to enumerate live sessions; a pack that
-    # does not request it would silently disable that reaping path. Shared
-    # predicate with the start_shim dispatch injection so the two layers cannot
-    # diverge (wave-5 re-review B7).
-    discovery_present = has_session_discovery(manifest.insecure_features)
-    if not discovery_present:
+    if not has_session_discovery(manifest.insecure_features):
         logger.warning(
             "pack_ingest_missing_session_discovery pack=%s release=%s: insecure_features lacks a "
             "':session_discovery' entry; injecting '*:session_discovery' into the stored manifest",
-            pack_id,
-            release_id,
+            manifest.id,
+            manifest.release,
         )
+        manifest_dict["insecure_features"] = [*(manifest_dict.get("insecure_features") or []), "*:session_discovery"]
 
+    return ParsedPack(
+        manifest=manifest,
+        manifest_dict=manifest_dict,
+        pack_id=manifest.id,
+        release=manifest.release,
+        payload_sha=hashlib.sha256(data).hexdigest(),
+    )
+
+
+async def reserve_pack_upload(
+    session: AsyncSession,
+    *,
+    storage: PackStorageService,
+    parsed: ParsedPack,
+) -> ArtifactReservation:
+    """Phase 1: settle the conflict question and claim the artifact path."""
     existing = (
         await session.execute(
-            select(DriverPack)
-            .where(DriverPack.id == pack_id)
-            .options(
-                selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
+            select(DriverPackRelease).where(
+                DriverPackRelease.pack_id == parsed.pack_id,
+                DriverPackRelease.release == parsed.release,
             )
         )
     ).scalar_one_or_none()
     if existing is not None:
-        for release in existing.releases:
-            if release.release == release_id:
-                if release.artifact_sha256 == payload_sha:
-                    existing.current_release = release_id
-                    if release.artifact_path is None or not Path(release.artifact_path).is_file():
-                        try:
-                            record = await asyncio.to_thread(
-                                _store_artifact, storage, pack_id=pack_id, release=release_id, data=data
-                            )
-                        except PackStorageError as exc:
-                            raise PackIngestConflictError(str(exc)) from exc
-                        release.artifact_path = record.path
-                        release.artifact_sha256 = record.sha256
-                        await session.flush()
-                        await record_pack_upload(
-                            session,
-                            username=username,
-                            pack_id=pack_id,
-                            release=release_id,
-                            artifact_sha256=record.sha256,
-                            origin_filename=origin_filename,
-                        )
-                    return existing
-                raise PackIngestConflictError(
-                    f"pack {pack_id!r} release {release_id!r} already exists with different content"
+        if existing.artifact_sha256 != parsed.payload_sha:
+            raise PackIngestConflictError(
+                f"pack {parsed.pack_id!r} release {parsed.release!r} already exists with different content"
+            )
+        if existing.artifact_path is not None and Path(existing.artifact_path).is_file():
+            return ArtifactReservation(
+                artifact_path=existing.artifact_path,
+                needs_write=False,
+                artifact_id=None,
+                reserved_at=None,
+            )
+
+    artifact_path = storage.path_for(pack_id=parsed.pack_id, release=parsed.release)
+    claim = await reserve_artifact(session, path=artifact_path)
+    if claim is None:
+        active = (
+            await session.execute(
+                select(PackArtifact.id, PackArtifact.sha256).where(
+                    PackArtifact.path == artifact_path,
+                    PackArtifact.state == PackArtifactState.active,
                 )
-        pack = existing
+            )
+        ).one_or_none()
+        if existing is None or active is None or active.sha256 != parsed.payload_sha:
+            raise PackIngestConflictError(
+                f"pack {parsed.pack_id!r} release {parsed.release!r} already has an upload in progress"
+            )
+        artifact_id = active.id
+        reserved_at = None
     else:
+        artifact_id, reserved_at = claim
+    return ArtifactReservation(
+        artifact_path=artifact_path,
+        needs_write=True,
+        artifact_id=artifact_id,
+        reserved_at=reserved_at,
+    )
+
+
+async def activate_pack_upload(
+    session: AsyncSession,
+    *,
+    parsed: ParsedPack,
+    reservation: ArtifactReservation,
+    record: StorageRecord | None,
+    username: str,
+    origin_filename: str,
+) -> PackOut:
+    """Phase 3: land the metadata and the ledger promotion in one transaction."""
+    pack = (
+        await session.execute(
+            select(DriverPack)
+            .where(DriverPack.id == parsed.pack_id)
+            .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
+        )
+    ).scalar_one_or_none()
+    release_row = None if pack is None else next((row for row in pack.releases if row.release == parsed.release), None)
+    if release_row is not None and release_row.artifact_sha256 != parsed.payload_sha:
+        raise PackIngestConflictError(
+            f"pack {parsed.pack_id!r} release {parsed.release!r} already exists with different content"
+        )
+    if record is None and release_row is None:
+        raise PackIngestConflictError(
+            f"pack {parsed.pack_id!r} release {parsed.release!r} changed while the upload was in progress"
+        )
+    if record is not None:
+        if reservation.artifact_id is None or (release_row is None and reservation.reserved_at is None):
+            raise PackIngestConflictError(
+                f"pack {parsed.pack_id!r} release {parsed.release!r} changed while the upload was in progress"
+            )
+        activated = await activate_artifact(
+            session,
+            artifact_id=reservation.artifact_id,
+            path=record.path,
+            sha256=record.sha256,
+            size_bytes=record.size,
+            reserved_at=reservation.reserved_at,
+        )
+        if not activated:
+            raise PackIngestConflictError(
+                f"pack {parsed.pack_id!r} release {parsed.release!r} lost its artifact reservation"
+            )
+
+    if pack is None:
         pack = DriverPack(
-            id=pack_id,
-            display_name=manifest.display_name,
-            maintainer=manifest.maintainer or "",
-            license=manifest.license or "",
+            id=parsed.pack_id,
+            display_name=parsed.manifest.display_name,
+            maintainer=parsed.manifest.maintainer or "",
+            license=parsed.manifest.license or "",
             state=PackState.enabled,
             runtime_policy={"strategy": "recommended"},
         )
         session.add(pack)
         await session.flush()
-
-    try:
-        record = await asyncio.to_thread(_store_artifact, storage, pack_id=pack_id, release=release_id, data=data)
-    except PackStorageError as exc:
-        raise PackIngestConflictError(str(exc)) from exc
-
-    manifest_dict = yaml.safe_load(manifest_text)
-    if not isinstance(manifest_dict, dict):
-        raise PackIngestValidationError("manifest.yaml must parse to a dictionary")
-
-    # Canonicalize session_discovery into the STORED manifest (wave-5 #29) so it
-    # cannot disagree with what dispatch actually runs. start_shim keeps its own
-    # injection as the compat layer for packs ingested before this canonicalization.
-    if not discovery_present:
-        manifest_dict["insecure_features"] = [*(manifest_dict.get("insecure_features") or []), "*:session_discovery"]
-
-    release_row = DriverPackRelease(
-        pack_id=pack_id,
-        release=release_id,
-        manifest_json=manifest_dict,
-        artifact_sha256=record.sha256,
-        artifact_path=record.path,
-    )
-    session.add(release_row)
-    pack.current_release = release_id
-    await session.flush()
-
-    _add_release_children(session, manifest, release_row)
-    await session.flush()
-
-    await record_pack_upload(
-        session,
-        username=username,
-        pack_id=pack_id,
-        release=release_id,
-        artifact_sha256=record.sha256,
-        origin_filename=origin_filename,
-    )
-
-    return (
-        await session.execute(
-            select(DriverPack)
-            .where(DriverPack.id == pack_id)
-            .options(
-                selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms),
-            )
+        release_row = None
+    if release_row is None:
+        release_row = DriverPackRelease(
+            pack_id=parsed.pack_id,
+            release=parsed.release,
+            manifest_json=parsed.manifest_dict,
+            artifact_sha256=record.sha256 if record is not None else None,
+            artifact_path=record.path if record is not None else None,
         )
-    ).scalar_one()
+        session.add(release_row)
+        await session.flush()
+        _add_release_children(session, parsed.manifest, release_row)
+    elif record is not None:
+        release_row.artifact_path = record.path
+        release_row.artifact_sha256 = record.sha256
+
+    pack.current_release = parsed.release
+    await session.flush()
+
+    if record is not None:
+        await record_pack_upload(
+            session,
+            username=username,
+            pack_id=parsed.pack_id,
+            release=parsed.release,
+            artifact_sha256=record.sha256,
+            origin_filename=origin_filename,
+        )
+
+    return build_pack_out(
+        (
+            await session.execute(
+                select(DriverPack)
+                .where(DriverPack.id == parsed.pack_id)
+                .options(selectinload(DriverPack.releases).selectinload(DriverPackRelease.platforms))
+            )
+        ).scalar_one()
+    )
+
+
+async def ingest_pack_tarball(
+    session_factory: SessionFactory,
+    *,
+    storage: PackStorageService,
+    username: str,
+    origin_filename: str,
+    data: bytes,
+) -> PackOut:
+    """Reserve, write, activate. Owns both boundaries; the bytes move between them."""
+    parsed = await asyncio.to_thread(parse_pack_tarball, data)
+
+    async with session_factory.begin() as session:
+        reservation = await reserve_pack_upload(session, storage=storage, parsed=parsed)
+
+    record: StorageRecord | None = None
+    if reservation.needs_write:
+        try:
+            record = await asyncio.to_thread(
+                _store_artifact, storage, pack_id=parsed.pack_id, release=parsed.release, data=data
+            )
+        except PackStorageError as exc:
+            raise PackIngestConflictError(str(exc)) from exc
+
+    async with session_factory.begin() as session:
+        return await activate_pack_upload(
+            session,
+            parsed=parsed,
+            reservation=reservation,
+            record=record,
+            username=username,
+            origin_filename=origin_filename,
+        )

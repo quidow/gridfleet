@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 _EAST = "00000000-0000-0000-0000-000000000201"
 _WEST = "00000000-0000-0000-0000-000000000202"
 _EAST_TV = "00000000-0000-0000-0000-000000000203"
+_MEMBER_OF_REVISION = "6d8c3b5042b5"
 
 
 class _MigrationHarness:
@@ -106,11 +107,9 @@ class _MigrationHarness:
         )
 
 
-def _previous_head(cfg: Config) -> str:
+def _previous_revision(cfg: Config) -> str:
     script = ScriptDirectory.from_config(cfg)
-    head = script.get_current_head()
-    assert head is not None
-    revision = script.get_revision(head)
+    revision = script.get_revision(_MEMBER_OF_REVISION)
     assert revision is not None and isinstance(revision.down_revision, str)
     return revision.down_revision
 
@@ -129,7 +128,7 @@ async def _harness(label: str) -> AsyncIterator[tuple[_MigrationHarness, str]]:
         async with engine.begin() as conn:
             await conn.execute(text(f'CREATE SCHEMA "{schema_name}"'))
         harness = _MigrationHarness(engine, cfg)
-        predecessor = _previous_head(cfg)
+        predecessor = _previous_revision(cfg)
         await harness.upgrade(predecessor)
         yield harness, predecessor
     finally:
@@ -155,7 +154,7 @@ async def test_upgrade_backfills_edges_removes_json_and_downgrade_restores_it() 
     async with _harness("round_trip") as (h, predecessor):
         await _seed_round_trip(h)
 
-        await h.upgrade("head")
+        await h.upgrade(_MEMBER_OF_REVISION)
 
         assert await h.fetch(
             "SELECT source.key, target.key FROM device_group_member_of r "
@@ -195,7 +194,7 @@ async def test_downgrade_rebuilds_member_of_from_a_jsonb_null_filters_row() -> N
         await h.seed_group(_EAST, "east", "East", "static", None)
         await h.seed_group(_EAST_TV, "east-tv", "East TV", "dynamic", {"member_of": ["east"]})
 
-        await h.upgrade("head")
+        await h.upgrade(_MEMBER_OF_REVISION)
         await h.execute("UPDATE device_groups SET filters = 'null'::jsonb WHERE key = 'east-tv'")
 
         await h.downgrade(predecessor)
@@ -204,7 +203,7 @@ async def test_downgrade_rebuilds_member_of_from_a_jsonb_null_filters_row() -> N
 
         # Confirms the fix actually un-wedges the database rather than merely
         # producing a nicer-looking value that still fails re-validation.
-        await h.upgrade("head")
+        await h.upgrade(_MEMBER_OF_REVISION)
 
 
 _NORTH_TV = "00000000-0000-0000-0000-000000000204"
@@ -218,7 +217,7 @@ async def test_relation_endpoints_are_enforced_by_foreign_keys() -> None:
         await h.seed_group(_EAST_TV, "east-tv", "East TV", "dynamic", None)
         await h.seed_group(_NORTH_TV, "north-tv", "North TV", "dynamic", None)
 
-        await h.upgrade("head")
+        await h.upgrade(_MEMBER_OF_REVISION)
 
         # A static row used as the dynamic (source) endpoint: its group_type
         # does not match the FK's server-defaulted 'dynamic' half.
@@ -291,7 +290,7 @@ async def test_upgrade_folds_duplicates_and_leaves_static_filters_untouched() ->
         # writes this shape today.
         await h.seed_group(_EAST_TV, "east-tv", "East TV", "dynamic", {"member_of": ["east", "east"]})
 
-        await h.upgrade("head")
+        await h.upgrade(_MEMBER_OF_REVISION)
 
         assert await h.fetch(
             f"SELECT count(*) FROM device_group_member_of WHERE dynamic_group_id = '{_EAST_TV}'::uuid"
@@ -339,7 +338,7 @@ async def test_upgrade_rejects_malformed_or_invalid_dynamic_source_rows(
         # under test (e.g. the malformed-shape guard) were deleted, since every
         # RuntimeError in this migration interpolates the source group's id.
         # The message fragment pins the branch too.
-        await h.upgrade_expecting("head", f"{re.escape(_EAST_TV)}.*{re.escape(expected_fragment)}")
+        await h.upgrade_expecting(_MEMBER_OF_REVISION, f"{re.escape(_EAST_TV)}.*{re.escape(expected_fragment)}")
 
         assert await h.fetch("SELECT filters FROM device_groups WHERE key = 'east-tv'") == [(filters,)]
         assert await h.fetch("SELECT to_regclass('device_group_member_of')") == [(None,)]

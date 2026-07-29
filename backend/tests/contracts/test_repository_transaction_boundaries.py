@@ -109,7 +109,11 @@ BEGIN_OWNER_REGISTRY: frozenset[BoundaryOwner] = frozenset(
         BoundaryOwner("app/packs/routers/catalog.py", "update_runtime_policy", "command"),
         BoundaryOwner("app/packs/routers/uploads.py", "delete_release", "command"),
         BoundaryOwner("app/packs/routers/uploads.py", "update_current_release", "command"),
-        BoundaryOwner("app/packs/routers/uploads.py", "upload", "command"),
+        # The tail of an operator-facing delete, not scheduler plumbing: it drops
+        # the ledger rows whose files the same call just unlinked. Contained
+        # rather than propagating, because it runs after the delete committed.
+        BoundaryOwner("app/packs/services/service.py", "purge_pack_artifacts", "command"),
+        BoundaryOwner("app/packs/services/ingest.py", "ingest_pack_tarball", "command"),
         BoundaryOwner("app/sessions/router.py", "update_session_status", "command"),
         BoundaryOwner("app/grid/router_internal.py", "_finalize_interrupted_create", "command"),
         BoundaryOwner("app/grid/router_internal.py", "activity", "command"),
@@ -238,6 +242,7 @@ BEGIN_OWNER_REGISTRY: frozenset[BoundaryOwner] = frozenset(
         BoundaryOwner("app/core/db_retry.py", "retry_on_serialization_failure", "infrastructure"),
         BoundaryOwner("app/core/observability.py", "flush_background_loop_snapshots", "infrastructure"),
         BoundaryOwner("app/devices/services/data_cleanup.py", "_delete_in_batches", "infrastructure"),
+        BoundaryOwner("app/packs/services/artifact_reaper.py", "run_pack_artifact_reaper_stage", "infrastructure"),
         BoundaryOwner(
             "app/devices/services/fleet_capacity.py",
             "FleetCapacityService.collect_capacity_snapshot_once",

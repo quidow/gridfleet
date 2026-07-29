@@ -243,6 +243,18 @@ def record_outbox_gaps_retired(count: int) -> None:
     OUTBOX_GAPS_RETIRED_TOTAL.inc(count)
 
 
+PACK_ARTIFACTS_REAPED_TOTAL = Counter(
+    "pack_artifacts_reaped_total",
+    "Driver-pack artifact ledger rows the janitor reaped: an unlink the delete path could not "
+    "finish, or a reservation whose upload died before it activated.",
+)
+
+
+def record_pack_artifacts_reaped(count: int) -> None:
+    """Counted per sweep, not per file: one crashed upload can leave a batch."""
+    PACK_ARTIFACTS_REAPED_TOTAL.inc(count)
+
+
 HEARTBEAT_PING_DURATION_SECONDS = Histogram(
     "gridfleet_agent_heartbeat_duration_seconds",
     "Backend->agent heartbeat ping duration in seconds.",

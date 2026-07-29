@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import tarfile
 from contextlib import asynccontextmanager
@@ -22,12 +23,14 @@ from app.packs.models import (
     DriverPackRelease,
     HostPackDoctorResult,
     HostPackInstallation,
+    PackArtifact,
+    PackArtifactState,
 )
 from app.packs.services import service as pack_service
 from app.packs.services.ingest import MAX_PACK_TARBALL_BYTES
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
+    from collections.abc import AsyncIterator, Iterator, Sequence
 
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -82,8 +85,8 @@ class _ObservedPackSessions:
     Two things the routes owe their callers are only observable from here: that
     a mutation runs inside a factory-owned transaction at all, and that the
     filesystem work happens once that transaction has ended. ``fail_before_exit``
-    injects the failure as a real statement against a table that does not exist,
-    so the transaction is genuinely aborted rather than left artificially clean.
+    injects the failure at every boundary when true, or at one selected ordinal,
+    as a real statement against a table that does not exist.
 
     Only ``begin()`` is wrapped: no pack route takes the plain ``session_factory()``
     read form, so a stand-in for it would be scaffolding nothing could keep honest.
@@ -92,7 +95,7 @@ class _ObservedPackSessions:
     def __init__(self) -> None:
         self._inner: async_sessionmaker[AsyncSession] | None = None
         self.sessions: list[AsyncSession] = []
-        self.fail_before_exit = False
+        self.fail_before_exit: bool | int = False
 
     def bind(self, inner: async_sessionmaker[AsyncSession]) -> None:
         """Adopt the factory the container built for this request."""
@@ -103,16 +106,17 @@ class _ObservedPackSessions:
         assert self._inner is not None, "no request has resolved the pack container yet"
         return self._inner
 
-    async def _inject(self, db: AsyncSession) -> None:
-        if self.fail_before_exit:
+    async def _inject(self, db: AsyncSession, boundary: int) -> None:
+        if self.fail_before_exit is True or self.fail_before_exit == boundary:
             await db.execute(text("SELECT 1 FROM gridfleet_no_such_table"))
 
     @asynccontextmanager
     async def begin(self) -> AsyncIterator[AsyncSession]:
         async with self._bound.begin() as db:
             self.sessions.append(db)
+            boundary = len(self.sessions)
             yield db
-            await self._inject(db)
+            await self._inject(db, boundary)
 
     @property
     def open_transactions(self) -> int:
@@ -202,6 +206,48 @@ async def test_reupload_same_release_restores_missing_artifact(
     fetch_res = await client.get("/api/driver-packs/vendor-foo/releases/0.1.0/tarball")
     assert fetch_res.status_code == 200
     assert fetch_res.content == tarball
+
+
+async def test_reupload_emits_only_for_new_or_restored_artifacts(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    tarball = _tarball()
+    files = {"tarball": ("vendor-foo-0.1.0.tar.gz", tarball, "application/gzip")}
+
+    assert (await client.post("/api/driver-packs/uploads", files=files)).status_code == 201
+    assert (await client.post("/api/driver-packs/uploads", files=files)).status_code == 201
+
+    release = (
+        await db_session.execute(
+            select(DriverPackRelease).where(
+                DriverPackRelease.pack_id == "vendor-foo",
+                DriverPackRelease.release == "0.1.0",
+            )
+        )
+    ).scalar_one()
+    assert release.artifact_path is not None
+    Path(release.artifact_path).unlink()
+
+    assert (await client.post("/api/driver-packs/uploads", files=files)).status_code == 201
+
+    events = (
+        (
+            await db_session.execute(
+                select(SystemEvent).where(SystemEvent.type == "driver_pack.upload").order_by(SystemEvent.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    payload = {
+        "uploaded_by": "anonymous-admin",
+        "pack_id": "vendor-foo",
+        "release": "0.1.0",
+        "artifact_sha256": hashlib.sha256(tarball).hexdigest(),
+        "origin_filename": "vendor-foo-0.1.0.tar.gz",
+    }
+    assert [event.data for event in events] == [payload, payload]
 
 
 async def test_tarball_fetch_404_when_artifact_file_missing(
@@ -458,8 +504,7 @@ def _watch_unlinks(monkeypatch: pytest.MonkeyPatch, observed: _ObservedPackSessi
     """Record, per ``Path.unlink`` call, how many pack transactions were open.
 
     Armed after the uploads that seed a test, so the spy covers only the two
-    deletion paths — the upload path deliberately writes its artifact inside its
-    transaction.
+    deletion paths; the upload boundary has its own write spy below.
     """
     open_at_unlink: list[int] = []
     real_unlink = Path.unlink
@@ -470,6 +515,49 @@ def _watch_unlinks(monkeypatch: pytest.MonkeyPatch, observed: _ObservedPackSessi
 
     monkeypatch.setattr(Path, "unlink", _spy)
     return open_at_unlink
+
+
+def _watch_artifact_writes(monkeypatch: pytest.MonkeyPatch, observed: _ObservedPackSessions) -> list[int]:
+    """Record, per ``Path.write_bytes`` call, how many pack transactions were open.
+
+    The upload twin of ``_watch_unlinks``. A lexical scan cannot see this: the
+    write happens inside ``PackStorageService.store``, several frames below the
+    route that owns the boundaries, so only a real session watching a real write
+    can prove the bytes move with nothing open.
+    """
+    open_at_write: list[int] = []
+    real_write_bytes = Path.write_bytes
+
+    def _spy(self: Path, data: bytes) -> int:
+        open_at_write.append(observed.open_transactions)
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", _spy)
+    return open_at_write
+
+
+async def test_upload_writes_the_artifact_with_no_open_transaction(
+    client: AsyncClient,
+    observed_pack_sessions: _ObservedPackSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    open_at_write = _watch_artifact_writes(monkeypatch, observed_pack_sessions)
+
+    res = await client.post(
+        "/api/driver-packs/uploads",
+        files={"tarball": ("vendor-foo-0.1.0.tar.gz", _tarball("0.1.0"), "application/gzip")},
+    )
+
+    assert res.status_code == 201, res.text
+    assert len(observed_pack_sessions.sessions) == 2, (
+        "the upload must own a reserve transaction and an activate transaction, "
+        f"got {len(observed_pack_sessions.sessions)}"
+    )
+    assert open_at_write, "the upload never wrote an artifact"
+    assert open_at_write == [0] * len(open_at_write), (
+        f"artifact bytes were written with {open_at_write} pack transaction(s) open; "
+        "no transaction may span the storage write"
+    )
 
 
 async def test_delete_pack_unlinks_artifacts_after_its_transaction(
@@ -553,20 +641,108 @@ async def test_failed_artifact_deletion_is_logged_and_still_reports_success(
         )
 
 
-async def test_upload_rolls_back_metadata_and_outbox_together(
+async def test_a_failed_ledger_cleanup_still_reports_a_successful_delete(
+    client: AsyncClient,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ledger cleanup is post-commit too, so it may not turn a 204 into a 500.
+
+    Same rule as the unlink beside it: the metadata deletion is already durable,
+    and answering 500 would report a rollback that never happened. The row this
+    fails to drop stays ``orphaned``, which is exactly what the reaper takes as
+    input -- so the containment loses nothing and the pair still converges.
+
+    The failure is a real statement against a table that does not exist, not a
+    patched method with a ``side_effect``: a mock leaves the session clean, and
+    the aborted transaction production would actually see is a different code
+    path. Only the injection point is patched; what happens inside the boundary
+    is the genuine failure.
+    """
+    await _upload(client, "0.1.0")
+
+    async def _fail(db: AsyncSession, *, paths: Sequence[str]) -> None:
+        del paths
+        await db.execute(text("SELECT 1 FROM gridfleet_no_such_table"))
+
+    monkeypatch.setattr(pack_service, "forget_artifacts", _fail)
+
+    res = await client.delete("/api/driver-packs/vendor-foo")
+
+    assert res.status_code == 204, "a failed ledger cleanup must not turn a committed delete into an error"
+    async with db_session_maker() as peer:
+        assert await peer.get(DriverPack, "vendor-foo") is None, (
+            "metadata deletion committed before the cleanup and must stay committed"
+        )
+        rows = (await peer.scalars(select(PackArtifact))).all()
+    assert [row.state for row in rows] == [PackArtifactState.orphaned], (
+        "the row the cleanup could not drop must stay orphaned for the reaper"
+    )
+
+
+async def test_delete_release_removes_its_ledger_row_after_a_successful_unlink(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await _upload(client, "0.1.0")
+    await _upload(client, "0.2.0")
+
+    res = await client.delete("/api/driver-packs/vendor-foo/releases/0.1.0")
+
+    assert res.status_code == 204
+    paths = sorted((await db_session.scalars(select(PackArtifact.path))).all())
+    assert len(paths) == 1, f"the deleted release left a ledger row behind: {paths}"
+    assert paths[0].endswith("0.2.0.tar.gz")
+
+
+async def test_delete_pack_removes_every_ledger_row_after_successful_unlinks(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await _upload(client, "0.1.0")
+    await _upload(client, "0.2.0")
+
+    res = await client.delete("/api/driver-packs/vendor-foo")
+
+    assert res.status_code == 204
+    assert (await db_session.scalars(select(PackArtifact))).all() == []
+
+
+async def test_a_failed_unlink_leaves_the_ledger_row_orphaned_for_the_reaper(
+    client: AsyncClient,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The committed delete still reports success, and the file is not forgotten.
+
+    Swallowing the unlink failure was already the right answer for the caller --
+    the database effect they asked for did happen. What was missing was anything
+    that would ever come back for the file. The ``orphaned`` row is that.
+    """
+    await _upload(client, "0.1.0")
+
+    def _explode(self: Path, *args: object, **kwargs: object) -> None:
+        raise PermissionError(f"cannot remove {self}")
+
+    monkeypatch.setattr(Path, "unlink", _explode)
+    res = await client.delete("/api/driver-packs/vendor-foo")
+    monkeypatch.undo()
+
+    assert res.status_code == 204
+    async with db_session_maker() as peer:
+        rows = (await peer.scalars(select(PackArtifact))).all()
+    assert [row.state for row in rows] == [PackArtifactState.orphaned], (
+        "a failed unlink must leave exactly one orphaned ledger row for the reaper"
+    )
+
+
+async def test_upload_rolls_back_metadata_and_outbox_when_activation_fails(
     client: AsyncClient,
     db_session: AsyncSession,
     observed_pack_sessions: _ObservedPackSessions,
 ) -> None:
-    """The upload's row, its release and its outbox event share one transaction.
-
-    The artifact bytes deliberately do not: the ingest path takes no pack row
-    lock and the tarball is fully read and size-capped before the boundary
-    opens, so storage stays inside the transaction and a rolled-back upload can
-    leave an orphan file behind. That is the documented exception, asserted here
-    so it is a decision rather than a surprise.
-    """
-    observed_pack_sessions.fail_before_exit = True
+    """Boundary two couples metadata, outbox, and ledger activation atomically."""
+    observed_pack_sessions.fail_before_exit = 2
 
     with pytest.raises(ProgrammingError):
         await client.post(
@@ -579,6 +755,11 @@ async def test_upload_rolls_back_metadata_and_outbox_together(
     assert (await db_session.scalar(select(SystemEvent).where(SystemEvent.type == "driver_pack.upload"))) is None, (
         "the outbox row survived a rolled-back upload"
     )
+    reservation = (await db_session.scalars(select(PackArtifact))).one()
+    assert reservation.state is PackArtifactState.pending
+    assert reservation.sha256 is None
+    assert reservation.size_bytes is None
+    assert Path(reservation.path).is_file()
 
 
 async def test_release_mutations_roll_back_on_a_pre_exit_failure(
