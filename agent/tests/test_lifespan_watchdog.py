@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
 import pytest
@@ -48,6 +49,11 @@ async def test_lifespan_restarts_a_crashed_status_push_loop(monkeypatch: pytest.
     ``_start_status_loop_when_ready`` in the restart path, so this also pins that
     a restart clears ``host_identity.wait()`` — the identity is already set by
     then, and a second run must proceed instead of parking forever.
+
+    It also pins that the restart rebinds the ``status_task`` variable the
+    lifespan's ``finally:`` block cancels: an implementation that creates the
+    replacement task without the ``nonlocal status_task`` rebind still reaches
+    ``starts == 2`` here, but leaks the replacement task past teardown.
     """
     from unittest.mock import AsyncMock, patch
 
@@ -59,12 +65,14 @@ async def test_lifespan_restarts_a_crashed_status_push_loop(monkeypatch: pytest.
 
     starts = 0
     restarted = asyncio.Event()
+    restarted_task: asyncio.Task[None] | None = None
 
     async def _fake_run_forever(_self: StatusPushLoop) -> None:
-        nonlocal starts
+        nonlocal starts, restarted_task
         starts += 1
         if starts == 1:
             raise RuntimeError("synthetic status push crash")
+        restarted_task = asyncio.current_task()
         restarted.set()
         await asyncio.Event().wait()
 
@@ -86,6 +94,13 @@ async def test_lifespan_restarts_a_crashed_status_push_loop(monkeypatch: pytest.
             await asyncio.wait_for(restarted.wait(), timeout=5.0)
 
     assert starts == 2
+    assert restarted_task is not None
+    # ``.cancel()`` in the lifespan's ``finally:`` only requests cancellation;
+    # give the loop a bounded chance to actually deliver it before asserting,
+    # rather than racing the scheduler on the very next line.
+    with contextlib.suppress(asyncio.CancelledError):
+        await asyncio.wait_for(restarted_task, timeout=1.0)
+    assert restarted_task.done() or restarted_task.cancelled()
 
 
 @pytest.mark.asyncio
