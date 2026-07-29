@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from typing import TYPE_CHECKING, Any
 
 import httpx2 as httpx
@@ -228,7 +229,12 @@ async def _wait_for_attempts(client: _ScriptedClient, count: int) -> None:
         await asyncio.sleep(0.01)
 
 
-async def _run_scripted_loop(script: list[bool], *, reregister_min_interval: float) -> int:
+async def _run_scripted_loop(
+    script: list[bool],
+    *,
+    reregister_min_interval: float,
+    boot_id: str | None = None,
+) -> int:
     """Run the loop until the script is exhausted; return the re-registration count."""
     client = _ScriptedClient(script)
     calls = 0
@@ -244,6 +250,7 @@ async def _run_scripted_loop(script: list[bool], *, reregister_min_interval: flo
         host_identity=_identity(HOST_ID),
         pack_status=lambda: None,
         push_interval=0.01,
+        boot_id=boot_id,
         on_boot_fence_rejected=_on_fence,
         reregister_min_interval=reregister_min_interval,
     )
@@ -279,6 +286,88 @@ async def test_a_later_episode_reregisters_once_the_floor_has_elapsed() -> None:
     with a wide margin without adding an explicit sleep.
     """
     assert await _run_scripted_loop([True, False, True], reregister_min_interval=0.001) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_raising_fence_hook_does_not_kill_the_loop() -> None:
+    """The hook is called from inside ``except BootFenceRejected``.
+
+    An exception raised there is *not* caught by the sibling ``except
+    Exception`` on the same ``try``, so without containment in
+    ``_request_reregistration`` it escapes ``run_forever`` and stops status
+    pushes for good — the same offline host the fence recovery exists to avoid.
+    """
+    client = _ScriptedClient([True, False, False])
+
+    def _boom() -> None:
+        raise RuntimeError("hook boom")
+
+    loop = StatusPushLoop(
+        client=client,
+        manager=_FakeManager(),
+        capabilities_cache=await _capabilities_cache(),
+        host_identity=_identity(HOST_ID),
+        pack_status=lambda: None,
+        push_interval=0.01,
+        on_boot_fence_rejected=_boom,
+        reregister_min_interval=3600.0,
+    )
+    task = asyncio.create_task(loop.run_forever())
+    try:
+        # Attempts after the rejection are only reachable if the loop survived.
+        await asyncio.wait_for(_wait_for_attempts(client, 3), timeout=2.0)
+        assert not task.done()
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+async def test_first_fence_rejection_warns_and_the_rest_of_the_episode_is_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One WARNING per episode, carrying the correlators; repeats stay DEBUG.
+
+    A rejection burst lasts as long as the dispute does, so logging every one at
+    WARNING would drown the operator-visible signal at push cadence.
+    """
+    boot_id = "11111111-1111-1111-1111-111111111111"
+    with caplog.at_level(logging.DEBUG, logger="agent_app.status_push"):
+        assert await _run_scripted_loop([True, True, True], reregister_min_interval=3600.0, boot_id=boot_id) == 1
+
+    fenced = [record for record in caplog.records if "fenced out" in record.getMessage()]
+    assert len(fenced) == 3
+    assert fenced[0].levelno == logging.WARNING
+    assert {record.levelno for record in fenced[1:]} == {logging.DEBUG}
+    assert f"boot_id={boot_id}" in fenced[0].getMessage()
+    assert f"host_id={HOST_ID}" in fenced[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_fence_rejection_without_a_hook_logs_at_debug(caplog: pytest.LogCaptureFixture) -> None:
+    """No hook means no recovery to announce, so the rejection is not a warning."""
+    client = _ScriptedClient([True, True])
+    loop = StatusPushLoop(
+        client=client,
+        manager=_FakeManager(),
+        capabilities_cache=await _capabilities_cache(),
+        host_identity=_identity(HOST_ID),
+        pack_status=lambda: None,
+        push_interval=0.01,
+    )
+    with caplog.at_level(logging.DEBUG, logger="agent_app.status_push"):
+        task = asyncio.create_task(loop.run_forever())
+        try:
+            await asyncio.wait_for(_wait_for_attempts(client, 2), timeout=2.0)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    fenced = [record for record in caplog.records if "fenced out" in record.getMessage()]
+    assert fenced
+    assert {record.levelno for record in fenced} == {logging.DEBUG}
 
 
 @pytest.mark.asyncio
