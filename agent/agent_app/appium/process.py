@@ -18,6 +18,7 @@ from typing import Any
 import httpx2 as httpx
 
 from agent_app import http_client
+from agent_app.appium import port_reclaim
 from agent_app.appium.exceptions import (
     AlreadyRunningError,
     DeviceNotFoundError,
@@ -774,21 +775,9 @@ class AppiumProcessManager:
         if spec.insecure_features:
             appium_cmd.extend(["--allow-insecure", ",".join(spec.insecure_features)])
 
-        if await self._can_connect_to_appium(spec.port):
-            raise PortOccupiedError(
-                f"Port {spec.port} is already in use by another Appium listener; "
-                "stop the existing process before starting a new managed node"
-            )
-
-        if not self._is_appium_port_bindable(spec.port):
-            # Appium binds on 0.0.0.0; a non-Appium listener on this port would
-            # otherwise pass the HTTP probe above, then fail subprocess bind
-            # with EADDRINUSE — surfacing as a 30s readiness timeout instead of
-            # a fast 409.
-            raise PortOccupiedError(
-                f"Port {spec.port} is already bound on this host by a non-Appium listener; "
-                "stop the existing process before starting a new managed node"
-            )
+        occupied = await self._port_occupied_detail(spec.port)
+        if occupied is not None and not await self._reclaim_unmanaged_port(spec.port):
+            raise PortOccupiedError(occupied)
 
         log_file = open_log_file(spec.port)
         try:
@@ -1228,6 +1217,45 @@ class AppiumProcessManager:
 
     async def _can_connect_to_appium(self, port: int) -> bool:
         return await self._fetch_appium_status(port) is not None
+
+    async def _port_occupied_detail(self, port: int) -> str | None:
+        """Why *port* cannot be bound, or None when it is free."""
+        if await self._can_connect_to_appium(port):
+            return (
+                f"Port {port} is already in use by another Appium listener; "
+                "stop the existing process before starting a new managed node"
+            )
+        if not self._is_appium_port_bindable(port):
+            # Appium binds on 0.0.0.0; a non-Appium listener on this port would
+            # otherwise pass the HTTP probe above, then fail subprocess bind
+            # with EADDRINUSE — surfacing as a 30s readiness timeout instead of
+            # a fast 409.
+            return (
+                f"Port {port} is already bound on this host by a non-Appium listener; "
+                "stop the existing process before starting a new managed node"
+            )
+        return None
+
+    def _tracked_appium_pids(self) -> set[int]:
+        return {proc.pid for proc in self._appium_procs.values() if proc.returncode is None}
+
+    async def _reclaim_unmanaged_port(self, port: int) -> bool:
+        """Terminate an unmanaged Appium this host started on *port*.
+
+        Returns True when the port came free. Deliberately a single attempt: a
+        port still held after a successful reclaim means something else is
+        wrong, and the caller's existing failure path should report it.
+        """
+        victim = port_reclaim.find_agent_owned_appium(
+            port=port,
+            runtime_root=agent_settings.runtime.runtime_root,
+            exclude_pids=self._tracked_appium_pids(),
+        )
+        if victim is None:
+            return False
+        logger.warning("Reclaiming unmanaged Appium pid=%d holding desired port %d", victim.pid, port)
+        await port_reclaim.terminate_process(victim)
+        return (await self._port_occupied_detail(port)) is None
 
     def _is_appium_port_bindable(self, port: int) -> bool:
         # Mirror Appium's own bind (0.0.0.0, SO_REUSEADDR) so the probe returns
