@@ -7,7 +7,7 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 # Each entry point below must own at least one `async with ....begin()` context,
 # directly or in a closure it defines. Names, not shapes: a generic analyzer here
-# would duplicate tests/contracts/test_transaction_boundaries.py.
+# would duplicate tests/contracts/test_repository_transaction_boundaries.py.
 EXPLICIT_BOUNDARY_OWNERS = {
     "app/hosts/router_agent.py": {"status"},
     "app/appium_nodes/services/host_sweep.py": {"run_host_sweep_once"},

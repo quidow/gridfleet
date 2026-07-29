@@ -8,21 +8,16 @@ are serialised by ``device_group_member_of``'s two composite foreign keys —
 advisory lock, so nothing here intercepts or waits on lock acquisition any
 more. What survives is the plumbing several unrelated suites still need:
 constructing a bare ``DeviceGroupsService``, reading the relation back out, and
-capturing exactly one session's SQL.
+capturing either exactly one session's SQL or every statement on an engine.
 
-``capture_statements`` in particular is imported by six modules that have
-nothing to do with group locking (``tests/lifecycle/test_escalation.py``,
-``tests/devices/test_device_group_service_more.py``,
-``tests/devices/test_decision_snapshot.py``,
-``tests/devices/test_intent_service.py``,
-``tests/devices/test_devices_import_commit.py``, and
-``tests/appium_nodes/test_node_health.py``), which is why this file is kept
-rather than folded into a caller.
+The statement-capture helpers are shared across concurrency and query-budget
+suites that have nothing to do with group locking, which is why this file is
+kept rather than folded into a caller.
 """
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING
 
 from sqlalchemy import event, select
@@ -35,7 +30,7 @@ from app.devices.services.service import DeviceCrudService
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator, Callable, Iterator
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -128,20 +123,19 @@ async def assert_no_dangling_reference(
     where one of the two outcomes always makes the guard vacuous — pin the exact
     expected end state there instead.
 
-    Two checks, because a key-based one alone cannot fail. Resolving the target
-    through ``device_groups`` means a reference to a deleted id disappears from
-    the result set instead of showing up as a violation, which is exactly the
-    vacuous-guard failure mode this helper's previous body had against the JSON
-    column. The orphan read is the one that can actually catch a weakened
-    ``fk_device_group_member_of_static_group``.
+    One check, deliberately. A key-based read (including
+    :func:`fetch_member_of_keys`) resolves the target *through* ``device_groups``,
+    so a reference to a deleted id disappears from the result set instead of
+    showing up as a violation -- ``static_key not in references`` is then true by
+    construction, which is the vacuous-guard failure mode this helper's original
+    body had against the JSON column and which a second key-based half here
+    reproduced. The outer-join orphan read is the one that can actually catch a
+    weakened ``fk_device_group_member_of_static_group``.
     """
-    static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
+    _static_row, dynamic_row = await fetch_group_rows(db_session_maker, static_key=static_key, dynamic_key=dynamic_key)
     assert dynamic_row is not None
     orphans = await fetch_orphan_reference_ids(db_session_maker, dynamic_key=dynamic_key)
     assert not orphans, f"dynamic group {dynamic_key} references group ids that no longer exist: {orphans}"
-    if static_row is None:
-        references = await fetch_member_of_keys(db_session_maker, dynamic_key=dynamic_key)
-        assert static_key not in references, f"dynamic group {dynamic_key} references deleted static group {static_key}"
 
 
 @asynccontextmanager
@@ -174,6 +168,47 @@ async def capture_statements(session: AsyncSession) -> AsyncIterator[list[str]]:
         yield statements
     finally:
         detach()
+
+
+@contextmanager
+def capture_engine_statements(session: AsyncSession) -> Iterator[list[str]]:
+    """Collect every statement the *engine* behind *session* issues, from any connection.
+
+    The opposite trade-off to :func:`capture_statements`, and the right one in
+    exactly one situation: the work under test runs on a session the test does not
+    hold -- an API request through ``client.get``/``client.post``, which opens its
+    own session from the app's factory. Pinning to the caller's connection there
+    records nothing at all, and a budget assertion over an empty list passes
+    vacuously, which is the failure mode that matters most in a guard.
+
+    The cost is real and is why this is a separate name rather than a flag: this
+    also sees the event-bus flush, a fixture's cleanup query, and every other
+    connection in the pool. It can carry a *comparative* assertion (a delta
+    between two runs) or a *categorised* one (statements naming a table), never a
+    raw total. Reach for :func:`capture_statements` whenever the statements come
+    from the session the test already holds and that session has no transaction
+    open yet.
+    """
+    statements: list[str] = []
+
+    def listener(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    bind = session.bind
+    assert bind is not None
+    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
+    event.listen(sync_engine, "before_cursor_execute", listener)
+    try:
+        yield statements
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", listener)
 
 
 def pin_statement_listener(session: AsyncSession, sink: list[str]) -> Callable[[], None]:

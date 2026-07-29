@@ -20,8 +20,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import text, update
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.errors import pg_sqlstate
 from app.core.timeutil import now_utc
 from app.jobs import JOB_KIND_DEVICE_HEALTH_REMEDIATION, JOB_STATUS_PENDING, JOB_STATUS_RUNNING
 from app.jobs import queue as job_queue
@@ -63,7 +65,17 @@ class _SnapshotFixingSessionFactory(RecordingSessionFactory):
     class installs gives the transaction a first statement (fixing its
     snapshot) and gives ``hook`` a point to fire *before* the real claim
     UPDATE runs.
+
+    It also records what the driver actually raised. ``failed_sqlstates`` is the
+    error that escaped the attempt; ``aborted_sqlstates`` is what a follow-up
+    statement on that same session gets, which is the property the retry exists
+    for -- observation only, the real error still propagates untouched.
     """
+
+    def __init__(self, inner: async_sessionmaker[AsyncSession]) -> None:
+        super().__init__(inner)
+        self.failed_sqlstates: list[str] = []
+        self.aborted_sqlstates: list[str] = []
 
     @asynccontextmanager
     async def begin(self) -> AsyncIterator[AsyncSession]:
@@ -72,7 +84,15 @@ class _SnapshotFixingSessionFactory(RecordingSessionFactory):
             self.begun += 1
             async with session.begin():
                 await session.execute(text("select 1"))
-                yield session
+                try:
+                    yield session
+                except DBAPIError as exc:
+                    self.failed_sqlstates.append(pg_sqlstate(exc))
+                    try:
+                        await session.execute(text("select 1"))
+                    except DBAPIError as followup:
+                        self.aborted_sqlstates.append(pg_sqlstate(followup))
+                    raise
 
 
 async def test_create_job_flush_only_rolls_back_with_its_transaction(db_session: AsyncSession) -> None:
@@ -280,13 +300,23 @@ async def test_claim_next_job_retries_after_a_real_serialization_failure(
         if peer_claimed or "update jobs" in statement:
             return
         peer_claimed = True
-        async with db_session_maker() as peer, peer.begin():
-            await peer.execute(
-                update(Job)
-                .where(Job.id == first)
-                .values(status=JOB_STATUS_RUNNING, started_at=now_utc())
-                .execution_options(synchronize_session=False)
-            )
+
+        async def _claim_the_first_row() -> None:
+            async with db_session_maker() as peer, peer.begin():
+                await peer.execute(
+                    update(Job)
+                    .where(Job.id == first)
+                    .values(status=JOB_STATUS_RUNNING, started_at=now_utc())
+                    .execution_options(synchronize_session=False)
+                )
+
+        # Bounded like every other blocking peer in this file. The primer is
+        # ``select 1``, which holds no lock the peer's UPDATE could wait on, so
+        # this cannot block today -- but a primer that ever becomes a locking
+        # statement would make the hook await forever, and a suite that hangs
+        # reports nothing at all. Covers the peer's commit too, not just its
+        # UPDATE, since ``peer.begin()`` commits on exit.
+        await asyncio.wait_for(_claim_the_first_row(), timeout=5.0)
 
     repeatable_read = async_sessionmaker(
         db_session_maker.kw["bind"].execution_options(isolation_level="REPEATABLE READ"),
@@ -304,6 +334,20 @@ async def test_claim_next_job_retries_after_a_real_serialization_failure(
     assert claim.id == second, "the retry must claim the job the peer did not take"
     assert recorder.begun == 2, "the failed attempt's session, then a fresh one"
     assert recorder.sessions[0] is not recorder.sessions[1]
+    # The failure that drove the retry, named. ``is_retryable_serialization_error``
+    # accepts 40P01 (deadlock) as well as 40001 (serialization failure), so without
+    # this the test would pass just as happily on a deadlock -- a different
+    # interleaving with a different cause.
+    assert recorder.failed_sqlstates == ["40001"], (
+        f"expected exactly one serialization failure, got {recorder.failed_sqlstates}"
+    )
+    # And the property the retry exists for, which a synthetic raise cannot
+    # reproduce: the failed statement left Postgres refusing further commands on
+    # that transaction (25P02), so recovery has to be a fresh session rather than
+    # a rollback-and-continue on this one.
+    assert recorder.aborted_sqlstates == ["25P02"], (
+        f"the failed attempt's transaction was not left aborted: {recorder.aborted_sqlstates}"
+    )
 
 
 async def test_run_pending_once_releases_claim_transaction_before_dispatch(

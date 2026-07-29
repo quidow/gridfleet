@@ -439,15 +439,18 @@ async def test_rejected_writers_leave_no_open_transaction(
         # has unwound this transaction yet, because create_group no longer
         # rolls back its own rejections. A caller with no boundary of its own
         # (this hand-started session) is left holding it open.
+        #
+        # No durability check follows, deliberately. This rejection is raised by
+        # _resolve_static_member_of, before _insert_group stages anything, so
+        # there is no partial row for a rollback to discard and a count here
+        # would read 0 whatever the boundary did. The property "the caller's
+        # boundary takes the partial work down" needs a failure *after* the
+        # INSERT and is pinned through the real router boundary by
+        # tests/devices/test_group_command_boundaries.py::
+        # test_create_group_failure_leaves_no_row_and_no_edge.
         assert session.in_transaction(), (
             "a refused create_group must leave its transaction open for the caller's boundary to unwind"
         )
-        await session.rollback()
-
-    surviving = await db_session.scalar(
-        select(func.count()).select_from(DeviceGroup).where(DeviceGroup.key == other_key)
-    )
-    assert surviving == 0, "a rejected create_group must not leave a group row behind once the caller unwinds"
 
 
 async def test_public_count_leaves_its_transaction_for_the_caller_to_close(

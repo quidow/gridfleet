@@ -28,7 +28,7 @@ from tests.contracts.test_repository_transaction_boundaries import (
     parse_module,
     relative_module,
 )
-from tests.contracts.test_transaction_boundaries import MIGRATED_TRANSACTION_LOCAL_MODULES
+from tests.contracts.transaction_local_modules import MIGRATED_TRANSACTION_LOCAL_MODULES
 
 BACKEND_APP = Path(__file__).resolve().parents[2] / "app"
 BACKEND_ROOT = BACKEND_APP.parent
@@ -142,6 +142,13 @@ def test_protected_column_written_only_by_sanctioned_modules(attr: str) -> None:
 # advances ``operational_state_last_emitted`` through the same ledger and would
 # otherwise be reachable from a third module with nothing failing (the column
 # scan passes for it, so the gap was silent).
+#
+# This is line text, not AST, and stays that way deliberately. It cannot see an
+# import-aliased call site (``from ... import emit_operational_state_transition as
+# emit``), a ``getattr(state_module, name)`` reflection, or a bare name handed to
+# ``functools.partial``. That ceiling is pre-existing and unchanged by the
+# widening from ``emit_`` to ``(emit|apply)_``; every real call site in ``app/``
+# is a direct, unaliased call, and an AST scan buys nothing until one is not.
 _CALL_RE = re.compile(r"\b(emit|apply)_operational_state_transition\s*\(")
 CALL_EXEMPT_FILES = {
     # The definition and the reconciler edge-detector call live here.
@@ -171,7 +178,7 @@ def test_operational_state_transition_writers_called_only_by_the_edge_detector()
     )
 
 
-def test_the_call_scan_sees_both_transition_writers(tmp_path: Path) -> None:
+def test_the_call_scan_sees_both_transition_writers() -> None:
     """The scan must match ``apply_`` as well as ``emit_``.
 
     ``apply_operational_state_transition`` advances the same ledger column and is

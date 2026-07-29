@@ -71,6 +71,52 @@ async def test_create_group_failure_leaves_no_row_and_no_edge(
     assert edges == 0, "a failed create_group left member_of edges behind"
 
 
+async def test_update_group_failure_leaves_the_previous_definition_intact(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A raise after the UPDATE flush must take the field writes down with it.
+
+    ``update_group`` assigns the requested fields, flushes, and only then
+    replaces the ``member_of`` edges — so an exception between the two is the
+    interleaving that would otherwise commit a renamed group whose reference set
+    was never rewritten. Sibling of the create and delete cases above.
+    """
+    static_key = f"phase11-upd-target-{uuid.uuid4().hex[:8]}"
+    dynamic_key = f"phase11-upd-source-{uuid.uuid4().hex[:8]}"
+    await _make_static(client, static_key)
+    created = await client.post(
+        "/api/device-groups",
+        json={
+            "key": dynamic_key,
+            "name": dynamic_key,
+            "group_type": "dynamic",
+            "description": "before",
+            "filters": {"status": "available"},
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    async def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("injected mid-update failure")
+
+    monkeypatch.setattr(groups_module, "_replace_member_of", _boom)
+
+    with pytest.raises(RuntimeError, match="injected mid-update failure"):
+        await client.patch(
+            f"/api/device-groups/{dynamic_key}",
+            json={"description": "after", "filters": {"member_of": [static_key]}},
+        )
+
+    db_session.expire_all()
+    group = (await db_session.execute(select(DeviceGroup).where(DeviceGroup.key == dynamic_key))).scalar_one()
+    assert group.description == "before", "a failed update_group committed its field writes anyway"
+    assert group.filters == {"status": "available"}, "a failed update_group committed its filter replacement"
+    edges = await db_session.scalar(select(func.count()).select_from(DeviceGroupMemberOf))
+    assert edges == 0, "a failed update_group left member_of edges behind"
+
+
 async def test_create_dynamic_group_reports_null_count_when_the_count_read_fails(
     client: AsyncClient,
     db_session: AsyncSession,

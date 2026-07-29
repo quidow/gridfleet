@@ -278,7 +278,6 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         await device_groups.update_group(
             group_key,
             device_groups.DeviceGroupUpdate(name="new"),
-            db=object(),
             device_services=ds_update_none,
         )
     assert exc.value.status_code == 404
@@ -296,7 +295,6 @@ async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.Mo
         await device_groups.update_group(
             group_key,
             device_groups.DeviceGroupUpdate(name="new"),
-            db=object(),
             device_services=ds_update_ok,
         )
         == updated_group.payload

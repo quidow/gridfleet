@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import contextlib
 import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import select
 from sqlalchemy.orm import raiseload, selectinload
 
 from app.core.timeutil import now_utc
@@ -28,12 +27,10 @@ from app.devices.services.group_membership import (
 )
 from app.devices.services.read_projection import load_device_read_projections
 from app.devices.services.service import device_scope_conditions
-from tests.concurrency.group_lock_helpers import capture_statements
+from tests.concurrency.group_lock_helpers import capture_engine_statements, capture_statements
 from tests.helpers import create_device_record, create_reserved_run
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -357,30 +354,6 @@ async def test_load_group_definition_batch_is_one_statement_at_any_width(db_sess
     assert len(many.member_of_keys_by_dynamic_group_id) == 20
 
 
-@contextlib.contextmanager
-def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
-    statements: list[str] = []
-
-    def listener(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    bind = session.bind
-    assert bind is not None
-    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
-    event.listen(sync_engine, "before_cursor_execute", listener)
-    try:
-        yield statements
-    finally:
-        event.remove(sync_engine, "before_cursor_execute", listener)
-
-
 def _count_reads(statements: list[str]) -> int:
     return sum(stmt.lstrip().upper().startswith(("SELECT", "WITH")) for stmt in statements)
 
@@ -434,13 +407,13 @@ async def test_group_list_reads_do_not_scale_with_dynamic_group_count(
     seeded_driver_packs: None,
 ) -> None:
     await _seed_groups_and_devices(db_session, dynamic_groups=1, devices=2, host_id=db_host.id)
-    with _capture_statements(db_session) as statements:
+    with capture_engine_statements(db_session) as statements:
         response = await client.get("/api/device-groups")
         assert response.status_code == 200
     one = _count_reads(statements)
 
     await _seed_groups_and_devices(db_session, dynamic_groups=20, devices=40, host_id=db_host.id)
-    with _capture_statements(db_session) as statements:
+    with capture_engine_statements(db_session) as statements:
         response = await client.get("/api/device-groups")
         assert response.status_code == 200
     many = _count_reads(statements)
@@ -490,9 +463,9 @@ async def test_group_detail_reads_do_not_scale_beyond_device_list_serialization(
     )
     assert add.status_code == 200
 
-    with _capture_statements(db_session) as group_one:
+    with capture_engine_statements(db_session) as group_one:
         assert (await client.get("/api/device-groups/members-scale")).status_code == 200
-    with _capture_statements(db_session) as list_one:
+    with capture_engine_statements(db_session) as list_one:
         assert (await client.get("/api/devices")).status_code == 200
 
     extras: list[Device] = []
@@ -506,9 +479,9 @@ async def test_group_detail_reads_do_not_scale_beyond_device_list_serialization(
     )
     assert add_more.status_code == 200
 
-    with _capture_statements(db_session) as group_many:
+    with capture_engine_statements(db_session) as group_many:
         assert (await client.get("/api/device-groups/members-scale")).status_code == 200
-    with _capture_statements(db_session) as list_many:
+    with capture_engine_statements(db_session) as list_many:
         assert (await client.get("/api/devices")).status_code == 200
 
     group_delta = _count_reads(group_many) - _count_reads(group_one)
@@ -572,12 +545,12 @@ async def test_group_list_reads_do_not_scale_with_static_group_count(
 ) -> None:
     """Static member counts are one aggregate, not a count per group."""
     await _seed_static_groups_and_devices(db_session, static_groups=1, devices=2, host_id=db_host.id)
-    with _capture_statements(db_session) as statements:
+    with capture_engine_statements(db_session) as statements:
         assert (await client.get("/api/device-groups")).status_code == 200
     one = _count_reads(statements)
 
     await _seed_static_groups_and_devices(db_session, static_groups=20, devices=40, host_id=db_host.id)
-    with _capture_statements(db_session) as statements:
+    with capture_engine_statements(db_session) as statements:
         assert (await client.get("/api/device-groups")).status_code == 200
     many = _count_reads(statements)
     assert many == one, f"group list reads scaled with static group count: {one} -> {many}"
@@ -597,7 +570,7 @@ async def test_static_group_device_query_paginates_in_sql(
     fleet-wide result in Python.
     """
     key = await _seed_static_groups_and_devices(db_session, static_groups=1, devices=5, host_id=db_host.id)
-    with _capture_statements(db_session) as statements:
+    with capture_engine_statements(db_session) as statements:
         response = await client.get(f"/api/devices?group={key}&limit=2")
         assert response.status_code == 200
     assert len(response.json()["items"]) == 2
@@ -607,7 +580,7 @@ async def test_static_group_device_query_paginates_in_sql(
     )
 
     await _seed_static_groups_and_devices(db_session, static_groups=1, devices=40, host_id=db_host.id)
-    with _capture_statements(db_session) as statements:
+    with capture_engine_statements(db_session) as statements:
         response = await client.get(f"/api/devices?group={key}&limit=2")
         assert response.status_code == 200
     assert len(response.json()["items"]) == 2
@@ -629,12 +602,12 @@ async def test_group_bulk_route_reads_do_not_scale_with_fleet_size(
 ) -> None:
     """Bulk routes resolve member ids, never the whole device table."""
     key = await _seed_static_groups_and_devices(db_session, static_groups=1, devices=2, host_id=db_host.id)
-    with _capture_statements(db_session) as statements:
+    with capture_engine_statements(db_session) as statements:
         assert (await client.post(f"/api/device-groups/{key}/bulk/exit-maintenance")).status_code == 200
     small = _count_reads(statements)
 
     await _seed_static_groups_and_devices(db_session, static_groups=1, devices=40, host_id=db_host.id)
-    with _capture_statements(db_session) as statements:
+    with capture_engine_statements(db_session) as statements:
         assert (await client.post(f"/api/device-groups/{key}/bulk/exit-maintenance")).status_code == 200
     large = _count_reads(statements)
     assert large == small, f"group bulk reads scaled with fleet size: {small} -> {large}"
@@ -989,7 +962,7 @@ async def test_load_group_membership_index_reuses_injected_projection_facts(
     projections = await load_device_read_projections(db_session, devices, now=now)
     pairs = [(device, projections[device.id]) for device in devices]
 
-    with _capture_statements(db_session) as statements:
+    with capture_engine_statements(db_session) as statements:
         index = await load_group_membership_index(
             db_session,
             groups=[dynamic_group],

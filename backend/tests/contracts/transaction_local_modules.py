@@ -6,7 +6,9 @@ module is now asserted for the whole of ``app/`` with no allowlist by
 here would give one fact two homes that can disagree. The tuple survives
 because two other contracts read it as the transaction-locality registry:
 ``test_no_direct_device_state_writes.py``'s ``caller_locked`` proof mode and
-``test_phase9_domain_command_boundaries.py``'s gate.
+``test_phase9_domain_command_boundaries.py``'s gate. It is named without a
+``test_`` prefix because it collects no tests -- under one it read as a test module
+that had silently stopped asserting anything.
 """
 
 MIGRATED_TRANSACTION_LOCAL_MODULES = (

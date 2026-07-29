@@ -41,7 +41,7 @@ def _calls_named(tree: ast.AST, names: set[str]) -> list[tuple[int, str, str]]:
 
     The owner is the innermost enclosing ``def``/``async def``, or ``<module>``
     for a call at module scope. Mirrors
-    ``tests/contracts/test_transaction_boundaries.py``'s scoping helper.
+    ``tests/contracts/test_repository_transaction_boundaries.py``'s scoping helper.
     """
     functions = [
         (node.lineno, node.end_lineno or node.lineno, node.name)

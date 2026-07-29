@@ -555,6 +555,21 @@ def begin_owner_findings(tree: ast.Module, module: str) -> list[tuple[str, str, 
     a ``with``/``async with`` item, and a ``begin()`` handed to an exit stack's
     ``enter_context``/``enter_async_context``. ``begin_nested()`` has its own
     attribute name and is checked separately.
+
+    WHAT THIS DOES NOT SEE, decided rather than patched. The stack shape is
+    matched by *name*, positionally: ``enter_async_context(cm=db.begin())``
+    (the loop reads ``node.args``, never ``node.keywords``), an aliased argument
+    (``cm = db.begin()`` then ``enter_async_context(cm)``), ``push`` and
+    ``push_async_exit``, and any indirection through another call frame all
+    escape it. The discriminator is name-only in the other direction too:
+    ``stack.enter_context(unrelated.begin())`` would be flagged as a
+    transaction. Each of those is one more shape, not the end of the class --
+    closing the class needs transaction-context dataflow beyond the effect
+    walker's stack-receiver binding state. None of these shapes appears anywhere
+    under ``app/`` today; ``grep -rn
+    "enter_async_context\\|AsyncExitStack" app/`` returning nothing is what makes
+    the disclosure sufficient, and a first exit-stack boundary landing in
+    production is the trigger to revisit it.
     """
     findings: list[tuple[str, str, int]] = []
     for node, owner in iter_owned(tree, ""):
@@ -638,36 +653,314 @@ def effect_owners() -> list[tuple[str, str, int]]:
     return sorted(findings)
 
 
-def effects_inside_transactions() -> list[str]:
-    """Effect calls nested lexically inside a ``begin()``/``begin_nested()`` body.
+def _registers_transaction_on_a_stack(node: ast.AST) -> frozenset[str]:
+    """Exit-stack receiver names handed a ``begin()`` in *node*'s executable subtree.
+
+    The mirror of the second shape ``begin_owner_findings`` detects. A
+    transaction registered on a stack stays open until the stack unwinds, so
+    every statement after the registration in that block runs with it open.
+    Lambda bodies and generator-expression bodies/inner clauses are skipped at
+    creation; lambda defaults and a generator's outermost iterable remain eager.
+    Immediate invocation/consumption (a called lambda, ``next()``, or a loop) is
+    not modeled; it needs context-sensitive execution modeling, and production
+    has no exit-stack use.
+    """
+
+    def registers(current: ast.AST) -> frozenset[str]:
+        if current is not node and isinstance(current, ast.stmt):
+            return frozenset()
+        if isinstance(current, ast.Lambda):
+            return frozenset().union(
+                *(
+                    registers(default)
+                    for default in (*current.args.defaults, *current.args.kw_defaults)
+                    if default is not None
+                )
+            )
+        if isinstance(current, ast.GeneratorExp):
+            return registers(current.generators[0].iter)
+        if (
+            isinstance(current, ast.Call)
+            and call_tail(current.func) in {"enter_context", "enter_async_context"}
+            and any(
+                isinstance(argument, ast.Call)
+                and isinstance(argument.func, ast.Attribute)
+                and argument.func.attr in {"begin", "begin_nested"}
+                for argument in current.args
+            )
+        ):
+            owner = _dotted_name(current.func.value) if isinstance(current.func, ast.Attribute) else None
+            return frozenset({owner or "<unknown-exit-stack>"})
+        return frozenset().union(*(registers(child) for child in ast.iter_child_nodes(current)))
+
+    return registers(node)
+
+
+def _opens_exit_stack(item: ast.withitem) -> bool:
+    context = item.context_expr
+    return isinstance(context, ast.Call) and call_tail(context.func) in {"ExitStack", "AsyncExitStack"}
+
+
+@dataclass(frozen=True, slots=True)
+class _EffectState:
+    stack_transactions: frozenset[ast.withitem | None]
+    name_bindings: dict[str, frozenset[object]]
+    attribute_bindings: dict[tuple[object, str], frozenset[object]]
+
+
+def _unknown_name(name: str) -> tuple[str, str]:
+    return ("name", name)
+
+
+def _unknown_attribute(owner: object, attribute: str) -> tuple[str, object, str]:
+    return ("attribute", owner, attribute)
+
+
+def _object_is_reachable(state: _EffectState, object_id: object) -> bool:
+    if any(object_id in bindings for bindings in state.name_bindings.values()):
+        return True
+    if any(object_id in bindings for bindings in state.attribute_bindings.values()):
+        return True
+    if isinstance(object_id, tuple) and len(object_id) == 2 and object_id[0] == "name":
+        return object_id[1] not in state.name_bindings
+    if isinstance(object_id, tuple) and len(object_id) == 3 and object_id[0] == "attribute":
+        _, owner, attribute = object_id
+        if not _object_is_reachable(state, owner):
+            return False
+        bindings = state.attribute_bindings.get((owner, attribute))
+        return bindings is None or object_id in bindings
+    return False
+
+
+def _join_effect_states(*states: _EffectState) -> _EffectState:
+    names = {name for state in states for name in state.name_bindings}
+    attributes = {attribute for state in states for attribute in state.attribute_bindings}
+    return _EffectState(
+        stack_transactions=frozenset(stack for state in states for stack in state.stack_transactions),
+        name_bindings={
+            name: frozenset(object_id for state in states for object_id in state.name_bindings.get(name, frozenset()))
+            for name in names
+        },
+        attribute_bindings={
+            attribute: frozenset(
+                object_id
+                for state in states
+                for object_id in state.attribute_bindings.get(
+                    attribute,
+                    (
+                        frozenset({_unknown_attribute(*attribute)})
+                        if _object_is_reachable(state, attribute[0])
+                        else frozenset()
+                    ),
+                )
+            )
+            for attribute in attributes
+        },
+    )
+
+
+def _resolve_object_name(state: _EffectState, name: str) -> frozenset[object]:
+    root, *attributes = name.split(".")
+    objects = state.name_bindings.get(root, frozenset({_unknown_name(root)}))
+    for attribute in attributes:
+        objects = frozenset(
+            object_id
+            for owner in objects
+            for object_id in state.attribute_bindings.get(
+                (owner, attribute),
+                frozenset({_unknown_attribute(owner, attribute)}),
+            )
+        )
+    return objects
+
+
+def _resolve_objects(state: _EffectState, value: ast.expr) -> frozenset[object]:
+    name = _dotted_name(value)
+    return _resolve_object_name(state, name) if name is not None else frozenset({value})
+
+
+def _bind_objects(state: _EffectState, target: ast.expr, objects: frozenset[object]) -> _EffectState:
+    if isinstance(target, ast.Name):
+        bindings = dict(state.name_bindings)
+        bindings[target.id] = objects
+        return _EffectState(state.stack_transactions, bindings, state.attribute_bindings)
+    if not isinstance(target, ast.Attribute):
+        return state
+    owners = _resolve_objects(state, target.value)
+    bindings = dict(state.attribute_bindings)
+    for owner in owners:
+        attribute = (owner, target.attr)
+        if len(owners) == 1:
+            bindings[attribute] = objects
+        else:
+            bindings[attribute] = (
+                bindings.get(
+                    attribute,
+                    frozenset({_unknown_attribute(owner, target.attr)}),
+                )
+                | objects
+            )
+    return _EffectState(state.stack_transactions, state.name_bindings, bindings)
+
+
+def _stack_identities(objects: frozenset[object]) -> frozenset[ast.withitem | None]:
+    return frozenset(object_id if isinstance(object_id, ast.withitem) else None for object_id in objects)
+
+
+def _register_stack_transactions(state: _EffectState, receivers: frozenset[str]) -> _EffectState:
+    if not receivers:
+        return state
+    registered = frozenset(
+        stack for receiver in receivers for stack in _stack_identities(_resolve_object_name(state, receiver))
+    )
+    return _EffectState(
+        state.stack_transactions | registered,
+        state.name_bindings,
+        state.attribute_bindings,
+    )
+
+
+def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[str]:
+    """Effect calls nested inside a ``begin()``/``begin_nested()`` transaction in *tree*.
 
     Descends explicitly rather than through ``ast.walk`` because the property is
     about nesting: the ``with`` header itself is evaluated before the block is
-    entered, while a call in the body — or in a function *defined* in the body —
+    entered, while a call in the body -- or in a function *defined* in the body --
     runs with the transaction open.
+
+    Two ways in, matching ``begin_owner_findings``: a ``with``/``async with`` item,
+    and a ``begin()`` registered on an exit stack, which opens the transaction for
+    the remainder of the enclosing block rather than for a nested one. Statement
+    lists are therefore walked in order, with the flag flipping *after* the
+    registering statement -- the registration's own arguments are evaluated before
+    the transaction exists. Eager call inputs propagate state, but lambda bodies
+    and generator-expression bodies/inner clauses are skipped at creation;
+    lambda defaults and a generator's outermost iterable do propagate. Immediate
+    invocation/consumption is not modeled; it needs context-sensitive execution
+    modeling, and production has no exit-stack use.
+    Branch states conservatively join active transactions, name-to-object bindings,
+    and fields keyed by owner identity. Parameters start unresolved; a missing
+    attribute remains unresolved because it may predate the branch, while a missing
+    plain name does not invent an external value for a branch-only local. Mutually
+    exclusive runtime paths may therefore still produce a finding.
+
+    Direct ``begin()`` contexts are scoped to their ``with`` block. Exit-stack
+    registrations are tracked by the identity of the ``with`` item that created
+    the stack. Names bind abstract object identities, and attributes bind to their
+    owning identity: object aliases therefore share fields, while rebinding a root
+    or attribute prefix makes descendants resolve from the replacement object. A
+    stack exit removes only its own registered transaction identity.
     """
     findings: list[str] = []
-    for path in PRODUCTION:
-        module = relative_module(path)
-        tree = parse_module(path)
-        appium = _uses_appium_direct(tree)
+    appium = _uses_appium_direct(tree)
 
-        def visit(node: ast.AST, in_transaction: bool, *, module: str = module, appium: bool = appium) -> None:
-            if isinstance(node, ast.Call):
-                name = _effect_call_name(node, module_uses_appium_direct=appium)
-                if name is not None and in_transaction:
-                    findings.append(f"{module}:{node.lineno} {name}()")
-            if isinstance(node, ast.With | ast.AsyncWith):
-                opens = any(_opens_transaction(item) for item in node.items)
-                for item in node.items:
-                    visit(item.context_expr, in_transaction)
-                for statement in node.body:
-                    visit(statement, in_transaction or opens)
-                return
+    def visit_body(
+        statements: list[ast.stmt],
+        state: _EffectState,
+        scoped_transaction: bool = False,
+    ) -> _EffectState:
+        for statement in statements:
+            state = visit(statement, state, scoped_transaction)
+        return state
+
+    def visit(
+        node: ast.AST,
+        state: _EffectState,
+        scoped_transaction: bool = False,
+    ) -> _EffectState:
+        if isinstance(node, ast.Call):
             for child in ast.iter_child_nodes(node):
-                visit(child, in_transaction)
+                state = visit(child, state, scoped_transaction)
+            name = _effect_call_name(node, module_uses_appium_direct=appium)
+            if name is not None and (state.stack_transactions or scoped_transaction):
+                findings.append(f"{module}:{node.lineno} {name}()")
+            return _register_stack_transactions(state, _registers_transaction_on_a_stack(node))
+        if isinstance(node, ast.Lambda):
+            for default in (*node.args.defaults, *node.args.kw_defaults):
+                if default is not None:
+                    state = visit(default, state, scoped_transaction)
+            return state
+        if isinstance(node, ast.GeneratorExp):
+            return visit(node.generators[0].iter, state, scoped_transaction)
+        if isinstance(node, ast.Assign):
+            state = visit(node.value, state, scoped_transaction)
+            objects = _resolve_objects(state, node.value)
+            for target in node.targets:
+                state = _bind_objects(state, target, objects)
+            return state
+        if isinstance(node, ast.With | ast.AsyncWith):
+            direct_transaction = scoped_transaction
+            closing_stacks: set[ast.withitem] = set()
+            for item in node.items:
+                state = visit(item.context_expr, state, direct_transaction)
+                if _opens_exit_stack(item):
+                    closing_stacks.add(item)
+                    if item.optional_vars is not None:
+                        state = _bind_objects(state, item.optional_vars, frozenset({item}))
+                direct_transaction = direct_transaction or _opens_transaction(item)
+            state = visit_body(node.body, state, direct_transaction)
+            return _EffectState(
+                state.stack_transactions - closing_stacks,
+                state.name_bindings,
+                state.attribute_bindings,
+            )
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            parameters = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+            parameters.extend(argument for argument in (node.args.vararg, node.args.kwarg) if argument is not None)
+            bindings = dict(state.name_bindings)
+            bindings.update((argument.arg, frozenset({argument})) for argument in parameters)
+            visit_body(
+                node.body,
+                _EffectState(state.stack_transactions, bindings, state.attribute_bindings),
+                scoped_transaction,
+            )
+            return state
+        if isinstance(node, ast.If | ast.For | ast.AsyncFor | ast.While):
+            if isinstance(node, ast.If | ast.While):
+                after_header = visit(node.test, state, scoped_transaction)
+            else:
+                after_header = visit(node.iter, state, scoped_transaction)
+            body_state = visit_body(node.body, after_header, scoped_transaction)
+            else_state = visit_body(node.orelse, after_header, scoped_transaction)
+            return _join_effect_states(body_state, else_state)
+        if isinstance(node, ast.Try | ast.TryStar):
+            body_state = visit_body(node.body, state, scoped_transaction)
+            handler_states: list[_EffectState] = []
+            for handler in node.handlers:
+                handler_state = body_state
+                if handler.type is not None:
+                    handler_state = visit(handler.type, handler_state, scoped_transaction)
+                handler_states.append(visit_body(handler.body, handler_state, scoped_transaction))
+            else_state = visit_body(node.orelse, body_state, scoped_transaction)
+            return visit_body(
+                node.finalbody,
+                _join_effect_states(body_state, *handler_states, else_state),
+                scoped_transaction,
+            )
+        if isinstance(node, ast.Match):
+            subject_state = visit(node.subject, state, scoped_transaction)
+            case_states: list[_EffectState] = []
+            for case in node.cases:
+                case_state = subject_state
+                if case.guard is not None:
+                    case_state = visit(case.guard, case_state, scoped_transaction)
+                case_states.append(visit_body(case.body, case_state, scoped_transaction))
+            return _join_effect_states(subject_state, *case_states)
+        for child in ast.iter_child_nodes(node):
+            state = visit(child, state, scoped_transaction)
+        return _register_stack_transactions(
+            state,
+            _registers_transaction_on_a_stack(node) if isinstance(node, ast.stmt) else frozenset(),
+        )
 
-        visit(tree, False)
+    visit(tree, _EffectState(frozenset(), {}, {}))
+    return findings
+
+
+def effects_inside_transactions() -> list[str]:
+    findings: list[str] = []
+    for path in PRODUCTION:
+        findings.extend(effects_inside_transactions_in_tree(parse_module(path), relative_module(path)))
     return findings
 
 
@@ -742,6 +1035,445 @@ async def outer(db, stack):
     assert [owner for _module, owner, _lineno in owners] == ["outer", "outer"]
 
 
+def test_the_effect_check_sees_a_transaction_opened_through_an_exit_stack() -> None:
+    """An exit-stack ``begin()`` holds the same row locks an ``async with`` does.
+
+    ``begin_owners`` was widened to see this shape; the effect check was not, so
+    an agent dial inside a stack-opened transaction escaped the guard whose whole
+    purpose is stopping a remote call from running with a row lock held. No
+    module under ``app/`` uses an exit stack today, so this is the only place the
+    widened detector can be falsified.
+    """
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await stack.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+    )
+    findings = effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py")
+    assert findings == ["synthetic.py:4 agent_health()"]
+
+
+def test_the_effect_check_does_not_flag_an_effect_before_the_stack_registration() -> None:
+    """Order matters, and a stack with no ``begin()`` opens nothing.
+
+    The registration call is evaluated before the transaction exists -- the same
+    reasoning that makes a ``with`` header's own expressions out of scope -- so an
+    effect above it is not inside anything, and a stack that never receives a
+    ``begin()`` must not make its whole body look transactional.
+    """
+    before = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(ip, port)\n"
+        "        await stack.enter_async_context(db.begin())\n"
+    )
+    unrelated = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await stack.enter_async_context(db.stream())\n"
+        "        await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(before), "synthetic.py") == []
+    assert effects_inside_transactions_in_tree(ast.parse(unrelated), "synthetic.py") == []
+
+
+def test_the_effect_check_tracks_a_stack_registration_within_an_if_body() -> None:
+    """A registration opens the rest of its own compound statement body."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if True:\n"
+        "            await stack.enter_async_context(db.begin())\n"
+        "            await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
+
+
+def test_the_effect_check_ignores_a_stack_registration_inside_a_nested_definition() -> None:
+    """Defining a function does not execute its exit-stack registration."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        async def register():\n"
+        "            await stack.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == []
+
+
+def test_the_effect_check_scans_compound_headers_inside_a_transaction() -> None:
+    """A compound header is evaluated while its enclosing transaction is open."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with db.begin():\n"
+        "        if await agent_health(ip, port):\n"
+        "            pass\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:3 agent_health()"]
+
+
+def test_the_effect_check_keeps_a_branch_registered_transaction_open_afterwards() -> None:
+    """An exit-stack transaction can outlive the branch that registered it."""
+    source = (
+        "async def outer(db, ip, port, ready):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if ready:\n"
+        "            await stack.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
+
+
+def test_the_effect_check_visits_else_after_a_transactional_if_branch() -> None:
+    """Joining branch states must not short-circuit the second branch's scan."""
+    source = (
+        "async def outer(db, ip, port, ready):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if ready:\n"
+        "            await stack.enter_async_context(db.begin())\n"
+        "        else:\n"
+        "            async with db.begin():\n"
+        "                await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:7 agent_health()"]
+
+
+def test_the_effect_check_tracks_registration_order_within_a_compound_header() -> None:
+    """Later terms see a transaction registered by an earlier header term."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if (await stack.enter_async_context(db.begin())) and (await agent_health(ip, port)):\n"
+        "            pass\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:3 agent_health()"]
+
+
+def test_the_effect_check_tracks_registration_order_across_with_items() -> None:
+    """Each ``with`` item is evaluated after the transaction state from prior items."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with (\n"
+        "        AsyncExitStack() as stack,\n"
+        "        await stack.enter_async_context(db.begin()),\n"
+        "        await agent_health(ip, port),\n"
+        "    ):\n"
+        "        pass\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
+
+
+def test_the_effect_check_keeps_a_stack_registration_from_a_nested_with_header() -> None:
+    """A nested context ends before a transaction registered on the outer stack."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        async with passthrough(await stack.enter_async_context(db.begin())):\n"
+        "            pass\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
+
+
+def test_the_effect_check_keeps_a_stack_registration_from_a_nested_with_body() -> None:
+    """A registration in a nested body remains active until the outer stack exits."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        async with passthrough():\n"
+        "            await stack.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
+
+
+def test_the_effect_check_keeps_an_outer_stack_registration_past_an_inner_stack() -> None:
+    """An inner exit stack must not clear a transaction owned by the outer stack."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as outer_stack:\n"
+        "        async with AsyncExitStack():\n"
+        "            await outer_stack.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
+
+
+def test_the_effect_check_distinguishes_nested_stacks_with_the_same_name() -> None:
+    """Rebinding a name must not collapse the two stack lifetimes."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await stack.enter_async_context(db.begin())\n"
+        "        async with AsyncExitStack() as stack:\n"
+        "            pass\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:6 agent_health()"]
+
+
+def test_the_effect_check_closes_a_transaction_registered_through_a_stack_alias() -> None:
+    """An alias identifies the stack whose exit closes its transaction."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        alias = stack\n"
+        "        await alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
+
+
+def test_the_effect_check_keeps_a_branch_transaction_past_a_same_name_nested_stack() -> None:
+    """A branch join must retain identity across a later name shadow."""
+    source = (
+        "async def outer(db, ip, port, ready):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if ready:\n"
+        "            await stack.enter_async_context(db.begin())\n"
+        "        async with AsyncExitStack() as stack:\n"
+        "            pass\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:7 agent_health()"]
+
+
+def test_the_effect_check_keeps_an_unresolved_parameter_binding_at_a_branch_join() -> None:
+    """A parameter can still name an external stack on the unassigned branch."""
+    source = (
+        "async def outer(db, ip, port, ready, alias):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if ready:\n"
+        "            alias = stack\n"
+        "        await alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == [
+        "synthetic.py:6 agent_health()",
+        "synthetic.py:7 agent_health()",
+    ]
+
+
+def test_the_effect_check_keeps_an_unresolved_attribute_binding_at_a_branch_join() -> None:
+    """An attribute can retain its pre-existing stack on the unassigned branch."""
+    source = (
+        "async def outer(db, ip, port, ready, holder):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if ready:\n"
+        "            holder.alias = stack\n"
+        "        await holder.alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == [
+        "synthetic.py:6 agent_health()",
+        "synthetic.py:7 agent_health()",
+    ]
+
+
+def test_the_effect_check_does_not_invent_an_unresolved_local_at_a_branch_join() -> None:
+    """A branch-only local is unusable on the unassigned path, not external."""
+    source = (
+        "async def outer(db, ip, port, ready):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if ready:\n"
+        "            alias = stack\n"
+        "        await alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:6 agent_health()"]
+
+
+def test_the_effect_check_rebases_attributes_after_a_definite_root_rebind() -> None:
+    """Rebinding an object's root makes its old attributes unreachable through that root."""
+    source = (
+        "async def outer(db, ip, port, holder, replacement):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        holder.alias = stack\n"
+        "        holder = replacement\n"
+        "        await holder.alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == [
+        "synthetic.py:6 agent_health()",
+        "synthetic.py:7 agent_health()",
+    ]
+
+
+def test_the_effect_check_preserves_both_attribute_roots_after_a_conditional_rebind() -> None:
+    """A conditional root rebind retains the original and replacement attribute paths."""
+    source = (
+        "async def outer(db, ip, port, ready, holder, replacement):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        holder.alias = stack\n"
+        "        if ready:\n"
+        "            holder = replacement\n"
+        "        await holder.alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == [
+        "synthetic.py:7 agent_health()",
+        "synthetic.py:8 agent_health()",
+    ]
+
+
+def test_the_effect_check_rebases_descendants_after_an_attribute_prefix_rebind() -> None:
+    """Rebinding an attribute prefix makes its old descendants unreachable through it."""
+    source = (
+        "async def outer(db, ip, port, holder, replacement):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        holder.child.alias = stack\n"
+        "        holder.child = replacement\n"
+        "        await holder.child.alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == [
+        "synthetic.py:6 agent_health()",
+        "synthetic.py:7 agent_health()",
+    ]
+
+
+def test_the_effect_check_propagates_attributes_through_an_object_alias() -> None:
+    """Aliasing an object also aliases the stack-valued attributes on that object."""
+    source = (
+        "async def outer(db, ip, port, holder):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        holder.alias = stack\n"
+        "        other = holder\n"
+        "        await other.alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:6 agent_health()"]
+
+
+def test_the_effect_check_propagates_attributes_through_an_object_alias_chain() -> None:
+    """Object identity carries stack-valued attributes through multiple aliases."""
+    source = (
+        "async def outer(db, ip, port, holder):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        holder.alias = stack\n"
+        "        other = holder\n"
+        "        third = other\n"
+        "        await third.alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:7 agent_health()"]
+
+
+def test_the_effect_check_keeps_aliased_attributes_after_the_original_root_is_rebound() -> None:
+    """Rebinding one object name does not mutate another name for the old object."""
+    source = (
+        "async def outer(db, ip, port, holder, replacement):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        holder.alias = stack\n"
+        "        other = holder\n"
+        "        holder = replacement\n"
+        "        await other.alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:7 agent_health()"]
+
+
+def test_the_effect_check_shares_attribute_writes_through_object_aliases() -> None:
+    """An attribute write through an object alias is visible through the original name."""
+    source = (
+        "async def outer(db, ip, port, holder):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        other = holder\n"
+        "        other.alias = stack\n"
+        "        await holder.alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:6 agent_health()"]
+
+
+def test_the_effect_check_sees_a_transaction_registered_by_an_effect_argument() -> None:
+    """An effect runs after its arguments have been evaluated."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if await agent_health(await stack.enter_async_context(db.begin())):\n"
+        "            pass\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:3 agent_health()"]
+
+
+def test_the_effect_check_sees_a_transaction_registered_by_its_callable() -> None:
+    """An effect runs after its callable expression has been evaluated."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await (await stack.enter_async_context(db.begin())).agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:3 agent_health()"]
+
+
+def test_the_effect_check_does_not_evaluate_a_lambda_body() -> None:
+    """Lambda bodies are skipped at creation; defaults are evaluated then.
+
+    Immediate invocation is not modeled; it needs context-sensitive execution
+    modeling, and production has no exit-stack use.
+    """
+    deferred = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(lambda: stack.enter_async_context(db.begin()))\n"
+    )
+    eager_default = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(lambda transaction=stack.enter_context(db.begin()): transaction)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(deferred), "synthetic.py") == []
+    assert effects_inside_transactions_in_tree(ast.parse(eager_default), "synthetic.py") == [
+        "synthetic.py:3 agent_health()"
+    ]
+
+
+def test_the_effect_check_only_evaluates_a_generator_expressions_outer_iterable() -> None:
+    """Generator bodies/inner clauses are skipped at creation; the outer iterable is eager.
+
+    Immediate consumption by ``next()`` or a loop is not modeled; it needs
+    context-sensitive execution modeling, and production has no exit-stack use.
+    """
+    deferred_body = (
+        "async def outer(db, ip, port, values):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(stack.enter_async_context(db.begin()) for value in values)\n"
+    )
+    deferred_clause = (
+        "async def outer(db, ip, port, values):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(value for value in values if stack.enter_async_context(db.begin()))\n"
+    )
+    eager_outer_iterable = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await agent_health(value for value in [await stack.enter_async_context(db.begin())])\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(deferred_body), "synthetic.py") == []
+    assert effects_inside_transactions_in_tree(ast.parse(deferred_clause), "synthetic.py") == []
+    assert effects_inside_transactions_in_tree(ast.parse(eager_outer_iterable), "synthetic.py") == [
+        "synthetic.py:3 agent_health()"
+    ]
+
+
 def test_begin_owner_kinds_are_command_or_infrastructure() -> None:
     kinds = {owner.kind for owner in BEGIN_OWNER_REGISTRY}
     assert kinds <= {"command", "infrastructure"}, f"unclassifiable begin() owner kinds: {sorted(kinds)}"
@@ -775,10 +1507,15 @@ def test_no_effect_runs_inside_a_transaction_block() -> None:
     also lexical -- an effect one call frame below a ``begin()`` block is
     invisible here, which is what the runtime-backed entries in
     ``REMOTE_EFFECT_OWNER_REGISTRY`` exist to cover. The transaction detector
-    (``_opens_transaction``) is also ``With``/``AsyncWith``-only, so an effect
-    inside a transaction opened through an exit stack's
-    ``enter_context``/``enter_async_context`` is not caught here either --
-    unlike ``begin_owners``, which was widened to see that shape."""
+    recognizes the same two syntactic ``begin()`` shapes as ``begin_owners``. For
+    a directly constructed exit-stack ``with`` item, it distinguishes each stack
+    lifetime and follows plain name/attribute aliases. Parameters start
+    unresolved, and a branch that does not replace a pre-existing attribute
+    preserves that unresolved identity; branch-only local names do not gain one.
+    An unresolved receiver is conservatively left active. The detector still
+    skips a registration in a lambda/generator body at creation even when
+    immediate invocation/consumption later runs it. Recognizing that execution
+    needs context-sensitive modeling; production has no exit-stack use."""
     findings = effects_inside_transactions()
     assert findings == [], (
         "one of this repository's known effect entry points (see AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / "

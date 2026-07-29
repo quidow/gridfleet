@@ -22,9 +22,9 @@ of the split:
   measured numbers).
 
 The pinned constants are MEASURED, not derived. ``FORMULA_MAX`` is the Phase 8
-Global-Constraints ceiling (``24 + 9n``) and is asserted against BOTH paths: a
-count above it is an implementation defect, never a reason to raise the
-formula.
+Global-Constraints ceiling (``24 + 9n``) and is asserted on the settle path. The
+confirm path's exact ``STATUS_PUSH_MAX`` pin subsumes that ceiling: a count above
+it is an implementation defect, never a reason to raise the formula.
 """
 
 from __future__ import annotations
@@ -85,9 +85,8 @@ FLEET_SIZES = (1, 10, 50)
 STATUS_PUSH_MAX = {1: 25, 10: 52, 50: 172}
 STATUS_PUSH_COMMITS = {1: 6, 10: 15, 50: 55}
 
-# Phase 8 Global Constraints ceiling, asserted against both paths below: a
-# count above it is an implementation defect, never a reason to raise the
-# formula.
+# Phase 8 Global Constraints ceiling, asserted on the settle path below. The
+# confirm path has an exact measured pin instead.
 FORMULA_MAX = {n: 24 + 9 * n for n in FLEET_SIZES}
 PACK_CATALOG_SIGNATURES = ("SELECT driver_packs", "SELECT driver_pack_releases", "SELECT driver_pack_platforms")
 PACK_CATALOG_READS_PER_HOST = 1
@@ -363,18 +362,13 @@ async def test_status_push_statement_and_commit_budget(
     # Exact, not <=: STATUS_PUSH_MAX is documented as MEASURED, not derived (see
     # the inventory above), and a <= cannot catch a regression that *removes*
     # work — a stage silently skipped scores better than the pin. Same shape as
-    # the settle-path assertion below.
+    # the settle-path assertion below. It also subsumes every bound under it: a
+    # FORMULA_MAX ceiling check and the two per-device delta checks that used to
+    # sit here compared one constant with another once this pin held.
     assert counts == STATUS_PUSH_MAX, (
         f"confirm-path status push statement counts {counts} moved off the measured pin "
         f"{STATUS_PUSH_MAX}: attach a captured statement inventory before updating this"
     )
-    for size in FLEET_SIZES:
-        assert counts[size] <= FORMULA_MAX[size], (
-            f"status push at {size} devices issued {counts[size]} statements, above the Phase 8 "
-            f"ceiling {FORMULA_MAX[size]} — fix the implementation, do not raise the formula"
-        )
-    assert counts[10] - counts[1] <= 9 * 9
-    assert counts[50] - counts[10] <= 40 * 9
 
     # A new commit is a transaction-boundary regression even when the statement
     # total stays under the formula, so these are exact.
@@ -412,7 +406,7 @@ async def test_status_push_settle_path_statement_and_commit_budget(
     Before the driver-pack catalog was batched, this path spent three catalog
     statements per device on top of the reconciler's settlement and exceeded the
     Phase 8 ceiling from n=2 up. It no longer does, so ``FORMULA_MAX`` is
-    asserted here as well as on the confirm path.
+    asserted here; the confirm path relies on its exact measured pin.
     """
     _install_push_wiring(db_session_maker)
     assert db_session.bind is not None

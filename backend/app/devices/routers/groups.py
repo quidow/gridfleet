@@ -60,8 +60,7 @@ async def _group_device_ids_or_404(
 
 
 @router.post("", response_model=DeviceGroupMutationRead, response_model_exclude_none=True, status_code=201)
-async def create_group(data: DeviceGroupCreate, db: DbDep, device_services: DeviceServicesDep) -> dict[str, Any]:
-    del db  # the command owns its own session; the count below opens a second one
+async def create_group(data: DeviceGroupCreate, device_services: DeviceServicesDep) -> dict[str, Any]:
     try:
         async with device_services.session_factory.begin() as command_db:
             created = await device_services.groups.create_group(command_db, data)
@@ -114,10 +113,8 @@ async def get_group(group_key: GroupKey, db: DbDep, device_services: DeviceServi
 async def update_group(
     group_key: GroupKey,
     data: DeviceGroupUpdate,
-    db: DbDep,
     device_services: DeviceServicesDep,
 ) -> dict[str, Any]:
-    del db  # the command owns its own session; the count below opens a second one
     try:
         async with device_services.session_factory.begin() as command_db:
             written = await device_services.groups.update_group(command_db, group_key, data)
@@ -127,8 +124,7 @@ async def update_group(
 
 
 @router.delete("/{group_key}", status_code=204)
-async def delete_group(group_key: GroupKey, db: DbDep, device_services: DeviceServicesDep) -> None:
-    del db  # the command locks the same row from its own session
+async def delete_group(group_key: GroupKey, device_services: DeviceServicesDep) -> None:
     try:
         async with device_services.session_factory.begin() as command_db:
             deleted = await device_services.groups.delete_group(command_db, group_key)

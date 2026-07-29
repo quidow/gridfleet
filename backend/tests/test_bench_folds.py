@@ -4,7 +4,16 @@ Reproduces the per-push CPU cost of the synchronous status-push folds and the
 node-health fold against a synthetic fleet, so fold optimizations can be
 measured deterministically with cProfile instead of prod py-spy sampling.
 
-Skipped in the normal suite. Run explicitly:
+Only ``test_bench_healthy_fold_statement_budget`` runs in CI. Everything else here
+is opt-in behind ``FOLD_BENCH=1`` and its assertions have no standing regression
+value -- including the deep-history ladder pins, whose scenario needs the
+``FOLD_BENCH_SCENARIO``/``FOLD_BENCH_FLEET`` harness and cannot be reached from a
+plain pytest run. Deliberate: reproducing that scenario as a standing test means
+re-seeding ~200 remediation rows per device on every suite run. Verify it by hand
+after touching the snapshot loader, with the command in
+``_verify_deep_history_untouched``.
+
+The load benchmarks are skipped in the normal suite. Run explicitly:
 
     FOLD_BENCH=1 FOLD_BENCH_DEVICES=50 FOLD_BENCH_ITERS=3 \
         uv run pytest -s -p no:randomly tests/test_bench_folds.py -o addopts=""
@@ -134,21 +143,42 @@ if TYPE_CHECKING:
 pytestmark = [
     pytest.mark.db,
     pytest.mark.usefixtures("seeded_driver_packs"),
-    pytest.mark.skipif(not os.getenv("FOLD_BENCH"), reason="set FOLD_BENCH=1 to run the fold load benchmark"),
 ]
 
-DEVICES = int(os.getenv("FOLD_BENCH_DEVICES", "50"))
-ITERS = int(os.getenv("FOLD_BENCH_ITERS", "3"))
-WARMUP = int(os.getenv("FOLD_BENCH_WARMUP", "1"))
-CHURN = float(os.getenv("FOLD_BENCH_CHURN", "0.0"))
-validate_benchmark_knobs(devices=DEVICES, iters=ITERS, warmup=WARMUP, churn=CHURN)
-_raw_lifecycle_mode = os.getenv("FOLD_BENCH_LIFECYCLE", "real")
-if _raw_lifecycle_mode not in ("real", "isolated"):
-    raise ValueError("FOLD_BENCH_LIFECYCLE must be 'real' or 'isolated'")
-LIFECYCLE_MODE = cast("Literal['real', 'isolated']", _raw_lifecycle_mode)
-JSON_PATH = os.getenv("FOLD_BENCH_JSON")
-EXPLAIN = bool(os.getenv("FOLD_BENCH_EXPLAIN"))
-SCENARIO = os.getenv("FOLD_BENCH_SCENARIO", "steady")
+# The load benchmarks below drive a real fleet under the FOLD_BENCH_* knobs and
+# print a report; they are opt-in. ``test_bench_healthy_fold_statement_budget``
+# deliberately carries no such mark: it is a fixed 10-device fold that reads none
+# of those knobs, and behind this skip its statement-category pin had exactly zero
+# standing regression value -- the state W3.1 of the Phase 11 follow-ups names.
+bench_enabled = bool(os.getenv("FOLD_BENCH"))
+bench_only = pytest.mark.skipif(not bench_enabled, reason="set FOLD_BENCH=1 to run the fold load benchmark")
+
+if bench_enabled:
+    DEVICES = int(os.getenv("FOLD_BENCH_DEVICES", "50"))
+    ITERS = int(os.getenv("FOLD_BENCH_ITERS", "3"))
+    WARMUP = int(os.getenv("FOLD_BENCH_WARMUP", "1"))
+    CHURN = float(os.getenv("FOLD_BENCH_CHURN", "0.0"))
+    validate_benchmark_knobs(devices=DEVICES, iters=ITERS, warmup=WARMUP, churn=CHURN)
+    _raw_lifecycle_mode = os.getenv("FOLD_BENCH_LIFECYCLE", "real")
+    if _raw_lifecycle_mode not in ("real", "isolated"):
+        raise ValueError("FOLD_BENCH_LIFECYCLE must be 'real' or 'isolated'")
+    LIFECYCLE_MODE = cast("Literal['real', 'isolated']", _raw_lifecycle_mode)
+    JSON_PATH = os.getenv("FOLD_BENCH_JSON")
+    EXPLAIN = bool(os.getenv("FOLD_BENCH_EXPLAIN"))
+    SCENARIO = os.getenv("FOLD_BENCH_SCENARIO", "steady")
+    FLEET: tuple[TupleSpec, ...] = (
+        HOMOGENEOUS_FLEET if os.getenv("FOLD_BENCH_FLEET", "mixed") == "homogeneous" else MIXED_FLEET
+    )
+else:
+    DEVICES = 50
+    ITERS = 3
+    WARMUP = 1
+    CHURN = 0.0
+    LIFECYCLE_MODE: Literal["real", "isolated"] = "real"
+    JSON_PATH = None
+    EXPLAIN = False
+    SCENARIO = "steady"
+    FLEET = MIXED_FLEET
 
 
 @dataclass(frozen=True)
@@ -260,30 +290,33 @@ async def _verify_deep_history_untouched(db: AsyncSession, tap: QueryTap, device
         .where(DeviceRemediationLogEntry.device_id == devices[0].device_id)
     )
     assert count == _DEEP_HISTORY_ROWS, f"healthy fold must not append to an inactive deep ladder (rows={count})"
-    # Every healthy observation still loads the ladder once per device per armed
-    # iteration -- but through the Phase 3 snapshot loader, and bounded to the
-    # entries at or after the latest reset. The seed ends in a terminal reset, so
-    # a ~200-row inactive history costs a bounded read of exactly one row: the
-    # terminal reset itself. The old assertion here demanded a full-history read
-    # from the retired ``remediation_log.load_ladder`` call site: it measured a
-    # cost Phase 3 removed, against a call site the fold no longer uses.
     ladder_key = ("app.devices.services.decision_snapshot._load_current_ladder", "SELECT device_remediation_log")
-    assert tap.callsite_counter[ladder_key] >= len(devices) * ITERS, "deep-history ladder read did not run per device"
-    # Exact, not a loose upper bound. The seed ends in a terminal reset and the
-    # bounded read's predicate is ``(at, id) >= (reset.at, reset.id)``, so the
-    # read returns exactly the reset row itself -- one row per device per armed
-    # iteration -- and nothing behind it. The former bound was
+    reads = tap.callsite_counter[ladder_key]
+    rows = tap.rows[ladder_key]
+    expected_reads = len(devices) * ITERS
+    # Two separate properties, each with its own message, because one number was
+    # previously asserted twice: a ``>=`` on the read count three lines above an
+    # ``==`` on the row count, both against ``len(devices) * ITERS``. A read that
+    # ran twice per device passed the loose one and failed the exact one with a
+    # message blaming history scanning -- the wrong diagnosis for the wrong number.
+    assert reads == expected_reads, (
+        f"the ladder read ran {reads} times, expected exactly {expected_reads} "
+        f"(once per device per armed iteration); a larger number is a repeated read per device, "
+        f"a smaller one means it stopped running per device"
+    )
+    # The seed ends in a terminal reset and the bounded read's predicate is
+    # ``(at, id) >= (reset.at, reset.id)``, so each read returns exactly the reset
+    # row itself and nothing behind it. Rows-per-read, not a total, so this cannot
+    # be satisfied by the read count moving. The former bound was
     # ``< len(devices) * _DEEP_HISTORY_ROWS * ITERS``, roughly 200x looser, so a
     # read that regressed to scanning 90% of the history still passed.
     # Re-measure with:
     #   FOLD_BENCH=1 FOLD_BENCH_SCENARIO=deep-history FOLD_BENCH_DEVICES=4 \
     #   FOLD_BENCH_ITERS=2 FOLD_BENCH_WARMUP=0 FOLD_BENCH_FLEET=homogeneous \
     #   uv run pytest -q -s tests/test_bench_folds.py::test_bench_device_health_loop_fold
-    expected_rows = len(devices) * ITERS
-    assert tap.rows[ladder_key] == expected_rows, (
-        f"the ladder read returned {tap.rows[ladder_key]} rows, expected exactly {expected_rows} "
-        f"(one terminal reset row per device per iteration). A larger number means the read regressed "
-        f"to scanning history behind the reset; a smaller one means it stopped running per device."
+    assert rows == reads, (
+        f"the ladder read returned {rows} rows across {reads} reads, expected exactly one row per read "
+        f"(the terminal reset). More means the read regressed to scanning history behind the reset."
     )
 
 
@@ -486,11 +519,6 @@ def _build_device_health_benchmark_service(
     return build_real_lifecycle_connectivity_service()
 
 
-FLEET: tuple[TupleSpec, ...] = (
-    HOMOGENEOUS_FLEET if os.getenv("FOLD_BENCH_FLEET", "mixed") == "homogeneous" else MIXED_FLEET
-)
-
-
 def _churn_count(n: int, churn: float) -> int:
     """First-k selection size for a churn fraction (deterministic, index-based)."""
     return round(n * churn)
@@ -575,6 +603,7 @@ async def _measure(
     _report(label, tap, wall_ms)
 
 
+@bench_only
 async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
     service = NodeHealthService(
         publisher=event_bus,
@@ -596,6 +625,7 @@ async def test_bench_node_health_fold(db_session: AsyncSession) -> None:
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
 
+@bench_only
 async def test_bench_device_properties_fold(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
 ) -> None:
@@ -636,6 +666,7 @@ def _host_telemetry_sample(iteration: int) -> dict[str, object]:
     }
 
 
+@bench_only
 async def test_bench_host_telemetry_fold(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]
 ) -> None:
@@ -656,6 +687,7 @@ async def test_bench_host_telemetry_fold(
     event.remove(db_session.bind.sync_engine, "before_cursor_execute", tap)
 
 
+@bench_only
 def test_bench_real_lifecycle_composition() -> None:
     service = build_real_lifecycle_connectivity_service()
 
@@ -817,6 +849,7 @@ def _report_device_health_loop(
         )
 
 
+@bench_only
 async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession]) -> None:
     service = _build_push_service(db_session_maker)
     tap = QueryTap()
@@ -851,6 +884,7 @@ async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: asyn
     assert _observation_failure_total() == failures_before, "a whole-push stage failed (check dial stubs / wiring)"
 
 
+@bench_only
 async def test_bench_device_health_loop_fold(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
@@ -1033,7 +1067,7 @@ async def test_bench_healthy_fold_statement_budget(
     tap.armed = False
     commits.armed = False
     try:
-        host, devices = await seed_fleet(db_session, FLEET, device_count, generation=0)
+        host, devices = await seed_fleet(db_session, MIXED_FLEET, device_count, generation=0)
         revision = await next_observation_revision(db_session)
         section = device_health_loop_section(
             devices,

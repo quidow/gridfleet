@@ -120,6 +120,7 @@ class SettingsService:
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._refresh_lock = asyncio.Lock()
         self._refresh_task: asyncio.Task[None] | None = None
+        self._track_refresh_task: Callable[[asyncio.Task[None]], None] | None = None
 
     async def initialize(self, db: AsyncSession) -> None:
         """Load all settings from DB and build the in-memory cache."""
@@ -149,8 +150,24 @@ class SettingsService:
 
         logger.info("Settings service initialized (%d overrides loaded)", len(overrides))
 
-    def configure_store_refresh(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def configure_store_refresh(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        task_tracker: Callable[[asyncio.Task[None]], None],
+    ) -> None:
+        """Wire the store the refresh reads and the tracker that owns its task.
+
+        *task_tracker* is ``EventBus.track_task``. The refresh runs as its own
+        task so a ``settings.changed`` dispatch does not block the bus's handler
+        loop on a full cache reload -- but a task the bus does not track is one
+        its shutdown drain can neither await nor cancel, and under production's
+        single long-lived loop that is a refresh killed mid-flight at process
+        exit. Required, not optional: the only caller that legitimately has no
+        tracker is a test poking ``_session_factory`` directly.
+        """
         self._session_factory = session_factory
+        self._track_refresh_task = task_tracker
 
     async def shutdown(self) -> None:
         await self._cancel_refresh_task()
@@ -168,7 +185,10 @@ class SettingsService:
             return
         if self._refresh_task is not None and not self._refresh_task.done():
             return
-        self._refresh_task = asyncio.create_task(self.refresh_from_store())
+        task = asyncio.create_task(self.refresh_from_store())
+        self._refresh_task = task
+        if self._track_refresh_task is not None:
+            self._track_refresh_task(task)
 
     async def refresh_from_store(self) -> None:
         if self._session_factory is None:

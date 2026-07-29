@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-import contextlib
 from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import event
 
 from app.devices.models import Device, DeviceGroup, DeviceGroupMemberOf, DeviceGroupMembership, GroupType
+from tests.concurrency.group_lock_helpers import capture_engine_statements
 from tests.helpers import create_device_record
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Iterator
 
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,30 +21,6 @@ if TYPE_CHECKING:
 async def seed_packs(db_session: AsyncSession) -> None:
     await seed_test_packs(db_session)
     await db_session.commit()
-
-
-@contextlib.contextmanager
-def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
-    statements: list[str] = []
-
-    def listener(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    bind = session.bind
-    assert bind is not None
-    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
-    event.listen(sync_engine, "before_cursor_execute", listener)
-    try:
-        yield statements
-    finally:
-        event.remove(sync_engine, "before_cursor_execute", listener)
 
 
 def _count_reads_through_lock(statements: list[str]) -> int:
@@ -231,7 +205,7 @@ async def test_run_allocation_read_count_constant_at_candidate_scale(
     one_device = await _seed_available_device(db_session, default_host_id, "scale-1", "Scale 1")
     await _seed_static_group(db_session, key="scale-a", device_ids=[one_device.id])
 
-    with _capture_statements(db_session) as one_statements:
+    with capture_engine_statements(db_session) as one_statements:
         resp = await client.post("/api/runs", json=_run_payload(groups=["scale-a"]))
     assert resp.status_code == 201
     one_reads = _count_reads_through_lock(one_statements)
@@ -245,7 +219,7 @@ async def test_run_allocation_read_count_constant_at_candidate_scale(
         extra_ids.append(device.id)
     await _seed_static_group(db_session, key="scale-many", device_ids=extra_ids)
 
-    with _capture_statements(db_session) as many_statements:
+    with capture_engine_statements(db_session) as many_statements:
         resp = await client.post("/api/runs", json=_run_payload(groups=["scale-many"], count=24))
     assert resp.status_code == 201
     many_reads = _count_reads_through_lock(many_statements)
@@ -280,7 +254,7 @@ async def test_run_allocation_read_count_constant_at_requirement_scale(
                 for _ in range(n)
             ],
         }
-        with _capture_statements(db_session) as statements:
+        with capture_engine_statements(db_session) as statements:
             resp = await client.post("/api/runs", json=payload)
         assert resp.status_code == 201
         return _count_reads_through_lock(statements)
