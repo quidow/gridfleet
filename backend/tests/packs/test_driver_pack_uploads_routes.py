@@ -24,6 +24,7 @@ from app.packs.models import (
     HostPackDoctorResult,
     HostPackInstallation,
     PackArtifact,
+    PackArtifactState,
 )
 from app.packs.services import service as pack_service
 from app.packs.services.ingest import MAX_PACK_TARBALL_BYTES
@@ -638,6 +639,62 @@ async def test_failed_artifact_deletion_is_logged_and_still_reports_success(
         assert await peer.get(DriverPack, "vendor-foo") is None, (
             "metadata deletion committed before the unlink and must stay committed"
         )
+
+
+async def test_delete_release_removes_its_ledger_row_after_a_successful_unlink(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await _upload(client, "0.1.0")
+    await _upload(client, "0.2.0")
+
+    res = await client.delete("/api/driver-packs/vendor-foo/releases/0.1.0")
+
+    assert res.status_code == 204
+    paths = sorted((await db_session.scalars(select(PackArtifact.path))).all())
+    assert len(paths) == 1, f"the deleted release left a ledger row behind: {paths}"
+    assert paths[0].endswith("0.2.0.tar.gz")
+
+
+async def test_delete_pack_removes_every_ledger_row_after_successful_unlinks(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    await _upload(client, "0.1.0")
+    await _upload(client, "0.2.0")
+
+    res = await client.delete("/api/driver-packs/vendor-foo")
+
+    assert res.status_code == 204
+    assert (await db_session.scalars(select(PackArtifact))).all() == []
+
+
+async def test_a_failed_unlink_leaves_the_ledger_row_orphaned_for_the_reaper(
+    client: AsyncClient,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The committed delete still reports success, and the file is not forgotten.
+
+    Swallowing the unlink failure was already the right answer for the caller --
+    the database effect they asked for did happen. What was missing was anything
+    that would ever come back for the file. The ``orphaned`` row is that.
+    """
+    await _upload(client, "0.1.0")
+
+    def _explode(self: Path, *args: object, **kwargs: object) -> None:
+        raise PermissionError(f"cannot remove {self}")
+
+    monkeypatch.setattr(Path, "unlink", _explode)
+    res = await client.delete("/api/driver-packs/vendor-foo")
+    monkeypatch.undo()
+
+    assert res.status_code == 204
+    async with db_session_maker() as peer:
+        rows = (await peer.scalars(select(PackArtifact))).all()
+    assert [row.state for row in rows] == [PackArtifactState.orphaned], (
+        "a failed unlink must leave exactly one orphaned ledger row for the reaper"
+    )
 
 
 async def test_upload_rolls_back_metadata_outbox_and_reservation_together(

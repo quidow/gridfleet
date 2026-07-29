@@ -12,6 +12,7 @@ from app.core.http_errors import found_or_404
 from app.packs.dependencies import PackServicesDep
 from app.packs.models import DriverPackRelease
 from app.packs.schemas import CurrentReleasePatch, PackOut, PackReleasesOut
+from app.packs.services.artifact_ledger import forget_artifacts
 from app.packs.services.ingest import (
     MAX_PACK_TARBALL_BYTES,
 )
@@ -129,8 +130,10 @@ async def delete_release(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     # Post-commit, for the same reason as the pack delete: no transaction and no
-    # pack row lock may span filesystem deletion, and a failing unlink is logged
-    # rather than reported as a rollback that did not happen.
-    if artifact_path:
-        unlink_pack_artifact(artifact_path)
+    # pack row lock may span filesystem deletion. The ledger row stays behind on
+    # failure so the janitor's reaper retries; on success there is nothing left
+    # to reap, so the row goes too.
+    if artifact_path and unlink_pack_artifact(artifact_path):
+        async with packs.session_factory.begin() as db:
+            await forget_artifacts(db, paths=[artifact_path])
     return Response(status_code=status.HTTP_204_NO_CONTENT)
