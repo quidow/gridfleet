@@ -564,8 +564,9 @@ def begin_owner_findings(tree: ast.Module, module: str) -> list[tuple[str, str, 
     escape it. The discriminator is name-only in the other direction too:
     ``stack.enter_context(unrelated.begin())`` would be flagged as a
     transaction. Each of those is one more shape, not the end of the class --
-    closing the class needs local dataflow, which is a phase of its own. None of
-    these shapes appears anywhere under ``app/`` today; ``grep -rn
+    closing the class needs transaction-context dataflow beyond the effect
+    walker's stack-receiver binding state. None of these shapes appears anywhere
+    under ``app/`` today; ``grep -rn
     "enter_async_context\\|AsyncExitStack" app/`` returning nothing is what makes
     the disclosure sufficient, and a first exit-stack boundary landing in
     production is the trigger to revisit it.
@@ -653,7 +654,7 @@ def effect_owners() -> list[tuple[str, str, int]]:
 
 
 def _registers_transaction_on_a_stack(node: ast.AST) -> frozenset[str]:
-    """Exit-stack owners handed a ``begin()`` in *node*'s executable subtree.
+    """Exit-stack receiver names handed a ``begin()`` in *node*'s executable subtree.
 
     The mirror of the second shape ``begin_owner_findings`` detects. A
     transaction registered on a stack stays open until the stack unwinds, so
@@ -695,11 +696,53 @@ def _registers_transaction_on_a_stack(node: ast.AST) -> frozenset[str]:
     return registers(node)
 
 
-def _exit_stack_owner(item: ast.withitem) -> str | None:
+def _opens_exit_stack(item: ast.withitem) -> bool:
     context = item.context_expr
-    if not isinstance(context, ast.Call) or call_tail(context.func) not in {"ExitStack", "AsyncExitStack"}:
-        return None
-    return _dotted_name(item.optional_vars) if item.optional_vars is not None else None
+    return isinstance(context, ast.Call) and call_tail(context.func) in {"ExitStack", "AsyncExitStack"}
+
+
+@dataclass(frozen=True, slots=True)
+class _EffectState:
+    stack_transactions: frozenset[ast.withitem | None]
+    stack_bindings: dict[str, frozenset[ast.withitem | None]]
+
+
+def _join_effect_states(*states: _EffectState) -> _EffectState:
+    names = {name for state in states for name in state.stack_bindings}
+    return _EffectState(
+        stack_transactions=frozenset(stack for state in states for stack in state.stack_transactions),
+        stack_bindings={
+            name: frozenset(stack for state in states for stack in state.stack_bindings.get(name, frozenset()))
+            for name in names
+        },
+    )
+
+
+def _bind_stack_name(
+    state: _EffectState,
+    target: ast.expr,
+    stacks: frozenset[ast.withitem | None],
+) -> _EffectState:
+    name = _dotted_name(target)
+    if name is None:
+        return state
+    bindings = dict(state.stack_bindings)
+    bindings[name] = stacks
+    return _EffectState(state.stack_transactions, bindings)
+
+
+def _bound_stacks(state: _EffectState, value: ast.expr) -> frozenset[ast.withitem | None]:
+    name = _dotted_name(value)
+    return state.stack_bindings.get(name, frozenset({None})) if name is not None else frozenset({None})
+
+
+def _register_stack_transactions(state: _EffectState, receivers: frozenset[str]) -> _EffectState:
+    if not receivers:
+        return state
+    registered = frozenset(
+        stack for receiver in receivers for stack in state.stack_bindings.get(receiver, frozenset({None}))
+    )
+    return _EffectState(state.stack_transactions | registered, state.stack_bindings)
 
 
 def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[str]:
@@ -720,96 +763,107 @@ def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[s
     lambda defaults and a generator's outermost iterable do propagate. Immediate
     invocation/consumption is not modeled; it needs context-sensitive execution
     modeling, and production has no exit-stack use.
-    Branch states are conservatively joined, so mutually exclusive runtime paths
-    may still produce a finding.
+    Branch states conservatively join both active transactions and possible
+    name-to-stack bindings, so mutually exclusive runtime paths may still produce
+    a finding.
 
     Direct ``begin()`` contexts are scoped to their ``with`` block. Exit-stack
-    registrations are tracked by their owning stack name because one made in a
-    nested ``with`` remains active until that owner, not merely the innermost
-    exit stack, unwinds.
+    registrations are tracked by the identity of the ``with`` item that created
+    the stack; plain name/attribute assignments carry that identity to aliases.
+    Rebinding a name therefore cannot close an older stack, while any alias
+    registration is cleared when that stack unwinds.
     """
     findings: list[str] = []
     appium = _uses_appium_direct(tree)
 
     def visit_body(
         statements: list[ast.stmt],
-        stack_transactions: frozenset[str],
+        state: _EffectState,
         scoped_transaction: bool = False,
-    ) -> frozenset[str]:
+    ) -> _EffectState:
         for statement in statements:
-            stack_transactions = visit(statement, stack_transactions, scoped_transaction)
-        return stack_transactions
+            state = visit(statement, state, scoped_transaction)
+        return state
 
     def visit(
         node: ast.AST,
-        stack_transactions: frozenset[str],
+        state: _EffectState,
         scoped_transaction: bool = False,
-    ) -> frozenset[str]:
+    ) -> _EffectState:
         if isinstance(node, ast.Call):
             for child in ast.iter_child_nodes(node):
-                stack_transactions = visit(child, stack_transactions, scoped_transaction)
+                state = visit(child, state, scoped_transaction)
             name = _effect_call_name(node, module_uses_appium_direct=appium)
-            if name is not None and (stack_transactions or scoped_transaction):
+            if name is not None and (state.stack_transactions or scoped_transaction):
                 findings.append(f"{module}:{node.lineno} {name}()")
-            return stack_transactions | _registers_transaction_on_a_stack(node)
+            return _register_stack_transactions(state, _registers_transaction_on_a_stack(node))
         if isinstance(node, ast.Lambda):
             for default in (*node.args.defaults, *node.args.kw_defaults):
                 if default is not None:
-                    stack_transactions = visit(default, stack_transactions, scoped_transaction)
-            return stack_transactions
+                    state = visit(default, state, scoped_transaction)
+            return state
         if isinstance(node, ast.GeneratorExp):
-            return visit(node.generators[0].iter, stack_transactions, scoped_transaction)
+            return visit(node.generators[0].iter, state, scoped_transaction)
+        if isinstance(node, ast.Assign):
+            state = visit(node.value, state, scoped_transaction)
+            stacks = _bound_stacks(state, node.value)
+            for target in node.targets:
+                state = _bind_stack_name(state, target, stacks)
+            return state
         if isinstance(node, ast.With | ast.AsyncWith):
             direct_transaction = scoped_transaction
-            closing_stack_owners = frozenset(
-                owner for item in node.items if (owner := _exit_stack_owner(item)) is not None
-            )
+            closing_stacks: set[ast.withitem] = set()
             for item in node.items:
-                stack_transactions = visit(item.context_expr, stack_transactions, direct_transaction)
+                state = visit(item.context_expr, state, direct_transaction)
+                if _opens_exit_stack(item):
+                    closing_stacks.add(item)
+                    if item.optional_vars is not None:
+                        state = _bind_stack_name(state, item.optional_vars, frozenset({item}))
                 direct_transaction = direct_transaction or _opens_transaction(item)
-            stack_transactions = visit_body(node.body, stack_transactions, direct_transaction)
-            return stack_transactions - closing_stack_owners
+            state = visit_body(node.body, state, direct_transaction)
+            return _EffectState(state.stack_transactions - closing_stacks, state.stack_bindings)
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            visit_body(node.body, stack_transactions, scoped_transaction)
-            return stack_transactions
+            visit_body(node.body, state, scoped_transaction)
+            return state
         if isinstance(node, ast.If | ast.For | ast.AsyncFor | ast.While):
             if isinstance(node, ast.If | ast.While):
-                after_header = visit(node.test, stack_transactions, scoped_transaction)
+                after_header = visit(node.test, state, scoped_transaction)
             else:
-                after_header = visit(node.iter, stack_transactions, scoped_transaction)
-            body_transaction = visit_body(node.body, after_header, scoped_transaction)
-            else_transaction = visit_body(node.orelse, after_header, scoped_transaction)
-            return body_transaction | else_transaction
+                after_header = visit(node.iter, state, scoped_transaction)
+            body_state = visit_body(node.body, after_header, scoped_transaction)
+            else_state = visit_body(node.orelse, after_header, scoped_transaction)
+            return _join_effect_states(body_state, else_state)
         if isinstance(node, ast.Try | ast.TryStar):
-            body_transaction = visit_body(node.body, stack_transactions, scoped_transaction)
-            handler_transactions: list[frozenset[str]] = []
+            body_state = visit_body(node.body, state, scoped_transaction)
+            handler_states: list[_EffectState] = []
             for handler in node.handlers:
-                handler_transaction = body_transaction
+                handler_state = body_state
                 if handler.type is not None:
-                    handler_transaction = visit(handler.type, handler_transaction, scoped_transaction)
-                handler_transactions.append(visit_body(handler.body, handler_transaction, scoped_transaction))
-            else_transaction = visit_body(node.orelse, body_transaction, scoped_transaction)
+                    handler_state = visit(handler.type, handler_state, scoped_transaction)
+                handler_states.append(visit_body(handler.body, handler_state, scoped_transaction))
+            else_state = visit_body(node.orelse, body_state, scoped_transaction)
             return visit_body(
                 node.finalbody,
-                body_transaction | frozenset().union(*handler_transactions) | else_transaction,
+                _join_effect_states(body_state, *handler_states, else_state),
                 scoped_transaction,
             )
         if isinstance(node, ast.Match):
-            subject_transaction = visit(node.subject, stack_transactions, scoped_transaction)
-            case_transactions: list[frozenset[str]] = []
+            subject_state = visit(node.subject, state, scoped_transaction)
+            case_states: list[_EffectState] = []
             for case in node.cases:
-                case_transaction = subject_transaction
+                case_state = subject_state
                 if case.guard is not None:
-                    case_transaction = visit(case.guard, case_transaction, scoped_transaction)
-                case_transactions.append(visit_body(case.body, case_transaction, scoped_transaction))
-            return frozenset().union(*case_transactions) | subject_transaction
+                    case_state = visit(case.guard, case_state, scoped_transaction)
+                case_states.append(visit_body(case.body, case_state, scoped_transaction))
+            return _join_effect_states(subject_state, *case_states)
         for child in ast.iter_child_nodes(node):
-            stack_transactions = visit(child, stack_transactions, scoped_transaction)
-        return stack_transactions | (
-            _registers_transaction_on_a_stack(node) if isinstance(node, ast.stmt) else frozenset()
+            state = visit(child, state, scoped_transaction)
+        return _register_stack_transactions(
+            state,
+            _registers_transaction_on_a_stack(node) if isinstance(node, ast.stmt) else frozenset(),
         )
 
-    visit(tree, frozenset())
+    visit(tree, _EffectState(frozenset(), {}))
     return findings
 
 
@@ -1054,8 +1108,51 @@ def test_the_effect_check_keeps_an_outer_stack_registration_past_an_inner_stack(
         "        async with AsyncExitStack():\n"
         "            await outer_stack.enter_async_context(db.begin())\n"
         "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
     )
     assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
+
+
+def test_the_effect_check_distinguishes_nested_stacks_with_the_same_name() -> None:
+    """Rebinding a name must not collapse the two stack lifetimes."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        await stack.enter_async_context(db.begin())\n"
+        "        async with AsyncExitStack() as stack:\n"
+        "            pass\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:6 agent_health()"]
+
+
+def test_the_effect_check_closes_a_transaction_registered_through_a_stack_alias() -> None:
+    """An alias identifies the stack whose exit closes its transaction."""
+    source = (
+        "async def outer(db, ip, port):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        alias = stack\n"
+        "        await alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:5 agent_health()"]
+
+
+def test_the_effect_check_keeps_a_branch_transaction_past_a_same_name_nested_stack() -> None:
+    """A branch join must retain identity across a later name shadow."""
+    source = (
+        "async def outer(db, ip, port, ready):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if ready:\n"
+        "            await stack.enter_async_context(db.begin())\n"
+        "        async with AsyncExitStack() as stack:\n"
+        "            pass\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:7 agent_health()"]
 
 
 def test_the_effect_check_sees_a_transaction_registered_by_an_effect_argument() -> None:
@@ -1162,11 +1259,13 @@ def test_no_effect_runs_inside_a_transaction_block() -> None:
     also lexical -- an effect one call frame below a ``begin()`` block is
     invisible here, which is what the runtime-backed entries in
     ``REMOTE_EFFECT_OWNER_REGISTRY`` exist to cover. The transaction detector
-    sees both shapes ``begin_owners`` does -- a ``with``/``async with`` item and a
-    ``begin()`` registered on an exit stack -- so an effect under either is caught
-    here except when stack registration sits in a lambda/generator body skipped
-    at creation and run by immediate invocation/consumption. Recognizing that
-    execution needs context-sensitive modeling; production has no exit-stack use."""
+    recognizes the same two syntactic ``begin()`` shapes as ``begin_owners``. For
+    a directly constructed exit-stack ``with`` item, it distinguishes each stack
+    lifetime and follows plain name/attribute aliases; an unresolved receiver is
+    conservatively left active. It still skips a registration in a
+    lambda/generator body at creation even when immediate invocation/consumption
+    later runs it. Recognizing that execution needs context-sensitive modeling;
+    production has no exit-stack use."""
     findings = effects_inside_transactions()
     assert findings == [], (
         "one of this repository's known effect entry points (see AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / "
