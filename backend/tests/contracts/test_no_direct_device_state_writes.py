@@ -178,7 +178,7 @@ def test_operational_state_transition_writers_called_only_by_the_edge_detector()
     )
 
 
-def test_the_call_scan_sees_both_transition_writers(tmp_path: Path) -> None:
+def test_the_call_scan_sees_both_transition_writers() -> None:
     """The scan must match ``apply_`` as well as ``emit_``.
 
     ``apply_operational_state_transition`` advances the same ledger column and is
