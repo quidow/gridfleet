@@ -40,6 +40,15 @@ class PackStorageService:
     def _path_for(self, pack_id: str, release: str) -> Path:
         return self._root / self._safe_segment(pack_id) / f"{self._safe_segment(release)}.tar.gz"
 
+    def path_for(self, *, pack_id: str, release: str) -> str:
+        """The absolute path an upload of this pack+release will occupy.
+
+        Public because the ledger has to name the file before any bytes exist:
+        the reservation is what makes a crash between reserve and activate
+        recognisable as garbage instead of as a mystery file.
+        """
+        return str(self._path_for(pack_id, release))
+
     def store(self, *, pack_id: str, release: str, data: bytes) -> StorageRecord:
         self._ensure_root()
         target = self._path_for(pack_id, release)

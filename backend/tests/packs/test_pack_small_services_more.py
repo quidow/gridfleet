@@ -1,13 +1,23 @@
 import io
 import tarfile
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.packs.models import PackState
 from app.packs.services import capability as pack_capability_service
 from app.packs.services import ingest as pack_ingest_service
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+
+class _StubSessionFactory:
+    @asynccontextmanager
+    async def begin(self) -> AsyncIterator[object]:
+        yield object()
 
 
 def _tar_with_member(name: str, data: bytes = b"content", *, member_type: bytes = tarfile.REGTYPE) -> bytes:
@@ -120,25 +130,16 @@ async def test_pack_ingest_existing_release_storage_conflict(monkeypatch: pytest
         features={},
         insecure_features=[],
     )
-    release = SimpleNamespace(release="1", artifact_sha256="different", artifact_path=None)
-    existing = SimpleNamespace(
-        id="test-pack",
-        current_release=None,
-        releases=[release],
-        is_runnable=True,
-        state=PackState.enabled,
-    )
+    existing = SimpleNamespace(artifact_sha256="different", artifact_path=None)
     session = MagicMock()
     session.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: existing))
     monkeypatch.setattr(pack_ingest_service, "load_manifest_yaml", lambda text: manifest)
 
     with pytest.raises(pack_ingest_service.PackIngestConflictError, match="different content"):
-        await pack_ingest_service.ingest_pack_tarball(
+        await pack_ingest_service.reserve_pack_upload(
             session,
             storage=MagicMock(),
-            username="u",
-            origin_filename="pack.tgz",
-            data=data,
+            parsed=pack_ingest_service.parse_pack_tarball(data),
         )
 
 
@@ -155,41 +156,32 @@ async def test_pack_ingest_existing_release_restores_missing_artifact(monkeypatc
         features={},
         insecure_features=[],
     )
-    release = SimpleNamespace(release="1", artifact_sha256=payload_sha, artifact_path=None)
-    existing = SimpleNamespace(
-        id="test-pack",
-        current_release=None,
-        releases=[release],
-        is_runnable=True,
-        state=PackState.enabled,
-    )
-    session = MagicMock()
-    session.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: existing))
-    session.flush = AsyncMock()
-    record_upload = AsyncMock()
+    result = SimpleNamespace(id="test-pack", current_release="1")
     monkeypatch.setattr(pack_ingest_service, "load_manifest_yaml", lambda text: manifest)
-    monkeypatch.setattr(pack_ingest_service, "record_pack_upload", record_upload)
+    monkeypatch.setattr(
+        pack_ingest_service,
+        "reserve_pack_upload",
+        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/restored.tgz", True)),
+    )
+    activate = AsyncMock(return_value=result)
+    monkeypatch.setattr(pack_ingest_service, "activate_pack_upload", activate)
     storage = MagicMock()
-    storage.store.return_value = SimpleNamespace(path="/tmp/restored.tgz", sha256=payload_sha)
+    storage.store.return_value = SimpleNamespace(path="/tmp/restored.tgz", sha256=payload_sha, size=len(data))
 
     result = await pack_ingest_service.ingest_pack_tarball(
-        session,
+        _StubSessionFactory(),
         storage=storage,
         username="u",
         origin_filename="pack.tgz",
         data=data,
     )
 
-    assert result is existing
-    assert existing.current_release == "1"
-    assert release.artifact_path == "/tmp/restored.tgz"
-    session.flush.assert_awaited()
-    record_upload.assert_awaited_once()
+    assert result.current_release == "1"
+    activate.assert_awaited_once()
 
 
 async def test_pack_ingest_existing_release_storage_error_becomes_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
     data = _tar_with_member("manifest.yaml", b"schema_version: 1\nid: test-pack\nrelease: 1\nplatforms: []\n")
-    payload_sha = pack_ingest_service.hashlib.sha256(data).hexdigest()
     manifest = SimpleNamespace(
         id="test-pack",
         release="1",
@@ -200,17 +192,18 @@ async def test_pack_ingest_existing_release_storage_error_becomes_conflict(monke
         features={},
         insecure_features=[],
     )
-    release = SimpleNamespace(release="1", artifact_sha256=payload_sha, artifact_path=None)
-    existing = SimpleNamespace(id="test-pack", current_release=None, releases=[release])
-    session = MagicMock()
-    session.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: existing))
     monkeypatch.setattr(pack_ingest_service, "load_manifest_yaml", lambda text: manifest)
+    monkeypatch.setattr(
+        pack_ingest_service,
+        "reserve_pack_upload",
+        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/restored.tgz", True)),
+    )
     storage = MagicMock()
     storage.store.side_effect = pack_ingest_service.PackStorageError("disk full")
 
     with pytest.raises(pack_ingest_service.PackIngestConflictError, match="disk full"):
         await pack_ingest_service.ingest_pack_tarball(
-            session,
+            _StubSessionFactory(),
             storage=storage,
             username="u",
             origin_filename="pack.tgz",
@@ -248,18 +241,18 @@ async def test_pack_ingest_new_release_storage_and_manifest_dict_errors(monkeypa
         features={},
         insecure_features=[],
     )
-    no_existing = SimpleNamespace(scalar_one_or_none=lambda: None)
-    session = MagicMock()
-    session.execute = AsyncMock(return_value=no_existing)
-    session.add = MagicMock()
-    session.flush = AsyncMock()
     monkeypatch.setattr(pack_ingest_service, "load_manifest_yaml", lambda text: manifest)
+    monkeypatch.setattr(
+        pack_ingest_service,
+        "reserve_pack_upload",
+        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/pack.tgz", True)),
+    )
 
     storage = MagicMock()
     storage.store.side_effect = pack_ingest_service.PackStorageError("disk full")
     with pytest.raises(pack_ingest_service.PackIngestConflictError, match="disk full"):
         await pack_ingest_service.ingest_pack_tarball(
-            session,
+            _StubSessionFactory(),
             storage=storage,
             username="u",
             origin_filename="pack.tgz",
@@ -267,11 +260,11 @@ async def test_pack_ingest_new_release_storage_and_manifest_dict_errors(monkeypa
         )
 
     storage.store.side_effect = None
-    storage.store.return_value = SimpleNamespace(path="/tmp/pack.tgz", sha256="sha")
+    storage.store.return_value = SimpleNamespace(path="/tmp/pack.tgz", sha256="sha", size=len(data))
     monkeypatch.setattr(pack_ingest_service.yaml, "safe_load", lambda _text: ["bad"])
     with pytest.raises(pack_ingest_service.PackIngestValidationError, match="dictionary"):
         await pack_ingest_service.ingest_pack_tarball(
-            session,
+            _StubSessionFactory(),
             storage=storage,
             username="u",
             origin_filename="pack.tgz",
@@ -291,21 +284,20 @@ async def test_pack_ingest_existing_pack_without_release_adds_new_release(monkey
         features={},
         insecure_features=[],
     )
-    existing = SimpleNamespace(id="test-pack", current_release=None, releases=[SimpleNamespace(release="1")])
-    first = SimpleNamespace(scalar_one_or_none=lambda: existing)
-    second = SimpleNamespace(scalar_one=lambda: existing)
-    session = MagicMock()
-    session.execute = AsyncMock(side_effect=[first, second])
-    session.add = MagicMock()
-    session.flush = AsyncMock()
-    record_upload = AsyncMock()
+    existing = SimpleNamespace(id="test-pack", current_release="2")
     monkeypatch.setattr(pack_ingest_service, "load_manifest_yaml", lambda text: manifest)
-    monkeypatch.setattr(pack_ingest_service, "record_pack_upload", record_upload)
+    monkeypatch.setattr(
+        pack_ingest_service,
+        "reserve_pack_upload",
+        AsyncMock(return_value=pack_ingest_service.ArtifactReservation("/tmp/pack.tgz", True)),
+    )
+    activate = AsyncMock(return_value=existing)
+    monkeypatch.setattr(pack_ingest_service, "activate_pack_upload", activate)
     storage = MagicMock()
-    storage.store.return_value = SimpleNamespace(path="/tmp/pack.tgz", sha256="sha")
+    storage.store.return_value = SimpleNamespace(path="/tmp/pack.tgz", sha256="sha", size=len(data))
 
     result = await pack_ingest_service.ingest_pack_tarball(
-        session,
+        _StubSessionFactory(),
         storage=storage,
         username="u",
         origin_filename="pack.tgz",
@@ -314,7 +306,7 @@ async def test_pack_ingest_existing_pack_without_release_adds_new_release(monkey
 
     assert result is existing
     assert existing.current_release == "2"
-    record_upload.assert_awaited_once()
+    activate.assert_awaited_once()
 
 
 async def test_pack_capability_rendering_edges() -> None:

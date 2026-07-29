@@ -50,26 +50,18 @@ async def upload(
     username: AdminDep,
     packs: PackServicesDep,
 ) -> PackOut:
-    # Read and size-cap the body before the boundary opens: the transaction
-    # below must not span the upload stream.
+    # Read and size-cap the body before any boundary opens: no transaction may
+    # span the upload stream.
     data = await _read_limited_upload(tarball)
     if not data:
         raise HTTPException(status_code=400, detail="empty tarball")
     try:
-        async with packs.session_factory.begin() as db:
-            # Artifact storage deliberately stays inside this transaction. The
-            # ingest path takes no DriverPack row lock, the bytes are already
-            # read and capped, and splitting storage from metadata would need an
-            # artifact ledger this change does not add — so a rolled-back upload
-            # can leave an orphan file, which the next upload of the same release
-            # overwrites.
-            pack = await packs.release.upload(
-                db,
-                username=username,
-                origin_filename=tarball.filename or "unknown.tar.gz",
-                data=data,
-            )
-            return build_pack_out(pack)
+        return await packs.release.upload(
+            packs.session_factory,
+            username=username,
+            origin_filename=tarball.filename or "unknown.tar.gz",
+            data=data,
+        )
     except PackUploadValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PackUploadConflictError as exc:

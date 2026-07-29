@@ -22,6 +22,7 @@ from app.packs.models import (
     DriverPackRelease,
     HostPackDoctorResult,
     HostPackInstallation,
+    PackArtifact,
 )
 from app.packs.services import service as pack_service
 from app.packs.services.ingest import MAX_PACK_TARBALL_BYTES
@@ -472,6 +473,49 @@ def _watch_unlinks(monkeypatch: pytest.MonkeyPatch, observed: _ObservedPackSessi
     return open_at_unlink
 
 
+def _watch_artifact_writes(monkeypatch: pytest.MonkeyPatch, observed: _ObservedPackSessions) -> list[int]:
+    """Record, per ``Path.write_bytes`` call, how many pack transactions were open.
+
+    The upload twin of ``_watch_unlinks``. A lexical scan cannot see this: the
+    write happens inside ``PackStorageService.store``, several frames below the
+    route that owns the boundaries, so only a real session watching a real write
+    can prove the bytes move with nothing open.
+    """
+    open_at_write: list[int] = []
+    real_write_bytes = Path.write_bytes
+
+    def _spy(self: Path, data: bytes) -> int:
+        open_at_write.append(observed.open_transactions)
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", _spy)
+    return open_at_write
+
+
+async def test_upload_writes_the_artifact_with_no_open_transaction(
+    client: AsyncClient,
+    observed_pack_sessions: _ObservedPackSessions,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    open_at_write = _watch_artifact_writes(monkeypatch, observed_pack_sessions)
+
+    res = await client.post(
+        "/api/driver-packs/uploads",
+        files={"tarball": ("vendor-foo-0.1.0.tar.gz", _tarball("0.1.0"), "application/gzip")},
+    )
+
+    assert res.status_code == 201, res.text
+    assert len(observed_pack_sessions.sessions) == 2, (
+        "the upload must own a reserve transaction and an activate transaction, "
+        f"got {len(observed_pack_sessions.sessions)}"
+    )
+    assert open_at_write, "the upload never wrote an artifact"
+    assert open_at_write == [0] * len(open_at_write), (
+        f"artifact bytes were written with {open_at_write} pack transaction(s) open; "
+        "no transaction may span the storage write"
+    )
+
+
 async def test_delete_pack_unlinks_artifacts_after_its_transaction(
     client: AsyncClient,
     observed_pack_sessions: _ObservedPackSessions,
@@ -553,19 +597,12 @@ async def test_failed_artifact_deletion_is_logged_and_still_reports_success(
         )
 
 
-async def test_upload_rolls_back_metadata_and_outbox_together(
+async def test_upload_rolls_back_metadata_outbox_and_reservation_together(
     client: AsyncClient,
     db_session: AsyncSession,
     observed_pack_sessions: _ObservedPackSessions,
 ) -> None:
-    """The upload's row, its release and its outbox event share one transaction.
-
-    The artifact bytes deliberately do not: the ingest path takes no pack row
-    lock and the tarball is fully read and size-capped before the boundary
-    opens, so storage stays inside the transaction and a rolled-back upload can
-    leave an orphan file behind. That is the documented exception, asserted here
-    so it is a decision rather than a surprise.
-    """
+    """A failed upload leaves no row, no outbox event and no ledger reservation."""
     observed_pack_sessions.fail_before_exit = True
 
     with pytest.raises(ProgrammingError):
@@ -579,6 +616,7 @@ async def test_upload_rolls_back_metadata_and_outbox_together(
     assert (await db_session.scalar(select(SystemEvent).where(SystemEvent.type == "driver_pack.upload"))) is None, (
         "the outbox row survived a rolled-back upload"
     )
+    assert (await db_session.scalars(select(PackArtifact))).all() == [], "the reservation survived a rolled-back upload"
 
 
 async def test_release_mutations_roll_back_on_a_pre_exit_failure(

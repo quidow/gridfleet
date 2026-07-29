@@ -109,7 +109,7 @@ BEGIN_OWNER_REGISTRY: frozenset[BoundaryOwner] = frozenset(
         BoundaryOwner("app/packs/routers/catalog.py", "update_runtime_policy", "command"),
         BoundaryOwner("app/packs/routers/uploads.py", "delete_release", "command"),
         BoundaryOwner("app/packs/routers/uploads.py", "update_current_release", "command"),
-        BoundaryOwner("app/packs/routers/uploads.py", "upload", "command"),
+        BoundaryOwner("app/packs/services/ingest.py", "ingest_pack_tarball", "command"),
         BoundaryOwner("app/sessions/router.py", "update_session_status", "command"),
         BoundaryOwner("app/grid/router_internal.py", "_finalize_interrupted_create", "command"),
         BoundaryOwner("app/grid/router_internal.py", "activity", "command"),

@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
 from app.packs.models import DriverPack, DriverPackRelease, HostPackInstallation
-from app.packs.schemas import PackReleaseOut, PackReleasesOut
+from app.packs.schemas import PackOut, PackReleaseOut, PackReleasesOut
 from app.packs.services.ingest import ingest_pack_tarball
 from app.packs.services.release_ordering import parse_release_key, selected_release
 from app.packs.services.service import PackNotFound
@@ -21,6 +21,7 @@ from app.packs.services.storage import PackStorageError
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.type_defs import SessionFactory
     from app.packs.services.storage import PackStorageService
 
 
@@ -168,14 +169,14 @@ class PackReleaseService:
 
     async def upload(
         self,
-        db: AsyncSession,
+        session_factory: SessionFactory,
         *,
         username: str,
         origin_filename: str,
         data: bytes,
-    ) -> DriverPack:
+    ) -> PackOut:
         return await ingest_pack_tarball(
-            db,
+            session_factory,
             storage=self._storage,
             username=username,
             origin_filename=origin_filename,

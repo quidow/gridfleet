@@ -2023,18 +2023,25 @@ async def test_driver_pack_upload_export_error_mapping() -> None:
     mock_packs_releases = SimpleNamespace(release=SimpleNamespace(list_releases=AsyncMock(return_value="releases")))
     assert await driver_pack_uploads.list_releases("pack", session=object(), packs=mock_packs_releases) == "releases"
 
-    pack = SimpleNamespace(id="local/uploaded")
+    pack = {"id": "local/uploaded"}
     mock_packs_upload = SimpleNamespace(
         release=SimpleNamespace(upload=AsyncMock(return_value=pack)),
         session_factory=FakeSessionFactory(object()),
     )
-    with patch("app.packs.routers.uploads.build_pack_out", new=Mock(return_value={"id": pack.id})):
-        assert await driver_pack_uploads.upload(
+    assert (
+        await driver_pack_uploads.upload(
             tarball=ChunkUpload([b"tar"]),  # type: ignore[arg-type]
             username="admin",
             packs=mock_packs_upload,
-        ) == {"id": "local/uploaded"}
-    assert mock_packs_upload.session_factory.begun == 1
+        )
+        == pack
+    )
+    mock_packs_upload.release.upload.assert_awaited_once_with(
+        mock_packs_upload.session_factory,
+        username="admin",
+        origin_filename="pack.tgz",
+        data=b"tar",
+    )
 
     for error, status_code in (
         (driver_pack_uploads.PackUploadValidationError("bad manifest"), 400),
@@ -2051,7 +2058,6 @@ async def test_driver_pack_upload_export_error_mapping() -> None:
                 packs=mock_packs_err,
             )
         assert exc.value.status_code == status_code
-        assert mock_packs_err.session_factory.begun == 1
 
 
 async def test_driver_pack_upload_tarball_and_release_mutations(tmp_path: Path) -> None:
