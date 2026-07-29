@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- routes manifest mixes lazy components and the route-tree config */
 import { lazy } from 'react';
-import { Navigate, Outlet } from 'react-router-dom';
-import type { RouteObject } from 'react-router-dom';
+import { Navigate, Outlet } from 'react-router';
+import type { RouteObject } from 'react-router';
 import { AuthProvider } from './context/AuthContext';
 import { Dashboard } from './pages/Dashboard';
 import { Layout } from './components/Layout';

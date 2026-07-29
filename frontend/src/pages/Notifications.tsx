@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useNavigationType } from 'react-router-dom';
+import { useNavigationType } from 'react-router';
 import { Bell } from 'lucide-react';
 import { useNotifications } from '../hooks/useNotifications';
 import { useEventCatalog } from '../hooks/useEventCatalog';

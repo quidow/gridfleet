@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { Clock } from 'lucide-react';
 import { useSessions } from '../hooks/useSessions';
 import { useDevices } from '../hooks/useDevices';

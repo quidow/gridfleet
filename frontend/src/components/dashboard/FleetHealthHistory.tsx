@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { useFleetCapacityTimeline } from '../../hooks/useAnalytics';
 import type { FleetCapacityTimelinePoint } from '../../types';
 

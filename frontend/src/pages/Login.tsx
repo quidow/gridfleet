@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router';
 import { LockKeyhole, Shield } from 'lucide-react';
 import { Button, Card } from '../components/ui';
 import { TextField } from '../components/ui/TextField';

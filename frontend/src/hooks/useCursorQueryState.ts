@@ -1,4 +1,4 @@
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import type { CursorDirection } from '../types';
 
 const DEFAULT_PAGE_SIZE_OPTIONS = [25, 50, 100] as const;

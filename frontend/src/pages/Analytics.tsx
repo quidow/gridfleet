@@ -1,4 +1,4 @@
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import { Suspense, lazy, useMemo } from 'react';
 import { DateRangePicker } from '../components/analytics/DateRangePicker';
 import type { Preset } from '../components/analytics/DateRangePicker';

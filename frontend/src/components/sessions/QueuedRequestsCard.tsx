@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Card } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import { formatWaitTime } from '../../utils/dateFormatting';

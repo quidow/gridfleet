@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 import { formatWaitTime } from '../../utils/dateFormatting';
 import type { GridRouterRead } from '../../types/gridRouter';

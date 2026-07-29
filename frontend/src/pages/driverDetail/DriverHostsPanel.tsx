@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Server } from 'lucide-react';
 import { LoadingSpinner } from '../../components/LoadingSpinner';
 import { Badge, DataTable, EmptyState, type DataTableColumn } from '../../components/ui';

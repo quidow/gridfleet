@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Pencil } from 'lucide-react';
 import { deviceChipStatus } from '../../lib/deviceState';
 import { CONNECTION_TYPE_LABELS, DEVICE_STATUS_LABELS, DEVICE_TYPE_LABELS, resolvePlatformLabel } from '../../lib/labels';

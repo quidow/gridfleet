@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { useDevices } from '../../hooks/useDevices';
 import { useDriverPackCatalog } from '../../hooks/useDriverPacks';
 import { PlatformIcon } from '../PlatformIcon';
