@@ -18,6 +18,9 @@ someone else's process. Resolution follows symlinks, so a runtime binary
 symlinked out of the root reads as not-ours — fail-closed is the right
 direction, and ``APPIUM_HOME`` still identifies that process.
 
+A runtime root too shallow to tell ours from theirs — ``/``, or a bare
+top-level directory — confers no ownership at all; see ``_trusted_runtime_root``.
+
 No socket-table lookup: ``psutil.net_connections`` needs root on macOS. The
 caller's HTTP/bind probe already proved the port is held; this module only
 answers *by whom*.
@@ -38,6 +41,33 @@ logger = logging.getLogger(__name__)
 TERMINATE_GRACE_SEC = 5.0
 KILL_GRACE_SEC = 2.0
 POLL_INTERVAL_SEC = 0.2
+
+# A trusted runtime root needs at least two components below the filesystem
+# root ("/", "opt", "gridfleet-agent" — the shipped default goes one deeper).
+MIN_RUNTIME_ROOT_PARTS = 3
+
+
+def _trusted_runtime_root(runtime_root: str) -> Path | None:
+    """The canonical runtime root, or None when it is too broad to confer ownership.
+
+    Containment is ``resolved_root in resolved.parents``, which every absolute
+    path on the host satisfies when the root is ``/`` — a misconfigured
+    ``AGENT_RUNTIME_ROOT`` would then read every ``appium server --port N`` on
+    the host as agent-owned, and what follows a false match is a SIGKILL on a
+    third party's process. A root that shallow cannot distinguish ours from
+    theirs, so it owns nothing: fail closed and let the caller keep raising
+    ``PortOccupiedError``, which is merely a stuck node rather than a killed
+    stranger.
+    """
+    if not runtime_root:
+        return None
+    try:
+        resolved = Path(runtime_root).resolve()
+    except OSError, ValueError:
+        return None
+    if len(resolved.parts) < MIN_RUNTIME_ROOT_PARTS:
+        return None
+    return resolved
 
 
 class ProcessHandle(Protocol):
@@ -83,8 +113,10 @@ def _under_runtime_root(candidate: str, runtime_root: str) -> bool:
     """
     if not candidate or not Path(candidate).is_absolute():
         return False
+    resolved_root = _trusted_runtime_root(runtime_root)
+    if resolved_root is None:
+        return False
     try:
-        resolved_root = Path(runtime_root).resolve()
         resolved = Path(candidate).resolve()
     except OSError, ValueError:
         return False

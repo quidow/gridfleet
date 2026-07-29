@@ -819,6 +819,13 @@ class AppiumProcessManager:
             if clear_logs_on_failure:
                 log_path.unlink(missing_ok=True)
                 appium_log_path(spec.port).unlink(missing_ok=True)
+            # Bound the file count on the failure exit too. ``clear_logs_on_failure``
+            # is only true before a port's first successful start, so a node that
+            # started once and then fell into a spawn-and-die loop would otherwise
+            # leave one file per retry, forever — and the convergence loop retries
+            # every few seconds. Pruning to the same cap keeps the most recent
+            # failure logs (the point of the per-spawn split) without unbounded growth.
+            prune_port_logs(spec.port, keep=LOG_FILES_PER_PORT)
             log_snippet = "\n".join(recent_logs) if recent_logs else "(no output captured)"
             if exit_code is not None:
                 raise AppiumExitedError(
@@ -1268,7 +1275,13 @@ class AppiumProcessManager:
         port still held after a successful reclaim means something else is
         wrong, and the caller's existing failure path should report it.
         """
-        victim = port_reclaim.find_agent_owned_appium(
+        # Off the event loop: the lookup walks every process on the host and
+        # reads each one's argv (and sometimes its environ). This runs on every
+        # start attempt against an occupied port — once per convergence tick for
+        # as long as a port conflict lasts — and blocking here stalls the agent's
+        # HTTP server and its probe coroutines for the whole scan.
+        victim = await asyncio.to_thread(
+            port_reclaim.find_agent_owned_appium,
             port=port,
             runtime_root=agent_settings.runtime.runtime_root,
             exclude_pids=self._tracked_appium_pids(),

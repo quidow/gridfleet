@@ -170,6 +170,15 @@ class NodeStateLoop:
                 # start failure: recording one would escalate the backend
                 # recovery ladder for a successful recovery. The next tick sees
                 # the running node and converges.
+                #
+                # The other raise site means "this target is already served on a
+                # *different* port", which is equally safe to swallow here: that
+                # port is either desired too (some later spec in this same pass
+                # converges it) or it is not, in which case ``run_once``'s orphan
+                # sweep stops it at the end of this very tick — it walks every
+                # running port absent from the desired set. Either way the
+                # duplicate does not survive the tick, and the next one starts
+                # this port cleanly.
                 logger.info("node %s already running: %s", spec.device_id, exc)
                 return
             except Exception as exc:

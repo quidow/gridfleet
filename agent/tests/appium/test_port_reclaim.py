@@ -116,6 +116,29 @@ def test_runs_from_runtime_root_ignores_a_root_shaped_argument_that_is_not_a_pat
     assert not port_reclaim.runs_from_runtime_root(noise, RUNTIME_ROOT)
 
 
+def test_runs_from_runtime_root_rejects_a_filesystem_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``AGENT_RUNTIME_ROOT=/`` would make containment true for every absolute
+    argv token, so every Appium on the host reads as ours — and the next step is
+    a SIGKILL. Too shallow to own anything: reject it."""
+    for shallow in ("/", "//", "/opt", "/opt/", "/opt/.."):
+        assert not port_reclaim.runs_from_runtime_root(OWNED_CMDLINE, shallow), shallow
+    proc = _FakeProc(4242, OWNED_CMDLINE, environ={"APPIUM_HOME": "/opt"})
+    monkeypatch.setattr(port_reclaim.psutil, "process_iter", lambda _attrs: iter([proc]))
+    assert port_reclaim.find_agent_owned_appium(port=4723, runtime_root="/", exclude_pids=set()) is None
+
+
+def test_runs_from_runtime_root_rejects_an_empty_root() -> None:
+    assert not port_reclaim.runs_from_runtime_root(OWNED_CMDLINE, "")
+
+
+def test_runs_from_runtime_root_accepts_the_shipped_default_depth() -> None:
+    """The floor must not reject a plausible deployment root."""
+    root = "/opt/gridfleet-agent"
+    assert port_reclaim.runs_from_runtime_root(
+        ["node", f"{root}/runtimes/pack/bin/appium", "server", "--port", "4723"], root
+    )
+
+
 def test_find_rejects_a_sibling_prefix_occupant(monkeypatch: pytest.MonkeyPatch) -> None:
     sibling = _FakeProc(4242, ["node", f"{RUNTIME_ROOT}-evil/bin/appium", "server", "--port", "4723"])
     monkeypatch.setattr(port_reclaim.psutil, "process_iter", lambda _attrs: iter([sibling]))
