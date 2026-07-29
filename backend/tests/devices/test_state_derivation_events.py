@@ -13,8 +13,8 @@ import pytest
 from sqlalchemy import select
 
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState
-from app.devices.services.state import _transition_severity, emit_operational_state_transition
-from tests.helpers import create_device_record, create_host
+from app.devices.services.state import _transition_severity
+from tests.helpers import create_device_record, create_host, derive_and_apply_operational_state
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
@@ -47,7 +47,7 @@ async def test_offline_transition_records_no_audit_row(client: AsyncClient, db_s
         device_checks_healthy=False,
     )
 
-    changed = await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
 
     assert changed is True
     assert device.operational_state_last_emitted is DeviceOperationalState.offline
@@ -70,7 +70,7 @@ async def test_maintenance_transition_records_no_audit_row(client: AsyncClient, 
         lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
 
-    changed = await emit_operational_state_transition(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
 
     assert changed is True
     assert device.operational_state_last_emitted is DeviceOperationalState.maintenance

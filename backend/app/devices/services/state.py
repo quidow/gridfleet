@@ -390,20 +390,3 @@ def apply_operational_state_transition(
         severity=_transition_severity(old, derived_op),
     )
     return True
-
-
-async def emit_operational_state_transition(
-    db: AsyncSession,
-    device: Device,
-    *,
-    now: datetime,
-    publisher: EventPublisher,
-    packs: dict[str, PackView] | None = None,
-) -> bool:
-    """Emit one edge and advance the ledger when the projected state changes.
-
-    The caller must hold the device row lock. Fact-site events carry causes;
-    this edge detector intentionally compares only the durable projection.
-    """
-    derived_op = await derive_operational_state(db, device, now=now, packs=packs)
-    return apply_operational_state_transition(device, derived_op, publisher=publisher)

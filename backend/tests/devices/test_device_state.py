@@ -9,7 +9,7 @@ import pytest
 
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state as device_state
-from tests.helpers import create_device_record
+from tests.helpers import create_device_record, derive_and_apply_operational_state
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
@@ -34,7 +34,7 @@ async def _persisted_device(db: AsyncSession, host_id: str) -> Device:
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_emit_operational_state_transition_queues_event(
+async def test_operational_state_transition_queues_event(
     db_session: AsyncSession, default_host_id: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     device = await _persisted_device(db_session, default_host_id)
@@ -47,9 +47,7 @@ async def test_emit_operational_state_transition_queues_event(
 
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", fake_queue)
 
-    changed = await device_state.emit_operational_state_transition(
-        db_session, device, now=datetime.now(UTC), publisher=event_bus
-    )
+    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
     assert changed is True
     assert device.operational_state_last_emitted is DeviceOperationalState.available
     assert any(name == "device.operational_state_changed" for name, _, _ in captured)
@@ -61,17 +59,11 @@ async def test_emit_operational_state_transition_queues_event(
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_emit_operational_state_transition_noop_when_unchanged(
-    db_session: AsyncSession, default_host_id: str
-) -> None:
+async def test_operational_state_transition_noop_when_unchanged(db_session: AsyncSession, default_host_id: str) -> None:
     device = await _persisted_device(db_session, default_host_id)
-    changed = await device_state.emit_operational_state_transition(
-        db_session, device, now=datetime.now(UTC), publisher=event_bus
-    )
+    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
     assert changed is True
-    changed = await device_state.emit_operational_state_transition(
-        db_session, device, now=datetime.now(UTC), publisher=event_bus
-    )
+    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
     assert changed is False
 
 

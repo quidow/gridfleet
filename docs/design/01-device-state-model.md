@@ -10,7 +10,7 @@ A `Device` row carries **multiple independent axes** of state. They look related
 | --- | --- | --- |
 | Readiness | derived, not stored | `app.devices.services.readiness.is_ready_for_use_async` |
 | Operational state | read-time projection over durable facts | evaluator + SQL twin in `app/devices/services/state.py`; nobody stores current state |
-| Operational-state event ledger | `Device.operational_state_last_emitted` | `emit_operational_state_transition` in the locked intent-reconciler edge detector, plus the device-creation seed |
+| Operational-state event ledger | `Device.operational_state_last_emitted` | `apply_operational_state_transition` in the locked intent-reconciler edge detector, plus the device-creation seed |
 | Reservation | `device_reservations` rows | computed `is_reserved` via `app.devices.services.reservation_query.device_is_reserved` |
 | Lifecycle JSON | `Device.lifecycle_policy_state` | `app.devices.services.lifecycle_policy_state` helpers, under the row lock |
 | Remediation memory | `device_remediation_log` (append-only) | ladder writers via `app.lifecycle.services.actions.escalate_device_remediation_failure`; derivations in `app/lifecycle/services/remediation_log.py` |
@@ -31,7 +31,7 @@ operational_state : available | busy | verifying | offline | maintenance
 
 Masking order is `busy > verifying > maintenance > offline`: a higher state can hide a lower-axis fact, so ask single-axis questions of the fact itself — `in_maintenance(device)`, `device_has_live_session(...)`, or the reservation row. Use `operational_state` for SQL filters, counts, presentation, allocation, and composed-state gates.
 
-`Device.operational_state_last_emitted` is only the **event ledger**: the last projected value emitted as `device.operational_state_changed`. It is written only by `emit_operational_state_transition` inside the locked intent-reconciler edge detector, plus the creation seed. Every other code path writes durable facts. The contract test `tests/contracts/test_no_direct_device_state_writes.py` enforces this; `docs/reference/device-lifecycle.md` is the canonical spec (derivation flow, inline-reconcile criterion, the priced `_ready_sql` approximation).
+`Device.operational_state_last_emitted` is only the **event ledger**: the last projected value emitted as `device.operational_state_changed`. It is written only by `apply_operational_state_transition` inside the locked intent-reconciler edge detector, plus the creation seed. Every other code path writes durable facts. The contract test `tests/contracts/test_no_direct_device_state_writes.py` enforces this; `docs/reference/device-lifecycle.md` is the canonical spec (derivation flow, inline-reconcile criterion, the priced `_ready_sql` approximation).
 
 ### Reservation (computed, not a column)
 
