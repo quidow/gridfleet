@@ -6,48 +6,23 @@ GET /api/runs{,/{id}} exposing those fields via to_reserved_device_info(), and
 get_device_reservation_with_entry not loading reserved-device rows (N+1 guard).
 """
 
-import contextlib
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import event, select
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.devices.models import Device
 from app.runs import service as run_service
 from app.runs.service_allocator import _build_device_info
+from tests.concurrency.group_lock_helpers import capture_engine_statements
 from tests.helpers import create_device, create_reserved_run
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
-
-
-@contextlib.contextmanager
-def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
-    statements: list[str] = []
-
-    def listener(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    bind = session.bind
-    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
-    event.listen(sync_engine, "before_cursor_execute", listener)
-    try:
-        yield statements
-    finally:
-        event.remove(sync_engine, "before_cursor_execute", listener)
 
 
 def _pack_reads_before_run_insert(statements: list[str]) -> list[str]:
@@ -147,7 +122,7 @@ async def test_reservation_context_lookup_does_not_load_reserved_device_rows(
     ]
     await create_reserved_run(db_session, name="context-run", devices=devices)
 
-    with _capture_statements(db_session) as statements:
+    with capture_engine_statements(db_session) as statements:
         run, entry = await run_service.get_device_reservation_with_entry(db_session, devices[0].id)
 
     assert run is not None
@@ -185,7 +160,7 @@ async def test_run_creation_reads_the_pack_tables_once(
         "requirements": [{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
     }
 
-    with _capture_statements(db_session) as statements:
+    with capture_engine_statements(db_session) as statements:
         response = await client.post("/api/runs", json=payload)
 
     assert response.status_code == 201, response.text

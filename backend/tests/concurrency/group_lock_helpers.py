@@ -22,7 +22,7 @@ rather than folded into a caller.
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING
 
 from sqlalchemy import event, select
@@ -35,7 +35,7 @@ from app.devices.services.service import DeviceCrudService
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable
+    from collections.abc import AsyncIterator, Callable, Iterator
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -174,6 +174,47 @@ async def capture_statements(session: AsyncSession) -> AsyncIterator[list[str]]:
         yield statements
     finally:
         detach()
+
+
+@contextmanager
+def capture_engine_statements(session: AsyncSession) -> Iterator[list[str]]:
+    """Collect every statement the *engine* behind *session* issues, from any connection.
+
+    The opposite trade-off to :func:`capture_statements`, and the right one in
+    exactly one situation: the work under test runs on a session the test does not
+    hold -- an API request through ``client.get``/``client.post``, which opens its
+    own session from the app's factory. Pinning to the caller's connection there
+    records nothing at all, and a budget assertion over an empty list passes
+    vacuously, which is the failure mode that matters most in a guard.
+
+    The cost is real and is why this is a separate name rather than a flag: this
+    also sees the event-bus flush, a fixture's cleanup query, and every other
+    connection in the pool. It can carry a *comparative* assertion (a delta
+    between two runs) or a *categorised* one (statements naming a table), never a
+    raw total. Reach for :func:`capture_statements` whenever the statements come
+    from the session the test already holds and that session has no transaction
+    open yet.
+    """
+    statements: list[str] = []
+
+    def listener(
+        conn: object,
+        cursor: object,
+        statement: str,
+        parameters: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        statements.append(statement)
+
+    bind = session.bind
+    assert bind is not None
+    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
+    event.listen(sync_engine, "before_cursor_execute", listener)
+    try:
+        yield statements
+    finally:
+        event.remove(sync_engine, "before_cursor_execute", listener)
 
 
 def pin_statement_listener(session: AsyncSession, sink: list[str]) -> Callable[[], None]:

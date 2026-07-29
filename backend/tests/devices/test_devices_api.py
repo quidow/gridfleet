@@ -1,4 +1,3 @@
-import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -7,7 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import event, select
+from sqlalchemy import select
 from sqlalchemy.orm import raiseload, selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -33,13 +32,12 @@ from app.lifecycle.services import remediation_log
 from app.packs.models import DriverPack, DriverPackPlatform, DriverPackRelease
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service_viability import SessionViabilityService
+from tests.concurrency.group_lock_helpers import capture_engine_statements
 from tests.helpers import create_device_record, create_host, seed_ready_loop_snapshots
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
-
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -256,30 +254,6 @@ async def test_list_devices(client: AsyncClient, db_session: AsyncSession, defau
     assert DeviceRead.model_validate(body["items"][0])
 
 
-@contextlib.contextmanager
-def _capture_statements(session: AsyncSession) -> Iterator[list[str]]:
-    statements: list[str] = []
-
-    def listener(
-        conn: object,
-        cursor: object,
-        statement: str,
-        parameters: object,
-        context: object,
-        executemany: bool,
-    ) -> None:
-        statements.append(statement)
-
-    bind = session.bind
-    assert bind is not None
-    sync_engine = bind.sync_engine if hasattr(bind, "sync_engine") else bind
-    event.listen(sync_engine, "before_cursor_execute", listener)
-    try:
-        yield statements
-    finally:
-        event.remove(sync_engine, "before_cursor_execute", listener)
-
-
 @pytest.mark.db
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("seeded_driver_packs")
@@ -290,7 +264,7 @@ async def test_list_devices_pack_lookups_do_not_scale_with_device_count(
     of how many devices the list returns (guards against the per-device N+1)."""
 
     async def pack_query_count() -> int:
-        with _capture_statements(db_session) as statements:
+        with capture_engine_statements(db_session) as statements:
             resp = await client.get("/api/devices")
             assert resp.status_code == 200
         return sum(1 for stmt in statements if "driver_packs" in stmt.lower())
