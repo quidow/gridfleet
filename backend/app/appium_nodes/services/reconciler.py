@@ -216,15 +216,23 @@ def _superseded_by_a_running_node(
     row: DesiredRow,
     at: str,
     observed_by_target: dict[str, ObservedEntry],
-    observed_by_port: dict[int, ObservedEntry],
 ) -> bool:
     """True when the agent currently runs a node for *row* that started at or
     after the report — the report belongs to a superseded episode.
 
     Both timestamps are agent-minted (the failure ring and the running-node
     snapshot come from the same clock), so the comparison is meaningful.
+
+    Target match only — deliberately no ``observed_by_port`` fallback, unlike
+    the convergence path (``rows_needing_stale_clear``). The directions differ:
+    there a mismatch strands a live node as ``observed_running`` False and the
+    port fallback is the fail-safe recovery, while here a mismatch is fail-OPEN
+    — a cross-device port collision would let another device's node declare
+    this report superseded, advancing the cursor past a genuine
+    ``port_conflict`` and skipping both the escalation and the ``desired_port``
+    re-pin. Losing a real supersession only costs one extra escalation.
     """
-    entry = match_observed_entry(row, observed_by_target, observed_by_port)
+    entry = match_observed_entry(row, observed_by_target)
     if entry is None or entry.started_at is None:
         return False
     try:
@@ -372,6 +380,17 @@ async def _record_start_failure(
             return
         now = now_utc()
         snapshot = await load_device_decision_snapshot(db, locked, now=now)
+        if conflict_port is not None:
+            # Ahead of the backoff gate on purpose. The re-pin is not a ladder
+            # action — it is the corrective write that makes the next start
+            # attempt able to succeed — and it is idempotent under the Device
+            # lock this transaction already holds. Behind the gate it was lost
+            # whenever ANY backoff window was open, including one opened by a
+            # different source (the ladder is shared), and a re-pin that itself
+            # landed on a second occupied port stayed uncorrected until the
+            # window expired — so a host leaking two ports could still walk the
+            # device to review_required.
+            await _repin_desired_port(db, row, conflict_port=conflict_port, settings=settings)
         if snapshot.ladder.backoff_active(now=now) is not None:
             # One escalation per failure episode. The agent keeps retrying (and
             # keeps reporting) on its own cadence while the backend's recovery
@@ -391,8 +410,6 @@ async def _record_start_failure(
             reason=reason,
             ladder=snapshot.ladder,
         )
-        if conflict_port is not None:
-            await _repin_desired_port(db, row, conflict_port=conflict_port, settings=settings)
 
 
 async def _reset_start_failure(
@@ -643,9 +660,8 @@ class ReconcilerService:
             if current is None or matched[3] > current[3]:
                 newest[matched[0].device_id] = matched
         observed_by_target = {entry.connection_target: entry for entry in observed}
-        observed_by_port = {entry.port: entry for entry in observed}
         for device_id, (row, kind, port, at) in sorted(newest.items(), key=lambda item: str(item[0])):
-            if _superseded_by_a_running_node(row, at, observed_by_target, observed_by_port):
+            if _superseded_by_a_running_node(row, at, observed_by_target):
                 # The node this report is about has already been replaced by one
                 # that started later. Fold it so it stops being replayed, but do
                 # not let it escalate or re-shelve the episode that succeeded.

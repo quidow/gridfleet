@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.reconciler import ReconcilerService
@@ -89,6 +90,83 @@ async def test_a_report_from_a_superseded_episode_never_escalates(
 
     assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 0
     assert svc._last_seen_failure_at[device.id] == stale_at, "the stale report was not folded"
+
+
+@pytest.mark.db
+async def test_a_foreign_node_sharing_the_port_does_not_supersede_the_report(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Supersession matches by connection target only.
+
+    The observed node here belongs to another device that happens to hold the
+    port this row is pinned to — exactly the cross-device collision a
+    ``port_conflict`` reports. Resolving the observation by port would let that
+    node vouch for this one, advancing the dedupe cursor past a real conflict
+    and skipping both the escalation and the ``desired_port`` re-pin.
+    """
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="port-collision",
+        identity_value="port-collision-001",
+        connection_target="port-collision-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=None,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    started_at = datetime.now(UTC)
+    stale_at = (started_at - timedelta(seconds=5)).isoformat()
+    # Same port, different device's target — and the row has no live target, so
+    # neither target lookup can hit.
+    observed = [ObservedEntry(port=4723, pid=9999, connection_target="some-other-device-target", started_at=started_at)]
+    row = DesiredRow(
+        device_id=device.id,
+        host_id=db_host.id,
+        node_id=node.id,
+        connection_target=device.connection_target,
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=None,
+        active_connection_target=None,
+        stop_pending=False,
+    )
+    svc = ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({"appium.port_range_start": 4723, "appium.port_range_end": 4823}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=db_session_maker,
+    )
+
+    await svc._ingest_start_failure_reports(
+        [row],
+        [
+            {
+                "port": 4723,
+                "connection_target": device.connection_target,
+                "kind": "port_conflict",
+                "detail": "port in use",
+                "at": stale_at,
+            }
+        ],
+        observed=observed,
+    )
+
+    assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 1, "a real conflict was swallowed"
+    db_session.expire(node)
+    reloaded = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
+    assert reloaded.desired_port != 4723, "the re-pin was skipped"
 
 
 async def test_reconcile_host_folds_reports_before_convergence(monkeypatch: pytest.MonkeyPatch) -> None:
