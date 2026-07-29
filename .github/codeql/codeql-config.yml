@@ -31,3 +31,10 @@ query-filters:
       id: py/cyclic-import
   - exclude:
       id: py/unsafe-cyclic-import
+  # Inline PEP 544 Protocol members (outside the protocols.py files ignored
+  # above) have `...` bodies that CodeQL reports as py/ineffectual-statement.
+  # Every alert this query has raised here has been that idiom. Excluding it
+  # costs no coverage: ruff's B018 is already enforced in CI via the `B` rule
+  # set, and it flags real useless expressions while ignoring Protocol stubs.
+  - exclude:
+      id: py/ineffectual-statement
