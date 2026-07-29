@@ -63,6 +63,10 @@ PROTECTED_COLUMN_WRITERS: dict[str, frozenset[str]] = {
             # Node creation paths set the initial port before the row exists.
             "app/lifecycle/services/policy.py",
             "app/lifecycle/services/operator_node.py",
+            # A desired-port re-pin moves ownership with the pin (D3) so the
+            # agent's orphan sweep and the intent reconciler's recompute both
+            # follow the node to its new port.
+            "app/appium_nodes/services/reconciler.py",
         }
     ),
     "active_connection_target": frozenset(

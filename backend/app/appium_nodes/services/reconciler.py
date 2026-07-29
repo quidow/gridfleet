@@ -229,6 +229,13 @@ async def _repin_desired_port(
             conflict_port=conflict_port,
         )
         return
+    # Ownership moves with the pin. ``node.port`` is what the agent's desired
+    # spec is keyed on (``desired_port or port``) and what the intent
+    # reconciler re-derives ``desired_port`` from on its next tick: leaving it
+    # on the conflicted port makes the agent's own sweep reap the node it just
+    # started on the new port, and lets the recompute undo this write ~5s
+    # later. Both writers serialise on the Device row lock the caller holds.
+    node.port = ports[0]
     # Preserve the existing watermark: this write only corrects the port under
     # the same restart request; it is not a competing writer.
     await write_desired_state(
