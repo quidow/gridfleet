@@ -37,11 +37,12 @@ from agent_app.pack.worker_supervisor import WorkerSupervisor
 from agent_app.probes import ProbeLoop
 from agent_app.registration import RegistrationService
 from agent_app.registration import manager_auth as _manager_auth  # tests patch agent_app.lifespan._manager_auth
-from agent_app.status_push import StatusPushClient, StatusPushLoop
+from agent_app.status_push import BOOT_FENCE_ERROR_CODE, BootFenceRejected, StatusPushClient, StatusPushLoop
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
+    import httpx2 as httpx
     from fastapi import FastAPI
 
     from agent_app.pack.manifest import DesiredPack
@@ -104,6 +105,20 @@ class HttpPackStateClient(PackStateClient):
         return resp.json()  # type: ignore[no-any-return]
 
 
+def _is_boot_fence_rejection(resp: httpx.Response) -> bool:
+    """True only for the backend's coded fence 409, never for another conflict."""
+    if resp.status_code != 409:
+        return False
+    try:
+        body: object = resp.json()
+    except ValueError:
+        return False
+    if not isinstance(body, dict):
+        return False
+    error = body.get("error")
+    return isinstance(error, dict) and error.get("code") == BOOT_FENCE_ERROR_CODE
+
+
 class HttpStatusPushClient(StatusPushClient):
     def __init__(self, base_url: str) -> None:
         self._base = base_url.rstrip("/")
@@ -114,6 +129,8 @@ class HttpStatusPushClient(StatusPushClient):
         if (auth := _manager_auth()) is not None:
             kwargs["auth"] = auth
         resp = await client.post(f"{self._base}/agent/hosts/status", **kwargs)
+        if _is_boot_fence_rejection(resp):
+            raise BootFenceRejected("backend rejected this push: boot fence superseded")
         resp.raise_for_status()
 
 
@@ -312,6 +329,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             probe_results=lambda: probe_loop.latest_results() if probe_loop else None,
             push_interval=agent_settings.core.status_push_interval_sec,
             boot_id=str(boot_id),
+            on_boot_fence_rejected=registration.request_refresh,
+            reregister_min_interval=float(agent_settings.core.registration_refresh_interval_sec),
         )
         app.state.status_push_loop = status_loop
         status_task = asyncio.create_task(_start_status_loop_when_ready(host_identity, status_loop))
