@@ -1067,7 +1067,7 @@ async def test_bench_healthy_fold_statement_budget(
     tap.armed = False
     commits.armed = False
     try:
-        host, devices = await seed_fleet(db_session, FLEET, device_count, generation=0)
+        host, devices = await seed_fleet(db_session, MIXED_FLEET, device_count, generation=0)
         revision = await next_observation_revision(db_session)
         section = device_health_loop_section(
             devices,

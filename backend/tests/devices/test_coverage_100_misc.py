@@ -624,9 +624,15 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
 
     monkeypatch.setattr(
         device_recovery_job.device_locking,
-        "lock_device",
-        AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4())),
+        "lock_device_handle",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                device=SimpleNamespace(lifecycle_policy_state={}, appium_node=None),
+                assert_active=lambda _db: None,
+            )
+        ),
     )
+    monkeypatch.setattr(device_recovery_job, "load_device_decision_snapshot", AsyncMock(return_value=object()))
     mock_lifecycle_policy = AsyncMock()
     mock_lifecycle_policy.prepare_auto_recovery_locked = AsyncMock(side_effect=RuntimeError("boom"))
     await device_recovery_job.RecoveryJobService(
@@ -639,6 +645,7 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
         str(uuid.uuid4()),
         {"device_id": str(uuid.uuid4())},
     )
+    mock_lifecycle_policy.prepare_auto_recovery_locked.assert_awaited_once()
 
     class QueueCtx:
         async def __aenter__(self) -> AsyncMock:

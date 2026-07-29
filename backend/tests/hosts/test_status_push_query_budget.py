@@ -22,9 +22,9 @@ of the split:
   measured numbers).
 
 The pinned constants are MEASURED, not derived. ``FORMULA_MAX`` is the Phase 8
-Global-Constraints ceiling (``24 + 9n``) and is asserted against BOTH paths: a
-count above it is an implementation defect, never a reason to raise the
-formula.
+Global-Constraints ceiling (``24 + 9n``) and is asserted on the settle path. The
+confirm path's exact ``STATUS_PUSH_MAX`` pin subsumes that ceiling: a count above
+it is an implementation defect, never a reason to raise the formula.
 """
 
 from __future__ import annotations

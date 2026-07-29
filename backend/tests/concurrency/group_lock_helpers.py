@@ -8,7 +8,7 @@ are serialised by ``device_group_member_of``'s two composite foreign keys —
 advisory lock, so nothing here intercepts or waits on lock acquisition any
 more. What survives is the plumbing several unrelated suites still need:
 constructing a bare ``DeviceGroupsService``, reading the relation back out, and
-capturing exactly one session's SQL.
+capturing either exactly one session's SQL or every statement on an engine.
 
 ``capture_statements`` in particular is imported by six modules that have
 nothing to do with group locking (``tests/lifecycle/test_escalation.py``,
