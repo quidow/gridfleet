@@ -796,6 +796,7 @@ class AppiumProcessManager:
                 env=env,
             )
         except FileNotFoundError:
+            log_path.unlink(missing_ok=True)
             raise RuntimeMissingError(f"appium executable not found (last tried: {appium_bin})") from None
         finally:
             # Only the agent's copy of the fd — the child inherited its own.
