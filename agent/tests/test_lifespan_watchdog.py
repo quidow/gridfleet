@@ -155,3 +155,51 @@ async def test_lifespan_teardown_ends_a_crash_looping_status_push_task(monkeypat
     await asyncio.sleep(0.2)
 
     assert starts == starts_at_teardown, "teardown did not stop the crash loop"
+
+
+@pytest.mark.asyncio
+async def test_lifespan_supervises_every_background_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """All six loops are restart-supervised, not just the two that push and enrol.
+
+    A crash in the pack, node, probe or capabilities loop used to be logged and
+    then left dead for the process lifetime. Recording construction rather than
+    reading a roster off ``app.state`` keeps the assertion honest about *how* the
+    task was started, and adds no production surface for the test's benefit.
+    """
+    from typing import Any
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi import FastAPI
+
+    from agent_app import lifespan as lifespan_module
+    from agent_app.host.capabilities import CapabilitiesCache
+    from agent_app.lifespan import _SupervisedTask
+
+    names: list[str] = []
+
+    def _recording(name: str, factory: Any, **kwargs: Any) -> _SupervisedTask:  # noqa: ANN401
+        names.append(name)
+        return _SupervisedTask(name, factory, **kwargs)
+
+    monkeypatch.setattr(lifespan_module, "_SupervisedTask", _recording)
+    monkeypatch.setattr(lifespan_module.agent_settings.core, "host_id", "00000000-0000-0000-0000-000000000079")
+
+    with (
+        patch.object(CapabilitiesCache, "refresh", new_callable=AsyncMock),
+        patch.object(CapabilitiesCache, "run_refresh_loop", new_callable=AsyncMock),
+        patch.object(CapabilitiesCache, "get_or_refresh", new_callable=AsyncMock, return_value={}),
+        patch("agent_app.host.hardware_info.collect", return_value={}),
+        patch("agent_app.appium.appium_mgr.start_log_maintenance"),
+        patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
+    ):
+        async with lifespan_module.lifespan(FastAPI()):
+            await asyncio.sleep(0)
+
+    assert sorted(names) == [
+        "capabilities_refresh",
+        "node_state_loop",
+        "pack_state_loop",
+        "probe_loop",
+        "registration",
+        "status_push_loop",
+    ]

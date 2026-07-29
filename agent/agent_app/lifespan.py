@@ -371,8 +371,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     capabilities_cache = CapabilitiesCache(adapter_registry=adapter_registry)
     app.state.capabilities_cache = capabilities_cache
     await capabilities_cache.refresh()
-    capabilities_task = asyncio.create_task(capabilities_cache.run_refresh_loop(refresh_immediately=False))
-    capabilities_task.add_done_callback(_watchdog("capabilities_refresh"))
+    # ``refresh_immediately=False`` on a restart too: the cache keeps its last
+    # snapshot across a crash, so an immediate refresh would buy nothing the
+    # next tick does not.
+    _supervise(
+        "capabilities_refresh",
+        lambda: asyncio.create_task(capabilities_cache.run_refresh_loop(refresh_immediately=False)),
+    )
     boot_id = uuid4()
     app.state.host_identity = host_identity
     app.state.runtime_registry = runtime_registry
@@ -418,7 +423,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     status_loop: StatusPushLoop | None = None
     probe_loop: ProbeLoop | None = None
-    probe_task: asyncio.Task[None] | None = None
     if backend_url:
         status_loop = StatusPushLoop(
             client=HttpStatusPushClient(backend_url),
@@ -488,30 +492,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             on_results=status_loop.wake,
         )
         app.state.probe_loop = probe_loop
-        probe_task = asyncio.create_task(_start_probe_loop_when_ready(host_identity, probe_loop))
-        probe_task.add_done_callback(_watchdog("probe_loop"))
-
-    pack_task: asyncio.Task[None] | None = None
-    if backend_url:
-        pack_task = asyncio.create_task(
-            _start_pack_loop_when_ready(
-                app,
-                host_identity,
-                backend_url,
-                runtime_registry,
-                adapter_registry,
-                worker_supervisor,
-                status_loop.wake if status_loop else None,
-            )
+        # Non-optional alias, same reason as the status loop. The ProbeLoop object
+        # is likewise reused across restarts so its doorbell — the
+        # ``request_immediate`` call in agent_app/pack/router.py — survives.
+        supervised_probe_loop = probe_loop
+        _supervise(
+            "probe_loop",
+            lambda: asyncio.create_task(_start_probe_loop_when_ready(host_identity, supervised_probe_loop)),
         )
-        pack_task.add_done_callback(_watchdog("pack_state_loop"))
 
-    node_task: asyncio.Task[None] | None = None
     if backend_url:
-        node_task = asyncio.create_task(
-            _start_node_loop_when_ready(app, host_identity, backend_url, status_loop.wake if status_loop else None)
+        # Unlike the status and probe loops, this factory rebuilds its loop object
+        # on each start and republishes it to ``app.state`` before running. Every
+        # consumer reads ``app.state.pack_state_loop`` per request, so a rebuild is
+        # visible immediately; the cost is that ``latest_desired_packs`` reads None
+        # until the first fetch after a restart.
+        _supervise(
+            "pack_state_loop",
+            lambda: asyncio.create_task(
+                _start_pack_loop_when_ready(
+                    app,
+                    host_identity,
+                    backend_url,
+                    runtime_registry,
+                    adapter_registry,
+                    worker_supervisor,
+                    status_loop.wake if status_loop else None,
+                )
+            ),
         )
-        node_task.add_done_callback(_watchdog("node_state_loop"))
+
+    if backend_url:
+        _supervise(
+            "node_state_loop",
+            lambda: asyncio.create_task(
+                _start_node_loop_when_ready(app, host_identity, backend_url, status_loop.wake if status_loop else None)
+            ),
+        )
 
     try:
         yield
@@ -521,13 +538,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # walked past. Order within the loop is irrelevant — none of these await.
         for supervised in supervisors:
             supervised.shutdown()
-        if node_task is not None:
-            node_task.cancel()
-        if pack_task is not None:
-            pack_task.cancel()
-        if probe_task is not None:
-            probe_task.cancel()
-        capabilities_task.cancel()
         await worker_supervisor.shutdown_all()
         await appium_mgr.shutdown()
         await close_shared_http_client()
