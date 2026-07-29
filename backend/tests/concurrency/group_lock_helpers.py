@@ -10,14 +10,9 @@ more. What survives is the plumbing several unrelated suites still need:
 constructing a bare ``DeviceGroupsService``, reading the relation back out, and
 capturing either exactly one session's SQL or every statement on an engine.
 
-``capture_statements`` in particular is imported by six modules that have
-nothing to do with group locking (``tests/lifecycle/test_escalation.py``,
-``tests/devices/test_device_group_service_more.py``,
-``tests/devices/test_decision_snapshot.py``,
-``tests/devices/test_intent_service.py``,
-``tests/devices/test_devices_import_commit.py``, and
-``tests/appium_nodes/test_node_health.py``), which is why this file is kept
-rather than folded into a caller.
+The statement-capture helpers are shared across concurrency and query-budget
+suites that have nothing to do with group locking, which is why this file is
+kept rather than folded into a caller.
 """
 
 from __future__ import annotations

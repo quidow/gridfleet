@@ -85,9 +85,8 @@ FLEET_SIZES = (1, 10, 50)
 STATUS_PUSH_MAX = {1: 25, 10: 52, 50: 172}
 STATUS_PUSH_COMMITS = {1: 6, 10: 15, 50: 55}
 
-# Phase 8 Global Constraints ceiling, asserted against both paths below: a
-# count above it is an implementation defect, never a reason to raise the
-# formula.
+# Phase 8 Global Constraints ceiling, asserted on the settle path below. The
+# confirm path has an exact measured pin instead.
 FORMULA_MAX = {n: 24 + 9 * n for n in FLEET_SIZES}
 PACK_CATALOG_SIGNATURES = ("SELECT driver_packs", "SELECT driver_pack_releases", "SELECT driver_pack_platforms")
 PACK_CATALOG_READS_PER_HOST = 1
@@ -407,7 +406,7 @@ async def test_status_push_settle_path_statement_and_commit_budget(
     Before the driver-pack catalog was batched, this path spent three catalog
     statements per device on top of the reconciler's settlement and exceeded the
     Phase 8 ceiling from n=2 up. It no longer does, so ``FORMULA_MAX`` is
-    asserted here as well as on the confirm path.
+    asserted here; the confirm path relies on its exact measured pin.
     """
     _install_push_wiring(db_session_maker)
     assert db_session.bind is not None
