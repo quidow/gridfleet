@@ -131,6 +131,16 @@ Agents run on physical lab hosts or VMs where devices are attached. Unlike the c
 - **Appium Process Management**: The Agent isolates each device by spawning standalone Appium server processes attached to that device's UDID/Serial. The agent runs no Grid relay node; WebDriver traffic reaches Appium via the router (below).
 - **Health Checks**: Monitors ADB connectivity and driver viability, terminating Appium processes gracefully if the physical device goes offline.
 
+### Boot fence — one live boot owns a host row
+
+Each agent process mints a `uuid4` boot id at startup and sends it with every registration and every status push. Registration writes it to `Host.current_boot_id` (`backend/app/hosts/service.py`), so the newest registration owns the row; a row that has never carried one adopts the first tokened push's id.
+
+A push whose `boot_id` does not match the row is rejected with HTTP 409 and the coded body `{"error": {"code": "BOOT_FENCE_SUPERSEDED", ...}}` (`backend/app/hosts/service_status_push.py`), counted by `gridfleet_host_push_boot_fence_rejections_total`. A rejected push stamps no liveness, so the host reads offline after `general.host_offline_after_sec` (45 s) even though the fenced-out agent is alive and pushing on cadence.
+
+The agent recovers on that code alone: `StatusPushLoop` (`agent/agent_app/status_push.py`) asks the registration loop to re-register at once, which rewrites the fence — a genuine fence loss then costs one push cycle instead of one registration refresh. The request fires at most once per rejection episode (an episode ends only when a push succeeds), with `AGENT_REGISTRATION_REFRESH_INTERVAL_SEC` (300 s) as a floor on top, so two agents that genuinely dispute a host row cannot ping-pong enrolments. Any other 409 stays an ordinary push failure and triggers no re-enrolment.
+
+`BOOT_FENCE_SUPERSEDED` is a wire contract. Tests on both sides spell the literal out rather than importing the constant, so renaming it on one side fails that side's own tests instead of travelling silently.
+
 ## 3. WebDriver Router (Rust / Pingora)
 
 The router (`router/`) is a standalone Rust binary that listens on `:4444` and replaces the Selenium Grid hub. For each incoming W3C `POST /session` it calls the backend's internal grid API (`/internal/grid/create-session`), which claims a matching device, creates the Appium session backend-side, records it as running, and returns the response for relay. The router then proxies that session's WebDriver commands directly to the allocated device's Appium server. Subsequent commands on an established session are routed by session id to the same Appium upstream. The backend owns allocation, queueing, capability matching, and session creation; the router owns request forwarding. It is configured purely via `GRIDFLEET_ROUTER_*` env vars (see `docs/reference/environment.md`).
