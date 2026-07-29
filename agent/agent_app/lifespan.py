@@ -76,11 +76,12 @@ def _restart_delay(consecutive_crashes: int, base: float, cap: float) -> float:
     return min(base * 2.0 ** (consecutive_crashes - 1), cap)
 
 
-def _watchdog(
-    name: str,
-    restart: Callable[[], asyncio.Task[None]] | None = None,
-) -> Callable[[asyncio.Task[Any]], None]:
-    """Return a done_callback that logs unhandled exceptions from supervised tasks."""
+def _watchdog(name: str) -> Callable[[asyncio.Task[Any]], None]:
+    """Return a done_callback that logs how a supervised task ended.
+
+    Restarting is ``_SupervisedTask``'s job — it needs state across restarts that
+    this closure, rebuilt on every respawn, cannot hold.
+    """
 
     def _cb(task: asyncio.Task[Any]) -> None:
         if task.cancelled():
@@ -94,9 +95,6 @@ def _watchdog(
             name,
             exc_info=(type(exc), exc, exc.__traceback__),
         )
-        if restart is not None:
-            logger.info("restarting background task %s", name)
-            restart()
 
     return _cb
 
@@ -358,6 +356,14 @@ async def _start_probe_loop_when_ready(host_identity: HostIdentity, loop: ProbeL
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    supervisors: list[_SupervisedTask] = []
+
+    def _supervise(name: str, factory: Callable[[], asyncio.Task[None]]) -> None:
+        """Start a restart-supervised background loop and enrol it for teardown."""
+        supervised = _SupervisedTask(name, factory)
+        supervisors.append(supervised)
+        supervised.start()
+
     host_identity = HostIdentity()
     runtime_registry = RuntimeRegistry()
     adapter_registry = AdapterRegistry()
@@ -394,20 +400,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         boot_id=str(boot_id),
     )
 
-    reg_task: asyncio.Task[None]
-
-    def _start_registration_task() -> asyncio.Task[None]:
-        nonlocal reg_task
-        reg_task = asyncio.create_task(
+    _supervise(
+        "registration",
+        lambda: asyncio.create_task(
             registration.run(
                 agent_settings.manager.manager_url,
                 agent_settings.core.agent_port,
             )
-        )
-        reg_task.add_done_callback(_watchdog("registration", _start_registration_task))
-        return reg_task
-
-    reg_task = _start_registration_task()
+        ),
+    )
     appium_mgr.set_runtime_registry(runtime_registry)
     appium_mgr.set_adapter_registry(adapter_registry)
     appium_mgr.set_desired_packs_provider(
@@ -416,7 +417,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     appium_mgr.start_log_maintenance()
 
     status_loop: StatusPushLoop | None = None
-    status_task: asyncio.Task[None] | None = None
     probe_loop: ProbeLoop | None = None
     probe_task: asyncio.Task[None] | None = None
     if backend_url:
@@ -433,21 +433,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             reregister_min_interval=float(agent_settings.core.registration_refresh_interval_sec),
         )
         app.state.status_push_loop = status_loop
-        # Non-optional alias: the restart closure below needs the loop itself,
-        # not the ``StatusPushLoop | None`` the enclosing scope declares.
+        # Non-optional alias: the restart factory below needs the loop itself, not
+        # the ``StatusPushLoop | None`` the enclosing scope declares. The object is
+        # deliberately reused across restarts — the probe, pack and node tasks all
+        # hold ``status_loop.wake``, so rebuilding it would orphan every doorbell.
         supervised_status_loop = status_loop
-
-        def _start_status_task() -> asyncio.Task[None]:
-            # Status pushes are what keep this host reading online, so a crash
-            # here has to be restarted rather than logged and left dead. The
-            # rebind keeps the ``finally`` block cancelling the live task.
-            nonlocal status_task
-            task = asyncio.create_task(_start_status_loop_when_ready(host_identity, supervised_status_loop))
-            task.add_done_callback(_watchdog("status_push_loop", _start_status_task))
-            status_task = task
-            return task
-
-        status_task = _start_status_task()
+        _supervise(
+            "status_push_loop",
+            lambda: asyncio.create_task(_start_status_loop_when_ready(host_identity, supervised_status_loop)),
+        )
 
         async def _resolve_probe_context(pack_id: str, platform_id: str) -> tuple[Any, str] | None:
             pack_state_loop = app.state.pack_state_loop
@@ -522,15 +516,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # Close every restart gate before anything awaits: a crash callback already
+        # queued in the event loop must not spawn a replacement this pass has
+        # walked past. Order within the loop is irrelevant — none of these await.
+        for supervised in supervisors:
+            supervised.shutdown()
         if node_task is not None:
             node_task.cancel()
         if pack_task is not None:
             pack_task.cancel()
-        if status_task is not None:
-            status_task.cancel()
         if probe_task is not None:
             probe_task.cancel()
-        reg_task.cancel()
         capabilities_task.cancel()
         await worker_supervisor.shutdown_all()
         await appium_mgr.shutdown()

@@ -50,10 +50,9 @@ async def test_lifespan_restarts_a_crashed_status_push_loop(monkeypatch: pytest.
     a restart clears ``host_identity.wait()`` — the identity is already set by
     then, and a second run must proceed instead of parking forever.
 
-    It also pins that the restart rebinds the ``status_task`` variable the
-    lifespan's ``finally:`` block cancels: an implementation that creates the
-    replacement task without the ``nonlocal status_task`` rebind still reaches
-    ``starts == 2`` here, but leaks the replacement task past teardown.
+    It also pins that teardown cancels the *replacement*: the supervisor rebinds
+    its ``_task`` on every start, and an implementation that forgets to still
+    reaches ``starts == 2`` here while leaking the replacement past teardown.
     """
     from unittest.mock import AsyncMock, patch
 
@@ -104,21 +103,55 @@ async def test_lifespan_restarts_a_crashed_status_push_loop(monkeypatch: pytest.
 
 
 @pytest.mark.asyncio
-async def test_watchdog_restarts_when_callback_provided() -> None:
-    restarted = False
+async def test_lifespan_teardown_ends_a_crash_looping_status_push_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The second exposure, end to end: teardown must end the crash loop.
 
-    async def _boom() -> None:
-        raise RuntimeError("synthetic")
+    An always-crashing loop leaves teardown one of two things to stop — a crash
+    callback already queued in the loop, or an armed backoff timer. The settling
+    sleep inside the ``async with`` puts it deterministically in the second case:
+    the crash callback has run and the timer is armed but has not fired. Without
+    the gate and the timer cancel, the replacement starts after the lifespan is
+    gone, against a closed http client and a shut-down manager.
+    """
+    from unittest.mock import AsyncMock, patch
 
-    def _restart() -> asyncio.Task[None]:
-        nonlocal restarted
-        restarted = True
-        return asyncio.create_task(asyncio.sleep(0))
+    from fastapi import FastAPI
 
-    task = asyncio.create_task(_boom())
-    task.add_done_callback(_watchdog("restart_task", _restart))
+    from agent_app import lifespan as lifespan_module
+    from agent_app.host.capabilities import CapabilitiesCache
+    from agent_app.status_push import StatusPushLoop
 
-    with pytest.raises(RuntimeError):
-        await asyncio.wait_for(task, timeout=1.0)
+    starts = 0
+    crashed_twice = asyncio.Event()
 
-    assert restarted is True
+    async def _always_crash(_self: StatusPushLoop) -> None:
+        nonlocal starts
+        starts += 1
+        if starts >= 2:
+            crashed_twice.set()
+        raise RuntimeError("synthetic status push crash")
+
+    monkeypatch.setattr(StatusPushLoop, "run_forever", _always_crash)
+    monkeypatch.setattr(lifespan_module.agent_settings.core, "host_id", "00000000-0000-0000-0000-000000000078")
+    # Compress the real 1 s backoff so the assertion below does not have to sleep
+    # through it. The schedule itself is Task 1's test, not this one's.
+    monkeypatch.setattr(lifespan_module, "_restart_delay", lambda *_args: 0.05)
+
+    with (
+        patch.object(CapabilitiesCache, "refresh", new_callable=AsyncMock),
+        patch.object(CapabilitiesCache, "run_refresh_loop", new_callable=AsyncMock),
+        patch.object(CapabilitiesCache, "get_or_refresh", new_callable=AsyncMock, return_value={}),
+        patch("agent_app.host.hardware_info.collect", return_value={}),
+        patch("agent_app.appium.appium_mgr.start_log_maintenance"),
+        patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
+    ):
+        async with lifespan_module.lifespan(FastAPI()):
+            await asyncio.wait_for(crashed_twice.wait(), timeout=5.0)
+            # Let the crash callback run so the backoff timer is armed — without
+            # this the exit races the callback and the timer may not exist yet.
+            await asyncio.sleep(0.01)
+
+    starts_at_teardown = starts
+    await asyncio.sleep(0.2)
+
+    assert starts == starts_at_teardown, "teardown did not stop the crash loop"
