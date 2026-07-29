@@ -33,7 +33,9 @@ class PackArtifact(Base):
     path: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     sha256: Mapped[str | None] = mapped_column(String, nullable=True)
     size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    state: Mapped[PackArtifactState] = mapped_column(Enum(PackArtifactState, native_enum=False), nullable=False)
+    state: Mapped[PackArtifactState] = mapped_column(
+        Enum(PackArtifactState, native_enum=False, create_constraint=True), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     state_changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

@@ -78,7 +78,7 @@ def upgrade() -> None:
         sa.Column("size_bytes", sa.BigInteger(), nullable=True),
         sa.Column(
             "state",
-            sa.Enum("pending", "active", "orphaned", name="packartifactstate", native_enum=False),
+            sa.Enum("pending", "active", "orphaned", name="packartifactstate", native_enum=False, create_constraint=True),
             nullable=False,
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),

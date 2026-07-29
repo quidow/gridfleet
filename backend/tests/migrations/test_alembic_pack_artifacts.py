@@ -18,6 +18,7 @@ import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -131,6 +132,12 @@ async def test_upgrade_backfills_only_artifacts_present_on_disk(tmp_path: Path) 
         assert await h.fetch("SELECT path, sha256, size_bytes, state FROM pack_artifacts ORDER BY path") == [
             (str(present), "sha-present", len(b"tarball-bytes"), "active")
         ]
+
+        with pytest.raises(IntegrityError):
+            await h.execute(
+                "INSERT INTO pack_artifacts (id, path, state) VALUES (:id, :path, 'invalid')",
+                {"id": str(uuid.uuid4()), "path": str(tmp_path / "invalid.tar.gz")},
+            )
 
 
 async def test_revision_round_trips(tmp_path: Path) -> None:
