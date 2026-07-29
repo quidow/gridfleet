@@ -60,8 +60,21 @@ async def escalate_remediation_failure(
         prior=prior,
     )
     shelved = ladder.attempts >= settings.get_int("general.lifecycle_recovery_review_threshold")
-    if shelved:
-        await review.mark_review_required(db, device, reason=reason, source=source)
+    if shelved and await review.mark_review_required(db, device, reason=reason, source=source):
+        # The flag went off -> on here, so THIS episode owns the shelving. Record
+        # that as an append-only fact: ``review_reason`` and ``review_set_at`` are
+        # mutable and shared with other shelving sources, so a later reader cannot
+        # reconstruct ownership from them (a re-flag overwrites the reason in place
+        # and deliberately keeps the original set_at). Only the transition is
+        # recorded — a no-op re-flag of an already-shelved device writes nothing.
+        marker = await remediation_log.append_action(
+            db,
+            device.id,
+            source=source,
+            action=remediation_log.ACTION_REVIEW_SHELVED,
+            reason=reason,
+        )
+        ladder = remediation_log.advance_ladder(ladder, marker)
     assert entry.backoff_until is not None
     return EscalationOutcome(
         backoff_until_iso=entry.backoff_until.isoformat(),

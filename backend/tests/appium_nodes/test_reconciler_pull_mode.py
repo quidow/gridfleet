@@ -370,17 +370,222 @@ async def test_pull_host_start_failure_uses_shared_exponential_backoff(
     assert before_first + timedelta(seconds=5) <= first_backoff_until <= after_first + timedelta(seconds=5)
 
     t1 = (datetime.now(UTC) + timedelta(seconds=1)).isoformat()
-    before_second = datetime.now(UTC)
+    # The second report arrives inside the first backoff window: folded, not escalated.
     await svc._ingest_start_failure_reports(
         [row], [_start_failure(kind="spawn_failed", connection_target=device.connection_target, at=t1)]
     )
+    assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 1
+
+    # Expire the window; the next report climbs one rung with a doubled delay.
+    await db_session.execute(
+        text("UPDATE device_remediation_log SET backoff_until = now() - interval '1 second' WHERE device_id = :d"),
+        {"d": device.id},
+    )
+    await db_session.commit()
+    t2 = (datetime.now(UTC) + timedelta(seconds=2)).isoformat()
+    before_second = datetime.now(UTC)
+    await svc._ingest_start_failure_reports(
+        [row], [_start_failure(kind="spawn_failed", connection_target=device.connection_target, at=t2)]
+    )
     after_second = datetime.now(UTC)
-    await db_session.refresh(device)
     second_ladder = await remediation_log.load_ladder(db_session, device.id)
     assert second_ladder.attempts == 2
     assert second_ladder.backoff_until is not None
-    second_backoff_until = second_ladder.backoff_until
-    assert before_second + timedelta(seconds=10) <= second_backoff_until <= after_second + timedelta(seconds=10)
+    assert before_second + timedelta(seconds=10) <= second_ladder.backoff_until <= after_second + timedelta(seconds=10)
+
+
+@pytest.mark.db
+async def test_start_failures_are_ingested_for_a_row_in_recovery_backoff(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """D4a: a row in backoff still folds its reports — the agent's ring must not
+    accumulate a backlog that lands as a burst when the window closes."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="backoff-ingest",
+        identity_value="backoff-ingest-001",
+        connection_target="backoff-ingest-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=None,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    row = _desired_row(
+        device_id=device.id,
+        host_id=db_host.id,
+        node_id=node.id,
+        connection_target=device.connection_target,
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=None,
+        active_connection_target=None,
+    )
+    svc = ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({"general.lifecycle_recovery_backoff_base_sec": 60}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=db_session_maker,
+    )
+
+    first = _start_failure(connection_target=device.connection_target, kind="spawn_failed")
+    await svc._ingest_start_failure_reports([row], [first])
+    assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 1
+
+    # Second report, inside the 60s backoff window: folded, never escalated.
+    later = _start_failure(
+        connection_target=device.connection_target,
+        kind="spawn_failed",
+        at=(datetime.now(UTC) + timedelta(seconds=1)).isoformat(),
+    )
+    await svc._ingest_start_failure_reports([row], [later])
+
+    assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 1
+    assert svc._last_seen_failure_at[device.id] == later["at"], "the report was not folded"
+
+
+@pytest.mark.db
+async def test_a_burst_of_queued_reports_escalates_the_ladder_once(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """D4b: the measured shape to make impossible — 35 queued reports, 35 rungs."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="burst-ingest",
+        identity_value="burst-ingest-001",
+        connection_target="burst-ingest-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=None,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    row = _desired_row(
+        device_id=device.id,
+        host_id=db_host.id,
+        node_id=node.id,
+        connection_target=device.connection_target,
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=None,
+        active_connection_target=None,
+    )
+    svc = ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader(
+            {
+                "general.lifecycle_recovery_backoff_base_sec": 60,
+                "general.lifecycle_recovery_review_threshold": 5,
+            }
+        ),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=db_session_maker,
+    )
+    base = datetime.now(UTC)
+    burst = [
+        _start_failure(
+            connection_target=device.connection_target,
+            kind="port_conflict",
+            at=(base + timedelta(milliseconds=index * 100)).isoformat(),
+        )
+        for index in range(35)
+    ]
+
+    await svc._ingest_start_failure_reports([row], burst)
+
+    ladder = await remediation_log.load_ladder(db_session, device.id)
+    assert ladder.attempts == 1, f"burst escalated {ladder.attempts} rungs"
+    await db_session.refresh(device)
+    assert device.review_required is False
+    assert svc._last_seen_failure_at[device.id] == burst[-1]["at"]
+
+
+@pytest.mark.db
+async def test_escalation_resumes_once_the_backoff_window_has_elapsed(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Rate-limited, not suppressed: the ladder still climbs, once per window."""
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="window-ingest",
+        identity_value="window-ingest-001",
+        connection_target="window-ingest-target",
+        operational_state=DeviceOperationalState.available,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=None,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+    )
+    db_session.add(node)
+    await db_session.commit()
+    row = _desired_row(
+        device_id=device.id,
+        host_id=db_host.id,
+        node_id=node.id,
+        connection_target=device.connection_target,
+        desired_state="running",
+        desired_port=4723,
+        port=4723,
+        pid=None,
+        active_connection_target=None,
+    )
+    svc = ReconcilerService(
+        publisher=Mock(),
+        settings=FakeSettingsReader({"general.lifecycle_recovery_backoff_base_sec": 60}),
+        pool=Mock(),
+        circuit_breaker=Mock(),
+        session_factory=db_session_maker,
+    )
+
+    await svc._ingest_start_failure_reports(
+        [row], [_start_failure(connection_target=device.connection_target, kind="spawn_failed")]
+    )
+    assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 1
+
+    # Expire the window the way time would, then report again.
+    await db_session.execute(
+        text("UPDATE device_remediation_log SET backoff_until = now() - interval '1 second' WHERE device_id = :d"),
+        {"d": device.id},
+    )
+    await db_session.commit()
+
+    await svc._ingest_start_failure_reports(
+        [row],
+        [
+            _start_failure(
+                connection_target=device.connection_target,
+                kind="spawn_failed",
+                at=(datetime.now(UTC) + timedelta(seconds=2)).isoformat(),
+            )
+        ],
+    )
+    assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 2
 
 
 @pytest.mark.db

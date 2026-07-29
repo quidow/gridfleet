@@ -23,7 +23,7 @@ from agent_app.appium.exceptions import (
     StartDeferredError,
     StartupTimeoutError,
 )
-from agent_app.appium.log_files import appium_log_path
+from agent_app.appium.log_files import appium_log_path, port_log_paths
 from agent_app.appium.process import (
     MAX_RESTART_EVENTS,
     AppiumInvocation,
@@ -2363,6 +2363,8 @@ async def test_start_appium_server_raises_runtime_missing_when_binary_not_found(
         pytest.raises(RuntimeMissingError, match="appium executable not found"),
     ):
         await manager._start_appium_server(spec, clear_logs_on_failure=True)
+
+    assert port_log_paths(4723) == []
 
 
 async def test_start_appium_server_clears_logs_when_clear_logs_on_failure_true() -> None:

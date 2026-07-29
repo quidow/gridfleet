@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 from typing import TYPE_CHECKING
 
@@ -142,3 +143,43 @@ async def test_subprocess_output_lands_in_file() -> None:
     lines = tail_lines(appium_log_path(4723), 100)
     assert "out line" in lines
     assert "err line" in lines
+
+
+def test_port_log_paths_are_newest_first_and_port_exact() -> None:
+    from agent_app.appium.log_files import appium_log_dir, port_log_paths, spawn_log_path
+
+    appium_log_dir().mkdir(parents=True, exist_ok=True)
+    older = spawn_log_path(4723, "aaaaaaaa")
+    newer = spawn_log_path(4723, "bbbbbbbb")
+    other_port = spawn_log_path(47231, "cccccccc")
+    for index, path in enumerate((older, newer, other_port)):
+        path.write_text("x")
+        os.utime(path, (index, index))
+
+    assert port_log_paths(4723) == [newer, older]
+    assert other_port not in port_log_paths(4723)
+
+
+def test_prune_port_logs_keeps_the_newest_n() -> None:
+    from agent_app.appium.log_files import appium_log_dir, port_log_paths, prune_port_logs, spawn_log_path
+
+    appium_log_dir().mkdir(parents=True, exist_ok=True)
+    paths = [spawn_log_path(4723, f"{index:08x}") for index in range(4)]
+    for index, path in enumerate(paths):
+        path.write_text("x")
+        os.utime(path, (index, index))
+
+    prune_port_logs(4723, keep=2)
+    assert port_log_paths(4723) == [paths[3], paths[2]]
+
+
+def test_remove_logs_for_port_clears_every_spawn() -> None:
+    from agent_app.appium.log_files import port_log_paths, remove_logs_for_port, spawn_log_path
+
+    for spawn_id in ("aaaaaaaa", "bbbbbbbb"):
+        path = spawn_log_path(4723, spawn_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x")
+
+    remove_logs_for_port(4723)
+    assert port_log_paths(4723) == []

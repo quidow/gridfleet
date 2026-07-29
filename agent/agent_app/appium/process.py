@@ -18,8 +18,10 @@ from typing import Any
 import httpx2 as httpx
 
 from agent_app import http_client
+from agent_app.appium import port_reclaim
 from agent_app.appium.exceptions import (
     AlreadyRunningError,
+    AppiumExitedError,
     DeviceNotFoundError,
     InvalidStartPayloadError,
     PortOccupiedError,
@@ -29,9 +31,14 @@ from agent_app.appium.exceptions import (
     StartupTimeoutError,
 )
 from agent_app.appium.log_files import (
+    LOG_FILES_PER_PORT,
     LOG_MAINTENANCE_INTERVAL_SEC,
     appium_log_path,
-    open_log_file,
+    newest_log_path,
+    open_spawn_log_file,
+    prune_port_logs,
+    remove_logs_for_port,
+    spawn_log_path,
     sweep_log_dir,
     tail_lines,
     truncate_oversized_logs,
@@ -774,23 +781,13 @@ class AppiumProcessManager:
         if spec.insecure_features:
             appium_cmd.extend(["--allow-insecure", ",".join(spec.insecure_features)])
 
-        if await self._can_connect_to_appium(spec.port):
-            raise PortOccupiedError(
-                f"Port {spec.port} is already in use by another Appium listener; "
-                "stop the existing process before starting a new managed node"
-            )
+        occupied = await self._port_occupied_detail(spec.port)
+        if occupied is not None and not await self._reclaim_unmanaged_port(spec.port):
+            raise PortOccupiedError(occupied)
 
-        if not self._is_appium_port_bindable(spec.port):
-            # Appium binds on 0.0.0.0; a non-Appium listener on this port would
-            # otherwise pass the HTTP probe above, then fail subprocess bind
-            # with EADDRINUSE — surfacing as a 30s readiness timeout instead of
-            # a fast 409.
-            raise PortOccupiedError(
-                f"Port {spec.port} is already bound on this host by a non-Appium listener; "
-                "stop the existing process before starting a new managed node"
-            )
-
-        log_file = open_log_file(spec.port)
+        spawn_id = uuid.uuid4().hex[:8]
+        log_path = spawn_log_path(spec.port, spawn_id)
+        log_file = open_spawn_log_file(spec.port, spawn_id)
         try:
             appium_proc = await asyncio.create_subprocess_exec(
                 *appium_cmd,
@@ -799,22 +796,42 @@ class AppiumProcessManager:
                 env=env,
             )
         except FileNotFoundError:
+            log_path.unlink(missing_ok=True)
             raise RuntimeMissingError(f"appium executable not found (last tried: {appium_bin})") from None
         finally:
             # Only the agent's copy of the fd — the child inherited its own.
             log_file.close()
 
+        wait_started = asyncio.get_event_loop().time()
         ready = await self._wait_for_readiness(spec.port, appium_proc)
         if not ready:
+            # Read the exit code BEFORE the kill below sets one: a child that
+            # died on its own is a different failure from one that never
+            # answered, and the distinction is the whole point of the message.
+            exit_code = appium_proc.returncode
+            waited_sec = asyncio.get_event_loop().time() - wait_started
             try:
                 appium_proc.kill()
                 await appium_proc.wait()
             except ProcessLookupError:
                 logger.debug("Appium process on port %d already exited before kill", spec.port, exc_info=True)
-            recent_logs = tail_lines(appium_log_path(spec.port), 20)
+            recent_logs = tail_lines(log_path, 20)
             if clear_logs_on_failure:
+                log_path.unlink(missing_ok=True)
                 appium_log_path(spec.port).unlink(missing_ok=True)
+            # Bound the file count on the failure exit too. ``clear_logs_on_failure``
+            # is only true before a port's first successful start, so a node that
+            # started once and then fell into a spawn-and-die loop would otherwise
+            # leave one file per retry, forever — and the convergence loop retries
+            # every few seconds. Pruning to the same cap keeps the most recent
+            # failure logs (the point of the per-spawn split) without unbounded growth.
+            prune_port_logs(spec.port, keep=LOG_FILES_PER_PORT)
             log_snippet = "\n".join(recent_logs) if recent_logs else "(no output captured)"
+            if exit_code is not None:
+                raise AppiumExitedError(
+                    f"Appium on port {spec.port} exited with code {exit_code} after {waited_sec:.1f}s "
+                    f"without becoming ready. Output:\n{log_snippet}"
+                )
             raise StartupTimeoutError(
                 f"Appium on port {spec.port} did not become ready within {READINESS_TIMEOUT}s. Output:\n{log_snippet}"
             )
@@ -826,6 +843,7 @@ class AppiumProcessManager:
             spec.port,
             asyncio.create_task(self._watch_appium_process(spec.port, appium_proc)),
         )
+        prune_port_logs(spec.port, keep=LOG_FILES_PER_PORT)
         return appium_proc
 
     async def start(
@@ -854,7 +872,6 @@ class AppiumProcessManager:
         if not pack_id or not platform_id:
             raise InvalidStartPayloadError("Appium start requires pack_id and platform_id")
         _validate_appium_port_in_range(port)
-        self._cancel_task(self._appium_restart_tasks, port)
         resolved_connection_target = connection_target
         pack_worker: WorkerHandle | None = None
         pack_worker_release: str | None = None
@@ -919,6 +936,12 @@ class AppiumProcessManager:
             connection_behavior=dict(connection_behavior) if connection_behavior else {},
         )
         async with self._start_lock:
+            # Cancelling this port's auto-restart task is only safe under the
+            # start lock. Every Appium spawn happens inside
+            # ``_start_appium_server``, which runs holding this lock, so a task
+            # cancelled here has either not spawned yet or has already
+            # registered what it spawned — never a live child nothing tracks.
+            self._cancel_task(self._appium_restart_tasks, port)
             if port in self._appium_procs and self._appium_procs[port].returncode is None:
                 raise AlreadyRunningError(f"Appium already running on port {port}")
             duplicate = self._running_info_for_target(
@@ -1114,7 +1137,7 @@ class AppiumProcessManager:
                     appium_proc.kill()
                     await appium_proc.wait()
 
-            appium_log_path(port).unlink(missing_ok=True)
+            remove_logs_for_port(port)
             self._intentional_stop_ports.discard(port)
         await self._dispatch_post_session(spec)
 
@@ -1129,7 +1152,7 @@ class AppiumProcessManager:
         return {"running": True, "port": port, "pid": proc.pid, "appium_status": appium_status}
 
     def get_logs(self, port: int, lines: int = 100) -> list[str]:
-        return tail_lines(appium_log_path(port), lines)
+        return tail_lines(newest_log_path(port), lines)
 
     def list_running(self) -> list[AppiumProcessInfo]:
         running: list[AppiumProcessInfo] = []
@@ -1223,6 +1246,51 @@ class AppiumProcessManager:
 
     async def _can_connect_to_appium(self, port: int) -> bool:
         return await self._fetch_appium_status(port) is not None
+
+    async def _port_occupied_detail(self, port: int) -> str | None:
+        """Why *port* cannot be bound, or None when it is free."""
+        if await self._can_connect_to_appium(port):
+            return (
+                f"Port {port} is already in use by another Appium listener; "
+                "stop the existing process before starting a new managed node"
+            )
+        if not self._is_appium_port_bindable(port):
+            # Appium binds on 0.0.0.0; a non-Appium listener on this port would
+            # otherwise pass the HTTP probe above, then fail subprocess bind
+            # with EADDRINUSE — surfacing as a 30s readiness timeout instead of
+            # a fast 409.
+            return (
+                f"Port {port} is already bound on this host by a non-Appium listener; "
+                "stop the existing process before starting a new managed node"
+            )
+        return None
+
+    def _tracked_appium_pids(self) -> set[int]:
+        return {proc.pid for proc in self._appium_procs.values() if proc.returncode is None}
+
+    async def _reclaim_unmanaged_port(self, port: int) -> bool:
+        """Terminate an unmanaged Appium this host started on *port*.
+
+        Returns True when the port came free. Deliberately a single attempt: a
+        port still held after a successful reclaim means something else is
+        wrong, and the caller's existing failure path should report it.
+        """
+        # Off the event loop: the lookup walks every process on the host and
+        # reads each one's argv (and sometimes its environ). This runs on every
+        # start attempt against an occupied port — once per convergence tick for
+        # as long as a port conflict lasts — and blocking here stalls the agent's
+        # HTTP server and its probe coroutines for the whole scan.
+        victim = await asyncio.to_thread(
+            port_reclaim.find_agent_owned_appium,
+            port=port,
+            runtime_root=agent_settings.runtime.runtime_root,
+            exclude_pids=self._tracked_appium_pids(),
+        )
+        if victim is None:
+            return False
+        logger.warning("Reclaiming unmanaged Appium pid=%d holding desired port %d", victim.pid, port)
+        await port_reclaim.terminate_process(victim)
+        return (await self._port_occupied_detail(port)) is None
 
     def _is_appium_port_bindable(self, port: int) -> bool:
         # Mirror Appium's own bind (0.0.0.0, SO_REUSEADDR) so the probe returns

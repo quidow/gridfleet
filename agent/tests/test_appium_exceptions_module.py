@@ -6,6 +6,7 @@ from __future__ import annotations
 def test_exceptions_importable_from_dedicated_module() -> None:
     from agent_app.appium.exceptions import (
         AlreadyRunningError,
+        AppiumExitedError,
         DeviceNotFoundError,
         InvalidStartPayloadError,
         PortOccupiedError,
@@ -16,6 +17,7 @@ def test_exceptions_importable_from_dedicated_module() -> None:
 
     for cls in (
         AlreadyRunningError,
+        AppiumExitedError,
         DeviceNotFoundError,
         InvalidStartPayloadError,
         PortOccupiedError,
@@ -29,6 +31,7 @@ def test_exceptions_importable_from_dedicated_module() -> None:
 def test_exception_classes_are_defined_in_exceptions_module() -> None:
     from agent_app.appium.exceptions import (
         AlreadyRunningError,
+        AppiumExitedError,
         DeviceNotFoundError,
         InvalidStartPayloadError,
         PortOccupiedError,
@@ -39,6 +42,7 @@ def test_exception_classes_are_defined_in_exceptions_module() -> None:
 
     for cls in (
         AlreadyRunningError,
+        AppiumExitedError,
         DeviceNotFoundError,
         InvalidStartPayloadError,
         PortOccupiedError,
