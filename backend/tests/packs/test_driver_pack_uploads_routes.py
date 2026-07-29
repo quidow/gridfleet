@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import tarfile
 from contextlib import asynccontextmanager
@@ -203,6 +204,48 @@ async def test_reupload_same_release_restores_missing_artifact(
     fetch_res = await client.get("/api/driver-packs/vendor-foo/releases/0.1.0/tarball")
     assert fetch_res.status_code == 200
     assert fetch_res.content == tarball
+
+
+async def test_reupload_emits_only_for_new_or_restored_artifacts(
+    client: AsyncClient,
+    db_session: AsyncSession,
+) -> None:
+    tarball = _tarball()
+    files = {"tarball": ("vendor-foo-0.1.0.tar.gz", tarball, "application/gzip")}
+
+    assert (await client.post("/api/driver-packs/uploads", files=files)).status_code == 201
+    assert (await client.post("/api/driver-packs/uploads", files=files)).status_code == 201
+
+    release = (
+        await db_session.execute(
+            select(DriverPackRelease).where(
+                DriverPackRelease.pack_id == "vendor-foo",
+                DriverPackRelease.release == "0.1.0",
+            )
+        )
+    ).scalar_one()
+    assert release.artifact_path is not None
+    Path(release.artifact_path).unlink()
+
+    assert (await client.post("/api/driver-packs/uploads", files=files)).status_code == 201
+
+    events = (
+        (
+            await db_session.execute(
+                select(SystemEvent).where(SystemEvent.type == "driver_pack.upload").order_by(SystemEvent.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    payload = {
+        "uploaded_by": "anonymous-admin",
+        "pack_id": "vendor-foo",
+        "release": "0.1.0",
+        "artifact_sha256": hashlib.sha256(tarball).hexdigest(),
+        "origin_filename": "vendor-foo-0.1.0.tar.gz",
+    }
+    assert [event.data for event in events] == [payload, payload]
 
 
 async def test_tarball_fetch_404_when_artifact_file_missing(
