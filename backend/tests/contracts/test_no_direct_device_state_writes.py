@@ -28,7 +28,7 @@ from tests.contracts.test_repository_transaction_boundaries import (
     parse_module,
     relative_module,
 )
-from tests.contracts.test_transaction_boundaries import MIGRATED_TRANSACTION_LOCAL_MODULES
+from tests.contracts.transaction_local_modules import MIGRATED_TRANSACTION_LOCAL_MODULES
 
 BACKEND_APP = Path(__file__).resolve().parents[2] / "app"
 BACKEND_ROOT = BACKEND_APP.parent

@@ -1,6 +1,6 @@
 """Phase 9 structural guards: no boundary argument, and no remote call under ``begin()``.
 
-``tests/contracts/test_transaction_boundaries.py`` owns the ``commit()`` /
+``tests/contracts/test_repository_transaction_boundaries.py`` owns the ``commit()`` /
 ``rollback()`` call scan and is not duplicated here. This file covers the two
 things that scan cannot see:
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from tests.contracts.test_transaction_boundaries import MIGRATED_TRANSACTION_LOCAL_MODULES
+from tests.contracts.transaction_local_modules import MIGRATED_TRANSACTION_LOCAL_MODULES
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
