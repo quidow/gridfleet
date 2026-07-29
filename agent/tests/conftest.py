@@ -9,6 +9,30 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+# Unroutable by construction: port 1 is privileged and never bound, so a leaked
+# request fails instantly instead of reaching a live backend on :8000.
+UNROUTABLE_MANAGER_URL = "http://127.0.0.1:1"
+
+
+@pytest.fixture(autouse=True)
+def _fence_manager_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point every test at an unroutable manager — environment and singleton both.
+
+    The environment covers code that rebuilds settings (``importlib.reload`` in
+    test_docs_gating, or any bare ``ManagerSettings()``); the patched singleton
+    covers every module already holding the import-time instance. Neither covers
+    the other: reloading ``agent_app.config`` rebinds ``agent_settings`` to a
+    fresh object the patch never reaches.
+
+    A test that genuinely needs a manager URL sets its own, as
+    ``tests/test_config.py`` does — a later ``monkeypatch`` call wins.
+    """
+    monkeypatch.setenv("AGENT_MANAGER_URL", UNROUTABLE_MANAGER_URL)
+    monkeypatch.delenv("AGENT_BACKEND_URL", raising=False)
+    monkeypatch.setattr(agent_settings.manager, "manager_url", UNROUTABLE_MANAGER_URL)
+    monkeypatch.setattr(agent_settings.manager, "backend_url", None)
+
+
 @pytest.fixture(autouse=True)
 async def reset_shared_http_client() -> object:
     """Close the process-wide httpx client after each test on its own event loop.
