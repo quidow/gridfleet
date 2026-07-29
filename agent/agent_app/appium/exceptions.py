@@ -19,6 +19,15 @@ class StartupTimeoutError(RuntimeError):
     """Raised when an Appium process fails to become ready within the timeout."""
 
 
+class AppiumExitedError(RuntimeError):
+    """Raised when an Appium process died before becoming ready.
+
+    Distinct from ``StartupTimeoutError``: the loser of an ``EADDRINUSE`` bind
+    race dies in milliseconds, and reporting that as a 30-second readiness
+    timeout sent the original port-conflict diagnosis down the wrong path.
+    """
+
+
 class RuntimeMissingError(RuntimeError):
     """Raised when no runtime is available to serve the requested pack."""
 

@@ -34,6 +34,59 @@ def open_log_file(port: int) -> BinaryIO:
     return appium_log_path(port).open("ab")
 
 
+LOG_FILES_PER_PORT = 2
+
+
+def spawn_log_path(port: int, spawn_id: str) -> Path:
+    """The log file for one spawn. Two racing processes on a port get two files."""
+    return appium_log_dir() / f"appium-{port}-{spawn_id}.log"
+
+
+def open_spawn_log_file(port: int, spawn_id: str) -> BinaryIO:
+    appium_log_dir().mkdir(parents=True, exist_ok=True)
+    return spawn_log_path(port, spawn_id).open("ab")
+
+
+def _matches_port(path: Path, port: int) -> bool:
+    """Exact port match: ``appium-4723*.log`` also globs port 47231."""
+    return path.stem == f"appium-{port}" or path.stem.startswith(f"appium-{port}-")
+
+
+def port_log_paths(port: int) -> list[Path]:
+    """Every log file for *port*, newest first (spawn files and the legacy name)."""
+    log_dir = appium_log_dir()
+    if not log_dir.is_dir():
+        return []
+    dated: list[tuple[float, Path]] = []
+    for path in log_dir.glob(f"appium-{port}*.log"):
+        if not _matches_port(path, port):
+            continue
+        try:
+            dated.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    return [path for _, path in sorted(dated, reverse=True)]
+
+
+def newest_log_path(port: int) -> Path:
+    """What ``/agent/appium/{port}/logs`` reads: the most recent spawn's file."""
+    paths = port_log_paths(port)
+    return paths[0] if paths else appium_log_path(port)
+
+
+def remove_logs_for_port(port: int) -> None:
+    for path in port_log_paths(port):
+        with contextlib.suppress(OSError):
+            path.unlink()
+
+
+def prune_port_logs(port: int, *, keep: int) -> None:
+    """Keep the *keep* newest spawn logs for a port; delete the rest."""
+    for path in port_log_paths(port)[keep:]:
+        with contextlib.suppress(OSError):
+            path.unlink()
+
+
 def tail_lines(path: Path, lines: int) -> list[str]:
     """Return up to the last *lines* lines of *path*, reading at most ``TAIL_READ_BYTES``."""
     try:
