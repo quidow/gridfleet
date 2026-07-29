@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.db
 
 _PACK_ID = "vendor-foo"
+_PACK_ARTIFACT_REVISION = "20260729_pack_artifacts"
 
 
 class _Harness:
@@ -65,11 +66,9 @@ class _Harness:
             return list((await conn.execute(text(sql))).all())
 
 
-def _previous_head(cfg: Config) -> str:
+def _previous_revision(cfg: Config) -> str:
     script = ScriptDirectory.from_config(cfg)
-    head = script.get_current_head()
-    assert head is not None
-    revision = script.get_revision(head)
+    revision = script.get_revision(_PACK_ARTIFACT_REVISION)
     assert revision is not None and isinstance(revision.down_revision, str)
     return revision.down_revision
 
@@ -88,7 +87,7 @@ async def _harness(label: str) -> AsyncIterator[tuple[_Harness, str]]:
         async with engine.begin() as conn:
             await conn.execute(text(f'CREATE SCHEMA "{schema_name}"'))
         harness = _Harness(engine, cfg)
-        predecessor = _previous_head(cfg)
+        predecessor = _previous_revision(cfg)
         await harness.upgrade(predecessor)
         yield harness, predecessor
     finally:
@@ -127,7 +126,7 @@ async def test_upgrade_backfills_only_artifacts_present_on_disk(tmp_path: Path) 
         await _seed_release(h, "0.2.0", str(gone), "sha-gone")
         await _seed_release(h, "0.3.0", None, "sha-none")
 
-        await h.upgrade("head")
+        await h.upgrade(_PACK_ARTIFACT_REVISION)
 
         assert await h.fetch("SELECT path, sha256, size_bytes, state FROM pack_artifacts ORDER BY path") == [
             (str(present), "sha-present", len(b"tarball-bytes"), "active")
@@ -147,11 +146,11 @@ async def test_revision_round_trips(tmp_path: Path) -> None:
     async with _harness("round_trip") as (h, predecessor):
         await _seed_release(h, "0.1.0", str(present), "sha-present")
 
-        await h.upgrade("head")
+        await h.upgrade(_PACK_ARTIFACT_REVISION)
         await h.downgrade(predecessor)
 
         assert await h.fetch("SELECT to_regclass('pack_artifacts')::text") == [(None,)]
 
-        await h.upgrade("head")
+        await h.upgrade(_PACK_ARTIFACT_REVISION)
 
         assert await h.fetch("SELECT path, state FROM pack_artifacts") == [(str(present), "active")]

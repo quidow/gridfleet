@@ -85,8 +85,8 @@ class _ObservedPackSessions:
     Two things the routes owe their callers are only observable from here: that
     a mutation runs inside a factory-owned transaction at all, and that the
     filesystem work happens once that transaction has ended. ``fail_before_exit``
-    injects the failure as a real statement against a table that does not exist,
-    so the transaction is genuinely aborted rather than left artificially clean.
+    injects the failure at every boundary when true, or at one selected ordinal,
+    as a real statement against a table that does not exist.
 
     Only ``begin()`` is wrapped: no pack route takes the plain ``session_factory()``
     read form, so a stand-in for it would be scaffolding nothing could keep honest.
@@ -95,7 +95,7 @@ class _ObservedPackSessions:
     def __init__(self) -> None:
         self._inner: async_sessionmaker[AsyncSession] | None = None
         self.sessions: list[AsyncSession] = []
-        self.fail_before_exit = False
+        self.fail_before_exit: bool | int = False
 
     def bind(self, inner: async_sessionmaker[AsyncSession]) -> None:
         """Adopt the factory the container built for this request."""
@@ -106,16 +106,17 @@ class _ObservedPackSessions:
         assert self._inner is not None, "no request has resolved the pack container yet"
         return self._inner
 
-    async def _inject(self, db: AsyncSession) -> None:
-        if self.fail_before_exit:
+    async def _inject(self, db: AsyncSession, boundary: int) -> None:
+        if self.fail_before_exit is True or self.fail_before_exit == boundary:
             await db.execute(text("SELECT 1 FROM gridfleet_no_such_table"))
 
     @asynccontextmanager
     async def begin(self) -> AsyncIterator[AsyncSession]:
         async with self._bound.begin() as db:
             self.sessions.append(db)
+            boundary = len(self.sessions)
             yield db
-            await self._inject(db)
+            await self._inject(db, boundary)
 
     @property
     def open_transactions(self) -> int:
@@ -503,8 +504,7 @@ def _watch_unlinks(monkeypatch: pytest.MonkeyPatch, observed: _ObservedPackSessi
     """Record, per ``Path.unlink`` call, how many pack transactions were open.
 
     Armed after the uploads that seed a test, so the spy covers only the two
-    deletion paths — the upload path deliberately writes its artifact inside its
-    transaction.
+    deletion paths; the upload boundary has its own write spy below.
     """
     open_at_unlink: list[int] = []
     real_unlink = Path.unlink
@@ -736,13 +736,13 @@ async def test_a_failed_unlink_leaves_the_ledger_row_orphaned_for_the_reaper(
     )
 
 
-async def test_upload_rolls_back_metadata_outbox_and_reservation_together(
+async def test_upload_rolls_back_metadata_and_outbox_when_activation_fails(
     client: AsyncClient,
     db_session: AsyncSession,
     observed_pack_sessions: _ObservedPackSessions,
 ) -> None:
-    """A failed upload leaves no row, no outbox event and no ledger reservation."""
-    observed_pack_sessions.fail_before_exit = True
+    """Boundary two couples metadata, outbox, and ledger activation atomically."""
+    observed_pack_sessions.fail_before_exit = 2
 
     with pytest.raises(ProgrammingError):
         await client.post(
@@ -755,7 +755,11 @@ async def test_upload_rolls_back_metadata_outbox_and_reservation_together(
     assert (await db_session.scalar(select(SystemEvent).where(SystemEvent.type == "driver_pack.upload"))) is None, (
         "the outbox row survived a rolled-back upload"
     )
-    assert (await db_session.scalars(select(PackArtifact))).all() == [], "the reservation survived a rolled-back upload"
+    reservation = (await db_session.scalars(select(PackArtifact))).one()
+    assert reservation.state is PackArtifactState.pending
+    assert reservation.sha256 is None
+    assert reservation.size_bytes is None
+    assert Path(reservation.path).is_file()
 
 
 async def test_release_mutations_roll_back_on_a_pre_exit_failure(
