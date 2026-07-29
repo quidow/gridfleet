@@ -351,7 +351,7 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
         ),
     )
     assert (
-        await device_groups.create_group(DeviceGroupCreate(key=group_key, name="g"), db=db, device_services=ds_create)
+        await device_groups.create_group(DeviceGroupCreate(key=group_key, name="g"), device_services=ds_create)
         == created_payload
     )
     ds_create.groups.get_group.assert_not_awaited()
@@ -376,15 +376,13 @@ async def test_device_groups_router_paths(monkeypatch: pytest.MonkeyPatch) -> No
         session_factory=FakeSessionFactory(db), groups=SimpleNamespace(update_group=AsyncMock(return_value=None))
     )
     with pytest.raises(HTTPException):
-        await device_groups.update_group(
-            group_key, DeviceGroupUpdate(name="new"), db=db, device_services=ds_update_none
-        )
+        await device_groups.update_group(group_key, DeviceGroupUpdate(name="new"), device_services=ds_update_none)
 
     ds_delete_false = SimpleNamespace(
         session_factory=FakeSessionFactory(db), groups=SimpleNamespace(delete_group=AsyncMock(return_value=False))
     )
     with pytest.raises(HTTPException):
-        await device_groups.delete_group(group_key, db=db, device_services=ds_delete_false)
+        await device_groups.delete_group(group_key, device_services=ds_delete_false)
 
     ds_dynamic = SimpleNamespace(groups=SimpleNamespace(get_group_type=AsyncMock(return_value=GroupType.dynamic)))
     with pytest.raises(HTTPException):
