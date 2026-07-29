@@ -242,6 +242,7 @@ BEGIN_OWNER_REGISTRY: frozenset[BoundaryOwner] = frozenset(
         BoundaryOwner("app/core/db_retry.py", "retry_on_serialization_failure", "infrastructure"),
         BoundaryOwner("app/core/observability.py", "flush_background_loop_snapshots", "infrastructure"),
         BoundaryOwner("app/devices/services/data_cleanup.py", "_delete_in_batches", "infrastructure"),
+        BoundaryOwner("app/packs/services/artifact_reaper.py", "run_pack_artifact_reaper_stage", "infrastructure"),
         BoundaryOwner(
             "app/devices/services/fleet_capacity.py",
             "FleetCapacityService.collect_capacity_snapshot_once",

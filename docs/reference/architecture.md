@@ -14,9 +14,10 @@ Background maintenance loops run in a single dedicated **scheduler process** —
 - Sync stray sessions on Appium that don't belong to the internal state.
 - Expire stale queue tickets and fail crash-orphaned pending rows (`grid_allocation_reaper`).
 - Transition device maintenance lifecycles (`device_intent_reconciler`).
-- Run trivial periodic chores as `stage_due` stages of the `janitor` loop (base tick 15 s): `run_reaper`, `fleet_capacity` (60 s), `pack_drain` backstop (60 s), `release_rollout` (60 s), `data_cleanup` (hourly, skips boot), and the heartbeat-snapshot flush (15 s).
+- Run trivial periodic chores as `stage_due` stages of the `janitor` loop (base tick 15 s): `run_reaper`, `fleet_capacity` (60 s), `pack_drain` backstop (60 s), `pack_artifact_reaper` (5 min), `release_rollout` (60 s), `data_cleanup` (hourly, skips boot), and the heartbeat-snapshot flush (15 s).
 
 **Scheduling doctrine:** a `BackgroundLoop` per independent lifecycle; `stage_due` stages only as sub-cadences of an owning sweep (host_sweep's partition probe; the janitor's stages above). Stage cadences are plumbing constants, never registry settings. Pack drain is event-driven — session/run release paths call `complete_drain_if_draining` inline so a pack disables on the release commit; the janitor's `pack_drain` stage is only the backstop.
+The `pack_artifact_reaper` stage is a backstop too: the pack delete routes unlink inline and drop their own `pack_artifacts` ledger rows, and the stage only collects the rows a failed unlink or a crashed upload left behind.
 
 ### Appium node lifecycle
 

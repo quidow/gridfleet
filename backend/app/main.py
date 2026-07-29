@@ -74,6 +74,10 @@ from app.hosts import router as hosts
 from app.hosts import router_agent as hosts_router_agent
 from app.lifecycle import router as lifecycle_router
 from app.packs import routers as pack_routers
+from app.packs.services.artifact_reaper import (
+    PACK_ARTIFACT_REAP_STAGE_INTERVAL_SEC,
+    run_pack_artifact_reaper_stage,
+)
 from app.packs.services.release_rollout import RELEASE_ROLLOUT_STAGE_INTERVAL_SEC, run_release_rollout_stage
 from app.portability import router as portability_router
 from app.runs import router as runs_router
@@ -192,6 +196,7 @@ def _build_janitor(app_services: AppServices) -> JanitorLoop:
             JanitorStage("run_reaper", JANITOR_BASE_INTERVAL_SEC, _run_reaper_stage),
             JanitorStage("fleet_capacity", 60.0, _fleet_capacity_stage),
             JanitorStage("pack_drain", 60.0, _pack_drain_stage),
+            JanitorStage("pack_artifact_reaper", PACK_ARTIFACT_REAP_STAGE_INTERVAL_SEC, run_pack_artifact_reaper_stage),
             JanitorStage("release_rollout", RELEASE_ROLLOUT_STAGE_INTERVAL_SEC, _release_rollout_stage),
             JanitorStage("data_cleanup", 3600.0, _data_cleanup_stage, skip_first_cycle=True),
             JanitorStage("flush", BACKGROUND_LOOP_FLUSH_INTERVAL_SEC, _flush_stage),
