@@ -346,7 +346,19 @@ async def _record_start_failure(
         locked = await _lock_device_for_reconciler(db, row.device_id)
         if locked is None:
             return
-        snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
+        now = now_utc()
+        snapshot = await load_device_decision_snapshot(db, locked, now=now)
+        if snapshot.ladder.backoff_active(now=now) is not None:
+            # One escalation per failure episode. The agent keeps retrying (and
+            # keeps reporting) on its own cadence while the backend's recovery
+            # window is open; climbing a rung per report is what turned a single
+            # transient port conflict into terminal review_required.
+            logger.info(
+                "appium_reconciler_start_failure_within_backoff",
+                device_id=str(row.device_id),
+                reason=reason,
+            )
+            return
         await escalate_device_remediation_failure(
             db,
             locked.device,
@@ -464,6 +476,11 @@ class ReconcilerService:
                 clear_observed = self._write_observed_factory()
                 for row in sorted(stale_rows, key=lambda item: str(item.device_id)):
                     await clear_observed(row=row, state="stopped", port=None, pid=None, details=NodeStartDetails())
+            # Start failures are observations, not decisions: fold them for
+            # every row on the host, including rows in recovery backoff. Gating
+            # ingestion on the ladder let the agent's ring accumulate a backlog
+            # that landed as one rung per queued report when the window closed.
+            await self._ingest_start_failure_reports(rows, raw_start_failures)
             active_rows = [
                 row
                 for row in rows
@@ -479,7 +496,6 @@ class ReconcilerService:
             # restart -> None; the observed-column sync lands on the next
             # cycle's fresh fetch_desired_rows. Scoped to active_rows
             # (backoff-excluded rows never converge this cycle anyway).
-            await self._ingest_start_failure_reports(active_rows, raw_start_failures)
             await self.converge_host_rows(
                 active_rows,
                 observed,
@@ -571,9 +587,11 @@ class ReconcilerService:
         return row, kind, failure.get("port"), at
 
     async def _ingest_start_failures(self, rows: list[DesiredRow], start_failures: list[dict[str, Any]]) -> None:
-        """Ingest agent-reported ``start_failures`` (D3): a ``port_conflict`` re-pins
-        ``desired_port`` to the next free candidate and trips the existing
-        start-failure backoff; a ``spawn_failed`` trips backoff only.
+        """Level-style ingest, collapsed to the newest ``start_failure`` per device.
+
+        A ``port_conflict`` re-pins ``desired_port`` to the next free candidate
+        and trips the existing start-failure backoff; a ``spawn_failed`` trips
+        backoff only.
 
         Only rows desired ``running`` can have a start failure. A failed start
         has no ``active_connection_target``, so failures match by
@@ -585,11 +603,18 @@ class ReconcilerService:
         running_by_target = _running_rows_by_target(rows)
         if not running_by_target:
             return
+        # One action per device per ingestion window. The agent re-reports the
+        # same failure on every ~5s poll, so a window can carry dozens of
+        # entries for one device; only the newest describes the current state.
+        newest: dict[uuid.UUID, tuple[DesiredRow, str, object, str]] = {}
         for failure in start_failures:
             matched = self._match_new_start_failure(failure, running_by_target)
             if matched is None:
                 continue
-            row, kind, port, at = matched
+            current = newest.get(matched[0].device_id)
+            if current is None or matched[3] > current[3]:
+                newest[matched[0].device_id] = matched
+        for device_id, (row, kind, port, at) in sorted(newest.items(), key=lambda item: str(item[0])):
             if kind == "port_conflict":
                 await _record_start_failure(
                     row,
@@ -605,7 +630,7 @@ class ReconcilerService:
             # Cursor advances only here, after the command's transaction context
             # exited successfully: a raised command leaves it behind so the same
             # ring entry is retried on the next push.
-            self._last_seen_failure_at[row.device_id] = at
+            self._last_seen_failure_at[device_id] = at
 
     def _write_observed_factory(self) -> Callable[..., Awaitable[None]]:
         async def _write(
