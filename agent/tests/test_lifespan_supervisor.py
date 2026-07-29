@@ -32,6 +32,11 @@ def test_restart_delay_is_capped_far_out() -> None:
     assert _restart_delay(40, _RESTART_BASE_DELAY_SEC, _RESTART_MAX_DELAY_SEC) == _RESTART_MAX_DELAY_SEC
 
 
+def test_restart_delay_is_capped_above_float_exponent_limit() -> None:
+    """Capping must happen before an unrepresentable exponent is evaluated."""
+    assert _restart_delay(1025, _RESTART_BASE_DELAY_SEC, _RESTART_MAX_DELAY_SEC) == _RESTART_MAX_DELAY_SEC
+
+
 def test_restart_constants_are_the_documented_values() -> None:
     """docs/reference/architecture.md quotes these three numbers; keep them honest."""
     assert (_RESTART_BASE_DELAY_SEC, _RESTART_MAX_DELAY_SEC, _RESTART_HEALTHY_AFTER_SEC) == (1.0, 60.0, 60.0)

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from math import log2
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
@@ -69,6 +70,8 @@ def _restart_delay(consecutive_crashes: int, base: float, cap: float) -> float:
     """
     if consecutive_crashes <= 0:
         return 0.0
+    if consecutive_crashes > log2(cap / base) + 1:
+        return cap
     return min(base * 2.0 ** (consecutive_crashes - 1), cap)
 
 
