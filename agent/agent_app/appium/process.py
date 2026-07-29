@@ -854,7 +854,6 @@ class AppiumProcessManager:
         if not pack_id or not platform_id:
             raise InvalidStartPayloadError("Appium start requires pack_id and platform_id")
         _validate_appium_port_in_range(port)
-        self._cancel_task(self._appium_restart_tasks, port)
         resolved_connection_target = connection_target
         pack_worker: WorkerHandle | None = None
         pack_worker_release: str | None = None
@@ -919,6 +918,12 @@ class AppiumProcessManager:
             connection_behavior=dict(connection_behavior) if connection_behavior else {},
         )
         async with self._start_lock:
+            # Cancelling this port's auto-restart task is only safe under the
+            # start lock. Every Appium spawn happens inside
+            # ``_start_appium_server``, which runs holding this lock, so a task
+            # cancelled here has either not spawned yet or has already
+            # registered what it spawned — never a live child nothing tracks.
+            self._cancel_task(self._appium_restart_tasks, port)
             if port in self._appium_procs and self._appium_procs[port].returncode is None:
                 raise AlreadyRunningError(f"Appium already running on port {port}")
             duplicate = self._running_info_for_target(

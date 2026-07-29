@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from agent_app.appium.exceptions import PortOccupiedError, RuntimeMissingError, StartDeferredError
+from agent_app.appium.exceptions import AlreadyRunningError, PortOccupiedError, RuntimeMissingError, StartDeferredError
 from agent_app.appium.node_state import NodeStateLoop
 
 
@@ -299,6 +299,17 @@ async def test_port_occupied_start_failure_is_recorded_as_port_conflict() -> Non
         }
     ]
     assert manager.started == []
+
+
+@pytest.mark.asyncio
+async def test_already_running_start_is_not_recorded_as_a_start_failure() -> None:
+    """The restart task won this start race, so the node is already running."""
+    manager = _Manager(fail_start_with=AlreadyRunningError("Appium already running on port 4723"))
+    loop = NodeStateLoop(client=_Client([_node()]), manager=manager)
+
+    await loop.run_once()
+
+    assert manager.start_failures == []
 
 
 @pytest.mark.asyncio

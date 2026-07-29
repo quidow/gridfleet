@@ -10,7 +10,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from agent_app.appium.exceptions import PortOccupiedError, StartDeferredError
+from agent_app.appium.exceptions import AlreadyRunningError, PortOccupiedError, StartDeferredError
 from agent_app.appium.process import _requests_host_resolution
 from agent_app.appium.schemas import AppiumStartRequest
 
@@ -162,6 +162,15 @@ class NodeStateLoop:
                     spec.device_id,
                     exc,
                 )
+                return
+            except AlreadyRunningError as exc:
+                # Something already serves this port or target — normally this
+                # node's own auto-restart task, which won the start lock while
+                # this tick was deciding. That is a node that started, not a
+                # start failure: recording one would escalate the backend
+                # recovery ladder for a successful recovery. The next tick sees
+                # the running node and converges.
+                logger.info("node %s already running: %s", spec.device_id, exc)
                 return
             except Exception as exc:
                 kind = "port_conflict" if isinstance(exc, PortOccupiedError) else "spawn_failed"
