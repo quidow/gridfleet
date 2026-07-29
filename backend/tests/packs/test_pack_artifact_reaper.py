@@ -194,3 +194,51 @@ async def test_a_row_re_reserved_between_the_read_and_the_delete_survives(
 
     assert dropped == 0, "the reaper deleted a ledger row a re-upload had taken over"
     assert [row.state for row in (await db_session.scalars(select(PackArtifact))).all()] == [PackArtifactState.pending]
+
+
+async def test_a_full_failed_batch_does_not_starve_a_newer_candidate(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failed oldest rows rotate behind later work instead of poisoning every tick."""
+    failed_at = now_utc() - timedelta(hours=2)
+    failed_paths = [tmp_path / f"failed-{index}.tar.gz" for index in range(200)]
+    successful_path = tmp_path / "successful.tar.gz"
+    successful_path.write_bytes(b"tarball-bytes")
+    async with db_session_maker.begin() as db:
+        db.add_all(
+            [
+                PackArtifact(
+                    path=str(path),
+                    state=PackArtifactState.orphaned,
+                    state_changed_at=failed_at,
+                )
+                for path in failed_paths
+            ]
+        )
+        db.add(
+            PackArtifact(
+                path=str(successful_path),
+                state=PackArtifactState.orphaned,
+                state_changed_at=failed_at + timedelta(hours=1),
+            )
+        )
+
+    real_unlink = Path.unlink
+
+    def _fail_oldest(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name.startswith("failed-"):
+            raise PermissionError(f"cannot remove {self}")
+        real_unlink(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "unlink", _fail_oldest)
+
+    await _reap(db_session_maker)
+    await _reap(db_session_maker)
+
+    assert not successful_path.exists()
+    async with db_session_maker() as db:
+        rows = (await db.scalars(select(PackArtifact))).all()
+    assert len(rows) == 200
+    assert {row.path for row in rows} == {str(path) for path in failed_paths}

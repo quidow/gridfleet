@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import and_, delete, or_, select
+from sqlalchemy import and_, delete, or_, select, update
 
 from app.core.metrics_recorders import record_pack_artifacts_reaped
 from app.core.observability import get_logger
@@ -93,6 +93,25 @@ async def _drop_reaped(db: AsyncSession, reaped: list[_ReapCandidate]) -> int:
     return int(getattr(result, "rowcount", 0) or 0)
 
 
+async def _bump_failed(db: AsyncSession, failed: list[_ReapCandidate]) -> int:
+    """Move failed attempts behind newer candidates without touching superseded rows."""
+    if not failed:
+        return 0
+    result = await db.execute(
+        update(PackArtifact)
+        .where(
+            or_(
+                *[
+                    and_(PackArtifact.id == row.id, PackArtifact.state_changed_at == row.state_changed_at)
+                    for row in failed
+                ]
+            )
+        )
+        .values(state_changed_at=now_utc())
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 async def run_pack_artifact_reaper_stage(db: AsyncSession) -> None:
     async with db.begin():
         candidates = await _select_candidates(db)
@@ -100,13 +119,17 @@ async def run_pack_artifact_reaper_stage(db: AsyncSession) -> None:
         return
 
     # No transaction is open across this loop, which is the point.
-    reaped = [row for row in candidates if unlink_pack_artifact(row.path)]
-    if not reaped:
-        return
+    reaped: list[_ReapCandidate] = []
+    failed: list[_ReapCandidate] = []
+    for row in candidates:
+        (reaped if unlink_pack_artifact(row.path) else failed).append(row)
 
     async with db.begin():
         dropped = await _drop_reaped(db, reaped)
+        bumped = await _bump_failed(db, failed)
 
     record_pack_artifacts_reaped(dropped)
     if dropped != len(reaped):
         logger.info("pack_artifact_reap_superseded", claimed=len(reaped), dropped=dropped)
+    if bumped != len(failed):
+        logger.info("pack_artifact_retry_superseded", claimed=len(failed), bumped=bumped)
