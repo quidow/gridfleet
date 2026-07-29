@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Package } from 'lucide-react';
 import { Badge, Button, DataTable, EmptyState, PageHeader, type DataTableColumn } from '../components/ui';
 import { LoadingSpinner } from '../components/LoadingSpinner';

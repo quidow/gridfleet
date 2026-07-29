@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { SummaryPill } from '../../components/ui/SummaryPill';
 import type { DeviceDetail } from '../../types';
 import { getDeviceDetailStatusPills } from './deviceDetailSummary';

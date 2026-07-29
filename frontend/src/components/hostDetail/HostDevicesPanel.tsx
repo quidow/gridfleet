@@ -1,5 +1,5 @@
 import { Search } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { PlatformIcon } from '../PlatformIcon';
 import { AvailabilityCell } from '../../pages/devices/deviceColumns';
 import { Badge, type BadgeTone } from '../ui/Badge';

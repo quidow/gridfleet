@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router';
 import { FolderOpen, Plus, Trash2 } from 'lucide-react';
 import { BulkActionToolbar } from './devices/BulkActionToolbar';
 import { Checkbox } from '../components/ui/Checkbox';

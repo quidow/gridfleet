@@ -1,4 +1,4 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink } from 'react-router';
 import { LayoutDashboard, Smartphone, Server, Clock, FolderOpen, Network, Package, Bell, Play, BarChart3, Settings2, PanelLeftClose, PanelLeftOpen, LogOut, Moon, Sun } from 'lucide-react';
 import { type ElementType } from 'react';
 import { useAuth } from '../context/auth';

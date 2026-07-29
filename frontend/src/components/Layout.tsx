@@ -1,5 +1,5 @@
 import { Suspense } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router';
 import { Toaster } from 'sonner';
 import { Sidebar } from './Sidebar';
 import { useEventStream } from '../hooks/useEventStream';

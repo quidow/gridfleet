@@ -1,4 +1,4 @@
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import type { SortDirection } from '../types';
 
 const DEFAULT_PAGE = 1;

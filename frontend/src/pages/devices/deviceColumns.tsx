@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- intentional mixed module: exports component + builder functions */
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { AlertTriangle, Cable, Cloud, LockKeyhole, Pencil, Play, Power, RefreshCw, Square, Trash2, Wifi, Wrench } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PlatformIcon } from '../../components/PlatformIcon';

@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { DataTable, type DataTableColumn } from '../ui/DataTable';

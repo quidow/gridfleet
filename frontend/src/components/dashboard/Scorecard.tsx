@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { useHosts } from '../../hooks/useHosts';
 import { useGridStatus, useHealth } from '../../hooks/useGrid';
 import { useFleetOverview } from '../../hooks/useAnalytics';

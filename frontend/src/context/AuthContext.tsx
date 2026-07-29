@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router';
 import { fetchAuthSession, loginWithPassword, logoutSession } from '../api/auth';
 import { configureApiAuth } from '../api/client';
 import { buildLocationTarget, normalizeNextTarget } from '../lib/authRouting';

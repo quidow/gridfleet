@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { useDevices } from '../../hooks/useDevices';
 import { useRuns } from '../../hooks/useRuns';
 import { PlatformIcon } from '../PlatformIcon';

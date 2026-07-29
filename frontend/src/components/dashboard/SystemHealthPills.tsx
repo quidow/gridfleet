@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { SummaryPill, type SummaryPillTone } from '../ui/SummaryPill';
 import { useGridStatus, useHealth } from '../../hooks/useGrid';
 import { useHosts } from '../../hooks/useHosts';

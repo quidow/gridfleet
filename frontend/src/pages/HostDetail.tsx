@@ -1,4 +1,4 @@
-import { useParams, useSearchParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router';
 import { useApproveHost, useHost, useRejectHost } from '../hooks/useHosts';
 import { LoadingSpinner } from '../components/LoadingSpinner';
 import { SetupVerificationModal } from './devices/SetupVerificationModal';

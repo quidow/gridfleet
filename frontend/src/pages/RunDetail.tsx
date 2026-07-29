@@ -1,4 +1,4 @@
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router';
 import { useMemo, useState } from 'react';
 import { useRun, useCancelRun, useForceReleaseRun } from '../hooks/useRuns';
 import { useSessions } from '../hooks/useSessions';

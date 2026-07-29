@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router';
 import { AlertTriangle, Plus, Server, Trash2 } from 'lucide-react';
 import { useHosts } from '../../hooks/useHosts';
 import { useDevices } from '../../hooks/useDevices';

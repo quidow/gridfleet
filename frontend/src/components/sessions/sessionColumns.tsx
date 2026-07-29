@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { ChevronRight, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import { StatusBadge } from '../StatusBadge';
