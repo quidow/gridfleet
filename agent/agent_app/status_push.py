@@ -115,9 +115,11 @@ class StatusPushLoop:
         try:
             self.on_boot_fence_rejected()
         except Exception:
-            # A raising hook must not escape into run_forever: this loop has no
-            # restart watchdog (unlike the registration loop), so an escape here
-            # is a silent, permanent stop of status pushes.
+            # A raising hook must not escape into run_forever: the sibling
+            # ``except Exception`` there does not cover an exception raised from
+            # inside the ``except BootFenceRejected`` clause, so an escape kills
+            # this loop. The lifespan watchdog restarts it, but containment keeps
+            # the push cadence unbroken instead of paying a rebuild per rejection.
             logger.exception("boot fence re-registration hook raised")
         return True
 

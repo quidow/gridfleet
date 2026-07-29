@@ -333,8 +333,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             reregister_min_interval=float(agent_settings.core.registration_refresh_interval_sec),
         )
         app.state.status_push_loop = status_loop
-        status_task = asyncio.create_task(_start_status_loop_when_ready(host_identity, status_loop))
-        status_task.add_done_callback(_watchdog("status_push_loop"))
+        # Non-optional alias: the restart closure below needs the loop itself,
+        # not the ``StatusPushLoop | None`` the enclosing scope declares.
+        supervised_status_loop = status_loop
+
+        def _start_status_task() -> asyncio.Task[None]:
+            # Status pushes are what keep this host reading online, so a crash
+            # here has to be restarted rather than logged and left dead. The
+            # rebind keeps the ``finally`` block cancelling the live task.
+            nonlocal status_task
+            task = asyncio.create_task(_start_status_loop_when_ready(host_identity, supervised_status_loop))
+            task.add_done_callback(_watchdog("status_push_loop", _start_status_task))
+            status_task = task
+            return task
+
+        status_task = _start_status_task()
 
         async def _resolve_probe_context(pack_id: str, platform_id: str) -> tuple[Any, str] | None:
             pack_state_loop = app.state.pack_state_loop

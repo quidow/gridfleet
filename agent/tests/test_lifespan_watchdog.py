@@ -39,6 +39,56 @@ async def test_watchdog_ignores_cancellation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_lifespan_restarts_a_crashed_status_push_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dead status-push task must be replaced, not merely logged.
+
+    Push recency is the only thing that keeps a host reading online, so a loop
+    that crashes once and stays dead takes the host offline for the rest of the
+    process lifetime. Patching ``run_forever`` (not the wrapper) keeps the real
+    ``_start_status_loop_when_ready`` in the restart path, so this also pins that
+    a restart clears ``host_identity.wait()`` — the identity is already set by
+    then, and a second run must proceed instead of parking forever.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from fastapi import FastAPI
+
+    from agent_app import lifespan as lifespan_module
+    from agent_app.host.capabilities import CapabilitiesCache
+    from agent_app.status_push import StatusPushLoop
+
+    starts = 0
+    restarted = asyncio.Event()
+
+    async def _fake_run_forever(_self: StatusPushLoop) -> None:
+        nonlocal starts
+        starts += 1
+        if starts == 1:
+            raise RuntimeError("synthetic status push crash")
+        restarted.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(StatusPushLoop, "run_forever", _fake_run_forever)
+    # Patch the settings object the lifespan module itself holds: test_docs_gating
+    # reloads agent_app.config, so a fresh ``from agent_app.config import
+    # agent_settings`` here can hand back an instance the lifespan never reads.
+    monkeypatch.setattr(lifespan_module.agent_settings.core, "host_id", "00000000-0000-0000-0000-000000000077")
+
+    with (
+        patch.object(CapabilitiesCache, "refresh", new_callable=AsyncMock),
+        patch.object(CapabilitiesCache, "run_refresh_loop", new_callable=AsyncMock),
+        patch.object(CapabilitiesCache, "get_or_refresh", new_callable=AsyncMock, return_value={}),
+        patch("agent_app.host.hardware_info.collect", return_value={}),
+        patch("agent_app.appium.appium_mgr.start_log_maintenance"),
+        patch("agent_app.appium.appium_mgr.shutdown", new_callable=AsyncMock),
+    ):
+        async with lifespan_module.lifespan(FastAPI()):
+            await asyncio.wait_for(restarted.wait(), timeout=5.0)
+
+    assert starts == 2
+
+
+@pytest.mark.asyncio
 async def test_watchdog_restarts_when_callback_provided() -> None:
     restarted = False
 
