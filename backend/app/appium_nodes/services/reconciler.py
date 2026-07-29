@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import Select, func, select, update
@@ -66,7 +67,6 @@ from app.packs.services.catalog_view import load_pack_catalog
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Awaitable, Callable
-    from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -210,6 +210,30 @@ def _running_rows_by_target(rows: list[DesiredRow]) -> dict[str, DesiredRow]:
         if row.active_connection_target:
             running_by_target.setdefault(row.active_connection_target, row)
     return running_by_target
+
+
+def _superseded_by_a_running_node(
+    row: DesiredRow,
+    at: str,
+    observed_by_target: dict[str, ObservedEntry],
+    observed_by_port: dict[int, ObservedEntry],
+) -> bool:
+    """True when the agent currently runs a node for *row* that started at or
+    after the report — the report belongs to a superseded episode.
+
+    Both timestamps are agent-minted (the failure ring and the running-node
+    snapshot come from the same clock), so the comparison is meaningful.
+    """
+    entry = match_observed_entry(row, observed_by_target, observed_by_port)
+    if entry is None or entry.started_at is None:
+        return False
+    try:
+        reported_at = datetime.fromisoformat(at)
+    except ValueError:
+        return False
+    if reported_at.tzinfo is None:
+        reported_at = reported_at.replace(tzinfo=UTC)
+    return reported_at <= entry.started_at
 
 
 async def _repin_desired_port(
@@ -480,7 +504,7 @@ class ReconcilerService:
             # every row on the host, including rows in recovery backoff. Gating
             # ingestion on the ladder let the agent's ring accumulate a backlog
             # that landed as one rung per queued report when the window closed.
-            await self._ingest_start_failure_reports(rows, raw_start_failures)
+            await self._ingest_start_failure_reports(rows, raw_start_failures, observed=observed)
             active_rows = [
                 row
                 for row in rows
@@ -552,13 +576,15 @@ class ReconcilerService:
         self,
         rows: list[DesiredRow],
         start_failures: list[dict[str, Any]] | None = None,
+        *,
+        observed: list[ObservedEntry] | None = None,
     ) -> None:
         """Ingest agent-reported start-failure facts for pull-only orchestration.
 
         Mark-stopped-on-absence is already handled by the
         ``db_clear_stale_running`` pass-through and is out of scope here.
         """
-        await self._ingest_start_failures(rows, start_failures or [])
+        await self._ingest_start_failures(rows, start_failures or [], observed or [])
 
     def _match_new_start_failure(
         self, failure: dict[str, Any], running_by_target: dict[str, DesiredRow]
@@ -586,7 +612,9 @@ class ReconcilerService:
             return None
         return row, kind, failure.get("port"), at
 
-    async def _ingest_start_failures(self, rows: list[DesiredRow], start_failures: list[dict[str, Any]]) -> None:
+    async def _ingest_start_failures(
+        self, rows: list[DesiredRow], start_failures: list[dict[str, Any]], observed: list[ObservedEntry]
+    ) -> None:
         """Level-style ingest, collapsed to the newest ``start_failure`` per device.
 
         A ``port_conflict`` re-pins ``desired_port`` to the next free candidate
@@ -614,7 +642,20 @@ class ReconcilerService:
             current = newest.get(matched[0].device_id)
             if current is None or matched[3] > current[3]:
                 newest[matched[0].device_id] = matched
+        observed_by_target = {entry.connection_target: entry for entry in observed}
+        observed_by_port = {entry.port: entry for entry in observed}
         for device_id, (row, kind, port, at) in sorted(newest.items(), key=lambda item: str(item[0])):
+            if _superseded_by_a_running_node(row, at, observed_by_target, observed_by_port):
+                # The node this report is about has already been replaced by one
+                # that started later. Fold it so it stops being replayed, but do
+                # not let it escalate or re-shelve the episode that succeeded.
+                logger.info(
+                    "appium_reconciler_start_failure_superseded",
+                    device_id=str(device_id),
+                    reason=kind,
+                )
+                self._last_seen_failure_at[device_id] = at
+                continue
             if kind == "port_conflict":
                 await _record_start_failure(
                     row,

@@ -501,4 +501,15 @@ async def reset_reconciler_start_failure_if_needed(
     if not (ladder.armed or ladder.last_failure_reason) or ladder.last_failure_source != "appium_reconciler":
         return False
     await remediation_log.append_reset(db, device.id, source="appium_reconciler", action="start_succeeded")
+    # A node that has demonstrably started is not shelved by the episode that
+    # just ended: clearing the ladder without the review flag left healthy,
+    # running nodes blocked as offline. Scoped to this episode's own shelving —
+    # the escalation writes its failure reason as the review reason, so a review
+    # set by verification or an operator carries a different one and survives.
+    if (
+        getattr(device, "review_required", False)
+        and ladder.last_failure_reason is not None
+        and device.review_reason == ladder.last_failure_reason
+    ):
+        await ReviewService().clear_review_required(db, device, reason="start_succeeded", source="appium_reconciler")
     return True
