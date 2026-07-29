@@ -175,10 +175,18 @@ class NodeStateLoop:
                 # *different* port", which is equally safe to swallow here: that
                 # port is either desired too (some later spec in this same pass
                 # converges it) or it is not, in which case ``run_once``'s orphan
-                # sweep stops it at the end of this very tick — it walks every
-                # running port absent from the desired set. Either way the
-                # duplicate does not survive the tick, and the next one starts
-                # this port cleanly.
+                # sweep stops it on the NEXT tick — the sweep iterates the
+                # ``running_by_port`` snapshot taken at the top of ``run_once``,
+                # so a node the auto-restart task spawned mid-tick is not in it
+                # and survives until the following pass re-snapshots.
+                #
+                # A duplicate that lives one extra tick is still bounded during a
+                # release rollout: an auto-restart carrying a stale pinned
+                # ``pack_release`` cannot silently win. ``_resolve_pack_worker``
+                # raises ``StartDeferredError`` on a release mismatch
+                # (``process.py:420``) and ``_auto_restart_appium`` returns
+                # without spawning (``process.py:707``), so the stale release is
+                # never the one left running.
                 logger.info("node %s already running: %s", spec.device_id, exc)
                 return
             except Exception as exc:
