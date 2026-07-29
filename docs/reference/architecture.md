@@ -131,6 +131,14 @@ Agents run on physical lab hosts or VMs where devices are attached. Unlike the c
 - **Appium Process Management**: The Agent isolates each device by spawning standalone Appium server processes attached to that device's UDID/Serial. The agent runs no Grid relay node; WebDriver traffic reaches Appium via the router (below).
 - **Health Checks**: Monitors ADB connectivity and driver viability, terminating Appium processes gracefully if the physical device goes offline.
 
+### Supervised background loops
+
+The agent lifespan (`agent/agent_app/lifespan.py`) runs six background loops — `capabilities_refresh`, `registration`, `status_push_loop`, `probe_loop`, `pack_state_loop` and `node_state_loop`. Each is owned by a `_SupervisedTask` that logs how the task ended and restarts it after a crash. The first crash of an episode restarts in the same event-loop iteration, so a one-off crash costs no push silence; a loop that keeps crashing backs off 1 s, 2 s, 4 s … to a 60 s cap, and the counter resets once a task has stayed up for 60 s. No crash takes a loop out for the process lifetime, and no crash loop spins the event loop.
+
+Restart supervision is gated on lifespan shutdown. Teardown closes every gate before it awaits anything, so a crash callback still queued in the event loop cannot spawn a replacement the teardown pass has already walked past. A pending backoff timer is cancelled by the same call.
+
+The `StatusPushLoop` and `ProbeLoop` objects are reused across restarts rather than rebuilt: sibling loops hold `status_loop.wake` and routes hold `probe_loop.request_immediate`, so a rebuilt object would silently orphan those doorbells. The pack and node loops are rebuilt and republished to `app.state` on each start, which is safe because every consumer reads them per request.
+
 ### Boot fence — one live boot owns a host row
 
 Each agent process mints a `uuid4` boot id at startup and sends it with every registration and every status push. Registration writes it to `Host.current_boot_id` (`backend/app/hosts/service.py`), so the newest registration owns the row; a row that has never carried one adopts the first tokened push's id.
