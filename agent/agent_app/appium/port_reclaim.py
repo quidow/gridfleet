@@ -11,6 +11,13 @@ from a path under ``AGENT_RUNTIME_ROOT`` (or with ``APPIUM_HOME`` under it).
 Anything else is left alone and the caller keeps raising — taking a port from
 an unrelated process on a shared host is not the agent's business.
 
+"Under the runtime root" is canonical path containment, never a string prefix:
+``<root>-evil/bin/appium`` and ``<root>/../elsewhere/appium`` both share the
+prefix and neither is ours, and what follows a false match is a SIGKILL on
+someone else's process. Resolution follows symlinks, so a runtime binary
+symlinked out of the root reads as not-ours — fail-closed is the right
+direction, and ``APPIUM_HOME`` still identifies that process.
+
 No socket-table lookup: ``psutil.net_connections`` needs root on macOS. The
 caller's HTTP/bind probe already proved the port is held; this module only
 answers *by whom*.
@@ -21,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from pathlib import Path
 from typing import Protocol
 
 import psutil  # type: ignore[import-untyped]
@@ -61,9 +69,31 @@ def serves_port(cmdline: list[str], port: int) -> bool:
     return port_index + 1 < len(cmdline) and cmdline[port_index + 1] == str(port)
 
 
+def _under_runtime_root(candidate: str, runtime_root: str) -> bool:
+    """True when *candidate* canonically resolves to, or inside, the runtime root.
+
+    Never a string prefix test: ``<root>-evil`` starts with ``<root>`` and is a
+    different directory, and ``<root>/../elsewhere`` starts with it while
+    resolving outside. Both sides are resolved (symlinks included, non-existent
+    tails normalised), so containment is decided on real paths.
+
+    Absolute candidates only. ``resolve()`` would anchor a relative argv token
+    (``server``) to *this* process's working directory, so an agent whose cwd
+    sits under the runtime root would read a bare token as ownership evidence.
+    """
+    if not candidate or not Path(candidate).is_absolute():
+        return False
+    try:
+        resolved_root = Path(runtime_root).resolve()
+        resolved = Path(candidate).resolve()
+    except OSError, ValueError:
+        return False
+    return resolved == resolved_root or resolved_root in resolved.parents
+
+
 def runs_from_runtime_root(cmdline: list[str], runtime_root: str) -> bool:
     """True when any argument is a path under the agent's runtime root."""
-    return any(arg.startswith(runtime_root) for arg in cmdline)
+    return any(_under_runtime_root(arg, runtime_root) for arg in cmdline)
 
 
 def _appium_home_under_root(proc: object, runtime_root: str) -> bool:
@@ -72,7 +102,7 @@ def _appium_home_under_root(proc: object, runtime_root: str) -> bool:
         environ = proc.environ()  # type: ignore[attr-defined]
     except psutil.Error, OSError:
         return False
-    return str(environ.get("APPIUM_HOME") or "").startswith(runtime_root)
+    return _under_runtime_root(str(environ.get("APPIUM_HOME") or ""), runtime_root)
 
 
 def find_agent_owned_appium(*, port: int, runtime_root: str, exclude_pids: set[int]) -> ProcessHandle | None:

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 from agent_app.appium import port_reclaim
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pytest
 
 RUNTIME_ROOT = "/opt/gridfleet-agent/runtimes"
@@ -71,6 +73,59 @@ def test_serves_port_matches_the_agents_spawn_shape() -> None:
 def test_runs_from_runtime_root_requires_a_path_under_the_root() -> None:
     assert port_reclaim.runs_from_runtime_root(OWNED_CMDLINE, RUNTIME_ROOT)
     assert not port_reclaim.runs_from_runtime_root(FOREIGN_CMDLINE, RUNTIME_ROOT)
+
+
+def test_runs_from_runtime_root_rejects_a_sibling_that_shares_the_prefix() -> None:
+    """``<root>-evil`` starts with ``<root>`` as a string and is not under it.
+    A prefix match here means SIGKILL on someone else's process."""
+    sibling = ["node", f"{RUNTIME_ROOT}-evil/bin/appium", "server", "--port", "4723"]
+    assert not port_reclaim.runs_from_runtime_root(sibling, RUNTIME_ROOT)
+
+
+def test_runs_from_runtime_root_rejects_a_traversal_out_of_the_root() -> None:
+    traversal = ["node", f"{RUNTIME_ROOT}/../elsewhere/bin/appium", "server", "--port", "4723"]
+    assert not port_reclaim.runs_from_runtime_root(traversal, RUNTIME_ROOT)
+
+
+def test_runs_from_runtime_root_accepts_a_non_normalised_path_inside_the_root() -> None:
+    """Canonicalisation cuts both ways: a path that detours and comes back is ours."""
+    inside = ["node", f"{RUNTIME_ROOT}/pack/../pack/bin/appium", "server", "--port", "4723"]
+    assert port_reclaim.runs_from_runtime_root(inside, RUNTIME_ROOT)
+
+
+def test_runs_from_runtime_root_ignores_relative_arguments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A relative token resolves against *this* process's cwd, not the target's.
+    An agent whose cwd sits inside the runtime root must not read a bare
+    ``appium`` token as ownership evidence."""
+    monkeypatch.chdir(tmp_path)
+    assert not port_reclaim.runs_from_runtime_root(["appium", "server", "--port", "4723"], str(tmp_path))
+
+
+def test_runs_from_runtime_root_ignores_a_root_shaped_argument_that_is_not_a_path() -> None:
+    """Only real path arguments count; a capability string that happens to embed
+    the root must not confer ownership."""
+    noise = [
+        "node",
+        "/usr/local/bin/appium",
+        "server",
+        "--port",
+        "4723",
+        "--default-capabilities",
+        f'{{"appium:app": "{RUNTIME_ROOT}/x.apk"}}',
+    ]
+    assert not port_reclaim.runs_from_runtime_root(noise, RUNTIME_ROOT)
+
+
+def test_find_rejects_a_sibling_prefix_occupant(monkeypatch: pytest.MonkeyPatch) -> None:
+    sibling = _FakeProc(4242, ["node", f"{RUNTIME_ROOT}-evil/bin/appium", "server", "--port", "4723"])
+    monkeypatch.setattr(port_reclaim.psutil, "process_iter", lambda _attrs: iter([sibling]))
+    assert port_reclaim.find_agent_owned_appium(port=4723, runtime_root=RUNTIME_ROOT, exclude_pids=set()) is None
+
+
+def test_find_rejects_an_appium_home_sibling_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    proc = _FakeProc(4242, FOREIGN_CMDLINE, environ={"APPIUM_HOME": f"{RUNTIME_ROOT}-evil/home"})
+    monkeypatch.setattr(port_reclaim.psutil, "process_iter", lambda _attrs: iter([proc]))
+    assert port_reclaim.find_agent_owned_appium(port=4723, runtime_root=RUNTIME_ROOT, exclude_pids=set()) is None
 
 
 def test_find_returns_the_agent_owned_occupant(monkeypatch: pytest.MonkeyPatch) -> None:
