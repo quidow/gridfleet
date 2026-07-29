@@ -39,7 +39,7 @@ curl -s http://localhost:8000/metrics | grep gridfleet_host_status_pushes_total 
 
 If `last_heartbeat` is stale and the push counter isn't advancing for this host, check the agent's own logs for `status push failed` (step 4) before assuming a network problem — the agent logs its own push failures.
 
-A `status push fenced out` line in the agent log (with a matching `gridfleet_host_push_boot_fence_rejections_total`) means a newer agent boot took the host row and the backend is rejecting this agent's pushes; the agent re-registers itself to reclaim the fence. See the boot-fence section of `docs/reference/architecture.md`.
+The metric `gridfleet_host_push_boot_fence_rejections_total` advancing for this host means a newer agent boot took the host row and the backend is rejecting this agent's pushes; the agent re-registers itself to reclaim the fence. The agent also logs a matching `status push fenced out` line, but only the first rejection of an episode logs at WARNING — later rejections in the same episode log at DEBUG, so the metric is the more reliable signal once the fence has been open for a while. See the boot-fence section of `docs/reference/architecture.md`.
 
 ## 4. Check manager-to-agent reachability (reverse direction — partition-probe diagnostic only)
 

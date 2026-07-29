@@ -64,10 +64,11 @@ class StatusPushLoop:
     # cycle instead of one registration refresh.
     on_boot_fence_rejected: Callable[[], None] | None = None
     # Floor between two fence-triggered re-registrations, so two agents that
-    # genuinely disagree about ownership cannot ping-pong enrolments. Defaults
-    # to the registration refresh interval; production always passes the real
-    # value from agent_app/config.py's registration_refresh_interval_sec, which
-    # is the source of truth this default merely mirrors.
+    # genuinely disagree about ownership cannot ping-pong enrolments at push
+    # cadence — ownership can still alternate, just no faster than this floor.
+    # Defaults to the registration refresh interval; production always passes
+    # the real value from agent_app/config.py's registration_refresh_interval_sec,
+    # which is the source of truth this default merely mirrors.
     reregister_min_interval: float = 300.0
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
     _fence_episode_active: bool = field(default=False, init=False, repr=False)
