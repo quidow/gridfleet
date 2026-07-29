@@ -12,6 +12,7 @@ import logging
 from contextlib import asynccontextmanager
 from math import log2
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
@@ -98,6 +99,82 @@ def _watchdog(
             restart()
 
     return _cb
+
+
+class _SupervisedTask:
+    """A lifespan background loop: logged when it ends, restarted when it crashes.
+
+    Restart state — the crash counter, the pending backoff timer, the shutdown
+    gate — has to outlive any single task, which is why it lives on this object
+    rather than in the done-callback closure. The closure is rebuilt on every
+    respawn, so a counter inside it would reset every time.
+
+    ``base_delay`` / ``max_delay`` / ``healthy_after`` are keyword arguments only
+    so tests can compress the clock; production always takes the defaults.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        factory: Callable[[], asyncio.Task[None]],
+        *,
+        base_delay: float = _RESTART_BASE_DELAY_SEC,
+        max_delay: float = _RESTART_MAX_DELAY_SEC,
+        healthy_after: float = _RESTART_HEALTHY_AFTER_SEC,
+    ) -> None:
+        self._name = name
+        self._factory = factory
+        self._base_delay = base_delay
+        self._max_delay = max_delay
+        self._healthy_after = healthy_after
+        self._log_exit = _watchdog(name)
+        self._task: asyncio.Task[None] | None = None
+        self._timer: asyncio.TimerHandle | None = None
+        self._crashes = 0
+        self._started_at = 0.0
+        self._shutting_down = False
+
+    def start(self) -> asyncio.Task[None]:
+        self._started_at = monotonic()
+        task = self._factory()
+        self._task = task
+        task.add_done_callback(self._on_done)
+        return task
+
+    def shutdown(self) -> None:
+        """Close the restart gate, drop any pending backoff, cancel the live task.
+
+        The gate has to close before the caller awaits anything: a crash callback
+        already queued in the event loop runs after this pass, and without the
+        gate it would spawn a replacement this pass has already walked past.
+        """
+        self._shutting_down = True
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if self._task is not None:
+            self._task.cancel()
+
+    def _on_done(self, task: asyncio.Task[Any]) -> None:
+        self._log_exit(task)
+        if self._shutting_down or task.cancelled() or task.exception() is None:
+            return
+        if monotonic() - self._started_at >= self._healthy_after:
+            self._crashes = 0
+        delay = _restart_delay(self._crashes, self._base_delay, self._max_delay)
+        self._crashes += 1
+        if delay <= 0.0:
+            logger.info("restarting background task %s", self._name)
+            self.start()
+            return
+        logger.info("restarting background task %s in %.0fs", self._name, delay)
+        self._timer = asyncio.get_running_loop().call_later(delay, self._restart_after_backoff)
+
+    def _restart_after_backoff(self) -> None:
+        self._timer = None
+        if self._shutting_down:
+            return
+        self.start()
 
 
 class HttpPackStateClient(PackStateClient):
