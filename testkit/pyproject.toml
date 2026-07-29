@@ -40,7 +40,7 @@ Security = "https://github.com/quidow/gridfleet/security/advisories/new"
 [project.optional-dependencies]
 dev = [
     "mypy>=1.20.2,<3",
-    "ruff>=0.15.12,<1",
+    "ruff>=0.16.0,<1",
 ]
 
 [project.entry-points.pytest11]
