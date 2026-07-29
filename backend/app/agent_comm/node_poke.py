@@ -32,5 +32,5 @@ async def poke_node_refresh_target(
             pool=pool,
             circuit_breaker=circuit_breaker,
         )
-    except Exception:  # noqa: BLE001 - poke is best-effort
+    except Exception:  # poke is best-effort
         logger.debug("agent nodes refresh poke failed for %s:%d", target.ip, target.agent_port, exc_info=True)

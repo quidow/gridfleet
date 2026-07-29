@@ -147,7 +147,7 @@ async def _poke_agent(device_id: uuid.UUID, appium_services: AppiumNodeServices)
         # converge_device_now opens and closes its own read session and writes
         # nothing, so the node snapshot taken above stays the source of truth.
         await appium_services.reconciler.converge_device_now(device_id)
-    except Exception:  # noqa: BLE001 — best-effort convergence; route must return the restart node even if convergence fails
+    except Exception:  # best-effort convergence; route must return the restart node even if convergence fails
         logger.warning("operator_restart_immediate_convergence_failed", exc_info=True, device_id=str(device_id))
 
 

@@ -92,7 +92,7 @@ def _node(
     stop_pending: bool = False,
     grid_run_id: str | None = None,
     restart_requested_at: datetime | None = None,
-    launch: dict[str, Any] | None | object = ...,  # sentinel means default launch
+    launch: dict[str, Any] | object | None = ...,  # sentinel means default launch
     unrunnable_reason: str | None = None,
 ) -> dict[str, Any]:
     if launch is ...:

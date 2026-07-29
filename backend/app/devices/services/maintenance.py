@@ -181,7 +181,7 @@ class MaintenanceService:
         try:
             async with self._session_factory.begin() as recovery_db:
                 await _schedule_device_recovery(recovery_db, device_id)
-        except Exception:  # noqa: BLE001 — best-effort recovery scheduling; device_connectivity_loop is the fallback
+        except Exception:  # best-effort recovery scheduling; device_connectivity_loop is the fallback
             logger.warning(
                 "exit_maintenance: failed to enqueue recovery job for %s; "
                 "device_connectivity_loop will pick it up on the next tick",

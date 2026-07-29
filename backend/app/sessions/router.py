@@ -52,6 +52,8 @@ async def _session_details_with_labels(db: AsyncSession, sessions: list[Session]
 @router.get("", response_model=SessionListRead)
 async def list_sessions(
     request: Request,
+    # Keyword-only: FastAPI resolves handler params by name, never positionally.
+    *,
     db: DbDep,
     session_services: SessionServicesDep,
     device_id: Annotated[uuid.UUID | None, Query()] = None,

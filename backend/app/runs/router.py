@@ -80,6 +80,8 @@ async def create_run(
 @router.get("", response_model=RunListRead)
 async def list_runs(
     request: Request,
+    # Keyword-only: FastAPI resolves handler params by name, never positionally.
+    *,
     db: DbDep,
     run_services: RunServicesDep,
     state: Annotated[RunState | None, Query()] = None,

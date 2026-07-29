@@ -40,7 +40,7 @@ async def _resolve_host_identity(
             if row is None:
                 return {}
             return {"host_id": str(row[0]), "hostname": str(row[1])}
-    except Exception:  # noqa: BLE001 - enrichment must never break the breaker
+    except Exception:  # enrichment must never break the breaker
         logger.debug("circuit_breaker_host_lookup_failed", host=host_addr, exc_info=True)
         return {}
 

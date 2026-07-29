@@ -48,6 +48,8 @@ router = APIRouter(responses=DEVICE_CORE_ERROR_RESPONSES)
 
 
 def build_device_query_filters(
+    # Keyword-only: FastAPI resolves dependency params by name, never positionally.
+    *,
     pack_id: Annotated[str | None, Query()] = None,
     platform_id: Annotated[str | None, Query()] = None,
     status: Annotated[ChipStatus | None, Query()] = None,
