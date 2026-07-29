@@ -712,7 +712,14 @@ def _join_effect_states(*states: _EffectState) -> _EffectState:
     return _EffectState(
         stack_transactions=frozenset(stack for state in states for stack in state.stack_transactions),
         stack_bindings={
-            name: frozenset(stack for state in states for stack in state.stack_bindings.get(name, frozenset()))
+            name: frozenset(
+                stack
+                for state in states
+                for stack in state.stack_bindings.get(
+                    name,
+                    frozenset({None}) if "." in name else frozenset(),
+                )
+            )
             for name in names
         },
     )
@@ -764,8 +771,10 @@ def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[s
     invocation/consumption is not modeled; it needs context-sensitive execution
     modeling, and production has no exit-stack use.
     Branch states conservatively join both active transactions and possible
-    name-to-stack bindings, so mutually exclusive runtime paths may still produce
-    a finding.
+    name-to-stack bindings. Parameters start unresolved; a missing attribute
+    binding remains unresolved because it may predate the branch, while a missing
+    plain name does not invent an external value for a branch-only local.
+    Mutually exclusive runtime paths may therefore still produce a finding.
 
     Direct ``begin()`` contexts are scoped to their ``with`` block. Exit-stack
     registrations are tracked by the identity of the ``with`` item that created
@@ -823,7 +832,11 @@ def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[s
             state = visit_body(node.body, state, direct_transaction)
             return _EffectState(state.stack_transactions - closing_stacks, state.stack_bindings)
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            visit_body(node.body, state, scoped_transaction)
+            parameters = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+            parameters.extend(argument for argument in (node.args.vararg, node.args.kwarg) if argument is not None)
+            bindings = dict(state.stack_bindings)
+            bindings.update((argument.arg, frozenset({None})) for argument in parameters)
+            visit_body(node.body, _EffectState(state.stack_transactions, bindings), scoped_transaction)
             return state
         if isinstance(node, ast.If | ast.For | ast.AsyncFor | ast.While):
             if isinstance(node, ast.If | ast.While):
@@ -1155,6 +1168,54 @@ def test_the_effect_check_keeps_a_branch_transaction_past_a_same_name_nested_sta
     assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:7 agent_health()"]
 
 
+def test_the_effect_check_keeps_an_unresolved_parameter_binding_at_a_branch_join() -> None:
+    """A parameter can still name an external stack on the unassigned branch."""
+    source = (
+        "async def outer(db, ip, port, ready, alias):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if ready:\n"
+        "            alias = stack\n"
+        "        await alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == [
+        "synthetic.py:6 agent_health()",
+        "synthetic.py:7 agent_health()",
+    ]
+
+
+def test_the_effect_check_keeps_an_unresolved_attribute_binding_at_a_branch_join() -> None:
+    """An attribute can retain its pre-existing stack on the unassigned branch."""
+    source = (
+        "async def outer(db, ip, port, ready, holder):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if ready:\n"
+        "            holder.alias = stack\n"
+        "        await holder.alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == [
+        "synthetic.py:6 agent_health()",
+        "synthetic.py:7 agent_health()",
+    ]
+
+
+def test_the_effect_check_does_not_invent_an_unresolved_local_at_a_branch_join() -> None:
+    """A branch-only local is unusable on the unassigned path, not external."""
+    source = (
+        "async def outer(db, ip, port, ready):\n"
+        "    async with AsyncExitStack() as stack:\n"
+        "        if ready:\n"
+        "            alias = stack\n"
+        "        await alias.enter_async_context(db.begin())\n"
+        "        await agent_health(ip, port)\n"
+        "    await agent_health(ip, port)\n"
+    )
+    assert effects_inside_transactions_in_tree(ast.parse(source), "synthetic.py") == ["synthetic.py:6 agent_health()"]
+
+
 def test_the_effect_check_sees_a_transaction_registered_by_an_effect_argument() -> None:
     """An effect runs after its arguments have been evaluated."""
     source = (
@@ -1261,11 +1322,13 @@ def test_no_effect_runs_inside_a_transaction_block() -> None:
     ``REMOTE_EFFECT_OWNER_REGISTRY`` exist to cover. The transaction detector
     recognizes the same two syntactic ``begin()`` shapes as ``begin_owners``. For
     a directly constructed exit-stack ``with`` item, it distinguishes each stack
-    lifetime and follows plain name/attribute aliases; an unresolved receiver is
-    conservatively left active. It still skips a registration in a
-    lambda/generator body at creation even when immediate invocation/consumption
-    later runs it. Recognizing that execution needs context-sensitive modeling;
-    production has no exit-stack use."""
+    lifetime and follows plain name/attribute aliases. Parameters start
+    unresolved, and a branch that does not replace a pre-existing attribute
+    preserves that unresolved identity; branch-only local names do not gain one.
+    An unresolved receiver is conservatively left active. The detector still
+    skips a registration in a lambda/generator body at creation even when
+    immediate invocation/consumption later runs it. Recognizing that execution
+    needs context-sensitive modeling; production has no exit-stack use."""
     findings = effects_inside_transactions()
     assert findings == [], (
         "one of this repository's known effect entry points (see AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / "
