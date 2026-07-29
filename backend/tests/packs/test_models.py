@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.packs.models import (
     DriverPack,
@@ -17,6 +18,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host
+
+
+pytestmark = pytest.mark.db
 
 
 @pytest.mark.asyncio
@@ -183,3 +187,21 @@ async def test_host_pack_doctor_result(db_session: AsyncSession, db_host: Host) 
     assert rows[0].check_id == "check-health"
     assert rows[0].ok is True
     assert rows[0].message == "All checks passed"
+
+
+async def test_pack_artifact_row_round_trips_with_a_unique_path(db_session: AsyncSession) -> None:
+    from app.packs.models import PackArtifact, PackArtifactState
+
+    db_session.add(
+        PackArtifact(path="/var/lib/gridfleet/driver-packs/vendor-foo/0.1.0.tar.gz", state=PackArtifactState.pending)
+    )
+    await db_session.flush()
+
+    row = (await db_session.execute(select(PackArtifact))).scalar_one()
+    assert row.state is PackArtifactState.pending
+    assert row.sha256 is None and row.size_bytes is None
+    assert row.created_at is not None and row.state_changed_at is not None
+
+    db_session.add(PackArtifact(path=row.path, state=PackArtifactState.active))
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
