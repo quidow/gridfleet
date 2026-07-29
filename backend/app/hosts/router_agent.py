@@ -9,7 +9,12 @@ from app.hosts import service as host_service
 from app.hosts.dependencies import HostServicesDep
 from app.hosts.models import Host
 from app.hosts.schemas import HostStatusPush
-from app.hosts.service_status_push import BootFenceError, SectionHashMismatchError, StatusPushTarget
+from app.hosts.service_status_push import (
+    BootFenceError,
+    BootFenceSupersededError,
+    SectionHashMismatchError,
+    StatusPushTarget,
+)
 from app.packs.dependencies import PackServicesDep
 
 router = APIRouter(prefix="/agent/hosts", tags=["agent-hosts"])
@@ -40,7 +45,7 @@ async def status(hosts: HostServicesDep, packs: PackServicesDep, push: HostStatu
         try:
             pending = await hosts.status_push.begin_status_push(db, host, push)
         except BootFenceError as exc:
-            raise HTTPException(status_code=409, detail="Stale or superseded boot_id") from exc
+            raise BootFenceSupersededError from exc
         except SectionHashMismatchError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         if push.packs is not None:
@@ -67,7 +72,7 @@ async def status(hosts: HostServicesDep, packs: PackServicesDep, push: HostStatu
         except BootFenceError as exc:
             # Raising out of the context rolled Txn B back: a superseded boot
             # publishes nothing.
-            raise HTTPException(status_code=409, detail="Stale or superseded boot_id") from exc
+            raise BootFenceSupersededError from exc
     if sections is None:
         return Response(status_code=204)
     try:

@@ -143,6 +143,15 @@ async def test_fence_mismatched_boot_rejected_409(client: AsyncClient, db_sessio
     assert host.last_heartbeat is None
 
 
+async def test_fence_rejection_carries_the_actionable_error_code(client: AsyncClient, db_session: AsyncSession) -> None:
+    """The agent re-registers on this code, so it must name the fence, not a
+    generic conflict — otherwise an unrelated 409 would trigger enrolment."""
+    host = await _make_host(db_session, hostname="fence-code", boot_id=uuid.uuid4())
+    resp = await _post(client, host.id, boot_id=uuid.uuid4(), node_health=_node_section(sequence=1))
+    assert resp.status_code == 409
+    assert resp.json()["error"]["code"] == "BOOT_FENCE_SUPERSEDED"
+
+
 async def test_fence_set_current_missing_boot_processes(client: AsyncClient, db_session: AsyncSession) -> None:
     boot = uuid.uuid4()
     host = await _make_host(db_session, hostname="fence-legacy-after", boot_id=boot)
