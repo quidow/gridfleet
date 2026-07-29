@@ -658,8 +658,11 @@ def _registers_transaction_on_a_stack(node: ast.AST) -> bool:
     The mirror of the second shape ``begin_owner_findings`` detects. A
     transaction registered on a stack stays open until the stack unwinds, so
     every statement after the registration in that block runs with it open.
-    Lambda bodies and generator-expression bodies/inner clauses are deferred;
-    lambda defaults and a generator's outermost iterable remain eager.
+    Lambda bodies and generator-expression bodies/inner clauses are skipped at
+    creation; lambda defaults and a generator's outermost iterable remain eager.
+    Immediate invocation/consumption (a called lambda, ``next()``, or a loop) is
+    not modeled; it needs context-sensitive execution modeling, and production
+    has no exit-stack use.
     """
 
     def registers(current: ast.AST) -> bool:
@@ -701,10 +704,13 @@ def effects_inside_transactions_in_tree(tree: ast.Module, module: str) -> list[s
     the remainder of the enclosing block rather than for a nested one. Statement
     lists are therefore walked in order, with the flag flipping *after* the
     registering statement -- the registration's own arguments are evaluated before
-    the transaction exists. Eager call inputs propagate state, but deferred lambda
-    and generator-expression bodies do not; lambda defaults and a generator's
-    outermost iterable do. Branch states are conservatively joined, so mutually
-    exclusive runtime paths may still produce a finding.
+    the transaction exists. Eager call inputs propagate state, but lambda bodies
+    and generator-expression bodies/inner clauses are skipped at creation;
+    lambda defaults and a generator's outermost iterable do propagate. Immediate
+    invocation/consumption is not modeled; it needs context-sensitive execution
+    modeling, and production has no exit-stack use.
+    Branch states are conservatively joined, so mutually exclusive runtime paths
+    may still produce a finding.
     """
     findings: list[str] = []
     appium = _uses_appium_direct(tree)
@@ -987,7 +993,11 @@ def test_the_effect_check_sees_a_transaction_registered_by_its_callable() -> Non
 
 
 def test_the_effect_check_does_not_evaluate_a_lambda_body() -> None:
-    """Lambda bodies are deferred, while defaults are evaluated at creation."""
+    """Lambda bodies are skipped at creation; defaults are evaluated then.
+
+    Immediate invocation is not modeled; it needs context-sensitive execution
+    modeling, and production has no exit-stack use.
+    """
     deferred = (
         "async def outer(db, ip, port):\n"
         "    async with AsyncExitStack() as stack:\n"
@@ -1005,7 +1015,11 @@ def test_the_effect_check_does_not_evaluate_a_lambda_body() -> None:
 
 
 def test_the_effect_check_only_evaluates_a_generator_expressions_outer_iterable() -> None:
-    """Generator bodies and clauses are deferred; the outer iterable is eager."""
+    """Generator bodies/inner clauses are skipped at creation; the outer iterable is eager.
+
+    Immediate consumption by ``next()`` or a loop is not modeled; it needs
+    context-sensitive execution modeling, and production has no exit-stack use.
+    """
     deferred_body = (
         "async def outer(db, ip, port, values):\n"
         "    async with AsyncExitStack() as stack:\n"
@@ -1063,7 +1077,9 @@ def test_no_effect_runs_inside_a_transaction_block() -> None:
     ``REMOTE_EFFECT_OWNER_REGISTRY`` exist to cover. The transaction detector
     sees both shapes ``begin_owners`` does -- a ``with``/``async with`` item and a
     ``begin()`` registered on an exit stack -- so an effect under either is caught
-    here."""
+    here except when stack registration sits in a lambda/generator body skipped
+    at creation and run by immediate invocation/consumption. Recognizing that
+    execution needs context-sensitive modeling; production has no exit-stack use."""
     findings = effects_inside_transactions()
     assert findings == [], (
         "one of this repository's known effect entry points (see AGENT_EFFECT_NAMES / APPIUM_DIRECT_NAMES / "
