@@ -11,7 +11,7 @@ The Appium node is the most failure-prone object in GridFleet. It lives in two p
 | `reconciler_agent` (`backend/app/appium_nodes/services/reconciler_agent.py`) | `mark_node_started`/`mark_node_stopped` (observed-state writers) plus `ReconcilerAgentService` (`start_node`/`stop_node`/`restart_node`) — these register desired-state intents only; none call the agent |
 | Observe-only convergence (`backend/app/appium_nodes/services/reconciler.py`) | Per-host: matches the agent's latest pushed status report against desired rows (`decide_convergence_action`), writes DB-only observed facts, ingests start failures; issues no start/stop/restart |
 | `host_sweep` node-health fold (`backend/app/appium_nodes/services/node_health.py`) | Folds the pushed node-health section; at the failure window escalates through the shared remediation ladder — never calls the agent |
-| `poke_node_refresh` (`backend/app/agent_comm/node_poke.py`) | Fire-and-forget wake hint after every desired-state write — the only backend→agent node signal |
+| `poke_node_refresh_target` (`backend/app/agent_comm/node_poke.py`) | Fire-and-forget wake hint after every desired-state write — the only backend→agent node signal |
 | Host agent `NodeStateLoop` (`agent/agent_app/appium/node_state.py`) | Pulls `GET /agent/appium-nodes/desired`, diffs against local Appium processes, owns start/stop/reconfigure/orphan-reap for its host |
 
 ## The DB↔agent contract in one sentence

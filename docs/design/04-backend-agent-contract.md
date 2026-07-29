@@ -49,7 +49,7 @@ All paths are under `http://<host_ip>:<host.agent_port>`. Every dial is a typed 
 | `agent_health` | GET `/agent/health` | cadence-gated partition diagnostic (`host_sweep`) and on-demand host diagnostics; carries version guidance |
 | `appium_status` | GET `/agent/appium/{port}/status` | on-demand "is the Appium on this port up?" for operator/diagnostic and node-flow waits |
 | `appium_logs` | GET `/agent/appium/{port}/logs` | host detail UI: last N Appium log lines |
-| `agent_nodes_refresh` | POST `/agent/appium-nodes/refresh` | fire-and-forget wake poke after desired-state writes; callers go through `poke_node_refresh` (`app/agent_comm/node_poke.py`) and swallow failures |
+| `agent_nodes_refresh` | POST `/agent/appium-nodes/refresh` | fire-and-forget wake poke after desired-state writes; callers go through `poke_node_refresh_target` (`app/agent_comm/node_poke.py`) and swallow failures |
 | `get_tool_status` | GET `/agent/tools/status` | host onboarding: Node provider and host helper versions |
 | `get_pack_devices` | GET `/agent/pack/devices` | presence enumeration on probe-miss; intake/discovery |
 | `normalize_pack_device` | POST `/agent/pack/devices/normalize` | intake: normalise raw operator input to canonical device fields |
@@ -97,7 +97,7 @@ Nodes converge by agent pull. The backend never starts, stops, restarts, or reco
 
 **Observed state comes only from the push.** The observe-only convergence pass (`app/appium_nodes/services/reconciler.py`) matches the pushed `appium_processes.running_nodes` entries against desired rows (`decide_convergence_action`) and performs the `mark_node_started` / `mark_node_stopped` DB flips (Doc 2). Start failures ride the same push (`start_failures`, kinds `port_conflict` / `spawn_failed`): `_record_start_failure` records the backoff for both kinds, and a `port_conflict` additionally re-pins `desired_port` to the next free candidate (`_repin_desired_port` via `candidate_ports`) — the backend stays the single port authority and the conflict converges within two poll cycles.
 
-**Delivery: the poke is the only signal.** Every desired-state write is followed by a fire-and-forget `poke_node_refresh`; `converge_device_now` (the operator fast path) pokes and returns without agent I/O. A lost poke costs at most one agent poll interval; correctness comes from the agent's own poll.
+**Delivery: the poke is the only signal.** Every desired-state write is followed by a fire-and-forget `poke_node_refresh_target`, whose `NodeRefreshTarget` the caller resolves from the already-loaded host row; `converge_device_now` (the operator fast path) pokes and returns without agent I/O. A lost poke costs at most one agent poll interval; correctness comes from the agent's own poll.
 
 ## Request envelope
 

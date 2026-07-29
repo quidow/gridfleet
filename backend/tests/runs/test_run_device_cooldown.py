@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _stub_agent_reconfigure(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Without this stub, poke_node_refresh attempts a real TCP connect to the
+    # Without this stub, poke_node_refresh_target attempts a real TCP connect to the
     # test host IP (10.0.0.x). Tests that need to assert on the call override
     # this with their own monkeypatch; pytest applies test-level patches on
     # top of autouse ones.
