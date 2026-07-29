@@ -52,6 +52,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Restart backoff for supervised background loops. The first crash of an episode
+# restarts in the same event-loop iteration — a one-off crash costs no push
+# silence, which is what keeps a host reading online. Only an actual crash loop
+# pays, doubling to a cap; the counter resets once a task has stayed up.
+_RESTART_BASE_DELAY_SEC = 1.0
+_RESTART_MAX_DELAY_SEC = 60.0
+_RESTART_HEALTHY_AFTER_SEC = 60.0
+
+
+def _restart_delay(consecutive_crashes: int, base: float, cap: float) -> float:
+    """Seconds to wait before the restart that follows ``consecutive_crashes`` crashes.
+
+    ``consecutive_crashes`` counts crashes already seen, so the first crash of an
+    episode passes 0 and restarts immediately.
+    """
+    if consecutive_crashes <= 0:
+        return 0.0
+    return min(base * 2.0 ** (consecutive_crashes - 1), cap)
+
+
 def _watchdog(
     name: str,
     restart: Callable[[], asyncio.Task[None]] | None = None,
