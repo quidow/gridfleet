@@ -383,7 +383,7 @@ class NodeHealthService:
             # pid-based fallback in node_running_signal. ``health_state`` is
             # cleared so the public summary label stays "running" rather than
             # echoing an "error" stamp.
-            snapshot = await self._health.apply_locked_node_state_transition(
+            await self._health.apply_locked_node_state_transition(
                 db,
                 locked,
                 locked_node,
@@ -395,7 +395,7 @@ class NodeHealthService:
                 observed_at=observation.observed_at,
             )
         else:
-            snapshot = await self._record_health_failure(
+            await self._record_health_failure(
                 db,
                 node,
                 locked_node,
