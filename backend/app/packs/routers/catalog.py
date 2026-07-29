@@ -14,8 +14,7 @@ from app.packs.schemas import (
     PackPatch,
     RuntimePolicyPatch,
 )
-from app.packs.services.artifact_ledger import forget_artifacts
-from app.packs.services.service import PackNotFound, PackTransitionError, unlink_pack_artifact
+from app.packs.services.service import PackNotFound, PackTransitionError, purge_pack_artifacts
 from app.settings.dependencies import SettingsServicesDep
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
@@ -98,11 +97,8 @@ async def delete_driver_pack(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     # Post-commit, so no pack row lock spans the filesystem. The deletion the
-    # caller asked for is durable either way, so a failing unlink is logged and
-    # the success status still returned; its ledger row stays ``orphaned`` and
-    # the janitor's reaper comes back for it.
-    reaped = [path for path in artifact_paths if unlink_pack_artifact(path)]
-    if reaped:
-        async with packs.session_factory.begin() as db:
-            await forget_artifacts(db, paths=reaped)
+    # caller asked for is durable either way, so a failing unlink or a failing
+    # ledger cleanup is logged and the success status still returned; the rows
+    # left behind are the reaper's input (see purge_pack_artifacts).
+    await purge_pack_artifacts(packs.session_factory, artifact_paths)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

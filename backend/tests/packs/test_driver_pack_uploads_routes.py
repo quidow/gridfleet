@@ -30,7 +30,7 @@ from app.packs.services import service as pack_service
 from app.packs.services.ingest import MAX_PACK_TARBALL_BYTES
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
+    from collections.abc import AsyncIterator, Iterator, Sequence
 
     from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -639,6 +639,45 @@ async def test_failed_artifact_deletion_is_logged_and_still_reports_success(
         assert await peer.get(DriverPack, "vendor-foo") is None, (
             "metadata deletion committed before the unlink and must stay committed"
         )
+
+
+async def test_a_failed_ledger_cleanup_still_reports_a_successful_delete(
+    client: AsyncClient,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ledger cleanup is post-commit too, so it may not turn a 204 into a 500.
+
+    Same rule as the unlink beside it: the metadata deletion is already durable,
+    and answering 500 would report a rollback that never happened. The row this
+    fails to drop stays ``orphaned``, which is exactly what the reaper takes as
+    input -- so the containment loses nothing and the pair still converges.
+
+    The failure is a real statement against a table that does not exist, not a
+    patched method with a ``side_effect``: a mock leaves the session clean, and
+    the aborted transaction production would actually see is a different code
+    path. Only the injection point is patched; what happens inside the boundary
+    is the genuine failure.
+    """
+    await _upload(client, "0.1.0")
+
+    async def _fail(db: AsyncSession, *, paths: Sequence[str]) -> None:
+        del paths
+        await db.execute(text("SELECT 1 FROM gridfleet_no_such_table"))
+
+    monkeypatch.setattr(pack_service, "forget_artifacts", _fail)
+
+    res = await client.delete("/api/driver-packs/vendor-foo")
+
+    assert res.status_code == 204, "a failed ledger cleanup must not turn a committed delete into an error"
+    async with db_session_maker() as peer:
+        assert await peer.get(DriverPack, "vendor-foo") is None, (
+            "metadata deletion committed before the cleanup and must stay committed"
+        )
+        rows = (await peer.scalars(select(PackArtifact))).all()
+    assert [row.state for row in rows] == [PackArtifactState.orphaned], (
+        "the row the cleanup could not drop must stay orphaned for the reaper"
+    )
 
 
 async def test_delete_release_removes_its_ledger_row_after_a_successful_unlink(

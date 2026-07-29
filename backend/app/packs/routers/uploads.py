@@ -12,7 +12,6 @@ from app.core.http_errors import found_or_404
 from app.packs.dependencies import PackServicesDep
 from app.packs.models import DriverPackRelease
 from app.packs.schemas import CurrentReleasePatch, PackOut, PackReleasesOut
-from app.packs.services.artifact_ledger import forget_artifacts
 from app.packs.services.ingest import (
     MAX_PACK_TARBALL_BYTES,
 )
@@ -22,7 +21,7 @@ from app.packs.services.ingest import (
 from app.packs.services.ingest import (
     PackIngestValidationError as PackUploadValidationError,
 )
-from app.packs.services.service import PackNotFound, build_pack_out, unlink_pack_artifact
+from app.packs.services.service import PackNotFound, build_pack_out, purge_pack_artifacts
 
 router = APIRouter(prefix="/api/driver-packs", tags=["driver-packs"])
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
@@ -130,10 +129,9 @@ async def delete_release(
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     # Post-commit, for the same reason as the pack delete: no transaction and no
-    # pack row lock may span filesystem deletion. The ledger row stays behind on
-    # failure so the janitor's reaper retries; on success there is nothing left
-    # to reap, so the row goes too.
-    if artifact_path and unlink_pack_artifact(artifact_path):
-        async with packs.session_factory.begin() as db:
-            await forget_artifacts(db, paths=[artifact_path])
+    # pack row lock may span filesystem deletion, and nothing after the commit
+    # may fail the response. On success the ledger row goes with the file; on
+    # failure it stays ``orphaned`` and the janitor's reaper comes back for it.
+    if artifact_path:
+        await purge_pack_artifacts(packs.session_factory, [artifact_path])
     return Response(status_code=status.HTTP_204_NO_CONTENT)

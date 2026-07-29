@@ -8,8 +8,11 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.core.type_defs import SessionFactory
     from app.packs.services.lifecycle import PackLifecycleService
 
 from app.core.observability import get_logger
@@ -31,7 +34,7 @@ from app.packs.schemas import (
     PlatformOut,
     RuntimePolicy,
 )
-from app.packs.services.artifact_ledger import orphan_artifacts
+from app.packs.services.artifact_ledger import forget_artifacts, orphan_artifacts
 from app.packs.services.driver_version import has_driver_drift, installed_driver_version
 from app.packs.services.release_ordering import selected_release
 
@@ -67,11 +70,11 @@ class PackTransitionError(ValueError):
 def unlink_pack_artifact(path: str) -> bool:
     """Remove a pack artifact whose metadata deletion has already committed.
 
-    Called by the routers once their transaction has ended, so the failure has
-    nowhere to roll back to: the deletion the caller asked for did happen, and
-    failing the response would report a rollback that never occurred. Swallowing
-    it is now correct rather than merely defensible -- the artifact ledger row
-    the same transaction marked ``orphaned`` guarantees the janitor retries.
+    Called once the caller's transaction has ended, so the failure has nowhere
+    to roll back to: the deletion the caller asked for did happen, and failing
+    the response would report a rollback that never occurred. Swallowing it is
+    now correct rather than merely defensible -- the artifact ledger row the
+    same transaction marked ``orphaned`` guarantees the janitor retries.
 
     Returns:
         ``True`` when the file is gone, including when it was already missing;
@@ -84,6 +87,34 @@ def unlink_pack_artifact(path: str) -> bool:
         logger.warning("pack_artifact_unlink_failed", artifact_path=path, error=str(exc))
         return False
     return True
+
+
+async def purge_pack_artifacts(session_factory: SessionFactory, paths: Sequence[str]) -> None:
+    """Unlink committed-deleted artifacts, then forget the ones that went.
+
+    Everything here runs after the caller's transaction committed, so nothing
+    here may fail the response -- not the unlink, and not the ledger cleanup
+    that follows it. Either one raised out of a delete route would answer 500
+    for a deletion that is already durable, sending the operator looking for a
+    pack that is gone.
+
+    Both failure modes converge on the same place rather than on an operator: a
+    file whose unlink failed keeps its ``orphaned`` row, and a row this could not
+    drop stays ``orphaned`` too. Both are exactly the reaper's input, which is
+    why swallowing them costs nothing.
+
+    The unlink deliberately runs before the ``begin()`` rather than inside it:
+    no transaction may span filesystem deletion, and the structure is what keeps
+    that true instead of a comment asking the next editor to remember it.
+    """
+    reaped = [path for path in paths if unlink_pack_artifact(path)]
+    if not reaped:
+        return
+    try:
+        async with session_factory.begin() as db:
+            await forget_artifacts(db, paths=reaped)
+    except Exception:
+        logger.exception("pack_artifact_forget_failed", artifact_paths=reaped)
 
 
 @dataclass
