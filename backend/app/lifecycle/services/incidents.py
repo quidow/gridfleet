@@ -213,12 +213,12 @@ class LifecycleIncidentService:
         result = await db.execute(stmt)
         rows = result.all()
 
-        if direction == "newer" and cursor:
-            rows = list(reversed(rows))
-
         has_more = len(rows) > limit
         if has_more:
             rows = rows[:limit]
+
+        if direction == "newer" and cursor:
+            rows = list(reversed(rows))
 
         items = [serialize_lifecycle_incident(event, device) for event, device in rows]
 
