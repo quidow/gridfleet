@@ -277,27 +277,6 @@ describe('deriveDeviceDetailTriage', () => {
     });
   });
 
-  it('prioritizes review_required over everything', () => {
-    const triage = deriveDeviceDetailTriage(
-      makeDevice({
-        review_required: true,
-        review_reason: 'Recovery probe failed 5 times',
-        review_set_at: '2026-05-17T15:00:00Z',
-        operational_state: 'offline',
-        appium_node: null,
-      }),
-      { health: makeHealth() },
-    );
-
-    expect(triage).toMatchObject({
-      tone: 'error',
-      eyebrow: 'Review required',
-      title: 'Device shelved — operator review required',
-      detail: 'Recovery probe failed 5 times',
-      action: { kind: 'none' },
-    });
-  });
-
   it('shows health check failed when node is running but health is unhealthy', () => {
     const triage = deriveDeviceDetailTriage(
       makeDevice({

@@ -1951,7 +1951,7 @@ export interface components {
              * Effective State
              * @enum {string}
              */
-            readonly effective_state: "starting" | "running" | "stopping" | "stopped" | "restarting" | "blocked" | "error";
+            readonly effective_state: "starting" | "running" | "stopping" | "stopped" | "restarting" | "error";
             /** Health Running */
             health_running?: boolean | null;
             /** Health State */
@@ -2163,15 +2163,6 @@ export interface components {
              */
             readiness_state: "setup_required" | "verification_required" | "verified";
             reservation?: components["schemas"]["DeviceReservationRead"] | null;
-            /** Review Reason */
-            review_reason?: string | null;
-            /**
-             * Review Required
-             * @default false
-             */
-            review_required: boolean;
-            /** Review Set At */
-            review_set_at?: string | null;
             /** Software Versions */
             software_versions: {
                 [key: string]: unknown;
@@ -2511,15 +2502,6 @@ export interface components {
              */
             readiness_state: "setup_required" | "verification_required" | "verified";
             reservation?: components["schemas"]["DeviceReservationRead"] | null;
-            /** Review Reason */
-            review_reason?: string | null;
-            /**
-             * Review Required
-             * @default false
-             */
-            review_required: boolean;
-            /** Review Set At */
-            review_set_at?: string | null;
             /** Software Versions */
             software_versions: {
                 [key: string]: unknown;
@@ -3227,7 +3209,7 @@ export interface components {
             /** Host Name */
             host_name?: string | null;
             /** Node Effective State */
-            node_effective_state?: ("starting" | "running" | "stopping" | "stopped" | "restarting" | "blocked" | "error") | null;
+            node_effective_state?: ("starting" | "running" | "stopping" | "stopped" | "restarting" | "error") | null;
             operational_state: components["schemas"]["DeviceOperationalState"];
             /** Platform Id */
             platform_id: string;

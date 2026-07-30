@@ -54,18 +54,6 @@ export function deriveDeviceDetailTriage(
   const reservation = device.reservation;
   const node = device.appium_node;
 
-  if (device.review_required) {
-    return {
-      tone: 'error',
-      eyebrow: 'Review required',
-      title: 'Device shelved — operator review required',
-      detail:
-        device.review_reason ||
-        'Automated recovery hit the failure threshold. Restart the node, re-verify, or exit maintenance to release the device back into the recovery loop.',
-      action: { kind: 'none', label: '' },
-    };
-  }
-
   if (reservation?.excluded) {
     return {
       tone: 'warn',
