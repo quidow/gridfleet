@@ -68,25 +68,31 @@ SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 # mirroring the recovery job's RECOVERY_PROBE_RETRY_DELAY_SEC.
 SCHEDULED_PROBE_RETRY_DELAY_SEC = 10.0
 
-# Plumbing constant: wall-clock budget for one scheduled pass. It is checked both
-# before admitting a new series and — threaded through as ``deadline`` — before
-# each in-series retry sleep, so the delivered bound is the budget plus one
-# worst-case *attempt*, not plus one worst-case series.
+# Plumbing constant: wall-clock budget for one scheduled pass, anchored at the
+# start of the owning appium_sweep cycle — AppiumSweepLoop computes
+# ``tick start + budget`` and passes it into ``check_due_devices`` as
+# ``deadline``, so the observation sweep and the due-set query spend from the
+# same allowance the stall watchdog measures (the in-method fallback serves
+# direct callers only). The deadline is checked both before admitting a new
+# series and — threaded through as ``deadline`` — before each in-series retry
+# sleep, so the delivered bound is the budget plus one worst-case *attempt*,
+# not plus one worst-case series.
 #
-# At stock settings one attempt costs at most 3 x 115 s: a 115 s create timeout
-# (min of general.session_viability_timeout_sec and effective_create_timeout on
-# grid.claim_window_sec) plus two terminate retries at that same timeout
-# (_terminate_probe_session). The check sits before the retry sleep, so the last
-# attempt can start at budget + delay: a pass runs ≤ 180 + 10 + 345 = 535 s,
-# inside the ~640 s the scheduler stall watchdog allows an appium_sweep cycle
-# (interval 30 + heartbeat grace 10 + stall grace 600). Deferred devices stay due
-# and the next pass (≤ 60 s later) picks them up.
+# One attempt costs at most create + 2 x terminate: create is bounded by
+# min(general.session_viability_timeout_sec, effective_create_timeout on
+# grid.claim_window_sec) — 115 s at stock settings, 240 s with both raised to
+# their maxima — and each terminate by _PROBE_TERMINATE_TIMEOUT_CAP_SEC, so the
+# worst attempt is 240 + 2 x 30 = 300 s at any supported setting combination.
+# The deadline check sits before the retry sleep, so the last attempt can start
+# at budget + delay: a cycle spends <= 180 + 10 + 300 = 490 s here, inside the
+# ~640 s the scheduler stall watchdog allows an appium_sweep cycle
+# (interval 30 + heartbeat grace 10 + stall grace 600).
 #
-# What this budget does not bound: raising both grid.claim_window_sec and
-# general.session_viability_timeout_sec (each tunable to 600) lifts the probe
-# timeout to its 240 s cap, so a single attempt can cost 3 x 240 = 720 s — past
-# the watchdog ceiling on its own, with or without this budget. That is the probe
-# timeout's own bound, and no cross-setting invariant currently forbids it.
+# A device the budget *skipped* (no series started) is untouched and stays due;
+# the next pass (<= 60 s later) picks it up. A device *truncated* mid-series has
+# already recorded a failed attempt, which parks it offline and drops it from
+# the next pass's available-only due set; it re-enters through device recovery
+# (connectivity._maybe_auto_recover), not through the scheduled pass.
 SCHEDULED_PASS_BUDGET_SEC = 180.0
 
 # §14.4a: a recovery-class probe may run on a device that is not yet ``available``.
