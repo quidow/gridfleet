@@ -24,7 +24,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `general.run_failure_escalates_to_maintenance` | `general` | `bool` | `true` | boolean | When a device is escalated out of a run (CI preparation failure or cooldown threshold exceeded), true places it into maintenance (manual recovery); false leaves it available. The device is released from the run regardless |
 | `general.session_viability_interval_sec` | `general` | `int` | `3600` | `0..604800` | Interval for idle session-viability probes; `0` disables the loop |
 | `general.session_viability_timeout_sec` | `general` | `int` | `120` | `10..600` | Timeout for a session-viability probe |
-| `general.session_viability_failure_threshold` | `general` | `int` | `3` | `1..20` | Consecutive session-viability failures required before the manager parks the device; tolerates transient Appium hiccups |
+| `general.session_viability_failure_threshold` | `general` | `int` | `3` | `1..20` | Probe attempts per scheduled viability pass; the pass retries ~10 s apart and escalates the device to lifecycle recovery when the consecutive-failure count reaches this value |
 | `general.lifecycle_recovery_backoff_base_sec` | `general` | `int` | `60` | `1..3600` | Base delay for lifecycle automatic recovery backoff |
 | `general.lifecycle_recovery_backoff_max_sec` | `general` | `int` | `900` | `1..86400` | Maximum delay for lifecycle automatic recovery backoff |
 | `device_checks.ip_ping.fail_window_sec` | `device_checks` | `int` | `120` | `0..3600` | Wall-clock seconds ICMP ping must keep failing before an opted-in device is marked unhealthy; `0` flips on the first miss |
