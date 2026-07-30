@@ -113,27 +113,42 @@ def _job() -> dict[str, Any]:
 
 
 async def test_failure_finalization_statements_permute(db_session: AsyncSession, db_host: Host) -> None:
-    """WS-15.3 acceptance: the failure-path intent mutations are order-independent.
+    """WS-15.3 acceptance: the failure-path intent mutations are order-independent,
+    up to one legitimate two-way split.
 
     After the durable-facts block (session_viability_status + outcome stamp), every
     ordering of the intent mutations, with an adversarial reconcile after each
-    statement, derives the same operational_state and the same (still-False)
-    allocation verdict. Post-Task-3, the appium node's own desired_state is
-    deliberately excluded from that invariant: this adversarial model includes a
-    "stop_intents" register step alongside its own "revoke_stops", so whichever
-    of the two is last in a given permutation legitimately decides whether an
-    operator:stop intent survives — same as a real concurrent operator stop would.
-    Node-state convergence no longer holds once review_required stops masking
-    that (pre-existing) race uniformly to "stopped"; the allocation-safety
-    invariant (session_viability_status → device_allows_allocation) is what has
-    to hold across every ordering now, and does. The stamp makes an unrevoked
-    lease terminal for both claim and command readers.
+    statement, derives one of exactly two convergence classes, partitioned by
+    whether the adversarial "stop_intents" register step runs after its own
+    "revoke_stops" in a given permutation:
+
+    - "stop_intents" last: the registered operator:stop intent survives to the
+      final reconcile and outranks everything else in decide_node_process,
+      forcing the node to a hard stop.
+    - "revoke_stops" last: no stop intent survives, so the node falls through to
+      the baseline:idle branch — with review_required gone (post-Task-3), that
+      branch now baseline-restarts the node instead of leaving it stopped.
+
+    This split is a pre-existing property of decide_node_process's precedence
+    ladder, not something Task 3 introduced: `_finalize_failure` itself never
+    registers an operator:stop intent (production only revokes), so the
+    "stop_intents" step models a *concurrent* actor racing the finalizer, not the
+    production path. Before Task 3, review_required=True forced the baseline
+    branch to "stopped" too, uniformly masking the two classes into one; with
+    that masking gone the split is real, and both classes are asserted here
+    rather than collapsed. What stays invariant across every ordering, in both
+    classes, is the allocation-safety claim the ruling depends on:
+    session_viability_status keeps device_allows_allocation False regardless of
+    which actor wins the node race. The stamp makes an unrevoked lease terminal
+    for both claim and command readers.
     """
-    finals: set[tuple[object, ...]] = set()
+    # Bucketed by whether "stop_intents" runs after its own "revoke_stops" — see
+    # docstring. Each bucket must converge to exactly one final tuple on its own.
+    finals: dict[bool, set[tuple[object, ...]]] = {True: set(), False: set()}
     step_names = ("stop_intents", "revoke_lease", "revoke_stops", "revoke_start")
     for index, perm in enumerate(itertools.permutations(step_names)):
         device = await create_device(db_session, host_id=db_host.id, name=f"ws153-perm-{index}")
-        await _seed_node(db_session, device.id, running=True)
+        node = await _seed_node(db_session, device.id, running=True)
         await register_verification_node_intent(
             db_session, device, settings=FakeSettingsReader({}), publisher=event_bus
         )
@@ -184,23 +199,31 @@ async def test_failure_finalization_statements_permute(db_session: AsyncSession,
             await reconcile_device(db_session, device.id, publisher=event_bus)
             states.append(await derive_operational_state(db_session, device, now=now_utc()))
         await db_session.commit()
+        await db_session.refresh(node)
         await db_session.refresh(device, attribute_names=["appium_node"])
         await db_session.refresh(device)
 
         assert all(state == states[-1] for state in states), f"projection flapped under {perm}: {states}"
-        # node.desired_state/stop_pending/accepting_new_sessions are deliberately not
-        # part of this invariant (see docstring): they legitimately depend on whether
-        # "stop_intents" or "revoke_stops" is last in a given permutation.
-        finals.add(
+        stop_survives = perm.index("stop_intents") > perm.index("revoke_stops")
+        finals[stop_survives].add(
             (
                 states[-1],
+                node.desired_state,
+                node.stop_pending,
+                node.accepting_new_sessions,
                 device.operational_state_last_emitted,
                 device_allows_allocation(device),
             )
         )
-    assert len(finals) == 1, f"orderings diverged: {finals}"
-    _, _, final_allows_allocation = next(iter(finals))
-    assert final_allows_allocation is False, "failed viability keeps the device out of allocation"
+    assert len(finals[True]) == 1, f"stop-survives orderings diverged: {finals[True]}"
+    assert len(finals[False]) == 1, f"no-surviving-stop orderings diverged: {finals[False]}"
+
+    (_, stop_survives_desired_state, _, _, _, stop_survives_allows_allocation) = next(iter(finals[True]))
+    (_, no_stop_desired_state, _, _, _, no_stop_allows_allocation) = next(iter(finals[False]))
+    assert stop_survives_desired_state == AppiumDesiredState.stopped, "surviving operator:stop forces a hard stop"
+    assert no_stop_desired_state == AppiumDesiredState.running, "baseline restart is intended post-Task-3"
+    assert stop_survives_allows_allocation is False, "failed viability keeps the device out of allocation"
+    assert no_stop_allows_allocation is False, "failed viability keeps the device out of allocation"
 
 
 async def test_finalize_success_single_edge_no_flap(

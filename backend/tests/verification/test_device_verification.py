@@ -1161,9 +1161,9 @@ async def test_failed_then_successful_reverify_recovers_device(
     default_host_id: str,
 ) -> None:
     """After a failed verification the device is held out by the failed viability result
-    (session_viability_status, node stopped) but NOT operator-stopped, so a subsequent
-    re-verify with a passing probe completes end-to-end — recovery without a DB edit
-    (spec bug-3 §6 R5)."""
+    (session_viability_status; the node baseline-restarts) but NOT operator-stopped, so a
+    subsequent re-verify with a passing probe completes end-to-end — recovery without a
+    DB edit (spec bug-3 §6 R5)."""
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     device = await create_device_record(
         db_session,
