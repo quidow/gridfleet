@@ -40,7 +40,7 @@ from app.lifecycle.services.policy import DeferredStopOutcome, LifecyclePolicySe
 from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
@@ -70,7 +70,7 @@ def _make_svc(
         settings=svc_settings,  # type: ignore[arg-type]
         actions=LifecyclePolicyActionsService(
             publisher=pub,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=incidents,
         ),  # type: ignore[arg-type]
         incidents=incidents,
@@ -2083,7 +2083,7 @@ async def test_restore_run_after_self_heal_ignores_released_device(db_session: A
     await create_reserved_run(db_session, name="self-heal-released-run", devices=[device])
     # Release the device from the run (the escalation mechanism) — real services, real reconcile.
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    await RunReservationService(review=build_review_service()).release_locked(
+    await RunReservationService().release_locked(
         db_session, locked, reason="CI preparation failed", publisher=event_bus
     )
     await db_session.commit()

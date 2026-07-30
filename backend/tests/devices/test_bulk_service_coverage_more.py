@@ -20,7 +20,7 @@ from app.lifecycle.services.operator_node import (
     operator_stop_intents,
     operator_stop_sources,
 )
-from tests.fakes import FakeSessionFactory, FakeSettingsReader, build_review_service
+from tests.fakes import FakeSessionFactory, FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -71,7 +71,7 @@ def _svc(
         circuit_breaker=MagicMock(),
         maintenance=maintenance or MagicMock(),  # type: ignore[arg-type]
         crud=crud or DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),  # type: ignore[arg-type]
-        operator=OperatorNodeLifecycleService(review=build_review_service(), settings=settings, publisher=event_bus),
+        operator=OperatorNodeLifecycleService(settings=settings, publisher=event_bus),
         session_factory=session_factory,  # type: ignore[arg-type]
     )
 

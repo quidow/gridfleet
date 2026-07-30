@@ -6,7 +6,7 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.maintenance import MaintenanceService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -44,7 +44,6 @@ async def test_enter_maintenance_writes_stop_intent_without_inline_agent_stop(
     device_id = device.id
 
     await MaintenanceService(
-        review=build_review_service(),
         settings=FakeSettingsReader({}),
         publisher=event_bus,
         session_factory=db_session_maker,

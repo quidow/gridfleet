@@ -23,7 +23,7 @@ from app.devices.models import DeviceIntent, DeviceOperationalState, DeviceRemed
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -88,7 +88,7 @@ async def test_auto_stop_commission_action_shape(
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=Mock(),
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
@@ -176,13 +176,12 @@ async def test_cooldown_intent_payload_shape(
         settings=_test_settings,
         circuit_breaker=_test_cb,
         maintenance=MaintenanceService(
-            review=build_review_service(),
             settings=FakeSettingsReader({}),
             publisher=event_bus,
             session_factory=db_session_maker,
         ),
         lifecycle_actions=AsyncMock(),
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=AsyncMock(),
         session_factory=db_session_maker,
     )
@@ -248,9 +247,7 @@ async def test_operator_start_intent_payload_shape(
         db_session,
         locked,
         "operator",
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus),
     )
 
     intent = await _get_intent(db_session, device.id, prefix=f"operator:start:{device.id}")
@@ -296,7 +293,7 @@ async def test_auto_recovery_commission_is_recorded_in_the_remediation_log(
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=event_bus,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),

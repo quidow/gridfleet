@@ -13,7 +13,7 @@ from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -70,9 +70,7 @@ async def test_bulk_restart_persists_watermark_when_recovery_directive_present(
         db_session,
         locked,
         "bulk",
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus),
     )
     await db_session.refresh(node)
 
@@ -100,9 +98,7 @@ async def test_operator_start_intent_is_ttl_bounded(
         db_session,
         locked,
         "bulk",
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus),
     )
     await db_session.commit()
 
@@ -145,9 +141,7 @@ async def test_operator_restart_intent_is_ttl_bounded(
         db_session,
         locked,
         "bulk",
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus),
     )
     await db_session.commit()
 
@@ -197,9 +191,7 @@ async def test_bulk_start_nodes_tags_desired_state_as_bulk(
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=_settings_bulk, publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=_settings_bulk, publisher=event_bus),
         session_factory=db_session_maker,
     ).bulk_start_nodes([device.id], caller="bulk")
 
@@ -239,9 +231,7 @@ async def test_bulk_start_nodes_accepts_group_caller(
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=_settings_group, publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=_settings_group, publisher=event_bus),
         session_factory=db_session_maker,
     ).bulk_start_nodes([device.id], caller="group")
 

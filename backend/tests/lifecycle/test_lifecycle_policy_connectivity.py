@@ -18,7 +18,6 @@ from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs import service_reservation as run_reservation_service
 from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import build_review_service
 from tests.fakes.settings import FakeSettingsReader
 from tests.helpers import create_reserved_run
 
@@ -38,7 +37,7 @@ def _build_lifecycle_policy_service() -> LifecyclePolicyService:
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=event_bus,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
@@ -329,7 +328,7 @@ async def test_connectivity_loss_keeps_device_in_run(
         settings=None,  # type: ignore[arg-type]
         actions=LifecyclePolicyActionsService(
             publisher=event_bus,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),

@@ -18,7 +18,7 @@ from app.lifecycle.services.actions import (
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -43,7 +43,7 @@ def _settings() -> FakeSettingsReader:
 def _actions() -> LifecyclePolicyActionsService:
     return LifecyclePolicyActionsService(
         publisher=event_bus,
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=LifecycleIncidentService(),
     )
 

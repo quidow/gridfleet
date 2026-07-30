@@ -14,7 +14,6 @@ from app.core.timeutil import now_utc
 from app.devices.models import Device, DeviceReservation, ExclusionKind
 from app.devices.services.intent_reconciler import ReconcileCandidate, gather_decision_facts, reconcile_device_command
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import build_review_service
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
@@ -79,7 +78,7 @@ async def test_indefinite_exclusion_drops_run_routing(
     device = await _create_available_device(db_session, default_host_id, "exkind-001")
     run = await _create_run(client)
 
-    svc = RunReservationService(review=build_review_service())
+    svc = RunReservationService()
     await svc.exclude_device_from_run(db_session, device.id, reason="health failure")
 
     entry = await _reservation_entry(db_session, run["id"], device.id)
@@ -170,7 +169,7 @@ async def test_expiry_clears_kind_and_skips_indefinite_exclusions(
 
     excluded_device = await _create_available_device(db_session, default_host_id, "exkind-006")
     run2 = await _create_run(client)
-    svc = RunReservationService(review=build_review_service())
+    svc = RunReservationService()
     await svc.exclude_device_from_run(db_session, excluded_device.id, reason="health failure")
 
     await reconcile_device_command(

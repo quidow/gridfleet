@@ -16,7 +16,7 @@ from app.devices.services.lifecycle_policy_state import state as lifecycle_state
 from app.devices.services.maintenance import MaintenanceService
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -32,7 +32,6 @@ pytestmark = pytest.mark.asyncio
 
 def _service(session_factory: async_sessionmaker[AsyncSession]) -> MaintenanceService:
     return MaintenanceService(
-        review=build_review_service(),
         settings=FakeSettingsReader({}),
         publisher=event_bus,
         session_factory=session_factory,

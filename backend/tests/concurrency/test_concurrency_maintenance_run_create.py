@@ -40,7 +40,6 @@ from app.settings.dependencies import get_settings_services
 from app.settings.service_config import SettingsConfigService
 from app.settings.services_container import SettingsServices
 from tests.conftest import settings_service, test_circuit_breaker
-from tests.fakes import build_review_service
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -82,9 +81,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
 
         def _override_device_services() -> DeviceServices:
             sf = async_sessionmaker(db_session_maker.kw["bind"], class_=AsyncSession, expire_on_commit=False)
-            _maintenance_svc = MaintenanceService(
-                review=build_review_service(), settings=settings_service, publisher=event_bus, session_factory=sf
-            )
+            _maintenance_svc = MaintenanceService(settings=settings_service, publisher=event_bus, session_factory=sf)
             _crud_svc = DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus)
             return DeviceServices(
                 fleet_capacity=FleetCapacityService(),
@@ -101,9 +98,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                     circuit_breaker=test_circuit_breaker,
                     maintenance=_maintenance_svc,
                     crud=_crud_svc,
-                    operator=OperatorNodeLifecycleService(
-                        review=build_review_service(), settings=settings_service, publisher=event_bus
-                    ),
+                    operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
                     session_factory=sf,
                 ),
                 presenter=DevicePresenterService(),
@@ -171,13 +166,12 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
                 maintenance=MaintenanceService(
-                    review=build_review_service(),
                     settings=settings_service,
                     publisher=event_bus,
                     session_factory=db_session_maker,
                 ),
                 lifecycle_actions=AsyncMock(),
-                reservation=RunReservationService(review=build_review_service()),
+                reservation=RunReservationService(),
                 incidents=LifecycleIncidentService(),
                 session_factory=db_session_maker,
             )
@@ -187,7 +181,7 @@ async def test_run_create_and_maintenance_cannot_overlap(
                 lifecycle=run_lifecycle,
                 release=run_release,
                 failure=run_failure,
-                reservation=RunReservationService(review=build_review_service()),
+                reservation=RunReservationService(),
                 query=run_query,
                 settings=settings_service,
                 session_factory=db_session_maker,

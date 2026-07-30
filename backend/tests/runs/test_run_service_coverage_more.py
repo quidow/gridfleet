@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
@@ -34,7 +33,7 @@ from app.runs.service_reservation import (
     get_device_reservation_with_entry,
 )
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run, select_devices_for_requirement
 from tests.helpers import test_event_bus as event_bus
 
@@ -69,13 +68,12 @@ def _make_failure_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunF
         settings=_settings,
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(
-            review=build_review_service(),
             settings=FakeSettingsReader({}),
             publisher=event_bus,
             session_factory=session_factory,
         ),
         lifecycle_actions=AsyncMock(),
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=LifecycleIncidentService(),
         session_factory=session_factory,
     )
@@ -298,7 +296,7 @@ async def test_restore_and_exclude_device_reservation_branches(
     )
     run = await create_reserved_run(db_session, name="reservation-branch-run", devices=[device])
     entry = run.device_reservations[0]
-    svc = RunReservationService(review=build_review_service())
+    svc = RunReservationService()
 
     assert await svc.exclude_device_from_run(db_session, uuid.uuid4(), reason="missing") is None
     assert await run_service.get_device_reservation(db_session, device.id) == run
@@ -324,12 +322,6 @@ async def test_restore_and_exclude_device_reservation_branches(
     assert entry.excluded is False
     assert entry.exclusion_reason is None
     assert await svc.restore_device_to_run(db_session, device.id) is excluded
-
-    monkeypatch.setattr(f"{RUN_LOOKUP_MODULE}.device_locking.lock_device", AsyncMock(side_effect=NoResultFound))
-    committed_excluded = await svc.exclude_device_from_run(db_session, device.id, reason="missing lock")
-    assert committed_excluded is not None
-    committed_restored = await svc.restore_device_to_run(db_session, device.id)
-    assert committed_restored is not None
 
     assert await svc.restore_device_to_run(db_session, uuid.uuid4()) is None
 
@@ -359,13 +351,12 @@ async def test_cooldown_device_guard_paths(
         settings=fake_settings,
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(
-            review=build_review_service(),
             settings=FakeSettingsReader({}),
             publisher=event_bus,
             session_factory=db_session_maker,
         ),
         lifecycle_actions=AsyncMock(),
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=LifecycleIncidentService(),
         session_factory=db_session_maker,
     )
@@ -541,7 +532,7 @@ async def test_cooldown_escalation_releases_device(
         circuit_breaker=_circuit_breaker,
         maintenance=maintenance,
         lifecycle_actions=AsyncMock(),
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=AsyncMock(),
         session_factory=db_session_maker,
     )
@@ -593,7 +584,7 @@ async def test_cooldown_escalation_enters_maintenance_when_enabled(
         circuit_breaker=_circuit_breaker,
         maintenance=maintenance,
         lifecycle_actions=AsyncMock(),
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=AsyncMock(),
         session_factory=db_session_maker,
     )
@@ -963,7 +954,7 @@ async def test_report_preparation_failure_releases_device_when_escalation_disabl
         circuit_breaker=_circuit_breaker,
         maintenance=maintenance,
         lifecycle_actions=lifecycle_actions,
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=incidents,
         session_factory=db_session_maker,
     )
@@ -1011,7 +1002,7 @@ async def test_report_preparation_failure_releases_and_maintains_when_enabled(
         circuit_breaker=_circuit_breaker,
         maintenance=maintenance,
         lifecycle_actions=lifecycle_actions,
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=incidents,
         session_factory=db_session_maker,
     )
@@ -1059,7 +1050,7 @@ async def test_release_device_from_run_releases_and_frees_device(
     run = await create_reserved_run(db_session, name="release-prim-run", devices=[device], state=RunState.active)
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    returned_run_id = await RunReservationService(review=build_review_service()).release_locked(
+    returned_run_id = await RunReservationService().release_locked(
         db_session, locked, reason="CI preparation failed", publisher=event_bus
     )
     await db_session.commit()
@@ -1099,7 +1090,7 @@ async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
     await db_session.commit()
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    await RunReservationService(review=build_review_service()).release_locked(
+    await RunReservationService().release_locked(
         db_session, locked, reason="CI preparation failed", publisher=event_bus
     )
     await db_session.commit()
@@ -1127,7 +1118,7 @@ async def test_reserved_device_info_exposes_released_at(
     )
     await create_reserved_run(db_session, name="dto-released-run", devices=[device], state=RunState.active)
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    await RunReservationService(review=build_review_service()).release_locked(
+    await RunReservationService().release_locked(
         db_session, locked, reason="CI preparation failed", publisher=event_bus
     )
     await db_session.commit()
@@ -1177,9 +1168,7 @@ async def test_release_device_from_run_clears_prior_exclusion(
     await db_session.commit()
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    await RunReservationService(review=build_review_service()).release_locked(
-        db_session, locked, reason="threshold crossed", publisher=event_bus
-    )
+    await RunReservationService().release_locked(db_session, locked, reason="threshold crossed", publisher=event_bus)
     await db_session.commit()
 
     released = (

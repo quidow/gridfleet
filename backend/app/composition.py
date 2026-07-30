@@ -38,7 +38,6 @@ from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.presenter import DevicePresenterService
 from app.devices.services.property_refresh import PropertyRefreshService
 from app.devices.services.remediation_job import RemediationJobService
-from app.devices.services.review import ReviewService
 from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
@@ -109,7 +108,7 @@ class AppServices:
     jobs: DurableJobWorkerLoop
 
 
-def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inherent
+def compose_app(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     bus: EventBus,
@@ -152,8 +151,7 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
     )
 
     device_capability_svc = DeviceCapabilityService()
-    review_svc = ReviewService()
-    reservation_svc = RunReservationService(review=review_svc)
+    reservation_svc = RunReservationService()
     incidents_svc = LifecycleIncidentService(publisher=bus)
     lifecycle_actions_svc = LifecyclePolicyActionsService(
         publisher=bus, reservation=reservation_svc, incidents=incidents_svc
@@ -166,7 +164,7 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
         capability=device_capability_svc,
         health=device_health_svc,
     )
-    operator_node_lifecycle_svc = OperatorNodeLifecycleService(settings=settings_svc, publisher=bus, review=review_svc)
+    operator_node_lifecycle_svc = OperatorNodeLifecycleService(settings=settings_svc, publisher=bus)
     reconciler_agent_svc = ReconcilerAgentService(settings=settings_svc, operator=operator_node_lifecycle_svc)
     lifecycle_policy_svc = LifecyclePolicyService(
         publisher=bus,
@@ -183,9 +181,7 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
         PropertyRefreshService(discovery=pack_discovery_svc),
         HostResourceTelemetryService(settings=settings_svc),
     )
-    maintenance_svc = MaintenanceService(
-        settings=settings_svc, publisher=bus, review=review_svc, session_factory=session_factory
-    )
+    maintenance_svc = MaintenanceService(settings=settings_svc, publisher=bus, session_factory=session_factory)
     crud_svc = DeviceCrudService(identity=identity_conflict_svc, publisher=bus)
     connectivity_svc, remediation_runner_svc = (
         ConnectivityService(

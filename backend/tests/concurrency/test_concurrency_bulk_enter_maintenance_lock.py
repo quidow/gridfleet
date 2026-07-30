@@ -10,7 +10,7 @@ from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -86,9 +86,7 @@ async def test_bulk_enter_maintenance_holds_one_device_lock_per_item_transaction
         circuit_breaker=MagicMock(),
         maintenance=GatedMaintenance(),  # type: ignore[arg-type]
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=_settings_enter, publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=_settings_enter, publisher=event_bus),
         session_factory=db_session_maker,
     )
     result, _ = await asyncio.gather(service.bulk_enter_maintenance(device_ids), racer())

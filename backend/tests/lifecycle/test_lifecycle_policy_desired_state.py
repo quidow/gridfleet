@@ -14,7 +14,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceRemediationLogEntry
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.incidents import LifecycleIncidentService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -52,7 +52,7 @@ async def test_attempt_auto_recovery_records_recovery_start_action(
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=Mock(),
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
@@ -150,7 +150,7 @@ async def test_handle_node_crash_tags_desired_state_with_lifecycle_crash(
 
     await LifecyclePolicyActionsService(
         publisher=event_bus,
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=LifecycleIncidentService(),
     ).handle_node_crash(
         db_session,
@@ -200,7 +200,7 @@ async def test_handle_node_crash_writes_desired_stopped_when_node_already_stoppe
 
     await LifecyclePolicyActionsService(
         publisher=event_bus,
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=LifecycleIncidentService(),
     ).handle_node_crash(
         db_session,

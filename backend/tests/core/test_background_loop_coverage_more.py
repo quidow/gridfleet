@@ -27,7 +27,7 @@ from app.devices.services.service import DeviceCrudService
 from app.devices.services.test_data import TestDataService
 from app.devices.services_container import DeviceServices
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -58,7 +58,6 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
     _svc_settings_2 = FakeSettingsReader({})
     _svc_pub_2 = AsyncMock()
     _svc_maint_2 = MaintenanceService(
-        review=build_review_service(),
         settings=FakeSettingsReader({}),
         publisher=event_bus,
         session_factory=Mock(),
@@ -80,9 +79,7 @@ async def test_intent_reconciler_loop_logs_cycle_failure_and_sleeps(monkeypatch:
                 circuit_breaker=Mock(),
                 maintenance=_svc_maint_2,
                 crud=_svc_crud_2,
-                operator=OperatorNodeLifecycleService(
-                    review=build_review_service(), settings=_svc_settings_2, publisher=event_bus
-                ),
+                operator=OperatorNodeLifecycleService(settings=_svc_settings_2, publisher=event_bus),
                 session_factory=Mock(),
             ),
             presenter=DevicePresenterService(),

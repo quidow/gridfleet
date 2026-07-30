@@ -35,7 +35,7 @@ from app.verification.services.execution import (
     _revoke_verification_node_intent,
     _stamp_verification_outcome,
 )
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 from tests.verification._lease_helpers import register_verification_node_intent
@@ -54,7 +54,7 @@ def _policy_service(*, viability: object | None = None) -> LifecyclePolicyServic
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=event_bus,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
@@ -267,9 +267,7 @@ async def test_operator_start_and_restart_supersede_stop_directive(
     await db_session.refresh(start_node)
     assert start_node.desired_state == AppiumDesiredState.stopped
 
-    operator = OperatorNodeLifecycleService(
-        settings=FakeSettingsReader({}), publisher=event_bus, review=build_review_service()
-    )
+    operator = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus)
     await operator.request_start(db_session, started, caller="operator_route", reason="operator start")
     await db_session.commit()
     await db_session.refresh(start_node)

@@ -35,7 +35,6 @@ from app.verification.services.execution import AgentCallContext, VerificationEx
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
 from tests.conftest import settings_service
-from tests.fakes import build_review_service
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
@@ -72,7 +71,7 @@ def _make_recovery_service(
         settings=settings_service,
         actions=LifecyclePolicyActionsService(
             publisher=AsyncMock(),
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
@@ -301,7 +300,6 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
     await db_session.commit()
 
     maintenance = MaintenanceService(
-        review=build_review_service(),
         settings=settings_service,
         publisher=event_bus,
         session_factory=db_session_maker,
@@ -408,7 +406,7 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                         # ``EventPublisher.queue_for_session`` is sync; a bare AsyncMock
                         # returns an un-awaited coroutine from actions.py's crash path.
                         publisher=AsyncMock(queue_for_session=Mock()),
-                        reservation=RunReservationService(review=build_review_service()),
+                        reservation=RunReservationService(),
                         incidents=LifecycleIncidentService(),
                     ),
                     incidents=LifecycleIncidentService(),

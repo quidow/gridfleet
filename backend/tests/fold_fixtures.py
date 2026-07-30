@@ -18,7 +18,6 @@ from app.core.timeutil import now_utc
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
-from app.devices.services.review import ReviewService
 from app.hosts.models import Host, HostStatus
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -35,9 +34,8 @@ if TYPE_CHECKING:
 
 
 def build_real_lifecycle_connectivity_service() -> ConnectivityService:
-    review = ReviewService()
     incidents = LifecycleIncidentService(publisher=event_bus)
-    reservation = RunReservationService(review=review)
+    reservation = RunReservationService()
     actions = LifecyclePolicyActionsService(
         publisher=event_bus,
         reservation=reservation,

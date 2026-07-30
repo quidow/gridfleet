@@ -85,7 +85,7 @@ from app.settings.service_config import SettingsConfigService
 from app.verification.services.execution import AgentCallContext, VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -455,7 +455,7 @@ async def test_more_pack_and_reservation_helper_branches(monkeypatch: pytest.Mon
     reservation_db.execute = AsyncMock(
         return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None))
     )
-    svc = run_reservation_service.RunReservationService(review=build_review_service())
+    svc = run_reservation_service.RunReservationService()
     assert await svc.exclude_device_from_run(reservation_db, uuid.uuid4(), reason="r") is None
     assert await svc.restore_device_to_run(reservation_db, uuid.uuid4()) is None
 

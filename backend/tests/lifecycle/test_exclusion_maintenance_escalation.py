@@ -12,7 +12,6 @@ from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import build_review_service
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +20,7 @@ if TYPE_CHECKING:
 
 _actions = LifecyclePolicyActionsService(
     publisher=Mock(),
-    reservation=RunReservationService(review=build_review_service()),
+    reservation=RunReservationService(),
     incidents=LifecycleIncidentService(),
 )
 

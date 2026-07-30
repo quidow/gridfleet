@@ -27,7 +27,6 @@ from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 from app.devices.services.state import derive_operational_state
 from app.lifecycle.services import remediation_log
 from app.sessions.models import Session, SessionStatus
-from tests.fakes.review import build_review_service
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
@@ -663,26 +662,6 @@ async def test_withdrawn_device_never_gets_baseline_node(
     await db_session.refresh(node)
     assert node.desired_state == AppiumDesiredState.stopped
     assert node.accepting_new_sessions is False
-
-
-async def test_recovery_promoted_review_device_gets_no_baseline_node(db_session: AsyncSession, db_host: Host) -> None:
-    """A device promoted to review_required by session_viability (recovery
-    threshold) must drop out of baseline node starts — pre-fix, suppressed
-    recovery left no intents and baseline:idle kept restarting the node."""
-    device = await create_device(db_session, host_id=db_host.id, name="promoted")
-    node = await _seed_node(db_session, device.id)
-
-    review = build_review_service()
-    marked = await review.mark_review_required(
-        db_session, device, reason="Recovery probe failed", source="session_viability"
-    )
-    assert marked is True
-    await db_session.commit()
-
-    await reconcile_device(db_session, device.id, publisher=event_bus)
-
-    await db_session.refresh(node)
-    assert node.desired_state == AppiumDesiredState.stopped
 
 
 async def test_no_intent_stop_holds_node_running_while_session_active(db_session: AsyncSession, db_host: Host) -> None:

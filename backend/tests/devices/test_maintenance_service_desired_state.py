@@ -13,7 +13,7 @@ from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalSt
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 from app.devices.services.recovery_projection import recovery_availability
 from app.lifecycle.services import remediation_log
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -58,7 +58,6 @@ async def test_exit_maintenance_writes_desired_running_when_node_present(
 
     monkeypatch.setattr(maintenance_service, "_schedule_device_recovery", AsyncMock())
     await MaintenanceService(
-        review=build_review_service(),
         settings=FakeSettingsReader({}),
         publisher=event_bus,
         session_factory=db_session_maker,
@@ -103,7 +102,6 @@ async def test_enter_maintenance_writes_desired_stopped_and_returns_without_wait
     from app.devices.services.maintenance import MaintenanceService
 
     await MaintenanceService(
-        review=build_review_service(),
         settings=FakeSettingsReader({}),
         publisher=event_bus,
         session_factory=db_session_maker,
@@ -136,7 +134,6 @@ async def test_enter_maintenance_resets_remediation_episode(
     from app.devices.services.maintenance import MaintenanceService
 
     service = MaintenanceService(
-        review=build_review_service(),
         settings=FakeSettingsReader({}),
         publisher=event_bus,
         session_factory=db_session_maker,

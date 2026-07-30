@@ -34,7 +34,7 @@ from app.sessions.service_viability import (
     grid_probe_response_to_result,
 )
 from tests.conftest import settings_service
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import (
     create_reservation,
     dispatch_committed_events,
@@ -1826,14 +1826,13 @@ def _wired_escalation_service(
     module installs an ``AsyncMock`` there, which cannot say anything about whose
     transaction the handler's writes land in — so this builds the real chain.
     """
-    review = build_review_service()
     incidents = LifecycleIncidentService()
     policy = LifecyclePolicyService(
         publisher=_test_event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=_test_event_bus,
-            reservation=RunReservationService(review=review),
+            reservation=RunReservationService(),
             incidents=incidents,
         ),
         incidents=incidents,

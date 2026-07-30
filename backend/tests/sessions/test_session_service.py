@@ -22,7 +22,6 @@ from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service import SessionCrudService, _session_ended_severity
-from tests.fakes import build_review_service
 from tests.helpers import create_device_record, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
@@ -44,7 +43,7 @@ def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=pub,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),

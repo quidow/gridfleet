@@ -18,7 +18,7 @@ from app.devices.services.health import DeviceHealthService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 
@@ -89,9 +89,7 @@ async def test_start_stop_restart_node_guard_paths(
     _svc_settings = FakeSettingsReader({})
     svc = node_agent.ReconcilerAgentService(
         settings=_svc_settings,
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=_svc_settings, publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=_svc_settings, publisher=event_bus),
     )
     device = await _loaded_device(db_session, db_host, "start-stop-guards")
     locked = await device_locking.lock_device_handle(db_session, device.id)
@@ -273,9 +271,7 @@ async def test_start_and_restart_guard_branches(monkeypatch: pytest.MonkeyPatch)
     _guard_settings = FakeSettingsReader({})
     svc = node_agent.ReconcilerAgentService(
         settings=_guard_settings,
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=_guard_settings, publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=_guard_settings, publisher=event_bus),
     )
     db = MagicMock()
     db.refresh = AsyncMock()

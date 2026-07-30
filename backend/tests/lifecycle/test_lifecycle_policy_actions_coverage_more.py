@@ -17,7 +17,7 @@ from app.lifecycle.services.actions import (
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -34,7 +34,7 @@ def test_lifecycle_policy_action_small_branch_helpers() -> None:
 async def test_restore_run_if_needed_early_return_branches() -> None:
     svc = LifecyclePolicyActionsService(
         publisher=Mock(),
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=LifecycleIncidentService(),
     )
     run = SimpleNamespace(state=RunState.completed)

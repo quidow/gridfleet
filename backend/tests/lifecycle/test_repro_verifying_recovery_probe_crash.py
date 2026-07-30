@@ -37,7 +37,7 @@ from app.devices.models.intent import DeviceIntent
 from app.devices.services.intent_types import CommandKind, verification_intent_source
 from app.devices.services.lifecycle_policy_state import recovery_generation, set_recovery_generation
 from app.lifecycle.services.incidents import LifecycleIncidentService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 from tests.sessions.test_session_viability import run_session_viability_probe
 
@@ -188,7 +188,7 @@ async def test_attempt_auto_recovery_probes_verifying_device(
             settings=FakeSettingsReader({}),
             actions=LifecyclePolicyActionsService(
                 publisher=event_bus,
-                reservation=RunReservationService(review=build_review_service()),
+                reservation=RunReservationService(),
                 incidents=LifecycleIncidentService(),
             ),
             incidents=LifecycleIncidentService(),
@@ -351,7 +351,7 @@ async def test_probe_collision_skip_does_not_flag_needs_attention(
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=event_bus,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),

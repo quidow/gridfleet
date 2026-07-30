@@ -8,7 +8,6 @@ import pytest
 
 from app.devices.services.event import build_device_crashed_payload
 from app.lifecycle.services.incidents import LifecycleIncidentService
-from tests.fakes import build_review_service
 from tests.helpers import dispatch_committed_events, seed_host_and_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -93,7 +92,7 @@ async def test_handle_node_crash_queues_device_crashed(
 
     await LifecyclePolicyActionsService(
         publisher=event_bus,
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=LifecycleIncidentService(),
     ).handle_node_crash(
         db_session,
@@ -131,7 +130,7 @@ async def test_handle_node_crash_skips_crashed_event_when_already_offline(
 
     await LifecyclePolicyActionsService(
         publisher=event_bus,
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=LifecycleIncidentService(),
     ).handle_node_crash(
         db_session,

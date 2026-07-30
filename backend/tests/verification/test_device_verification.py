@@ -52,7 +52,7 @@ from app.verification.services.preparation import (
 )
 from app.verification.services.runner import VerificationRunnerService
 from tests.conftest import settings_service
-from tests.fakes import RecordingSessionFactory, build_review_service
+from tests.fakes import RecordingSessionFactory
 from tests.helpers import create_device_record, delete_jobs_by_kind
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
@@ -206,9 +206,7 @@ async def _wait_for_job(
                     if node_manager is not None
                     else ReconcilerAgentService(
                         settings=settings_service,
-                        operator=OperatorNodeLifecycleService(
-                            review=build_review_service(), settings=settings_service, publisher=event_bus
-                        ),
+                        operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
                     ),
                 ),
             ),
@@ -1711,9 +1709,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     session_factory=session_factory,
                     node_manager=ReconcilerAgentService(
                         settings=settings_service,
-                        operator=OperatorNodeLifecycleService(
-                            review=build_review_service(), settings=settings_service, publisher=event_bus
-                        ),
+                        operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
                     ),
                 ),
             ),
@@ -2031,9 +2027,7 @@ async def test_agent_normalize_health_and_probe_run_without_open_transaction(
 
     node_manager = ReconcilerAgentService(
         settings=settings_service,
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=settings_service, publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
     )
     prep = VerificationPreparationService(
         settings=settings_service,

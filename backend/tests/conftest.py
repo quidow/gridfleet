@@ -97,7 +97,6 @@ from app.settings.services_container import SettingsServices
 from app.verification.dependencies import get_verification_services
 from app.verification.services.service import VerificationService
 from app.verification.services_container import VerificationServices
-from tests.fakes import build_review_service
 from tests.helpers import create_host, reset_event_bus, test_event_bus
 
 if TYPE_CHECKING:
@@ -386,7 +385,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
     def override_get_device_services() -> DeviceServices:
         sf = request_session_factory
         _maintenance_svc = MaintenanceService(
-            review=build_review_service(),
             settings=settings_service,
             publisher=test_event_bus,
             session_factory=sf,
@@ -407,9 +405,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 circuit_breaker=test_circuit_breaker,
                 maintenance=_maintenance_svc,
                 crud=_crud_svc,
-                operator=OperatorNodeLifecycleService(
-                    review=build_review_service(), settings=settings_service, publisher=test_event_bus
-                ),
+                operator=OperatorNodeLifecycleService(settings=settings_service, publisher=test_event_bus),
                 session_factory=sf,
             ),
             presenter=DevicePresenterService(),
@@ -425,7 +421,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(
                         publisher=test_event_bus,
-                        reservation=RunReservationService(review=build_review_service()),
+                        reservation=RunReservationService(),
                         incidents=LifecycleIncidentService(),
                     ),
                     incidents=LifecycleIncidentService(),
@@ -449,12 +445,10 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
         _incidents_svc = LifecycleIncidentService()
         _actions_svc = LifecyclePolicyActionsService(
             publisher=test_event_bus,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=_incidents_svc,
         )
-        _operator_node_svc = OperatorNodeLifecycleService(
-            review=build_review_service(), settings=settings_service, publisher=test_event_bus
-        )
+        _operator_node_svc = OperatorNodeLifecycleService(settings=settings_service, publisher=test_event_bus)
         _policy_svc = LifecyclePolicyService(
             publisher=test_event_bus,
             settings=settings_service,
@@ -525,7 +519,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             actions=LifecyclePolicyActionsService(
                 publisher=test_event_bus,
-                reservation=RunReservationService(review=build_review_service()),
+                reservation=RunReservationService(),
                 incidents=LifecycleIncidentService(),
             ),
             incidents=LifecycleIncidentService(),
@@ -559,7 +553,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             actions=LifecyclePolicyActionsService(
                 publisher=test_event_bus,
-                reservation=RunReservationService(review=build_review_service()),
+                reservation=RunReservationService(),
                 incidents=LifecycleIncidentService(),
             ),
             incidents=LifecycleIncidentService(),
@@ -585,17 +579,16 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             settings=settings_service,
             circuit_breaker=test_circuit_breaker,
             maintenance=MaintenanceService(
-                review=build_review_service(),
                 settings=settings_service,
                 publisher=test_event_bus,
                 session_factory=sf,
             ),
             lifecycle_actions=LifecyclePolicyActionsService(
                 publisher=test_event_bus,
-                reservation=RunReservationService(review=build_review_service()),
+                reservation=RunReservationService(),
                 incidents=LifecycleIncidentService(),
             ),
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
             session_factory=sf,
         )
@@ -605,7 +598,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             lifecycle=run_lifecycle,
             release=run_release,
             failure=run_failure,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             query=run_query,
             settings=settings_service,
             session_factory=sf,
@@ -665,9 +658,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             ),
             reconciler_agent=ReconcilerAgentService(
                 settings=settings_service,
-                operator=OperatorNodeLifecycleService(
-                    review=build_review_service(), settings=settings_service, publisher=test_event_bus
-                ),
+                operator=OperatorNodeLifecycleService(settings=settings_service, publisher=test_event_bus),
             ),
             node_health=NodeHealthService(
                 publisher=test_event_bus,

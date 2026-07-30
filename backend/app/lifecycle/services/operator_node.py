@@ -35,7 +35,6 @@ if TYPE_CHECKING:
     from app.appium_nodes.services.desired_state_writer import DesiredStateCaller
     from app.core.protocols import SettingsReader
     from app.devices.models import Device
-    from app.devices.protocols import ReviewProtocol
     from app.events.protocols import EventPublisher
 
 
@@ -175,10 +174,9 @@ async def _reserve_parallel_resources(db: AsyncSession, device: Device, *, node:
 
 
 class OperatorNodeLifecycleService:
-    def __init__(self, *, settings: SettingsReader, publisher: EventPublisher, review: ReviewProtocol) -> None:
+    def __init__(self, *, settings: SettingsReader, publisher: EventPublisher) -> None:
         self._settings = settings
         self._publisher = publisher
-        self._review = review
 
     async def request_start(
         self, db: AsyncSession, device: Device, *, caller: DesiredStateCaller, reason: str
@@ -222,9 +220,6 @@ class OperatorNodeLifecycleService:
             ladder = await remediation_log.load_ladder(db, device.id)
             if ladder.episode_active:
                 await remediation_log.append_reset(db, device.id, source="operator", action="operator_started")
-            await self._review.clear_review_required(
-                db, device, reason="Operator started Appium node", source="start_node"
-            )
         await db.refresh(node)
         return node
 
@@ -273,8 +268,5 @@ class OperatorNodeLifecycleService:
             ladder = await remediation_log.load_ladder(db, device.id)
             if ladder.episode_active:
                 await remediation_log.append_reset(db, device.id, source="operator", action="operator_restarted")
-            await self._review.clear_review_required(
-                db, device, reason="Operator restarted Appium node", source="restart_node"
-            )
         await db.refresh(node)
         return node

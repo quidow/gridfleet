@@ -15,7 +15,6 @@ from app.devices.models import Device, DeviceEvent, DeviceOperationalState, Devi
 from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
-from app.devices.services.review import ReviewService
 from app.events.models import SystemEvent
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -68,9 +67,8 @@ async def unhealthy_fold(
     db_session.add(node)
     await db_session.commit()
 
-    review = ReviewService()
     incidents = LifecycleIncidentService(publisher=event_bus)
-    reservation = RunReservationService(review=review)
+    reservation = RunReservationService()
     actions = LifecyclePolicyActionsService(
         publisher=event_bus,
         reservation=reservation,

@@ -34,7 +34,7 @@ from app.sessions import service_sync
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_sync import SessionSyncService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -52,7 +52,7 @@ def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=pub,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),

@@ -19,7 +19,7 @@ from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
@@ -56,13 +56,12 @@ def _make_failure_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunF
         settings=_settings,
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(
-            review=build_review_service(),
             settings=FakeSettingsReader({}),
             publisher=event_bus,
             session_factory=session_factory,
         ),
         lifecycle_actions=AsyncMock(),
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=LifecycleIncidentService(),
         session_factory=session_factory,
     )
