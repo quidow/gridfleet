@@ -123,15 +123,9 @@ crashes between the beats leaves a tombstone the TTL sweep collects.
    TTL-GC sweep now serves only the external-will survivors (verification lease,
    `forced_release`, `operator:start`).
 5. **2026-07-12 (WS-15.3): verification finalization writes its durable facts
-   before any intent mutation** — `verified_at` / `review_required`, the episode
+   before any intent mutation** — `verified_at`, the episode
    reset, the viability result, and the outcome stamp land first, so the
    remaining finalization statements derive the same projection in any order.
    The write-order laws in `execution.py` are gone;
    `tests/verification/test_finalization_permutations.py` pins the
    order-independence.
-
-## Out of scope
-
-Recovery suppression is also governed by `Device.review_required` and the
-lifecycle-policy backoff window, not by intents. See
-[device-lifecycle.md](./device-lifecycle.md).
