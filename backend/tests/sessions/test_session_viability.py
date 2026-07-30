@@ -128,6 +128,19 @@ async def _check_due_devices(db: AsyncSession, *, settings: FakeSettingsReader |
     await _svc.check_due_devices()
 
 
+async def _run_scheduled_probe_series(
+    db: AsyncSession,
+    device: Device,
+    *,
+    settings: FakeSettingsReader | None = None,
+) -> dict[str, Any] | None:
+    _svc._settings = settings or FakeSettingsReader({})
+    await db.commit()
+    engine = db.bind
+    _svc._session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return await _svc.run_scheduled_probe_series(device.id)
+
+
 async def test_session_viability_state_is_not_persisted_in_device_config(
     db_session: AsyncSession,
     db_host: Host,
@@ -2094,3 +2107,141 @@ async def test_scheduled_retry_rejects_states_not_owned_by_the_series(
             checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
             retry_after_viability_failure=True,
         )
+
+
+_SERIES_SETTINGS = {
+    "general.session_viability_failure_threshold": 3,
+    "general.session_viability_timeout_sec": 10,
+}
+
+
+async def test_scheduled_series_escalates_within_one_pass(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three back-to-back failures reach the threshold inside one series and
+    escalate exactly once, with the retry delay between attempts."""
+    device, node = _make_viability_device(db_host, "series-fail")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    handler = AsyncMock()
+    sleeper = AsyncMock()
+    monkeypatch.setattr(session_viability.asyncio, "sleep", sleeper)
+    probe = AsyncMock(return_value=(False, "no session"))
+    monkeypatch.setattr(_svc, "probe_session_direct", probe)
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
+    _svc.configure_health_failure_handler(handler)
+    try:
+        state = await _run_scheduled_probe_series(
+            db_session, device, settings=FakeSettingsReader(dict(_SERIES_SETTINGS))
+        )
+    finally:
+        _svc.configure_health_failure_handler(None)
+
+    assert state is not None and state["status"] == "failed"
+    assert state["consecutive_failures"] == 3
+    assert probe.await_count == 3
+    handler.assert_awaited_once()
+    assert sleeper.await_count == 2
+    assert all(call.args[0] == session_viability.SCHEDULED_PROBE_RETRY_DELAY_SEC for call in sleeper.await_args_list)
+
+
+async def test_scheduled_series_stops_on_first_pass(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient hiccup resolves within the series: fail, pass, stop — no
+    escalation, counter reset."""
+    device, node = _make_viability_device(db_host, "series-hiccup")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    handler = AsyncMock()
+    monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock())
+    probe = AsyncMock(side_effect=[(False, "hiccup"), (True, None)])
+    monkeypatch.setattr(_svc, "probe_session_direct", probe)
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
+    _svc.configure_health_failure_handler(handler)
+    try:
+        state = await _run_scheduled_probe_series(
+            db_session, device, settings=FakeSettingsReader(dict(_SERIES_SETTINGS))
+        )
+    finally:
+        _svc.configure_health_failure_handler(None)
+
+    assert state is not None and state["status"] == "passed"
+    assert state["consecutive_failures"] == 0
+    assert probe.await_count == 2
+    handler.assert_not_awaited()
+
+
+async def test_scheduled_series_counts_residual_failures_toward_the_threshold(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The threshold is counted over the persisted consecutive-failure counter:
+    with two residual failures, the first fresh failure escalates and the
+    series stops without burning the remaining attempts."""
+    device, node = _make_viability_device(db_host, "series-residual")
+    db_session.add_all([device, node])
+    await db_session.commit()
+    await set_session_viability_control_plane_entry(
+        db_session,
+        str(device.id),
+        {
+            "status": "failed",
+            "last_attempted_at": "2020-01-01T00:00:00+00:00",
+            "last_succeeded_at": None,
+            "error": "old failure",
+            "checked_by": "recovery",
+            "consecutive_failures": 2,
+        },
+    )
+
+    handler = AsyncMock()
+    sleeper = AsyncMock()
+    monkeypatch.setattr(session_viability.asyncio, "sleep", sleeper)
+    probe = AsyncMock(return_value=(False, "still broken"))
+    monkeypatch.setattr(_svc, "probe_session_direct", probe)
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
+    _svc.configure_health_failure_handler(handler)
+    try:
+        state = await _run_scheduled_probe_series(
+            db_session, device, settings=FakeSettingsReader(dict(_SERIES_SETTINGS))
+        )
+    finally:
+        _svc.configure_health_failure_handler(None)
+
+    assert state is not None and state["consecutive_failures"] == 3
+    assert probe.await_count == 1
+    handler.assert_awaited_once()
+    sleeper.assert_not_awaited()
+
+
+async def test_scheduled_series_stops_when_an_attempt_is_not_permitted(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A state change under the series (probe raced in, device left the
+    probeable state) ends the series with the last result — no crash, and the
+    retry flag is only set for attempts after the first."""
+    device, node = _make_viability_device(db_host, "series-race")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    first = {"status": "failed", "consecutive_failures": 1}
+    inner = AsyncMock(side_effect=[first, SessionViabilityProbeNotPermittedError("state changed")])
+    monkeypatch.setattr(_svc, "run_session_viability_probe", inner)
+    monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock())
+
+    state = await _run_scheduled_probe_series(db_session, device, settings=FakeSettingsReader(dict(_SERIES_SETTINGS)))
+
+    assert state is first
+    assert inner.await_count == 2
+    assert inner.await_args_list[0].kwargs["retry_after_viability_failure"] is False
+    assert inner.await_args_list[1].kwargs["retry_after_viability_failure"] is True

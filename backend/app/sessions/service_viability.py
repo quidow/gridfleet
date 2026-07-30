@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -61,6 +62,10 @@ __all__ = [
 
 SESSION_VIABILITY_KEY = "session_viability"
 SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
+
+# Plumbing constant: pause between attempts of one scheduled probe series,
+# mirroring the recovery job's RECOVERY_PROBE_RETRY_DELAY_SEC.
+SCHEDULED_PROBE_RETRY_DELAY_SEC = 10.0
 
 # §14.4a: a recovery-class probe may run on a device that is not yet ``available``.
 # It validates an ``offline`` device coming back from a node failure, or a
@@ -441,6 +446,44 @@ class SessionViabilityService:
             effect.device_id, state, result=(probe_result.status == "ack", probe_result.detail), checked_by=checked_by
         )
         return state
+
+    async def run_scheduled_probe_series(self, device_id: uuid.UUID) -> dict[str, Any] | None:
+        """Drive one due device's scheduled attempts as a series: up to
+        ``general.session_viability_failure_threshold`` attempts,
+        ``SCHEDULED_PROBE_RETRY_DELAY_SEC`` apart, stopping on the first pass
+        or once the failure counter reaches the threshold (that attempt's
+        escalation has already run inside ``run_session_viability_probe``).
+        Mirrors the recovery job's attempt series so a genuinely broken device
+        escalates within one pass instead of one failure per hourly interval.
+
+        Attempts after the first pass ``retry_after_viability_failure`` — the
+        previous failure's column write parks the device ``offline``, and the
+        retry must be admitted back into exactly that state. A probe racing in
+        between attempts (e.g. auto-recovery reacting to the park) surfaces as
+        ``SessionViabilityProbeInProgressError`` and simply ends the series.
+        """
+        threshold = max(1, self._settings.get_int("general.session_viability_failure_threshold"))
+        last: dict[str, Any] | None = None
+        for attempt in range(threshold):
+            try:
+                last = await self.run_session_viability_probe(
+                    device_id,
+                    checked_by=SessionViabilityCheckedBy.scheduled,
+                    retry_after_viability_failure=attempt > 0,
+                )
+            except (SessionViabilityProbeInProgressError, SessionViabilityProbeNotPermittedError, ValueError) as exc:
+                # The device left the probeable state under the series (probe
+                # raced in, state changed, readiness lapsed) — stop here; the
+                # next pass re-evaluates due-ness from scratch.
+                logger.debug("session_viability scheduled series stopped for device %s: %s", device_id, exc)
+                return last
+            if last.get("status") == "passed":
+                return last
+            if int(last.get("consecutive_failures") or 0) >= threshold:
+                return last
+            if attempt < threshold - 1:
+                await asyncio.sleep(SCHEDULED_PROBE_RETRY_DELAY_SEC)
+        return last
 
     async def check_due_devices(self) -> None:
         """Open one short read session, build the tuple of due device UUIDs,
