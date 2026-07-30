@@ -11,12 +11,9 @@ from app.lifecycle.services.remediation_log import (
     ACTION_AUTO_STOPPED,
     ACTION_RECOVERY_STARTED,
     ACTION_RESTART_COMMISSIONED,
-    ACTION_REVIEW_SHELVED,
     DIRECTIVE_START,
     DIRECTIVE_STOP,
-    EMPTY_LADDER,
     LadderState,
-    advance_ladder,
     build_policy_view,
     derive_ladder,
 )
@@ -337,19 +334,3 @@ def test_episode_active_truth_table() -> None:
     ]
     for entries, expected in cases:
         assert derive_ladder(entries).episode_active is expected
-
-
-def test_advance_ladder_review_shelved_matches_derive_ladder() -> None:
-    at = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
-    entries = [
-        _entry(kind="failure", at=at, action="failure_observed"),
-        _entry(kind="attempt", at=at + timedelta(seconds=1), action="recovery_failed"),
-        _entry(kind="action", at=at + timedelta(seconds=2), action=ACTION_REVIEW_SHELVED),
-        _entry(kind="action", at=at + timedelta(seconds=3), action=ACTION_AUTO_STOP_COMMISSIONED),
-        _entry(kind="reset", at=at + timedelta(seconds=4), action="self_healed"),
-        _entry(kind="attempt", at=at + timedelta(seconds=5), action="recovery_failed"),
-    ]
-    ladder = EMPTY_LADDER
-    for index, entry in enumerate(entries, start=1):
-        ladder = advance_ladder(ladder, entry)
-        assert ladder.review_shelved == derive_ladder(entries[:index]).review_shelved

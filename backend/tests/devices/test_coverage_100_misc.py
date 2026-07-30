@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from importlib import import_module
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -22,7 +22,6 @@ from app.core.errors import PackDrainingError, _http_error_code
 from app.core.leader import advisory as control_plane_leader_module
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState, DeviceType
-from app.devices.schemas.device import AppiumNodeRead, DesiredNodeState
 from app.devices.schemas.test_data import TestDataPayload
 from app.devices.services import (
     bulk as bulk_service,
@@ -131,39 +130,6 @@ def test_schema_validator_and_model_guard_branches() -> None:
 
     with pytest.raises(ValueError, match="JSON object"):
         TestDataPayload.model_construct(root=[])._validate()  # type: ignore[arg-type]
-
-
-def test_device_readiness_effective_state_branches() -> None:
-    now = datetime.now(UTC)
-    naive_future = (now + timedelta(hours=1)).replace(tzinfo=None).isoformat()
-    bad_timestamp = "not-a-date"
-
-    assert (
-        AppiumNodeRead(
-            id=uuid.uuid4(),
-            port=4723,
-            pid=None,
-            active_connection_target=None,
-            started_at=now,
-            desired_state=DesiredNodeState.running,
-            lifecycle_policy_state={"recovery_suppressed_reason": "cooldown", "backoff_until": naive_future},
-        ).effective_state
-        == "blocked"
-    )
-    assert (
-        AppiumNodeRead(
-            id=uuid.uuid4(),
-            port=4723,
-            pid=123,
-            active_connection_target=None,
-            started_at=now,
-            desired_state=DesiredNodeState.running,
-            lifecycle_policy_state={"recovery_suppressed_reason": "cooldown", "backoff_until": bad_timestamp},
-            health_state="ok",
-            health_running=True,
-        ).effective_state
-        == "running"
-    )
 
 
 async def test_small_service_guard_branches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

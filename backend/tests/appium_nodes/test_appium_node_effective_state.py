@@ -4,17 +4,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
-
-import pytest
 
 from app.devices.schemas.device import AppiumNodeRead
-
-if TYPE_CHECKING:
-    from httpx2 import AsyncClient
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from app.hosts.models import Host
 
 
 def _build_read(**overrides: object) -> AppiumNodeRead:
@@ -78,47 +69,6 @@ def test_effective_state_error_when_health_running_false() -> None:
     assert read.effective_state == "error"
 
 
-def test_effective_state_blocked_when_review_required() -> None:
-    read = _build_read(desired_state="running", pid=None, review_required=True)
-    assert read.effective_state == "blocked"
-
-
-def test_effective_state_not_blocked_when_only_suppression() -> None:
-    """Stored suppression alone no longer pins blocked (behavior change #4)."""
-    read = _build_read(
-        desired_state="running",
-        pid=None,
-        lifecycle_policy_state={
-            "recovery_suppressed_reason": "Auto-manage is disabled",
-            "backoff_until": None,
-        },
-    )
-    assert read.effective_state == "starting"
-
-
-def test_effective_state_blocked_when_backoff_active() -> None:
-    read = _build_read(
-        desired_state="running",
-        pid=None,
-        lifecycle_policy_state={
-            "backoff_until": (datetime.now(UTC) + timedelta(seconds=120)).isoformat(),
-        },
-    )
-    assert read.effective_state == "blocked"
-
-
-def test_effective_state_not_blocked_when_backoff_expired() -> None:
-    read = _build_read(
-        desired_state="running",
-        pid=None,
-        lifecycle_policy_state={
-            "recovery_suppressed_reason": "Node restart failed",
-            "backoff_until": (datetime.now(UTC) - timedelta(seconds=10)).isoformat(),
-        },
-    )
-    assert read.effective_state == "starting"
-
-
 def test_effective_state_expired_watermark_falls_through_to_running() -> None:
     requested_at = datetime.now(UTC) - timedelta(seconds=600)
     read = _build_read(
@@ -128,33 +78,3 @@ def test_effective_state_expired_watermark_falls_through_to_running() -> None:
         restart_requested_at=requested_at,
     )
     assert read.effective_state == "running"
-
-
-@pytest.mark.asyncio
-@pytest.mark.db
-async def test_effective_state_blocked_surfaces_through_router_serialization(
-    client: AsyncClient, db_session: AsyncSession, db_host: Host
-) -> None:
-    """review_required must be plumbed into AppiumNodeRead so the blocked
-    cascade branch fires end-to-end through the router."""
-    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-    from tests.helpers import create_device
-
-    device = await create_device(db_session, host_id=db_host.id, name="blocked-end-to-end", verified=True)
-    device.review_required = True
-    db_session.add(
-        AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-            pid=None,
-            active_connection_target=None,
-        )
-    )
-    await db_session.commit()
-
-    resp = await client.get(f"/api/devices/{device.id}")
-    assert resp.status_code == 200
-    appium_node = resp.json()["appium_node"]
-    assert appium_node["effective_state"] == "blocked"

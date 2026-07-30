@@ -34,7 +34,6 @@ _NODE_STATE_TO_STATUS: dict[str, HealthVerdictStatus] = {
     "stopping": "warn",
     "restarting": "warn",
     "error": "failed",
-    "blocked": "failed",
     "stopped": "unknown",
 }
 
@@ -62,7 +61,7 @@ def _device_verdict(device: Device) -> dict[str, Any]:
     return _verdict("unknown", "not checked", None)
 
 
-def _node_verdict(device: Device, *, policy_view: dict[str, Any] | None) -> dict[str, Any]:
+def _node_verdict(device: Device) -> dict[str, Any]:
     node = device.appium_node
     if node is None:
         return _verdict("unknown", "no node", None)
@@ -74,8 +73,6 @@ def _node_verdict(device: Device, *, policy_view: dict[str, Any] | None) -> dict
         restart_requested_at=node.restart_requested_at,
         started_at=node.started_at,
         restart_window_sec=DEFAULT_RESTART_WINDOW_SEC,
-        lifecycle_policy_state=policy_view,
-        review_required=device.review_required,
         now=now_utc(),
     )
     detail = node.health_state if node.health_state and node.health_state != effective else effective
@@ -103,7 +100,7 @@ def _overall(statuses: list[HealthVerdictStatus]) -> HealthVerdictStatus:
 
 def build_public_summary(device: Device, *, policy_view: dict[str, Any] | None = None) -> dict[str, Any]:
     device_v = _device_verdict(device)
-    node_v = _node_verdict(device, policy_view=policy_view)
+    node_v = _node_verdict(device)
     viability_v = _viability_verdict(device)
     return {
         "device": device_v,

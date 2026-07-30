@@ -1110,32 +1110,6 @@ async def test_device_detail_surfaces_lifecycle_policy_summary(
 
 
 @pytest.mark.asyncio
-async def test_device_detail_surfaces_blocked_appium_effective_state(
-    client: AsyncClient,
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    device = await _create_device(db_session, default_host_id)
-    device_id = str(device.id)
-    device.review_required = True
-    db_session.add(
-        AppiumNode(
-            device_id=device.id,
-            port=4723,
-            desired_state=AppiumDesiredState.running,
-            desired_port=4723,
-        )
-    )
-    await db_session.commit()
-
-    resp = await client.get(f"/api/devices/{device_id}")
-
-    assert resp.status_code == 200
-    node = resp.json()["appium_node"]
-    assert node["effective_state"] == "blocked"
-
-
-@pytest.mark.asyncio
 async def test_delete_device(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)

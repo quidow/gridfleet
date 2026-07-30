@@ -209,7 +209,6 @@ def _serialize_appium_node_for_detail(device: Device, *, policy_view: dict[str, 
         "health_running": node.health_running,
         "health_state": node.health_state,
         "lifecycle_policy_state": copy.deepcopy(policy_view),
-        "review_required": device.review_required,
     }
 
 

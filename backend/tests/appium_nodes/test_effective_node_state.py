@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import get_args
 
-from app.appium_nodes.services.effective_state import compute_effective_state
+from app.appium_nodes.services.effective_state import EffectiveNodeStateValue, compute_effective_state
+from app.core.timeutil import now_utc
 
 NOW = datetime(2026, 6, 7, 12, 0, 0, tzinfo=UTC)
 
@@ -20,8 +22,6 @@ def test_pending_watermark_is_restarting_within_window() -> None:
             restart_requested_at=watermark,
             started_at=watermark - timedelta(seconds=600),
             restart_window_sec=120,
-            lifecycle_policy_state=None,
-            review_required=False,
             now=NOW,
         )
         == "restarting"
@@ -39,8 +39,6 @@ def test_satisfied_watermark_is_running() -> None:
             restart_requested_at=watermark,
             started_at=NOW - timedelta(seconds=5),
             restart_window_sec=120,
-            lifecycle_policy_state=None,
-            review_required=False,
             now=NOW,
         )
         == "running"
@@ -58,67 +56,32 @@ def test_expired_watermark_self_clears_at_read_time() -> None:
             restart_requested_at=watermark,
             started_at=watermark - timedelta(seconds=600),
             restart_window_sec=120,
-            lifecycle_policy_state=None,
-            review_required=False,
             now=NOW,
         )
         == "running"
     )
 
 
-def test_blocked_when_review_required() -> None:
-    assert (
-        compute_effective_state(
-            pid=None,
-            desired_state="running",
-            health_running=None,
-            health_state=None,
-            restart_requested_at=None,
-            started_at=None,
-            restart_window_sec=120,
-            lifecycle_policy_state=None,
-            review_required=True,
-            now=NOW,
-        )
-        == "blocked"
+def test_blocked_rung_is_gone() -> None:
+    """Backoff/review no longer mask the real process state (drift review 1.1/1.5).
+
+    ``EffectiveNodeStateValue`` is public vocabulary (OpenAPI -> frontend); this
+    pins that the synthetic ``blocked`` state stays removed. ``restarting`` is
+    the only synthetic rung left.
+    """
+    assert "blocked" not in get_args(EffectiveNodeStateValue)
+    now = now_utc()
+    state = compute_effective_state(
+        pid=1234,
+        desired_state="running",
+        health_running=True,
+        health_state="ok",
+        restart_requested_at=None,
+        started_at=now - timedelta(minutes=5),
+        restart_window_sec=90,
+        now=now,
     )
-
-
-def test_blocked_when_backoff_active() -> None:
-    assert (
-        compute_effective_state(
-            pid=None,
-            desired_state="running",
-            health_running=None,
-            health_state=None,
-            restart_requested_at=None,
-            started_at=None,
-            restart_window_sec=120,
-            lifecycle_policy_state={"backoff_until": (NOW + timedelta(seconds=120)).isoformat()},
-            review_required=False,
-            now=NOW,
-        )
-        == "blocked"
-    )
-
-
-def test_not_blocked_when_only_suppression() -> None:
-    """Stored suppression alone no longer pins blocked (behavior change #4)."""
-    assert (
-        compute_effective_state(
-            pid=None,
-            desired_state="running",
-            health_running=None,
-            health_state=None,
-            restart_requested_at=None,
-            started_at=None,
-            restart_window_sec=120,
-            lifecycle_policy_state={"recovery_suppressed_reason": "manual"},
-            review_required=False,
-            now=NOW,
-        )
-        == "starting"
-    )
+    assert state == "running"
 
 
 def test_error_when_health_state_error() -> None:
@@ -131,8 +94,6 @@ def test_error_when_health_state_error() -> None:
             restart_requested_at=None,
             started_at=None,
             restart_window_sec=120,
-            lifecycle_policy_state=None,
-            review_required=False,
             now=NOW,
         )
         == "error"
@@ -149,8 +110,6 @@ def test_error_when_health_running_false() -> None:
             restart_requested_at=None,
             started_at=None,
             restart_window_sec=120,
-            lifecycle_policy_state=None,
-            review_required=False,
             now=NOW,
         )
         == "error"
@@ -164,8 +123,6 @@ def test_starting_running_stopping_stopped() -> None:
         "restart_requested_at": None,
         "started_at": None,
         "restart_window_sec": 120,
-        "lifecycle_policy_state": None,
-        "review_required": False,
         "now": NOW,
     }
     assert compute_effective_state(pid=None, desired_state="running", **base) == "starting"

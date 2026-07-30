@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from datetime import datetime, timedelta
+from typing import Literal
 
 EffectiveNodeStateValue = Literal[
     "starting",
@@ -11,22 +11,8 @@ EffectiveNodeStateValue = Literal[
     "stopping",
     "stopped",
     "restarting",
-    "blocked",
     "error",
 ]
-
-
-def _backoff_active(lifecycle_state: dict[str, Any], now: datetime) -> bool:
-    backoff_raw = lifecycle_state.get("backoff_until")
-    if not isinstance(backoff_raw, str):
-        return False
-    try:
-        backoff_until = datetime.fromisoformat(backoff_raw)
-    except ValueError:
-        return False
-    if backoff_until.tzinfo is None:
-        backoff_until = backoff_until.replace(tzinfo=UTC)
-    return backoff_until > now
 
 
 def _desired_state_effective(*, desired_state: str, pid: int | None) -> EffectiveNodeStateValue:
@@ -39,7 +25,7 @@ def _desired_state_effective(*, desired_state: str, pid: int | None) -> Effectiv
     return "stopped"
 
 
-def compute_effective_state(  # noqa: PLR0913 - keyword-only node observation fields folded into one verdict
+def compute_effective_state(
     *,
     pid: int | None,
     desired_state: str,
@@ -48,8 +34,6 @@ def compute_effective_state(  # noqa: PLR0913 - keyword-only node observation fi
     restart_requested_at: datetime | None,
     started_at: datetime | None,
     restart_window_sec: int,
-    lifecycle_policy_state: dict[str, Any] | None,
-    review_required: bool,
     now: datetime,
 ) -> EffectiveNodeStateValue:
     if (
@@ -60,9 +44,6 @@ def compute_effective_state(  # noqa: PLR0913 - keyword-only node observation fi
         # Read-time bounding replaces the lease-expiry sweep; a dead agent can
         # pin "restarting" for at most restart_window_sec.
         return "restarting"
-
-    if review_required or _backoff_active(lifecycle_policy_state or {}, now):
-        return "blocked"
 
     if health_state == "error" or health_running is False:
         return "error"

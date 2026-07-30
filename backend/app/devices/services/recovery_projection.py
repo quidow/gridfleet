@@ -7,8 +7,8 @@ lifecycle_policy_state recovery_suppressed_reason key — which needed three GC
 helpers and an age-gate (S10) purely because a stored copy can go stale.
 
 Kind precedence mirrors the retired attempt_auto_recovery gate order:
-review > recovery-deny (operator/maintenance/cooldown, via decide_recovery) >
-not_ready > deferred_stop > session > backoff.
+recovery-deny (operator/maintenance/cooldown) > not_ready > deferred_stop >
+session > backoff.
 """
 
 from __future__ import annotations
@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 
 
 class RecoveryBlockKind(StrEnum):
-    review = "review"
     operator = "operator"
     maintenance = "maintenance"
     cooldown = "cooldown"
@@ -55,7 +54,6 @@ class RecoveryBlockKind(StrEnum):
 
 SUPPRESSED_KINDS = frozenset(
     {
-        RecoveryBlockKind.review,
         RecoveryBlockKind.operator,
         RecoveryBlockKind.maintenance,
         RecoveryBlockKind.cooldown,
@@ -74,10 +72,8 @@ class RecoveryAvailability:
 _ALLOWED = RecoveryAvailability(allowed=True, reason=None, kind=None)
 
 
-def _recovery_ladder(  # noqa: PLR0911 - the guard ladder is one return per rung
+def _recovery_ladder(
     *,
-    review_required: bool,
-    review_reason: str | None,
     commands: Sequence[Command],
     facts: DecisionFacts,
     ladder: LadderState,
@@ -89,14 +85,9 @@ def _recovery_ladder(  # noqa: PLR0911 - the guard ladder is one return per rung
 
     Consulted by both fact-shaped callers (``recovery_availability_from_facts``,
     ``recovery_availability_from_snapshot``) so there is exactly one copy of the
-    review > recovery-deny > not_ready > deferred_stop > session > backoff order.
+    recovery-deny (operator/maintenance/cooldown) > not_ready > deferred_stop >
+    session > backoff order.
     """
-    if review_required:
-        return RecoveryAvailability(
-            False,
-            review_reason or "Device shelved — operator review required",
-            RecoveryBlockKind.review,
-        )
     decision = decide_recovery(list(commands), facts)
     if not decision.allowed:
         return RecoveryAvailability(
@@ -130,8 +121,6 @@ def recovery_availability_from_facts(
 ) -> RecoveryAvailability:
     """Pure recovery projection: no DB access — all inputs are captured facts."""
     return _recovery_ladder(
-        review_required=device.review_required,
-        review_reason=device.review_reason,
         commands=commands,
         facts=facts,
         ladder=ladder,
@@ -183,8 +172,6 @@ def recovery_availability_from_snapshot(
 ) -> RecoveryAvailability:
     commands = [command for row in snapshot.intents if (command := parse_command(row, now)) is not None]
     return _recovery_ladder(
-        review_required=snapshot.review_required,
-        review_reason=snapshot.review_reason,
         commands=commands,
         facts=snapshot.decision_facts,
         ladder=snapshot.ladder,
