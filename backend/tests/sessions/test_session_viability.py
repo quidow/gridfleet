@@ -88,6 +88,7 @@ async def run_session_viability_probe(
     *,
     checked_by: object,
     settings: FakeSettingsReader | None = None,
+    retry_after_viability_failure: bool = False,
 ) -> dict[str, Any]:
     _svc._settings = settings or FakeSettingsReader({})
     # The probe now owns its own fresh sessions via ``_session_factory``; commit
@@ -97,7 +98,9 @@ async def run_session_viability_probe(
     await db.commit()
     engine = db.bind
     _svc._session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    return await _svc.run_session_viability_probe(device.id, checked_by=checked_by)
+    return await _svc.run_session_viability_probe(
+        device.id, checked_by=checked_by, retry_after_viability_failure=retry_after_viability_failure
+    )
 
 
 async def probe_session_direct(
@@ -2004,3 +2007,90 @@ async def test_escalation_command_persists_the_failure_entry_for_a_maintenance_h
     # auto-stop ran alongside the recorded failure.
     assert held is not None
     assert ps(held).get("maintenance_reason") == "operator hold"
+
+
+async def test_scheduled_retry_probes_device_offline_solely_from_viability(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry flag admits a device whose only defect is its own failed
+    viability column — the state the series' previous attempt created."""
+    device, node = _make_viability_device(db_host, "retry-ok")
+    device.session_viability_status = "failed"
+    device.session_viability_error = "no session"
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(True, None)))
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
+
+    state = await run_session_viability_probe(
+        db_session,
+        device,
+        checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
+        retry_after_viability_failure=True,
+    )
+    assert state["status"] == "passed"
+
+
+async def test_scheduled_probe_without_retry_flag_still_rejects_viability_offline(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The carve-out must be opt-in: a plain scheduled probe on a
+    viability-parked device keeps refusing."""
+    device, node = _make_viability_device(db_host, "retry-flagless")
+    device.session_viability_status = "failed"
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(True, None)))
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
+
+    with pytest.raises(SessionViabilityProbeNotPermittedError):
+        await run_session_viability_probe(
+            db_session, device, checked_by=session_viability.SessionViabilityCheckedBy.scheduled
+        )
+
+
+@pytest.mark.parametrize(
+    "spoiler",
+    ["checks_failed", "maintenance", "stop_in_flight", "reserved"],
+)
+async def test_scheduled_retry_rejects_states_not_owned_by_the_series(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+    spoiler: str,
+) -> None:
+    """The retry flag never widens admission past 'offline solely from the
+    viability column': failed device checks, maintenance, an in-flight stop,
+    and a reservation all still refuse."""
+    device, node = _make_viability_device(db_host, f"retry-{spoiler}")
+    device.session_viability_status = "failed"
+    db_session.add_all([device, node])
+    await db_session.flush()
+    if spoiler == "checks_failed":
+        device.device_checks_healthy = False
+    elif spoiler == "maintenance":
+        set_maintenance_reason(device, "operator")
+    elif spoiler == "stop_in_flight":
+        node.desired_state = AppiumDesiredState.stopped
+        node.desired_port = None
+    await db_session.commit()
+    if spoiler == "reserved":
+        await create_reservation(db_session, device_id=device.id)
+        await db_session.commit()
+
+    monkeypatch.setattr(_svc, "probe_session_direct", AsyncMock(return_value=(True, None)))
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
+
+    with pytest.raises(SessionViabilityProbeNotPermittedError):
+        await run_session_viability_probe(
+            db_session,
+            device,
+            checked_by=session_viability.SessionViabilityCheckedBy.scheduled,
+            retry_after_viability_failure=True,
+        )

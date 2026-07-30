@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
+    from app.devices.services.state import DeviceStateFacts
     from app.events.protocols import EventPublisher
     from app.sessions.protocols import DeviceCapabilityReader, DeviceSessionViabilityWriter, HealthFailureHandler
 
@@ -67,6 +68,22 @@ SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 # eager re-validation (``maintenance → verifying → available|offline``). Any other
 # state (``busy``, ``maintenance``) is never probed.
 _RECOVERY_PROBE_ADMISSIBLE_STATES = frozenset({DeviceOperationalState.offline, DeviceOperationalState.verifying})
+
+
+def _offline_solely_from_viability_failure(facts: DeviceStateFacts, device: Device) -> bool:
+    """True when the offline projection is attributable to the session-viability
+    column alone: no stop is in flight and every other allocation signal is
+    green (``device_checks_healthy is not False`` mirrors ``merged_liveness``).
+    The scheduled series' retry attempts may re-probe exactly this state — the
+    one their own previous failed attempt created. Anything else (checks
+    failed, node stopping, maintenance — masked into ``state`` upstream)
+    belongs to the health/recovery pipelines, not the series.
+    """
+    return (
+        not facts.stop_in_flight
+        and device.session_viability_status == "failed"
+        and device.device_checks_healthy is not False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +265,7 @@ class SessionViabilityService:
         device_id: uuid.UUID,
         *,
         checked_by: SessionViabilityCheckedBy,
+        retry_after_viability_failure: bool = False,
     ) -> ProbePreparation:
         """Lock the device, re-validate admissibility under the lock, and insert
         the probe's pending birth row. Commits (via ``begin()``) to publish the
@@ -260,8 +278,16 @@ class SessionViabilityService:
             snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
             state = evaluate_operational_state(snapshot.state_facts)
             reserved = snapshot.decision_facts.reservation_run_id is not None
-            can_probe = (state == DeviceOperationalState.available and not reserved) or (
-                checked_by == SessionViabilityCheckedBy.recovery and state in _RECOVERY_PROBE_ADMISSIBLE_STATES
+            can_probe = (
+                (state == DeviceOperationalState.available and not reserved)
+                or (checked_by == SessionViabilityCheckedBy.recovery and state in _RECOVERY_PROBE_ADMISSIBLE_STATES)
+                or (
+                    retry_after_viability_failure
+                    and checked_by == SessionViabilityCheckedBy.scheduled
+                    and not reserved
+                    and state == DeviceOperationalState.offline
+                    and _offline_solely_from_viability_failure(snapshot.state_facts, locked.device)
+                )
             )
             if not can_probe:
                 raise SessionViabilityProbeNotPermittedError(
@@ -372,6 +398,7 @@ class SessionViabilityService:
         device_id: uuid.UUID,
         *,
         checked_by: SessionViabilityCheckedBy,
+        retry_after_viability_failure: bool = False,
     ) -> dict[str, Any]:
         """Drive one viability probe as durable phases, each owning its own
         transaction: prepare (claim) → remote Appium create/terminate (no DB
@@ -379,7 +406,9 @@ class SessionViabilityService:
         is carried across a transaction exit; only the immutable ``ProbeEffect``
         scalars bridge the no-transaction remote effect.
         """
-        prepared = await self._prepare_probe(device_id, checked_by=checked_by)
+        prepared = await self._prepare_probe(
+            device_id, checked_by=checked_by, retry_after_viability_failure=retry_after_viability_failure
+        )
         if prepared.terminal_state is not None:
             return prepared.terminal_state
         assert prepared.effect is not None
