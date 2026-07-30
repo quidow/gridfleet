@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from app.core.background_loop import BackgroundLoop
 from app.core.observability import get_logger
 from app.sessions.service_sync import SESSION_SYNC_WAKE_SOURCE_TOTAL, register_session_sync_wake_hook
+from app.sessions.service_viability import SCHEDULED_PASS_BUDGET_SEC
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +51,10 @@ class AppiumSweepLoop(BackgroundLoop):
         return SESSION_POLL_INTERVAL_SEC
 
     async def _run_cycle(self, db: AsyncSession) -> None:
+        # Anchor the viability budget at tick start: the stall watchdog measures
+        # the whole cycle, so the observation sweep and the due-set query spend
+        # from the same allowance as the probe series.
+        deadline = time.monotonic() + SCHEDULED_PASS_BUDGET_SEC
         try:
             await self._services.sync.sync(db)
         except Exception:
@@ -67,7 +72,7 @@ class AppiumSweepLoop(BackgroundLoop):
         # phases. The sweep's passed ``db`` is not used for viability, so no outer
         # read transaction is held across the remote Appium effects.
         try:
-            await self._services.viability.check_due_devices()
+            await self._services.viability.check_due_devices(deadline=deadline)
         except Exception:
             logger.exception("appium_sweep_viability_failed")
 

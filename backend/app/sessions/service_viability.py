@@ -526,18 +526,22 @@ class SessionViabilityService:
                 await asyncio.sleep(SCHEDULED_PROBE_RETRY_DELAY_SEC)
         return last
 
-    async def check_due_devices(self) -> None:
+    async def check_due_devices(self, *, deadline: float | None = None) -> None:
         """Open one short read session, build the tuple of due device UUIDs,
         close it, then run a viability probe per UUID. No outer read transaction
         is held across the remote Appium effects (each probe owns its own
         fresh-session phases).
 
         Each due device runs an attempt series (``run_scheduled_probe_series``);
-        the pass stops starting new series after ``SCHEDULED_PASS_BUDGET_SEC``
+        the pass stops starting new series once ``deadline`` elapses (the owning
+        sweep anchors it at tick start; the fallback here serves direct callers)
         and passes the same deadline into the series so a running one also stops
         retrying past it. A string of broken devices therefore cannot hold the
-        appium_sweep cycle past the scheduler stall watchdog — deferred devices
-        remain due and are picked up by the next pass.
+        appium_sweep cycle past the scheduler stall watchdog. A device skipped
+        before its first attempt is untouched and stays due for the next pass;
+        a device truncated mid-series has recorded a failed attempt and is
+        parked offline, and comes back through device recovery rather than the
+        next due set.
 
         A failing series is contained to its own device: the device row can be
         deleted between the due-set build and its series (``lock_device_handle``
@@ -555,7 +559,8 @@ class SessionViabilityService:
             )
             devices = (await db.execute(stmt)).scalars().all()
             due_ids = [device.id for device in devices if await _should_run_scheduled_probe(db, device, interval_sec)]
-        deadline = time.monotonic() + SCHEDULED_PASS_BUDGET_SEC
+        if deadline is None:
+            deadline = time.monotonic() + SCHEDULED_PASS_BUDGET_SEC
         for index, device_id in enumerate(due_ids):
             if time.monotonic() >= deadline:
                 logger.info(

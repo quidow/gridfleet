@@ -124,12 +124,14 @@ async def probe_session_direct(
     return await svc.probe_session_direct(capabilities, timeout_sec, target=target)
 
 
-async def _check_due_devices(db: AsyncSession, *, settings: FakeSettingsReader | None = None) -> None:
+async def _check_due_devices(
+    db: AsyncSession, *, settings: FakeSettingsReader | None = None, deadline: float | None = None
+) -> None:
     _svc._settings = settings or FakeSettingsReader({})
     await db.commit()
     engine = db.bind
     _svc._session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    await _svc.check_due_devices()
+    await _svc.check_due_devices(deadline=deadline)
 
 
 async def _run_scheduled_probe_series(
@@ -688,6 +690,26 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
     state = await get_session_viability(db_session, deferred)
     assert state is not None and state["last_attempted_at"] == stale["last_attempted_at"]
     assert await _should_run_scheduled_probe(db_session, deferred, 3600) is True
+
+
+async def test_check_due_devices_uses_the_callers_deadline_verbatim(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The owning sweep anchors the budget at tick start and passes the
+    deadline in; the pass must hand exactly that line to the series rather
+    than re-deriving its own, later one."""
+    device, node = _make_viability_device(db_host, "deadline-verbatim")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    series = AsyncMock(return_value={"status": "passed", "consecutive_failures": 0})
+    monkeypatch.setattr(_svc, "run_scheduled_probe_series", series)
+    deadline = time.monotonic() + 1000.0
+    await _check_due_devices(db_session, deadline=deadline)
+
+    series.assert_awaited_once_with(device.id, deadline=deadline)
 
 
 async def test_check_due_devices_continues_after_a_series_raises(
