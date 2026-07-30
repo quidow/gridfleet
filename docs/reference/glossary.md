@@ -16,7 +16,7 @@ This glossary defines the product terms that show up across the API, UI, and ope
 | Session | A recorded Appium/WebDriver session linked to one device and its final test outcome |
 | Run | A reservation record that locks one or more matching devices for an external test workflow |
 | Reservation | The period where a run owns devices and prevents other runs from matching them |
-| Lifecycle incident | A recent persisted device-event record used to explain deferred stops, backoff, exclusions, and recoveries |
+| Lifecycle incident | A recent persisted device-event record used to explain failures, connectivity changes, node crashes and restarts, maintenance transitions, deferred stops, backoff, exclusions, and recoveries |
 | Maintenance | An operator-controlled state that blocks normal use while the device is intentionally withheld from testing |
 | Recovery availability | Whether lifecycle automation may automatically recover (restart) the device’s Appium node right now — recomputed at read time by `recovery_projection.recovery_availability` (no stored flag) |
 | Intake candidate | A host-visible device detected by the agent but not yet imported into the canonical registry |
