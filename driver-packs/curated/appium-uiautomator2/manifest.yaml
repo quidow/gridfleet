@@ -1,6 +1,6 @@
 schema_version: 1
 id: appium-uiautomator2
-release: 2026.07.4
+release: 2026.07.5
 display_name: Appium UiAutomator2
 maintainer: gridfleet-team
 license: Apache-2.0
@@ -23,6 +23,7 @@ appium_driver:
   recommended: "5.0.6"
   known_bad: []
 insecure_features:
+  - uiautomator2:adb_shell
   - uiautomator2:chromedriver_autodownload
   - "*:session_discovery"
 platforms:
