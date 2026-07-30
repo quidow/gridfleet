@@ -6,6 +6,7 @@ export interface LifecycleIncidentParams {
   device_id?: string;
   cursor?: string;
   direction?: 'older' | 'newer';
+  scope?: 'all' | 'policy';
 }
 
 export async function fetchLifecycleIncidents(
@@ -18,6 +19,7 @@ export async function fetchLifecycleIncidents(
 export async function fetchRecentLifecycleIncidents(params?: {
   limit?: number;
   device_id?: string;
+  scope?: 'all' | 'policy';
 }): Promise<LifecycleIncidentRead[]> {
   const { data } = await api.get('/lifecycle/incidents', { params });
   return data.items;

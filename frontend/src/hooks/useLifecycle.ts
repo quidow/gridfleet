@@ -19,7 +19,7 @@ export function useLifecycleIncidents(params?: LifecycleIncidentParams) {
   });
 }
 
-export function useRecentLifecycleIncidents(params?: { limit?: number; device_id?: string }) {
+export function useRecentLifecycleIncidents(params?: { limit?: number; device_id?: string; scope?: 'all' | 'policy' }) {
   const { connected } = useEventStreamStatus();
   return useQuery({
     queryKey: qk.lifecycleIncidents.recent(params),

@@ -22,7 +22,7 @@ function compactRelativeTime(isoString: string): string {
 
 export function AttentionCard() {
   const devicesQuery = useDevices();
-  const incidentsQuery = useRecentLifecycleIncidents({ limit: 20 });
+  const incidentsQuery = useRecentLifecycleIncidents({ limit: 20, scope: 'policy' });
 
   if (devicesQuery.status === 'pending' || incidentsQuery.status === 'pending') {
     return (

@@ -264,7 +264,7 @@ async def test_lifecycle_incidents_router_returns_paginated_response() -> None:
     assert response["limit"] == 5
     assert response["next_cursor"] == "next"
     assert response["prev_cursor"] == "prev"
-    list_incidents.assert_awaited_once_with(db, limit=5, device_id=None, cursor=None, direction="newer")
+    list_incidents.assert_awaited_once_with(db, limit=5, device_id=None, cursor=None, direction="newer", scope="all")
 
 
 async def test_more_router_success_and_not_found_branches(monkeypatch: pytest.MonkeyPatch) -> None:

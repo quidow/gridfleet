@@ -203,3 +203,48 @@ async def test_lifecycle_incidents_api_includes_failure_and_maintenance_events(
     assert items[1]["label"] == "Maintenance Entered"
     assert items[1]["reason"] == "run escalation"
     assert items[-1]["summary_state"] == "idle"
+
+
+async def test_lifecycle_incidents_api_policy_scope_excludes_failure_and_maintenance_events(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_device(db_session, default_host_id, identity_value="lifecycle-api-5", name="Lifecycle Five")
+    base = datetime.now(UTC) - timedelta(minutes=10)
+    events: list[tuple[DeviceEventType, dict[str, Any] | None]] = [
+        (DeviceEventType.lifecycle_recovery_failed, {"reason": "recovery gave up", "summary_state": "recovery_failed"}),
+        (DeviceEventType.connectivity_lost, {"reason": "Host offline"}),
+        (DeviceEventType.lifecycle_recovered, {"reason": "healthy again", "summary_state": "idle"}),
+    ]
+    db_session.add_all(
+        [
+            DeviceEvent(
+                device_id=device["id"],
+                event_type=event_type,
+                details=details,
+                created_at=base + timedelta(minutes=index),
+            )
+            for index, (event_type, details) in enumerate(events)
+        ]
+    )
+    await db_session.commit()
+
+    # Default (scope omitted) is the all-17 behavior: State History and existing callers
+    # keep seeing the failure event that preceded the recovery.
+    resp_default = await client.get("/api/lifecycle/incidents", params={"device_id": device["id"]})
+    assert resp_default.status_code == 200
+    assert [item["event_type"] for item in resp_default.json()["items"]] == [
+        "lifecycle_recovered",
+        "connectivity_lost",
+        "lifecycle_recovery_failed",
+    ]
+
+    # scope=policy restricts to the original 10 lifecycle_* types, so a fixed-size
+    # enrichment window (e.g. AttentionCard) can't be starved by a host-wide flap.
+    resp_policy = await client.get("/api/lifecycle/incidents", params={"device_id": device["id"], "scope": "policy"})
+    assert resp_policy.status_code == 200
+    assert [item["event_type"] for item in resp_policy.json()["items"]] == [
+        "lifecycle_recovered",
+        "lifecycle_recovery_failed",
+    ]
