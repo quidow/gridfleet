@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.devices.locking import LockedDevice
-    from app.devices.protocols import RemoteNodeManager, ReviewProtocol, SessionViabilityProbe
+    from app.devices.protocols import RemoteNodeManager, SessionViabilityProbe
     from app.devices.services.decision_snapshot import DeviceDecisionSnapshot, ReservationDecisionSnapshot
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.actions import LifecyclePolicyActionsService
@@ -63,7 +63,6 @@ class LifecyclePolicyService:
         incidents: LifecycleIncidentService,
         viability: SessionViabilityProbe,
         node_manager: RemoteNodeManager,
-        review: ReviewProtocol,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
@@ -71,7 +70,6 @@ class LifecyclePolicyService:
         self._incidents = incidents
         self._viability = viability
         self._node_manager = node_manager
-        self._review = review
 
     async def prepare_auto_recovery_locked(
         self,
@@ -127,7 +125,6 @@ class LifecyclePolicyService:
                     db,
                     device,
                     settings=self._settings,
-                    review=self._review,
                     source=source,
                     reason=str(exc),
                     prior=snapshot.ladder,
@@ -246,7 +243,6 @@ class LifecyclePolicyService:
                 db,
                 locked.device,
                 settings=self._settings,
-                review=self._review,
                 source="session_viability",
                 reason=failure_reason,
                 prior=updated.ladder,

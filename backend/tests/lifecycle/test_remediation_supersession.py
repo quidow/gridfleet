@@ -31,12 +31,11 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.db
 
 
-def _settings(*, threshold: int = 5) -> FakeSettingsReader:
+def _settings() -> FakeSettingsReader:
     return FakeSettingsReader(
         {
             "general.lifecycle_recovery_backoff_base_sec": 10,
             "general.lifecycle_recovery_backoff_max_sec": 40,
-            "general.lifecycle_recovery_review_threshold": threshold,
         }
     )
 
@@ -51,7 +50,6 @@ def _actions() -> LifecyclePolicyActionsService:
 
 def _policy(settings: FakeSettingsReader) -> LifecyclePolicyService:
     return LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=settings,
         actions=_actions(),
@@ -135,22 +133,6 @@ async def test_self_heal_immediately_resets_and_emits_one_recovery_incident(
         .all()
     )
     assert len(events) == 1
-    assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 0
-
-
-async def test_review_threshold_survives_a_reset(db_session: AsyncSession, db_host: Host) -> None:
-    settings = _settings(threshold=3)
-    device = await create_device(db_session, host_id=db_host.id, name="supersession-threshold")
-    for attempt in range(3):
-        await _escalate(db_session, device, source="node_health", reason=f"failure-{attempt}", settings=settings)
-    await db_session.commit()
-
-    await db_session.refresh(device)
-    assert device.review_required is True
-    assert await _policy(settings).clear_escalation_residue_on_self_heal(db_session, device, reason="self-heal") is True
-    await db_session.commit()
-    await db_session.refresh(device)
-    assert device.review_required is True
     assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 0
 
 

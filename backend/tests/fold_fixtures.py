@@ -50,7 +50,6 @@ def build_real_lifecycle_connectivity_service() -> ConnectivityService:
         incidents=incidents,
         viability=AsyncMock(),
         node_manager=AsyncMock(),
-        review=review,
     )
     return ConnectivityService(
         publisher=event_bus,

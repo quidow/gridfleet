@@ -184,7 +184,6 @@ async def test_attempt_auto_recovery_probes_verifying_device(
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         lifecycle_policy=LifecyclePolicyService(
-            review=build_review_service(),
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             actions=LifecyclePolicyActionsService(
@@ -294,9 +293,7 @@ async def test_finalize_auto_recovery_skip_clears_generation_and_writes_no_state
     device = await _seed_verifying_device(db_session, db_host.id, identity="repro-collision-suppress")
 
     actions = AsyncMock()
-    review = AsyncMock()
     svc = LifecyclePolicyService(
-        review=review,
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=actions,
@@ -327,7 +324,6 @@ async def test_finalize_auto_recovery_skip_clears_generation_and_writes_no_state
     await db_session.refresh(device)
     assert recovery_generation(device) is None
     actions.complete_auto_stop_locked.assert_not_awaited()
-    review.mark_review_required.assert_not_awaited()
 
 
 async def test_probe_collision_skip_does_not_flag_needs_attention(
@@ -351,7 +347,6 @@ async def test_probe_collision_skip_does_not_flag_needs_attention(
     device = await _seed_verifying_device(db_session, db_host.id, identity="repro-collision-no-attention")
 
     svc = LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(

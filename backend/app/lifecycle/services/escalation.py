@@ -2,9 +2,9 @@
 
 The ladder's memory is the append-only ``device_remediation_log`` table.
 Every automated remediation -- recovery probe, node-health restart, appium
-start retry -- shares one derived attempt count and backoff window, promoted
-to ``Device.review_required`` once attempts cross
-``general.lifecycle_recovery_review_threshold``.
+start retry -- shares one derived attempt count and backoff window. The
+backoff saturates at ``general.lifecycle_recovery_backoff_max_sec``; attempts
+continue indefinitely — there is no terminal rung.
 
 Detection debounce (ip_ping duration windows, ``general.node_fail_window_sec``,
 probe-unanswered counting, the link-repair attempt budget) stays with each
@@ -28,7 +28,6 @@ if TYPE_CHECKING:
 
     from app.core.protocols import SettingsReader
     from app.devices.models import Device
-    from app.devices.protocols import ReviewProtocol
     from app.lifecycle.services.remediation_log import LadderState
 
 
@@ -36,7 +35,6 @@ if TYPE_CHECKING:
 class EscalationOutcome:
     backoff_until_iso: str
     attempts: int
-    shelved: bool
     ladder: LadderState
 
 
@@ -45,7 +43,6 @@ async def escalate_remediation_failure(
     device: Device,
     *,
     settings: SettingsReader,
-    review: ReviewProtocol,
     source: str,
     reason: str,
     prior: LadderState | None = None,
@@ -59,26 +56,9 @@ async def escalate_remediation_failure(
         settings=settings,
         prior=prior,
     )
-    shelved = ladder.attempts >= settings.get_int("general.lifecycle_recovery_review_threshold")
-    if shelved and await review.mark_review_required(db, device, reason=reason, source=source):
-        # The flag went off -> on here, so THIS episode owns the shelving. Record
-        # that as an append-only fact: ``review_reason`` and ``review_set_at`` are
-        # mutable and shared with other shelving sources, so a later reader cannot
-        # reconstruct ownership from them (a re-flag overwrites the reason in place
-        # and deliberately keeps the original set_at). Only the transition is
-        # recorded — a no-op re-flag of an already-shelved device writes nothing.
-        marker = await remediation_log.append_action(
-            db,
-            device.id,
-            source=source,
-            action=remediation_log.ACTION_REVIEW_SHELVED,
-            reason=reason,
-        )
-        ladder = remediation_log.advance_ladder(ladder, marker)
     assert entry.backoff_until is not None
     return EscalationOutcome(
         backoff_until_iso=entry.backoff_until.isoformat(),
         attempts=ladder.attempts,
-        shelved=shelved,
         ladder=ladder,
     )

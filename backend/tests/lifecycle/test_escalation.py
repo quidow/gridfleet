@@ -2,7 +2,6 @@
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -10,7 +9,7 @@ from app.core.timeutil import now_utc
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.escalation import escalate_remediation_failure
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device_record
+from tests.helpers import create_device, create_device_record
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,13 +23,11 @@ SETTINGS = FakeSettingsReader(
     {
         "general.lifecycle_recovery_backoff_base_sec": 60,
         "general.lifecycle_recovery_backoff_max_sec": 900,
-        "general.lifecycle_recovery_review_threshold": 3,
     }
 )
 
 
 async def test_escalate_increments_attempts_and_arms_backoff(db_session: AsyncSession, db_host: Host) -> None:
-    review = AsyncMock()
     device = await create_device_record(
         db_session,
         host_id=db_host.id,
@@ -42,7 +39,6 @@ async def test_escalate_increments_attempts_and_arms_backoff(db_session: AsyncSe
         db_session,
         device,
         settings=SETTINGS,
-        review=review,
         source="node_health",
         reason="first failure",
     )
@@ -50,7 +46,6 @@ async def test_escalate_increments_attempts_and_arms_backoff(db_session: AsyncSe
         db_session,
         device,
         settings=SETTINGS,
-        review=review,
         source="node_health",
         reason="second failure",
     )
@@ -59,44 +54,35 @@ async def test_escalate_increments_attempts_and_arms_backoff(db_session: AsyncSe
     ladder = await remediation_log.load_ladder(db_session, device.id)
     assert ladder.backoff_active(now=now_utc()) is not None
     assert ladder.last_failure_reason == "second failure"
-    assert first.shelved is False and second.shelved is False
-    review.mark_review_required.assert_not_awaited()
 
 
-async def test_escalate_promotes_to_review_at_threshold(db_session: AsyncSession, db_host: Host) -> None:
-    review = AsyncMock()
-    device = await create_device_record(
-        db_session,
-        host_id=db_host.id,
-        identity_value="escalation-threshold",
-        name="escalation-threshold",
+async def test_escalation_caps_backoff_and_never_stops(db_session: AsyncSession, db_host: Host) -> None:
+    """Attempts keep accruing past any old threshold; backoff saturates at the cap.
+
+    Expected sequence re-derived from append_attempt: seconds = min(900, 60 * 2**(n-1))
+    for n = 1..7 -> 60, 120, 240, 480, 900, 900, 900.
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="cap-forever")
+    settings = FakeSettingsReader(
+        {
+            "general.lifecycle_recovery_backoff_base_sec": 60,
+            "general.lifecycle_recovery_backoff_max_sec": 900,
+        }
     )
-
-    for _ in range(2):
-        await escalate_remediation_failure(
-            db_session,
-            device,
-            settings=SETTINGS,
-            review=review,
-            source="node_health",
-            reason="kept failing",
+    delays: list[int] = []
+    ladder = None
+    outcome = None
+    for _ in range(7):
+        before = now_utc()
+        outcome = await escalate_remediation_failure(
+            db_session, device, settings=settings, source="node_health", reason="probe failed", prior=ladder
         )
-    outcome = await escalate_remediation_failure(
-        db_session,
-        device,
-        settings=SETTINGS,
-        review=review,
-        source="node_health",
-        reason="kept failing",
-    )
-
-    assert outcome.shelved is True
-    review.mark_review_required.assert_awaited_once_with(
-        db_session,
-        device,
-        reason="kept failing",
-        source="node_health",
-    )
+        ladder = outcome.ladder
+        assert ladder.backoff_until is not None
+        delays.append(round((ladder.backoff_until - before).total_seconds()))
+    assert outcome is not None
+    assert delays == [60, 120, 240, 480, 900, 900, 900]
+    assert outcome.attempts == 7
 
 
 def test_backoff_active_treats_a_past_deadline_as_expired() -> None:
@@ -111,7 +97,6 @@ async def test_escalate_remediation_failure_with_prior_ladder_skips_select(
 ) -> None:
     from app.lifecycle.services.remediation_log import EMPTY_LADDER
     from tests.concurrency.group_lock_helpers import capture_statements
-    from tests.fakes.review import build_review_service
 
     device = await create_device_record(
         db_session,
@@ -121,14 +106,11 @@ async def test_escalate_remediation_failure_with_prior_ladder_skips_select(
     )
     await db_session.commit()
 
-    review = build_review_service()
-
     async with capture_statements(db_session) as statements:
         outcome = await escalate_remediation_failure(
             db_session,
             device,
             settings=SETTINGS,
-            review=review,
             source="test",
             reason="failed",
             prior=EMPTY_LADDER,

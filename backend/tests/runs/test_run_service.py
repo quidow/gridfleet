@@ -102,7 +102,6 @@ async def test_force_release_clears_deferred_stop(
     )
 
     real_deferred_stop = LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=_settings,
         actions=LifecyclePolicyActionsService(
@@ -438,7 +437,6 @@ async def test_deferred_stop_pass_publishes_the_held_intent_convergence(
     await db_session.commit()
 
     real_policy = LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=_settings,
         actions=LifecyclePolicyActionsService(

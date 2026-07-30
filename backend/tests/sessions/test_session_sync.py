@@ -48,7 +48,6 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
     pub = publisher if publisher is not None else event_bus
     return LifecyclePolicyService(
-        review=build_review_service(),
         publisher=pub,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(

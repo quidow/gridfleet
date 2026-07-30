@@ -87,7 +87,6 @@ async def concurrent_unhealthy_fold(
         incidents=incidents,
         viability=AsyncMock(),
         node_manager=AsyncMock(),
-        review=review,
     )
     service = ConnectivityService(
         publisher=event_bus,

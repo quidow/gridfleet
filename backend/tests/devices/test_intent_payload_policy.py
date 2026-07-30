@@ -84,7 +84,6 @@ async def test_auto_stop_commission_action_shape(
     await db_session.commit()
 
     _svc = LifecyclePolicyService(
-        review=build_review_service(),
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
@@ -293,7 +292,6 @@ async def test_auto_recovery_commission_is_recorded_in_the_remediation_log(
     await db_session.commit()
 
     svc = LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(

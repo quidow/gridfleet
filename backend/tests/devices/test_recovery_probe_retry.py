@@ -37,7 +37,6 @@ def _make_worker(db_session: AsyncSession, viability: object) -> RecoveryJobServ
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         lifecycle_policy=LifecyclePolicyService(
-            review=build_review_service(),
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             actions=LifecyclePolicyActionsService(

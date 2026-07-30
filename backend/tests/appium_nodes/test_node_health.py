@@ -246,7 +246,6 @@ async def test_fold_recovery_clears_pending_stop(db_session: AsyncSession, db_ho
     )
     await db_session.commit()
     recovery = LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(

@@ -34,7 +34,6 @@ def _build_lifecycle_policy_service() -> LifecyclePolicyService:
     from tests.helpers import test_event_bus as event_bus
 
     return LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
@@ -326,7 +325,6 @@ async def test_connectivity_loss_keeps_device_in_run(
 
     locked = await device_locking.lock_device(db_session, device.id)
     svc = LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=None,  # type: ignore[arg-type]
         actions=LifecyclePolicyActionsService(

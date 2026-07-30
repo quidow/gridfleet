@@ -72,7 +72,7 @@ curl -s -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://loca
 
 Focus on `appium_node.desired_state`, `appium_node.desired_port`, `appium_node.restart_requested_at`, `appium_node.started_at`, and `appium_node.last_observed_at`.
 
-- If `last_observed_at` is fresh and lifecycle state shows a start backoff, wait for the shared remediation backoff window. Appium start failures use the `general.lifecycle_recovery_*` ladder: exponential backoff starts on the first failure and the device is promoted to `review_required` at `general.lifecycle_recovery_review_threshold`.
+- If `last_observed_at` is fresh and lifecycle state shows a start backoff, wait for the shared remediation backoff window. Appium start failures use the `general.lifecycle_recovery_*` ladder: exponential backoff starts on the first failure and caps at `general.lifecycle_recovery_backoff_max_sec` (default 900 s); retries continue indefinitely.
 - If `restart_requested_at` is older than `appium_reconciler.restart_window_sec`, or `started_at >= restart_requested_at`, the node no longer projects as `restarting` — the watermark self-clears at read time; there is nothing to clear manually.
 - If the agent is still running a stale Appium process (its `started_at` predates a restart you expected to land), re-issue the restart through the backend (device-detail **Restart** or `POST /api/devices/DEVICE_ID/node/restart`) and let the agent converge.
 

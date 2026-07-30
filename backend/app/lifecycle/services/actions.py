@@ -480,7 +480,6 @@ async def escalate_device_remediation_failure(
         db,
         device,
         settings=settings,
-        review=ReviewService(),
         source=source,
         reason=reason,
         prior=ladder,

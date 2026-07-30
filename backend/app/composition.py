@@ -175,7 +175,6 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
         incidents=incidents_svc,
         viability=viability_svc,
         node_manager=reconciler_agent_svc,
-        review=review_svc,
     )
     viability_svc.configure_health_failure_handler(lifecycle_policy_svc.handle_health_failure)
     fleet_capacity_svc = FleetCapacityService()

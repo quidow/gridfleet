@@ -48,7 +48,6 @@ async def test_attempt_auto_recovery_records_recovery_start_action(
     from app.runs.service_reservation import RunReservationService
 
     svc = LifecyclePolicyService(
-        review=build_review_service(),
         publisher=Mock(),
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(

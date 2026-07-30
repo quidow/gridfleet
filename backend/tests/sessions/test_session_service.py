@@ -40,7 +40,6 @@ def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
     """Return a real LifecyclePolicyService for tests that need actual DB mutations."""
     pub = publisher if publisher is not None else event_bus
     return LifecyclePolicyService(
-        review=build_review_service(),
         publisher=pub,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(

@@ -68,7 +68,6 @@ def _make_recovery_service(
 ) -> RecoveryJobService:
     _sf = _session_factory(db_session)
     lifecycle_policy = LifecyclePolicyService(
-        review=build_review_service(),
         publisher=AsyncMock(),
         settings=settings_service,
         actions=LifecyclePolicyActionsService(
@@ -404,7 +403,6 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                 publisher=AsyncMock(),
                 settings=settings_service,
                 lifecycle_policy=LifecyclePolicyService(
-                    review=build_review_service(),
                     publisher=AsyncMock(),
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(

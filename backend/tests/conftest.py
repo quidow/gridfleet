@@ -421,7 +421,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 settings=settings_service,
                 circuit_breaker=test_circuit_breaker,
                 lifecycle_policy=LifecyclePolicyService(
-                    review=build_review_service(),
                     publisher=test_event_bus,
                     settings=settings_service,
                     actions=LifecyclePolicyActionsService(
@@ -457,7 +456,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             review=build_review_service(), settings=settings_service, publisher=test_event_bus
         )
         _policy_svc = LifecyclePolicyService(
-            review=build_review_service(),
             publisher=test_event_bus,
             settings=settings_service,
             actions=_actions_svc,
@@ -523,7 +521,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             health=DeviceHealthService(publisher=test_event_bus),
         )
         _lifecycle_policy_svc = LifecyclePolicyService(
-            review=build_review_service(),
             publisher=test_event_bus,
             settings=settings_service,
             actions=LifecyclePolicyActionsService(
@@ -558,7 +555,6 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
             db_session.bind, class_=AsyncSession, expire_on_commit=False
         )
         _lifecycle_policy_svc_runs = LifecyclePolicyService(
-            review=build_review_service(),
             publisher=test_event_bus,
             settings=settings_service,
             actions=LifecyclePolicyActionsService(

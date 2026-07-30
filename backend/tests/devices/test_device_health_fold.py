@@ -240,7 +240,6 @@ async def test_fold_loads_one_decision_snapshot_per_applied_device(
         incidents=incidents,
         viability=AsyncMock(),
         node_manager=AsyncMock(),
-        review=review,
     )
     service = ConnectivityService(
         publisher=event_bus,
@@ -900,7 +899,6 @@ async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
         incidents=incidents,
         viability=AsyncMock(),
         node_manager=AsyncMock(),
-        review=review,
     )
     service = ConnectivityService(
         publisher=event_bus,
@@ -1125,7 +1123,6 @@ def _connectivity_with_real_lifecycle(
         incidents=incidents,
         viability=AsyncMock(),
         node_manager=AsyncMock(),
-        review=review,
     )
     return ConnectivityService(
         publisher=event_bus,

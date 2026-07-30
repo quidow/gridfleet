@@ -66,7 +66,6 @@ def _make_svc(
     nm = node_manager if node_manager is not None else AsyncMock()
     incidents = LifecycleIncidentService(publisher=pub) if publish_incidents else LifecycleIncidentService()
     return LifecyclePolicyService(
-        review=build_review_service(),
         publisher=pub,  # type: ignore[arg-type]
         settings=svc_settings,  # type: ignore[arg-type]
         actions=LifecyclePolicyActionsService(
@@ -1118,7 +1117,6 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
         {
             "general.lifecycle_recovery_backoff_base_sec": 5,
             "general.lifecycle_recovery_backoff_max_sec": 20,
-            "general.lifecycle_recovery_review_threshold": 5,
             "appium.port_range_start": 4720,
             "appium.port_range_end": 4800,
         }

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from app.devices import locking as device_locking
-from app.devices.models import Device, DeviceEventType
+from app.devices.models import DeviceEventType
 from app.lifecycle.services import actions, remediation_log
 from app.lifecycle.services.actions import (
     LifecyclePolicyActionsService,
@@ -98,14 +98,11 @@ async def test_reset_start_failure_clears_reconciler_sourced_residue(db_session:
 
 
 @pytest.mark.db
-async def test_escalate_device_remediation_failure_backs_off_and_shelves(
-    db_session: AsyncSession, db_host: Host
-) -> None:
+async def test_escalate_device_remediation_failure_backs_off(db_session: AsyncSession, db_host: Host) -> None:
     settings = FakeSettingsReader(
         {
             "general.lifecycle_recovery_backoff_base_sec": 60,
             "general.lifecycle_recovery_backoff_max_sec": 900,
-            "general.lifecycle_recovery_review_threshold": 2,
         }
     )
     device = await create_device(db_session, host_id=db_host.id, name="escalate-device-remediation-failure")
@@ -115,7 +112,7 @@ async def test_escalate_device_remediation_failure_backs_off_and_shelves(
         db_session, locked, settings=settings, source="appium_reconciler", reason="spawn_failed"
     )
     await db_session.commit()
-    assert first.attempts == 1 and first.shelved is False
+    assert first.attempts == 1
     after = await remediation_log.load_ladder(db_session, locked.id)
     assert after.backoff_until is not None
     assert after.last_failure_source == "appium_reconciler"
@@ -125,6 +122,4 @@ async def test_escalate_device_remediation_failure_backs_off_and_shelves(
         db_session, locked, settings=settings, source="appium_reconciler", reason="spawn_failed"
     )
     await db_session.commit()
-    assert second.attempts == 2 and second.shelved is True
-    refreshed = await db_session.get(Device, device.id)
-    assert refreshed is not None and refreshed.review_required is True
+    assert second.attempts == 2

@@ -50,7 +50,6 @@ pytestmark = [pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
 
 def _policy_service(*, viability: object | None = None) -> LifecyclePolicyService:
     return LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(

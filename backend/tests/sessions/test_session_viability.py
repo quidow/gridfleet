@@ -1829,7 +1829,6 @@ def _wired_escalation_service(
     review = build_review_service()
     incidents = LifecycleIncidentService()
     policy = LifecyclePolicyService(
-        review=review,
         publisher=_test_event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
