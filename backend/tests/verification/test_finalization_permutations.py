@@ -11,11 +11,13 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import DeviceIntent, DeviceOperationalState
+from app.devices.models import Device, DeviceIntent, DeviceOperationalState
+from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import (
@@ -42,7 +44,6 @@ from tests.verification._lease_helpers import register_verification_node_intent
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from app.devices.models import Device
     from app.hosts.models import Host
 
 pytestmark = [pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -65,10 +66,12 @@ class _ViabilityStub:
         device: Device,
         *,
         status: str,
+        error: str | None = None,
         checked_by: object,
     ) -> dict[str, Any]:
         del checked_by
         device.session_viability_status = status
+        device.session_viability_error = error
         await db.flush()
         return {"status": status}
 
@@ -292,3 +295,44 @@ async def test_finalize_failure_single_edge_no_flap(
         (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
     )
     assert remaining == []
+
+
+async def test_finalize_failure_update_records_viability_failure(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed re-verification must land in Device.session_viability_status.
+
+    Acceptance criterion from the shelve/verification coupling analysis: with
+    review_required forced off, the failed probe result alone keeps the device
+    unallocatable. Before this fix, failure wrote nothing and a stale "passed"
+    survived.
+    """
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = await create_device(db_session, host_id=db_host.id, name="reverify-viability")
+    node = await _seed_node(db_session, device.id, running=True)
+    device.session_viability_status = "passed"
+    operation_id = uuid.uuid4()
+    await register_verification_node_intent(
+        db_session, device, settings=FakeSettingsReader({}), publisher=event_bus, operation_id=operation_id
+    )
+    await db_session.commit()
+
+    monkeypatch.setattr("app.verification.services.execution.set_stage", AsyncMock())
+    svc = _build_execution_service(session_factory)
+    effect = _effect(device, operation_id, mode="update", payload={})
+    outcome = await svc._finalize_failure(effect, error="probe failed", job=_job(), node_id=node.id)
+    assert outcome.status == "failed"
+    await dispatch_committed_events()
+
+    await db_session.refresh(device)
+    assert device.session_viability_status == "failed"
+    assert device.session_viability_error == "probe failed"
+
+    device.review_required = False
+    await db_session.commit()
+    loaded = (
+        await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
+    ).scalar_one()
+    assert device_allows_allocation(loaded) is False

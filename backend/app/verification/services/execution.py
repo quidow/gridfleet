@@ -442,6 +442,13 @@ class VerificationExecutionService:
                 return VerificationExecutionOutcome(status="failed", error=error, device_id=None)
 
             _restore_update_original_fields(device, effect.original_fields)
+            await self._viability.record_session_viability_result(
+                db,
+                device,
+                status="failed",
+                error=error,
+                checked_by=SessionViabilityCheckedBy.verification,
+            )
             await self._failure_finalizers.review.mark_review_required(
                 db,
                 device,
