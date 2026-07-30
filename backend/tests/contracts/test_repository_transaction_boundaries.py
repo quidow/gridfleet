@@ -373,6 +373,7 @@ EFFECT_ENTRY_POINTS: frozenset[tuple[str, str]] = frozenset(
         ("app/sessions/service_sync.py", "SessionSyncService._terminate_orphans"),
         ("app/sessions/service_sync.py", "_terminate_for_close"),
         ("app/sessions/service_viability.py", "SessionViabilityService.probe_session_direct"),
+        ("app/sessions/service_viability.py", "SessionViabilityService.run_scheduled_probe_series"),
         ("app/sessions/service_viability.py", "_terminate_probe_session"),
         ("app/verification/services/execution.py", "VerificationExecutionService._prepare_node"),
         ("app/verification/services/execution.py", "VerificationExecutionService.run_device_health"),
