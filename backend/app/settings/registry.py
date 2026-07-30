@@ -113,10 +113,10 @@ _DEFINITIONS: list[SettingDefinition] = [
         setting_type="int",
         default=3,
         description=(
-            "Appium session probe attempts per scheduled viability pass, and the "
-            "consecutive-failure count that escalates the device to lifecycle "
-            "recovery. The pass retries about 10 s apart, so transient hiccups "
-            "resolve within one pass instead of one failure per interval."
+            "Up to this many Appium session probe attempts per scheduled viability "
+            "pass, and the consecutive-failure count that escalates the device to "
+            "lifecycle recovery. The pass retries about 10 s apart, so transient "
+            "hiccups resolve within one pass instead of one failure per interval."
         ),
         min_value=1,
         max_value=20,

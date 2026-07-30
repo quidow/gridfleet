@@ -1,12 +1,13 @@
+import time
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from sqlalchemy import select, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -27,6 +28,7 @@ from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service_probes import PROBE_CHECKED_BY_CAP_KEY
 from app.sessions.service_viability import (
     _PROBE_ALWAYS_MATCH_KEYS,
+    SessionViabilityProbeInProgressError,
     SessionViabilityProbeNotPermittedError,
     SessionViabilityService,
     _filter_probe_always_match,
@@ -135,12 +137,13 @@ async def _run_scheduled_probe_series(
     device: Device,
     *,
     settings: FakeSettingsReader | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any] | None:
     _svc._settings = settings or FakeSettingsReader({})
     await db.commit()
     engine = db.bind
     _svc._session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    return await _svc.run_scheduled_probe_series(device.id)
+    return await _svc.run_scheduled_probe_series(device.id, deadline=deadline)
 
 
 async def test_session_viability_state_is_not_persisted_in_device_config(
@@ -633,7 +636,7 @@ async def test_check_due_devices_runs_the_series_per_due_device(
     monkeypatch.setattr(_svc, "run_scheduled_probe_series", series)
     await _check_due_devices(db_session)
 
-    series.assert_awaited_once_with(device.id)
+    series.assert_awaited_once_with(device.id, deadline=ANY)
 
 
 async def test_check_due_devices_defers_series_past_the_pass_budget(
@@ -642,16 +645,29 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The pass stops starting new series once the budget elapses; deferred
-    devices keep their stale last_attempted_at and stay due for the next pass."""
+    devices keep their stale last_attempted_at and stay due for the next pass.
+    The admitted series is handed the same deadline, so it stops retrying at the
+    budget line too."""
     d1, n1 = _make_viability_device(db_host, "budget-1")
     d2, n2 = _make_viability_device(db_host, "budget-2")
     n2.port = 4798
     n2.desired_port = 4798
     db_session.add_all([d1, n1, d2, n2])
     await db_session.commit()
+    stale = {
+        "status": "passed",
+        "last_attempted_at": "2020-01-01T00:00:00+00:00",
+        "last_succeeded_at": "2020-01-01T00:00:00+00:00",
+        "error": None,
+        "checked_by": "scheduled",
+        "consecutive_failures": 0,
+    }
+    for device in (d1, d2):
+        await set_session_viability_control_plane_entry(db_session, str(device.id), dict(stale))
 
     # monotonic reads: deadline computation, device-1 gate (inside budget),
-    # device-2 gate (past budget → defer).
+    # device-2 gate (past budget → defer). The series itself is mocked, so it
+    # adds none of its own.
     monkeypatch.setattr(
         session_viability,
         "time",
@@ -662,6 +678,43 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
     await _check_due_devices(db_session)
 
     assert series.await_count == 1
+    assert series.await_args is not None
+    assert series.await_args.kwargs["deadline"] == session_viability.SCHEDULED_PASS_BUDGET_SEC
+
+    # The deferred device was not touched: its stale attempt stamp survives, so
+    # the next pass still finds it due.
+    probed_id = series.await_args.args[0]
+    deferred = d1 if probed_id == d2.id else d2
+    state = await get_session_viability(db_session, deferred)
+    assert state is not None and state["last_attempted_at"] == stale["last_attempted_at"]
+    assert await _should_run_scheduled_probe(db_session, deferred, 3600) is True
+
+
+async def test_check_due_devices_continues_after_a_series_raises(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A device whose series raises something the series does not catch (a
+    deleted row raises NoResultFound out of lock_device_handle) must not skip
+    the remaining due devices — otherwise one deterministic fault starves every
+    device ordered after it, pass after pass."""
+    d1, n1 = _make_viability_device(db_host, "guard-1")
+    d2, n2 = _make_viability_device(db_host, "guard-2")
+    n2.port = 4798
+    n2.desired_port = 4798
+    db_session.add_all([d1, n1, d2, n2])
+    await db_session.commit()
+
+    series = AsyncMock(side_effect=[NoResultFound(), {"status": "passed", "consecutive_failures": 0}])
+    monkeypatch.setattr(_svc, "run_scheduled_probe_series", series)
+    with patch.object(session_viability.logger, "exception") as log_spy:
+        await _check_due_devices(db_session)
+
+    assert series.await_count == 2
+    assert {call.args[0] for call in series.await_args_list} == {d1.id, d2.id}
+    log_spy.assert_called_once()
+    assert log_spy.call_args.args[1] == series.await_args_list[0].args[0]
 
 
 async def test_probe_session_direct_passes_through_transport_error_as_indeterminate(
@@ -2296,6 +2349,96 @@ async def test_scheduled_series_stops_when_an_attempt_is_not_permitted(
     assert inner.await_count == 2
     assert inner.await_args_list[0].kwargs["retry_after_viability_failure"] is False
     assert inner.await_args_list[1].kwargs["retry_after_viability_failure"] is True
+
+
+async def test_scheduled_series_logs_when_it_ends_early(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An early exit names the device and the cause: a raced-in probe, a state
+    change and a lapsed readiness are otherwise indistinguishable from outside,
+    so a lab where auto-recovery always wins the race looks exactly like one
+    where the series works.
+
+    NOTE: spy on ``logger.info`` directly rather than through ``caplog`` — the
+    idiom this repo uses for log contracts (see test_maintenance_service_exit),
+    because stdlib logging state left by other tests in the same xdist worker
+    can keep the record from ever reaching a handler.
+    """
+    device, node = _make_viability_device(db_host, "series-earlylog")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    first = {"status": "failed", "consecutive_failures": 1}
+    inner = AsyncMock(side_effect=[first, SessionViabilityProbeInProgressError("probe already running")])
+    monkeypatch.setattr(_svc, "run_session_viability_probe", inner)
+    monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock())
+
+    with patch.object(session_viability.logger, "info") as log_spy:
+        state = await _run_scheduled_probe_series(
+            db_session, device, settings=FakeSettingsReader(dict(_SERIES_SETTINGS))
+        )
+
+    assert state is first
+    log_spy.assert_called_once()
+    assert log_spy.call_args.args[1] == device.id
+    assert log_spy.call_args.args[2] == "SessionViabilityProbeInProgressError"
+
+
+async def test_scheduled_series_stops_at_the_pass_deadline(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A deadline already elapsed when the first attempt fails truncates the
+    series there: no retry sleep, no further attempt. This is what keeps the
+    pass budget from being overrun by a whole series."""
+    device, node = _make_viability_device(db_host, "series-deadline")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    sleeper = AsyncMock()
+    monkeypatch.setattr(session_viability.asyncio, "sleep", sleeper)
+    probe = AsyncMock(return_value=(False, "no session"))
+    monkeypatch.setattr(_svc, "probe_session_direct", probe)
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
+
+    state = await _run_scheduled_probe_series(
+        db_session,
+        device,
+        settings=FakeSettingsReader(dict(_SERIES_SETTINGS)),
+        deadline=time.monotonic() - 1.0,
+    )
+
+    assert state is not None and state["status"] == "failed"
+    assert state["consecutive_failures"] == 1
+    assert probe.await_count == 1
+    sleeper.assert_not_awaited()
+
+
+async def test_scheduled_series_without_a_deadline_runs_every_attempt(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default (no deadline) series is unbounded: the same failing device
+    that truncates above burns all three attempts and both retry sleeps."""
+    device, node = _make_viability_device(db_host, "series-nodeadline")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    sleeper = AsyncMock()
+    monkeypatch.setattr(session_viability.asyncio, "sleep", sleeper)
+    probe = AsyncMock(return_value=(False, "no session"))
+    monkeypatch.setattr(_svc, "probe_session_direct", probe)
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
+
+    state = await _run_scheduled_probe_series(db_session, device, settings=FakeSettingsReader(dict(_SERIES_SETTINGS)))
+
+    assert state is not None and state["consecutive_failures"] == 3
+    assert probe.await_count == 3
+    assert sleeper.await_count == 2
 
 
 def _series_service_with_real_health(db: AsyncSession) -> SessionViabilityService:
