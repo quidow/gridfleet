@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -571,7 +572,12 @@ async def test_check_due_devices_respects_interval(db_session: AsyncSession, db_
         },
     )
 
-    with patch.object(SessionViabilityService, "run_session_viability_probe", new_callable=AsyncMock) as mock_probe:
+    with patch.object(
+        SessionViabilityService,
+        "run_session_viability_probe",
+        new_callable=AsyncMock,
+        return_value={"status": "passed", "consecutive_failures": 0},
+    ) as mock_probe:
         await _check_due_devices(db_session)
 
     assert mock_probe.await_count == 1
@@ -612,6 +618,50 @@ async def test_check_due_devices_excludes_reserved_device(db_session: AsyncSessi
         await _check_due_devices(db_session)
 
     assert mock_probe.await_count == 0
+
+
+async def test_check_due_devices_runs_the_series_per_due_device(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device, node = _make_viability_device(db_host, "pass-series")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    series = AsyncMock(return_value={"status": "passed", "consecutive_failures": 0})
+    monkeypatch.setattr(_svc, "run_scheduled_probe_series", series)
+    await _check_due_devices(db_session)
+
+    series.assert_awaited_once_with(device.id)
+
+
+async def test_check_due_devices_defers_series_past_the_pass_budget(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pass stops starting new series once the budget elapses; deferred
+    devices keep their stale last_attempted_at and stay due for the next pass."""
+    d1, n1 = _make_viability_device(db_host, "budget-1")
+    d2, n2 = _make_viability_device(db_host, "budget-2")
+    n2.port = 4798
+    n2.desired_port = 4798
+    db_session.add_all([d1, n1, d2, n2])
+    await db_session.commit()
+
+    # monotonic reads: deadline computation, device-1 gate (inside budget),
+    # device-2 gate (past budget → defer).
+    monkeypatch.setattr(
+        session_viability,
+        "time",
+        SimpleNamespace(monotonic=Mock(side_effect=[0.0, 0.0, 10_000.0])),
+    )
+    series = AsyncMock(return_value={"status": "passed", "consecutive_failures": 0})
+    monkeypatch.setattr(_svc, "run_scheduled_probe_series", series)
+    await _check_due_devices(db_session)
+
+    assert series.await_count == 1
 
 
 async def test_probe_session_direct_passes_through_transport_error_as_indeterminate(

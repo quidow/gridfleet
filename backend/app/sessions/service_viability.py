@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -66,6 +67,15 @@ SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 # Plumbing constant: pause between attempts of one scheduled probe series,
 # mirroring the recovery job's RECOVERY_PROBE_RETRY_DELAY_SEC.
 SCHEDULED_PROBE_RETRY_DELAY_SEC = 10.0
+
+# Plumbing constant: wall-clock budget for starting new series inside one
+# scheduled pass. Worst-case single series ≈ 3 x 115 s create timeout + 20 s
+# of retry sleeps ≈ 365 s; the scheduler stall watchdog kills the process when
+# an appium_sweep cycle exceeds ~640 s (interval 30 + heartbeat grace 10 +
+# stall grace 600), so the last series admitted at the budget line still
+# finishes inside it. Deferred devices stay due and the next pass (≤ 60 s
+# later) picks them up.
+SCHEDULED_PASS_BUDGET_SEC = 180.0
 
 # §14.4a: a recovery-class probe may run on a device that is not yet ``available``.
 # It validates an ``offline`` device coming back from a node failure, or a
@@ -488,7 +498,14 @@ class SessionViabilityService:
         """Open one short read session, build the tuple of due device UUIDs,
         close it, then run a viability probe per UUID. No outer read transaction
         is held across the remote Appium effects (each probe owns its own
-        fresh-session phases)."""
+        fresh-session phases).
+
+        Each due device runs an attempt series (``run_scheduled_probe_series``);
+        the pass stops starting new series after ``SCHEDULED_PASS_BUDGET_SEC``
+        so a string of broken devices cannot hold the appium_sweep cycle past
+        the scheduler stall watchdog — deferred devices remain due and are
+        picked up by the next pass.
+        """
         interval_sec = self._settings.get("general.session_viability_interval_sec")
         now = now_utc()
         async with self._session_factory() as db:
@@ -499,8 +516,16 @@ class SessionViabilityService:
             )
             devices = (await db.execute(stmt)).scalars().all()
             due_ids = [device.id for device in devices if await _should_run_scheduled_probe(db, device, interval_sec)]
-        for device_id in due_ids:
-            await self.run_session_viability_probe(device_id, checked_by=SessionViabilityCheckedBy.scheduled)
+        deadline = time.monotonic() + SCHEDULED_PASS_BUDGET_SEC
+        for index, device_id in enumerate(due_ids):
+            if time.monotonic() >= deadline:
+                logger.info(
+                    "session_viability pass budget exhausted; deferring %d of %d due devices to the next pass",
+                    len(due_ids) - index,
+                    len(due_ids),
+                )
+                break
+            await self.run_scheduled_probe_series(device_id)
 
 
 def _now_iso() -> str:
