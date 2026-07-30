@@ -51,6 +51,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "PROBE_TEST_NAME",
+    "SCHEDULED_PASS_BUDGET_SEC",
+    "SCHEDULED_PROBE_RETRY_DELAY_SEC",
     "SESSION_VIABILITY_KEY",
     "SESSION_VIABILITY_STATE_NAMESPACE",
     "SessionViabilityProbeInProgressError",
@@ -66,27 +68,36 @@ SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 
 # Plumbing constant: pause between attempts of one scheduled probe series,
 # mirroring the recovery job's RECOVERY_PROBE_RETRY_DELAY_SEC.
-SCHEDULED_PROBE_RETRY_DELAY_SEC = 10.0
+SCHEDULED_PROBE_RETRY_DELAY_SEC = 10
 
-# Plumbing constant: wall-clock budget for one scheduled pass. It is checked both
-# before admitting a new series and — threaded through as ``deadline`` — before
-# each in-series retry sleep, so the delivered bound is the budget plus one
-# worst-case *attempt*, not plus one worst-case series.
+# Plumbing constant: wall-clock budget for one scheduled pass, anchored at the
+# start of the owning appium_sweep cycle — AppiumSweepLoop computes
+# ``tick start + budget`` and passes it into ``check_due_devices`` as
+# ``deadline``, so the observation sweep and the due-set query spend from the
+# same allowance the stall watchdog measures (the in-method fallback serves
+# direct callers only). The deadline is checked both before admitting a new
+# series and — threaded through as ``deadline`` — before each in-series retry
+# sleep, so the delivered bound is the budget plus one worst-case *attempt*,
+# not plus one worst-case series.
 #
-# At stock settings one attempt costs at most 3 x 115 s: a 115 s create timeout
-# (min of general.session_viability_timeout_sec and effective_create_timeout on
-# grid.claim_window_sec) plus two terminate retries at that same timeout
-# (_terminate_probe_session). The check sits before the retry sleep, so the last
-# attempt can start at budget + delay: a pass runs ≤ 180 + 10 + 345 = 535 s,
-# inside the ~640 s the scheduler stall watchdog allows an appium_sweep cycle
-# (interval 30 + heartbeat grace 10 + stall grace 600). Deferred devices stay due
-# and the next pass (≤ 60 s later) picks them up.
+# One attempt costs at most create + 2 x terminate: create is bounded by
+# min(general.session_viability_timeout_sec, effective_create_timeout on
+# grid.claim_window_sec) — 115 s at stock settings, 240 s with both raised to
+# their maxima — and each terminate by _PROBE_TERMINATE_TIMEOUT_CAP_SEC, so the
+# worst attempt is 240 + 2 x 30 = 300 s at any supported setting combination.
+# The deadline check sits before the retry sleep, so the last attempt can start
+# at budget + delay: a cycle spends <= 180 + 10 + 300 = 490 s here, inside the
+# ~640 s the scheduler stall watchdog allows an appium_sweep cycle (interval 30
+# + heartbeat grace 10 + stall grace 600) — provided the observation sweep
+# itself finishes inside the budget; a sweep slower than that is its own
+# unbounded term, which this constant does not bound and the watchdog still
+# catches.
 #
-# What this budget does not bound: raising both grid.claim_window_sec and
-# general.session_viability_timeout_sec (each tunable to 600) lifts the probe
-# timeout to its 240 s cap, so a single attempt can cost 3 x 240 = 720 s — past
-# the watchdog ceiling on its own, with or without this budget. That is the probe
-# timeout's own bound, and no cross-setting invariant currently forbids it.
+# A device the budget *skipped* (no series started) is untouched and stays due;
+# the next pass (<= 60 s later) picks it up. A device *truncated* mid-series has
+# already recorded a failed attempt, which parks it offline and drops it from
+# the next pass's available-only due set; it re-enters through device recovery
+# (connectivity._maybe_auto_recover), not through the scheduled pass.
 SCHEDULED_PASS_BUDGET_SEC = 180.0
 
 # §14.4a: a recovery-class probe may run on a device that is not yet ``available``.
@@ -526,18 +537,22 @@ class SessionViabilityService:
                 await asyncio.sleep(SCHEDULED_PROBE_RETRY_DELAY_SEC)
         return last
 
-    async def check_due_devices(self) -> None:
+    async def check_due_devices(self, *, deadline: float | None = None) -> None:
         """Open one short read session, build the tuple of due device UUIDs,
         close it, then run a viability probe per UUID. No outer read transaction
         is held across the remote Appium effects (each probe owns its own
         fresh-session phases).
 
         Each due device runs an attempt series (``run_scheduled_probe_series``);
-        the pass stops starting new series after ``SCHEDULED_PASS_BUDGET_SEC``
+        the pass stops starting new series once ``deadline`` elapses (the owning
+        sweep anchors it at tick start; the fallback here serves direct callers)
         and passes the same deadline into the series so a running one also stops
         retrying past it. A string of broken devices therefore cannot hold the
-        appium_sweep cycle past the scheduler stall watchdog — deferred devices
-        remain due and are picked up by the next pass.
+        appium_sweep cycle past the scheduler stall watchdog. A device skipped
+        before its first attempt is untouched and stays due for the next pass;
+        a device truncated mid-series has recorded a failed attempt and is
+        parked offline, and comes back through device recovery rather than the
+        next due set.
 
         A failing series is contained to its own device: the device row can be
         deleted between the due-set build and its series (``lock_device_handle``
@@ -555,7 +570,8 @@ class SessionViabilityService:
             )
             devices = (await db.execute(stmt)).scalars().all()
             due_ids = [device.id for device in devices if await _should_run_scheduled_probe(db, device, interval_sec)]
-        deadline = time.monotonic() + SCHEDULED_PASS_BUDGET_SEC
+        if deadline is None:
+            deadline = time.monotonic() + SCHEDULED_PASS_BUDGET_SEC
         for index, device_id in enumerate(due_ids):
             if time.monotonic() >= deadline:
                 logger.info(
@@ -568,8 +584,17 @@ class SessionViabilityService:
                 await self.run_scheduled_probe_series(device_id, deadline=deadline)
             except Exception as exc:
                 # Blind by design — one device must not starve the rest of the pass.
-                # (BLE001 does not fire here: the handler logs with ``exception``.)
-                logger.exception("session_viability series failed for device %s (%s)", device_id, type(exc).__name__)
+                # Warning, not error: the usual cause is a device row deleted
+                # mid-pass, an expected race rather than a fault. ``exc_info``
+                # keeps the traceback for the genuine faults this guard also
+                # catches — and (verified against ruff 0.16.0) exempts BLE001
+                # exactly like ``logger.exception`` does, so no ``noqa`` here.
+                logger.warning(
+                    "session_viability series failed for device %s (%s)",
+                    device_id,
+                    type(exc).__name__,
+                    exc_info=True,
+                )
 
 
 def _now_iso() -> str:
@@ -714,12 +739,31 @@ def _build_session_payload(capabilities: dict[str, Any]) -> dict[str, Any]:
 
 _PROBE_TERMINATE_ATTEMPTS = 2
 
+# Terminate is a DELETE against a session that already exists; it never needs the
+# cold-create budget it used to inherit. Uncapped, one probe attempt could cost
+# create + 2 x terminate = 3 x 240 s at max settings — past the ~640 s the
+# scheduler stall watchdog allows the whole appium_sweep cycle. The cap trades
+# that for a bounded wait: a node too wedged to answer in 30 s only leaks the
+# probe session to the observation sweep's orphan-kill pass (which covers probe
+# rows), while the watchdog keeps running. The sweep already terminates real
+# sessions with the 10 s client default, so 30 s is generous for a healthy node.
+#
+# ``_terminate_probe_session`` isn't reached from the scheduled pass alone:
+# ``probe_session_direct`` also backs the verification job's session probe
+# (``execution.VerificationExecutionService._run_probe_phase``, which passes
+# ``general.session_viability_timeout_sec`` straight through) and recovery-class
+# probes (``recovery_job._run_probe``, via ``run_session_viability_probe``). The
+# cap is benign-to-desirable for those callers too — the same bounded-wait
+# tradeoff holds regardless of who dials in.
+_PROBE_TERMINATE_TIMEOUT_CAP_SEC = 30
+
 
 async def _terminate_probe_session(base: str, session_id: str, *, timeout_sec: int) -> bool:
     """Terminate a probe session, retrying once so a single transient failure
     (timeout/blip) does not leak the session and its driver-forwarded ports."""
+    terminate_timeout = min(timeout_sec, _PROBE_TERMINATE_TIMEOUT_CAP_SEC)
     for _ in range(_PROBE_TERMINATE_ATTEMPTS):
-        if await appium_direct.terminate_session(base, session_id, timeout=timeout_sec):
+        if await appium_direct.terminate_session(base, session_id, timeout=terminate_timeout):
             return True
     return False
 
