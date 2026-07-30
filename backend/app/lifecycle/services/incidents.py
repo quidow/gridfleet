@@ -34,6 +34,15 @@ LIFECYCLE_INCIDENT_LABELS: dict[DeviceEventType, str] = {
     DeviceEventType.lifecycle_run_restored: "Rejoined Run",
     DeviceEventType.lifecycle_run_cooldown_set: "Run Cooldown",
     DeviceEventType.lifecycle_run_cooldown_escalated: "Cooldown Extended",
+    # Widened beyond lifecycle_* so device history shows the failure that preceded a
+    # recovery, not just the recovery. Session/desired-state churn stays excluded as noise.
+    DeviceEventType.health_check_fail: "Health Fail",
+    DeviceEventType.connectivity_lost: "Disconnected",
+    DeviceEventType.connectivity_restored: "Connected",
+    DeviceEventType.node_crash: "Node Crash",
+    DeviceEventType.node_restart: "Node Restart",
+    DeviceEventType.maintenance_entered: "Maintenance Entered",
+    DeviceEventType.maintenance_exited: "Maintenance Exited",
 }
 
 LIFECYCLE_INCIDENT_TYPES: tuple[DeviceEventType, ...] = tuple(LIFECYCLE_INCIDENT_LABELS)
