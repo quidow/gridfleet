@@ -36,7 +36,7 @@ from app.verification.services.execution import (
 )
 from app.verification.services.job_state import new_job
 from app.verification.services.preparation import PreparedVerificationEffect
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 from tests.verification._lease_helpers import register_verification_node_intent
@@ -78,7 +78,6 @@ class _ViabilityStub:
 
 def _build_execution_service(session_factory: object) -> VerificationExecutionService:
     return VerificationExecutionService(
-        review=build_review_service(),
         publisher=event_bus,
         agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=AsyncMock(),
@@ -116,16 +115,25 @@ def _job() -> dict[str, Any]:
 async def test_failure_finalization_statements_permute(db_session: AsyncSession, db_host: Host) -> None:
     """WS-15.3 acceptance: the failure-path intent mutations are order-independent.
 
-    After the durable-facts block (review_required + outcome stamp), every ordering
-    of the intent mutations, with an adversarial reconcile after each statement,
-    derives the same final state. The stamp makes an unrevoked lease terminal for
-    both claim and command readers.
+    After the durable-facts block (session_viability_status + outcome stamp), every
+    ordering of the intent mutations, with an adversarial reconcile after each
+    statement, derives the same operational_state and the same (still-False)
+    allocation verdict. Post-Task-3, the appium node's own desired_state is
+    deliberately excluded from that invariant: this adversarial model includes a
+    "stop_intents" register step alongside its own "revoke_stops", so whichever
+    of the two is last in a given permutation legitimately decides whether an
+    operator:stop intent survives — same as a real concurrent operator stop would.
+    Node-state convergence no longer holds once review_required stops masking
+    that (pre-existing) race uniformly to "stopped"; the allocation-safety
+    invariant (session_viability_status → device_allows_allocation) is what has
+    to hold across every ordering now, and does. The stamp makes an unrevoked
+    lease terminal for both claim and command readers.
     """
     finals: set[tuple[object, ...]] = set()
     step_names = ("stop_intents", "revoke_lease", "revoke_stops", "revoke_start")
     for index, perm in enumerate(itertools.permutations(step_names)):
         device = await create_device(db_session, host_id=db_host.id, name=f"ws153-perm-{index}")
-        node = await _seed_node(db_session, device.id, running=True)
+        await _seed_node(db_session, device.id, running=True)
         await register_verification_node_intent(
             db_session, device, settings=FakeSettingsReader({}), publisher=event_bus
         )
@@ -143,8 +151,7 @@ async def test_failure_finalization_statements_permute(db_session: AsyncSession,
         await db_session.commit()
 
         locked = await device_locking.lock_device(db_session, device.id)
-        locked.review_required = True
-        locked.review_reason = "verification failed: probe failed"
+        locked.session_viability_status = "failed"
         await db_session.flush()
         await _stamp_verification_outcome(db_session, locked, outcome=VERIFICATION_OUTCOME_FAILED)
 
@@ -177,21 +184,23 @@ async def test_failure_finalization_statements_permute(db_session: AsyncSession,
             await reconcile_device(db_session, device.id, publisher=event_bus)
             states.append(await derive_operational_state(db_session, device, now=now_utc()))
         await db_session.commit()
-        await db_session.refresh(node)
+        await db_session.refresh(device, attribute_names=["appium_node"])
         await db_session.refresh(device)
 
         assert all(state == states[-1] for state in states), f"projection flapped under {perm}: {states}"
+        # node.desired_state/stop_pending/accepting_new_sessions are deliberately not
+        # part of this invariant (see docstring): they legitimately depend on whether
+        # "stop_intents" or "revoke_stops" is last in a given permutation.
         finals.add(
             (
                 states[-1],
-                node.desired_state,
-                node.stop_pending,
-                node.accepting_new_sessions,
                 device.operational_state_last_emitted,
-                device.review_required,
+                device_allows_allocation(device),
             )
         )
     assert len(finals) == 1, f"orderings diverged: {finals}"
+    _, _, final_allows_allocation = next(iter(finals))
+    assert final_allows_allocation is False, "failed viability keeps the device out of allocation"
 
 
 async def test_finalize_success_single_edge_no_flap(
@@ -290,7 +299,8 @@ async def test_finalize_failure_single_edge_no_flap(
         if name == "device.operational_state_changed"
     ]
     assert edges == [("verifying", "offline")], f"expected one clean edge, got {edges}"
-    assert device.review_required is True
+    assert device.review_required is False
+    assert device.session_viability_status == "failed"
     remaining = (
         (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
     )

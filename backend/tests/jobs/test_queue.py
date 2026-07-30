@@ -18,7 +18,7 @@ from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.verification.services.execution import AgentCallContext, VerificationExecutionService
 from app.verification.services.preparation import VerificationPreparationService
 from app.verification.services.runner import VerificationRunnerService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 
@@ -59,7 +59,6 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
                 publisher=event_bus,
             ),
             execution=VerificationExecutionService(
-                review=build_review_service(),
                 publisher=AsyncMock(),
                 agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=AsyncMock()),
                 crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),

@@ -295,7 +295,6 @@ def compose_app(  # noqa: PLR0915 - flat wiring root; statement count is inheren
         capability=device_capability_svc,
         reconciler=reconciler_svc,
         node_manager=reconciler_agent_svc,
-        review=review_svc,
         session_factory=session_factory,
     )
     verification_runner_svc = VerificationRunnerService(

@@ -388,7 +388,6 @@ async def test_exit_maintenance_recovery_rejoins_active_run(
                     publisher=event_bus,
                 ),
                 execution=VerificationExecutionService(
-                    review=build_review_service(),
                     publisher=AsyncMock(),
                     agent=AgentCallContext(settings=settings_service, circuit_breaker=AsyncMock()),
                     crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
@@ -480,7 +479,6 @@ async def test_device_recovery_job_completed_when_device_missing(
                 publisher=event_bus,
             ),
             execution=VerificationExecutionService(
-                review=build_review_service(),
                 publisher=AsyncMock(),
                 agent=AgentCallContext(settings=settings_service, circuit_breaker=AsyncMock()),
                 crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
