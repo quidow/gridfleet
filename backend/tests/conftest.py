@@ -202,9 +202,18 @@ async def ensure_test_database_for_db_tests(request: pytest.FixtureRequest) -> N
 async def setup_database(ensure_test_database: None) -> AsyncGenerator[AsyncEngine]:
     _ = ensure_test_database
     schema_name = f"test_{uuid.uuid4().hex}"
+    # Pooled, unlike the AUTOCOMMIT admin engines above. NullPool here made every
+    # session a fresh TCP connect plus a SCRAM-SHA-256 handshake (4096 PBKDF2
+    # iterations): 19.7 ms per connection against 0.9 ms pooled, and the suite
+    # opens hundreds of thousands of them. Pooling is safe because this engine is
+    # built per test and disposed at teardown below, so a connection is never
+    # reused across event loops -- the usual reason to reach for NullPool under
+    # asyncio. Sized well above the default 5+10 so that a test holding many
+    # concurrent sessions cannot exhaust the pool and stall on checkout.
     engine = create_async_engine(
         TEST_DATABASE_URL,
-        poolclass=NullPool,
+        pool_size=20,
+        max_overflow=40,
         connect_args={"server_settings": {"search_path": schema_name}},
     )
     async with engine.begin() as conn:

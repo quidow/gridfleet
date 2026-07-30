@@ -335,10 +335,34 @@ async def test_resume_interrupted_terminates_appium_with_no_open_transaction(
 
     monkeypatch.setattr(router_internal.appium_direct, "terminate_session", fake_terminate)
 
+    # Fake create_and_promote for the fresh claim that follows the cleanup. This
+    # assertion is about transaction state around the terminate call, not about
+    # reaching a real Appium: left unpatched the handler dials the seeded host
+    # address, which is unroutable under test and costs a full OS TCP connect
+    # timeout (75 s on macOS) before the handler falls through to "queued".
+    async def fake_create(
+        db_factory: session_create.DbFactory,
+        allocation_service: AllocationService,
+        *,
+        allocation: AllocationResult,
+        raw_body: bytes,
+        claim_window_sec: int,
+        max_create_timeout_sec: float | None = None,
+    ) -> session_create.CreateOutcome:
+        _ = db_factory, allocation_service, raw_body, claim_window_sec, max_create_timeout_sec
+        return session_create.CreateOutcome(
+            kind="created",
+            session_id="resumed-ssn",
+            appium_status=200,
+            appium_body={"value": {"sessionId": "resumed-ssn"}},
+            allocation=allocation,
+        )
+
+    monkeypatch.setattr(router_internal.session_create, "create_and_promote", fake_create)
+
     payload = CreateSessionRequest(body=_body(platformName="Android"), ticket=ticket.id)
     resp = await router_internal.create_session(payload, tracked_services)
     # The interrupted row is ended; the handler proceeds to a fresh claim which
-    # either allocates the now-free device or queues. Either way termination ran
-    # with no open transaction.
+    # allocates the now-free device. Termination ran with no open transaction.
     assert terminated == ["interrupted-ssn"]
-    assert resp.status in {"created", "queued"}
+    assert resp.status == "created"
