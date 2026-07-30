@@ -51,6 +51,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "PROBE_TEST_NAME",
+    "SCHEDULED_PASS_BUDGET_SEC",
+    "SCHEDULED_PROBE_RETRY_DELAY_SEC",
     "SESSION_VIABILITY_KEY",
     "SESSION_VIABILITY_STATE_NAMESPACE",
     "SessionViabilityProbeInProgressError",
@@ -66,7 +68,7 @@ SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 
 # Plumbing constant: pause between attempts of one scheduled probe series,
 # mirroring the recovery job's RECOVERY_PROBE_RETRY_DELAY_SEC.
-SCHEDULED_PROBE_RETRY_DELAY_SEC = 10.0
+SCHEDULED_PROBE_RETRY_DELAY_SEC = 10
 
 # Plumbing constant: wall-clock budget for one scheduled pass, anchored at the
 # start of the owning appium_sweep cycle — AppiumSweepLoop computes
