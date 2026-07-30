@@ -579,8 +579,17 @@ class SessionViabilityService:
                 await self.run_scheduled_probe_series(device_id, deadline=deadline)
             except Exception as exc:
                 # Blind by design — one device must not starve the rest of the pass.
-                # (BLE001 does not fire here: the handler logs with ``exception``.)
-                logger.exception("session_viability series failed for device %s (%s)", device_id, type(exc).__name__)
+                # Warning, not error: the usual cause is a device row deleted
+                # mid-pass, an expected race rather than a fault. ``exc_info``
+                # keeps the traceback for the genuine faults this guard also
+                # catches — and (verified against ruff 0.16.0) exempts BLE001
+                # exactly like ``logger.exception`` does, so no ``noqa`` here.
+                logger.warning(
+                    "session_viability series failed for device %s (%s)",
+                    device_id,
+                    type(exc).__name__,
+                    exc_info=True,
+                )
 
 
 def _now_iso() -> str:

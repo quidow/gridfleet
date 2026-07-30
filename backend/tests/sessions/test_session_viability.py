@@ -730,7 +730,7 @@ async def test_check_due_devices_continues_after_a_series_raises(
 
     series = AsyncMock(side_effect=[NoResultFound(), {"status": "passed", "consecutive_failures": 0}])
     monkeypatch.setattr(_svc, "run_scheduled_probe_series", series)
-    with patch.object(session_viability.logger, "exception") as log_spy:
+    with patch.object(session_viability.logger, "warning") as log_spy:
         await _check_due_devices(db_session)
 
     assert series.await_count == 2
