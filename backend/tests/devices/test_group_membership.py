@@ -663,7 +663,6 @@ def test_build_device_group_facts_is_identical_across_the_three_call_paths() -> 
     # Canonical loader: reservation via the gating-owner map lookup.
     gating_owner_map: dict[uuid.UUID, uuid.UUID | None] = {}
     canonical = build_device_group_facts(
-        device,
         operational_state=DeviceOperationalState.available,
         is_reserved=gating_owner_map.get(device.id) is not None,
         **shared,
@@ -672,13 +671,11 @@ def test_build_device_group_facts_is_identical_across_the_three_call_paths() -> 
     # column on the eligible row — the same fact by a different access path.
     row_reservation_run_id: uuid.UUID | None = None
     grid = build_device_group_facts(
-        device,
         operational_state=DeviceOperationalState.available,
         is_reserved=row_reservation_run_id is not None,
         **shared,
     )
     run = build_device_group_facts(
-        device,
         operational_state=DeviceOperationalState.available,
         is_reserved=False,
         **shared,

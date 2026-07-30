@@ -157,14 +157,14 @@ class DeviceGroupFacts:
 
 
 def build_device_group_facts(
-    device: Device,
     *,
     operational_state: DeviceOperationalState,
     is_reserved: bool,
     readiness_state: str,
     static_group_keys: frozenset[str],
 ) -> DeviceGroupFacts:
-    """Derive one device's evaluator facts. Pure: no IO, no session.
+    """Derive one device's evaluator facts from already-gathered inputs. Pure:
+    no IO, no session, and no read of the device row itself.
 
     The three fact-gathering call sites (``load_group_membership_index``, the
     grid allocator's ``_facts_from_eligible_rows``, and the run allocator's
@@ -426,7 +426,6 @@ async def load_group_membership_index(  # noqa: PLR0913 - one optional injected 
         else:
             is_reserved = gating_owner_map.get(device.id) is not None
         facts_by_device_id[device.id] = build_device_group_facts(
-            device,
             operational_state=op_map.get(device.id, DeviceOperationalState.offline),
             is_reserved=is_reserved,
             readiness_state=readiness.readiness_state if readiness is not None else "setup_required",

@@ -646,8 +646,8 @@ async def test_no_intent_stop_holds_node_running_while_session_active(db_session
     """Only an explicit stop_mode='hard' may flip desired_state=stopped while
     a client session is active. The no-intent stop (withdrawn device, F-G1
     gate) must defer like a graceful stop."""
-    device = await create_device(db_session, host_id=db_host.id, name="busy-maintenance")
-    device.lifecycle_policy_state = {**(device.lifecycle_policy_state or {}), "maintenance_reason": "operator"}
+    device = await create_device(db_session, host_id=db_host.id, name="busy-withdrawn")
+    device.verified_at = None
     await db_session.commit()
     node = await _seed_node(db_session, device.id)
     node.desired_state = AppiumDesiredState.running

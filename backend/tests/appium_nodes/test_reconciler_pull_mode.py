@@ -348,7 +348,6 @@ async def test_pull_host_start_failure_uses_shared_exponential_backoff(
             {
                 "general.lifecycle_recovery_backoff_base_sec": 5,
                 "general.lifecycle_recovery_backoff_max_sec": 60,
-                "general.lifecycle_recovery_review_threshold": 5,
             }
         ),
         pool=Mock(),

@@ -560,7 +560,6 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         for locked_device in locked_devices_list:
             pack = pack_catalog.get(locked_device.pack_id)
             locked_facts[locked_device.id] = build_device_group_facts(
-                locked_device,
                 operational_state=DeviceOperationalState.available,
                 is_reserved=False,
                 readiness_state=assess_device_with_pack(locked_device, pack).readiness_state,

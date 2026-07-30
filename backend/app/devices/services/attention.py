@@ -13,13 +13,13 @@ def compute_needs_attention(
     operational_state: DeviceOperationalState,
     readiness_state: str,
 ) -> bool:
-    """A device needs attention when it is out of service or flagged while in service.
+    """A device needs attention when it is out of service or not ready while in service.
 
     ``offline``/``maintenance`` subsume the old lifecycle-``suppressed`` and
     health-``failed`` triggers: ``evaluate_operational_state`` derives ``offline``
     whenever the device is not ready (failed health, suppressed recovery, missing
     setup), so checking the operational axis avoids flagging stale lifecycle JSON
-    residue on a serving device. The remaining clauses cover problems on devices
+    residue on a serving device. The remaining clause covers problems on devices
     that are busy/verifying and therefore not derived offline.
     """
     if operational_state in _OPERATIONAL_NEEDS_ATTENTION:

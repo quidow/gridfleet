@@ -299,7 +299,6 @@ def _facts_from_eligible_rows(
         device = row.device
         readiness = readiness_by_device_id.get(device.id)
         facts[device.id] = build_device_group_facts(
-            device,
             operational_state=DeviceOperationalState.available,
             is_reserved=row.reservation_run_id is not None,
             readiness_state=readiness.readiness_state if readiness is not None else "setup_required",
