@@ -72,12 +72,20 @@ _RECOVERY_PROBE_ADMISSIBLE_STATES = frozenset({DeviceOperationalState.offline, D
 
 def _offline_solely_from_viability_failure(facts: DeviceStateFacts, device: Device) -> bool:
     """True when the offline projection is attributable to the session-viability
-    column alone: no stop is in flight and every other allocation signal is
-    green (``device_checks_healthy is not False`` mirrors ``merged_liveness``).
+    column alone as far as control-plane decisions go: no stop is in flight and
+    device checks are not failing (``is not False`` mirrors ``merged_liveness``).
     The scheduled series' retry attempts may re-probe exactly this state — the
-    one their own previous failed attempt created. Anything else (checks
-    failed, node stopping, maintenance — masked into ``state`` upstream)
-    belongs to the health/recovery pipelines, not the series.
+    one their own previous failed attempt created. Failed checks, maintenance,
+    and busy/verifying (masked into ``state`` upstream) belong to other
+    pipelines, so the series yields to them.
+
+    Node liveness (``node_running_signal``) is deliberately not folded in: node
+    trouble that appears mid-series is evidence about the device under test,
+    and the retry is its arbiter — a vanished process records the terminal
+    "Appium node is not running" failure downstream, and a ``health_running=False``
+    flag with the pid still set either fails the real create (failure recorded)
+    or passes and disproves a stale flag. An in-flight stop is different in
+    kind — a control-plane decision, not an observation — hence the refusal.
     """
     return (
         not facts.stop_in_flight
