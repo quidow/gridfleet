@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +45,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.core.protocols import SettingsReader
+    from app.devices.services.state import DeviceStateFacts
     from app.events.protocols import EventPublisher
     from app.sessions.protocols import DeviceCapabilityReader, DeviceSessionViabilityWriter, HealthFailureHandler
 
@@ -61,12 +64,61 @@ __all__ = [
 SESSION_VIABILITY_KEY = "session_viability"
 SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
 
+# Plumbing constant: pause between attempts of one scheduled probe series,
+# mirroring the recovery job's RECOVERY_PROBE_RETRY_DELAY_SEC.
+SCHEDULED_PROBE_RETRY_DELAY_SEC = 10.0
+
+# Plumbing constant: wall-clock budget for one scheduled pass. It is checked both
+# before admitting a new series and — threaded through as ``deadline`` — before
+# each in-series retry sleep, so the delivered bound is the budget plus one
+# worst-case *attempt*, not plus one worst-case series.
+#
+# At stock settings one attempt costs at most 3 x 115 s: a 115 s create timeout
+# (min of general.session_viability_timeout_sec and effective_create_timeout on
+# grid.claim_window_sec) plus two terminate retries at that same timeout
+# (_terminate_probe_session). The check sits before the retry sleep, so the last
+# attempt can start at budget + delay: a pass runs ≤ 180 + 10 + 345 = 535 s,
+# inside the ~640 s the scheduler stall watchdog allows an appium_sweep cycle
+# (interval 30 + heartbeat grace 10 + stall grace 600). Deferred devices stay due
+# and the next pass (≤ 60 s later) picks them up.
+#
+# What this budget does not bound: raising both grid.claim_window_sec and
+# general.session_viability_timeout_sec (each tunable to 600) lifts the probe
+# timeout to its 240 s cap, so a single attempt can cost 3 x 240 = 720 s — past
+# the watchdog ceiling on its own, with or without this budget. That is the probe
+# timeout's own bound, and no cross-setting invariant currently forbids it.
+SCHEDULED_PASS_BUDGET_SEC = 180.0
+
 # §14.4a: a recovery-class probe may run on a device that is not yet ``available``.
 # It validates an ``offline`` device coming back from a node failure, or a
 # ``verifying`` device that exit-maintenance deliberately held out of service for
 # eager re-validation (``maintenance → verifying → available|offline``). Any other
 # state (``busy``, ``maintenance``) is never probed.
 _RECOVERY_PROBE_ADMISSIBLE_STATES = frozenset({DeviceOperationalState.offline, DeviceOperationalState.verifying})
+
+
+def _offline_solely_from_viability_failure(facts: DeviceStateFacts, device: Device) -> bool:
+    """True when the offline projection is attributable to the session-viability
+    column alone as far as control-plane decisions go: no stop is in flight and
+    device checks are not failing (``is not False`` mirrors ``merged_liveness``).
+    The scheduled series' retry attempts may re-probe exactly this state — the
+    one their own previous failed attempt created. Failed checks, maintenance,
+    and busy/verifying (masked into ``state`` upstream) belong to other
+    pipelines, so the series yields to them.
+
+    Node liveness (``node_running_signal``) is deliberately not folded in: node
+    trouble that appears mid-series is evidence about the device under test,
+    and the retry is its arbiter — a vanished process records the terminal
+    "Appium node is not running" failure downstream, and a ``health_running=False``
+    flag with the pid still set either fails the real create (failure recorded)
+    or passes and disproves a stale flag. An in-flight stop is different in
+    kind — a control-plane decision, not an observation — hence the refusal.
+    """
+    return (
+        not facts.stop_in_flight
+        and device.session_viability_status == "failed"
+        and device.device_checks_healthy is not False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +300,7 @@ class SessionViabilityService:
         device_id: uuid.UUID,
         *,
         checked_by: SessionViabilityCheckedBy,
+        retry_after_viability_failure: bool = False,
     ) -> ProbePreparation:
         """Lock the device, re-validate admissibility under the lock, and insert
         the probe's pending birth row. Commits (via ``begin()``) to publish the
@@ -260,8 +313,16 @@ class SessionViabilityService:
             snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
             state = evaluate_operational_state(snapshot.state_facts)
             reserved = snapshot.decision_facts.reservation_run_id is not None
-            can_probe = (state == DeviceOperationalState.available and not reserved) or (
-                checked_by == SessionViabilityCheckedBy.recovery and state in _RECOVERY_PROBE_ADMISSIBLE_STATES
+            can_probe = (
+                (state == DeviceOperationalState.available and not reserved)
+                or (checked_by == SessionViabilityCheckedBy.recovery and state in _RECOVERY_PROBE_ADMISSIBLE_STATES)
+                or (
+                    retry_after_viability_failure
+                    and checked_by == SessionViabilityCheckedBy.scheduled
+                    and not reserved
+                    and state == DeviceOperationalState.offline
+                    and _offline_solely_from_viability_failure(snapshot.state_facts, locked.device)
+                )
             )
             if not can_probe:
                 raise SessionViabilityProbeNotPermittedError(
@@ -372,6 +433,7 @@ class SessionViabilityService:
         device_id: uuid.UUID,
         *,
         checked_by: SessionViabilityCheckedBy,
+        retry_after_viability_failure: bool = False,
     ) -> dict[str, Any]:
         """Drive one viability probe as durable phases, each owning its own
         transaction: prepare (claim) → remote Appium create/terminate (no DB
@@ -379,7 +441,9 @@ class SessionViabilityService:
         is carried across a transaction exit; only the immutable ``ProbeEffect``
         scalars bridge the no-transaction remote effect.
         """
-        prepared = await self._prepare_probe(device_id, checked_by=checked_by)
+        prepared = await self._prepare_probe(
+            device_id, checked_by=checked_by, retry_after_viability_failure=retry_after_viability_failure
+        )
         if prepared.terminal_state is not None:
             return prepared.terminal_state
         assert prepared.effect is not None
@@ -405,11 +469,82 @@ class SessionViabilityService:
         )
         return state
 
+    async def run_scheduled_probe_series(
+        self, device_id: uuid.UUID, *, deadline: float | None = None
+    ) -> dict[str, Any] | None:
+        """Drive one due device's scheduled attempts as a series: up to
+        ``general.session_viability_failure_threshold`` attempts,
+        ``SCHEDULED_PROBE_RETRY_DELAY_SEC`` apart, stopping on the first pass
+        or once the failure counter reaches the threshold (that attempt's
+        escalation has already run inside ``run_session_viability_probe``).
+        Mirrors the recovery job's attempt series so a genuinely broken device
+        escalates within one pass instead of one failure per hourly interval.
+
+        Attempts after the first pass ``retry_after_viability_failure`` — the
+        previous failure's column write parks the device ``offline``, and the
+        retry must be admitted back into exactly that state. A probe racing in
+        between attempts (e.g. auto-recovery reacting to the park) surfaces as
+        ``SessionViabilityProbeInProgressError`` and simply ends the series.
+
+        ``deadline`` is a ``time.monotonic()`` value bounding the *attempts*, not
+        just the series start: it is checked before every retry sleep, so the
+        pass budget cannot be overrun by more than the attempt already running.
+        ``None`` (the default) runs the series unbounded. It is never checked
+        before the first attempt — the caller gates admission, and an admitted
+        series must get at least one attempt.
+        """
+        threshold = max(1, self._settings.get_int("general.session_viability_failure_threshold"))
+        last: dict[str, Any] | None = None
+        for attempt in range(threshold):
+            try:
+                last = await self.run_session_viability_probe(
+                    device_id,
+                    checked_by=SessionViabilityCheckedBy.scheduled,
+                    retry_after_viability_failure=attempt > 0,
+                )
+            except (SessionViabilityProbeInProgressError, SessionViabilityProbeNotPermittedError, ValueError) as exc:
+                # The device left the probeable state under the series (probe
+                # raced in, state changed, readiness lapsed) — stop here; the
+                # next pass re-evaluates due-ness from scratch. Logged because
+                # the three causes are otherwise indistinguishable from outside,
+                # and a lab where auto-recovery always wins this race reads as a
+                # series that silently never escalates.
+                logger.info("session_viability series ended early for device %s: %s", device_id, type(exc).__name__)
+                return last
+            if last.get("status") == "passed":
+                return last
+            if int(last.get("consecutive_failures") or 0) >= threshold:
+                return last
+            if attempt < threshold - 1:
+                if deadline is not None and time.monotonic() >= deadline:
+                    logger.info(
+                        "session_viability pass budget exhausted mid-series; truncating device %s after %d attempts",
+                        device_id,
+                        attempt + 1,
+                    )
+                    return last
+                await asyncio.sleep(SCHEDULED_PROBE_RETRY_DELAY_SEC)
+        return last
+
     async def check_due_devices(self) -> None:
         """Open one short read session, build the tuple of due device UUIDs,
         close it, then run a viability probe per UUID. No outer read transaction
         is held across the remote Appium effects (each probe owns its own
-        fresh-session phases)."""
+        fresh-session phases).
+
+        Each due device runs an attempt series (``run_scheduled_probe_series``);
+        the pass stops starting new series after ``SCHEDULED_PASS_BUDGET_SEC``
+        and passes the same deadline into the series so a running one also stops
+        retrying past it. A string of broken devices therefore cannot hold the
+        appium_sweep cycle past the scheduler stall watchdog — deferred devices
+        remain due and are picked up by the next pass.
+
+        A failing series is contained to its own device: the device row can be
+        deleted between the due-set build and its series (``lock_device_handle``
+        raises ``NoResultFound``, which the series does not catch), and an
+        unguarded raise here would skip every remaining due device — permanently,
+        pass after pass, for a deterministic per-device fault.
+        """
         interval_sec = self._settings.get("general.session_viability_interval_sec")
         now = now_utc()
         async with self._session_factory() as db:
@@ -420,8 +555,21 @@ class SessionViabilityService:
             )
             devices = (await db.execute(stmt)).scalars().all()
             due_ids = [device.id for device in devices if await _should_run_scheduled_probe(db, device, interval_sec)]
-        for device_id in due_ids:
-            await self.run_session_viability_probe(device_id, checked_by=SessionViabilityCheckedBy.scheduled)
+        deadline = time.monotonic() + SCHEDULED_PASS_BUDGET_SEC
+        for index, device_id in enumerate(due_ids):
+            if time.monotonic() >= deadline:
+                logger.info(
+                    "session_viability pass budget exhausted; deferring %d of %d due devices to the next pass",
+                    len(due_ids) - index,
+                    len(due_ids),
+                )
+                break
+            try:
+                await self.run_scheduled_probe_series(device_id, deadline=deadline)
+            except Exception as exc:
+                # Blind by design — one device must not starve the rest of the pass.
+                # (BLE001 does not fire here: the handler logs with ``exception``.)
+                logger.exception("session_viability series failed for device %s (%s)", device_id, type(exc).__name__)
 
 
 def _now_iso() -> str:
