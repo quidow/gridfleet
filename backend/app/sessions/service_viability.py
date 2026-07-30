@@ -471,11 +471,10 @@ class SessionViabilityService:
                     checked_by=SessionViabilityCheckedBy.scheduled,
                     retry_after_viability_failure=attempt > 0,
                 )
-            except (SessionViabilityProbeInProgressError, SessionViabilityProbeNotPermittedError, ValueError) as exc:
+            except SessionViabilityProbeInProgressError, SessionViabilityProbeNotPermittedError, ValueError:
                 # The device left the probeable state under the series (probe
                 # raced in, state changed, readiness lapsed) — stop here; the
                 # next pass re-evaluates due-ness from scratch.
-                logger.debug("session_viability scheduled series stopped for device %s: %s", device_id, exc)
                 return last
             if last.get("status") == "passed":
                 return last
