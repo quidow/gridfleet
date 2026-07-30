@@ -6,8 +6,8 @@ license = "Apache-2.0"
 authors = [{ name = "GridFleet contributors" }]
 requires-python = ">=3.14"
 dependencies = [
-    "fastapi==0.140.13",
-    "uvicorn[standard]==0.51.0",
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.0",
     "sqlalchemy[asyncio]==2.0.51",
     "asyncpg==0.31.0",
     "pydantic-settings==2.14.2",
