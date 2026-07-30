@@ -2,6 +2,45 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.40.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.39.0...gridfleet-agent-v0.40.0) (2026-07-30)
+
+
+### Features
+
+* **agent:** re-register at once when the backend fences a status push ([a692db2](https://github.com/quidow/gridfleet/commit/a692db264b10c1f35973bd18f56fef221d7fe2c7))
+
+
+### Bug Fixes
+
+* **agent:** add a restart backoff schedule for supervised loops ([3eb2f45](https://github.com/quidow/gridfleet/commit/3eb2f451720c83a352ef4173858e7a57dc4fb487))
+* **agent:** bound per-spawn appium logs and narrow port reclaim ([be853e0](https://github.com/quidow/gridfleet/commit/be853e03926f3274e0f75255a723b821d26f6add))
+* **agent:** cancel appium restart tasks only under the start lock ([c482749](https://github.com/quidow/gridfleet/commit/c482749092d28772b399668b3c0c4f7d22368cd7))
+* **agent:** cap restart backoff before overflow ([978ccc8](https://github.com/quidow/gridfleet/commit/978ccc86a815fb2e38b6077e9a22fff52d6df9ce))
+* **agent:** contain fence-hook exceptions and de-flake fence tests ([bc19395](https://github.com/quidow/gridfleet/commit/bc1939537ff61cf55bccb36a921b502a37fbf20b))
+* **agent:** correct the already-running swallow comment ([d06c2df](https://github.com/quidow/gridfleet/commit/d06c2dfdbad069f6cf3515e2d1c201c0279662f9))
+* **agent:** gate loop restarts on lifespan shutdown ([800fcc3](https://github.com/quidow/gridfleet/commit/800fcc3efb567d94f1636dd7a5efbe9d187a5d63))
+* **agent:** reclaim an unmanaged agent-owned appium on a desired port ([e981788](https://github.com/quidow/gridfleet/commit/e9817883060cd1802d01ab8156c60d6ad660a6be))
+* **agent:** reclaim an unmanaged agent-owned appium on a desired port ([4017877](https://github.com/quidow/gridfleet/commit/40178773aea969f284cddbedf9c71607681d1038))
+* **agent:** remove failed Appium spawn logs ([d678b8b](https://github.com/quidow/gridfleet/commit/d678b8b707d55d6ec7ec11048400b846b35d687e))
+* **agent:** report an appium exit as an exit and give each spawn its own log ([1fa3d53](https://github.com/quidow/gridfleet/commit/1fa3d53211cea1c66a5dace08b7e3829e8fada02))
+* **agent:** restart the status-push loop when it crashes ([cd212f3](https://github.com/quidow/gridfleet/commit/cd212f336da5a94b7aec913b983445715dc82a85))
+* **agent:** supervise crashed lifespan loops ([9e7d36b](https://github.com/quidow/gridfleet/commit/9e7d36be4bd8e5308be5153f5ce6efaa323eb6c6))
+* **agent:** supervise lifespan background loops ([4a47af4](https://github.com/quidow/gridfleet/commit/4a47af485a931cee3811b1b8fad8e5c9cc19a9a0))
+* **agent:** supervise the pack, node, probe and capabilities loops ([0163b2a](https://github.com/quidow/gridfleet/commit/0163b2a30e55229fc3b442296463a827b38c2c4d))
+* isolate the agent test suite from the host boot fence ([78a4efa](https://github.com/quidow/gridfleet/commit/78a4efa44e2ed9dacf4d2fec4fe4e95171126de3))
+* recover appium nodes from an unmanaged port occupant ([3845869](https://github.com/quidow/gridfleet/commit/38458693bd4f824e1a3d2712d922d925cf5d6eea))
+
+
+### Dependencies
+
+* **deps:** bump the python-dependencies group across 1 directory with 2 updates ([#909](https://github.com/quidow/gridfleet/issues/909)) ([e38b446](https://github.com/quidow/gridfleet/commit/e38b4468242cfe67213dcd2dc17e059526c43766))
+* **deps:** bump the python-dependencies group in /agent with 3 updates ([#922](https://github.com/quidow/gridfleet/issues/922)) ([0c7ebac](https://github.com/quidow/gridfleet/commit/0c7ebac77797eed133aee3b1d736742f298d500d))
+
+
+### Documentation
+
+* **docs:** correct the boot-fence ping-pong claim and lead the runbook with the metric ([d752bd5](https://github.com/quidow/gridfleet/commit/d752bd559813241fb5e6b76ae375da3c3ae8fc68))
+
 ## [0.39.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.38.2...gridfleet-agent-v0.39.0) (2026-07-21)
 
 
