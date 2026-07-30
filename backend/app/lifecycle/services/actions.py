@@ -499,6 +499,4 @@ async def reset_reconciler_start_failure_if_needed(
     if not (ladder.armed or ladder.last_failure_reason) or ladder.last_failure_source != "appium_reconciler":
         return False
     await remediation_log.append_reset(db, device.id, source="appium_reconciler", action="start_succeeded")
-    # A node that has demonstrably started is not shelved by the episode that
-    # just ended.
     return True

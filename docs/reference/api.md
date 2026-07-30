@@ -116,8 +116,8 @@ A fourth array, `memberships_skipped`, reports static group memberships the impo
 | `POST` | `/api/devices/bulk/exit-maintenance` | Exit maintenance in bulk | `BulkDeviceIds` | `BulkOperationResult` |
 | `POST` | `/api/devices/bulk/reconnect` | Reconnect eligible network Android devices in bulk | `BulkDeviceIds` | `BulkOperationResult` |
 
-> `effective_state` is a derived field with seven values:
-> `starting | running | stopping | stopped | restarting | blocked | error`.
+> `effective_state` is a derived field with six values:
+> `starting | running | stopping | stopped | restarting | error`.
 > See [device-lifecycle.md](device-lifecycle.md) for the cascade rules.
 > The legacy `state` field was removed in Phase 6.
 

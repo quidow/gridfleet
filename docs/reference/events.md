@@ -158,7 +158,7 @@ The `device_events` table is narrower than the live event bus. Causes are record
 - `connectivity_restored` — legacy value; no longer emitted (historical rows only)
 - `lifecycle_deferred_stop`
 - `lifecycle_auto_stopped`
-- `lifecycle_recovery_suppressed`
+- `lifecycle_recovery_suppressed` — legacy value; no longer emitted (historical rows only)
 - `lifecycle_recovery_failed`
 - `lifecycle_recovery_backoff`
 - `lifecycle_recovered`
