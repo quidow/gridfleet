@@ -714,12 +714,23 @@ def _build_session_payload(capabilities: dict[str, Any]) -> dict[str, Any]:
 
 _PROBE_TERMINATE_ATTEMPTS = 2
 
+# Terminate is a DELETE against a session that already exists; it never needs the
+# cold-create budget it used to inherit. Uncapped, one probe attempt could cost
+# create + 2 x create = 3 x 240 s at max settings — past the ~640 s the scheduler
+# stall watchdog allows the whole appium_sweep cycle. The cap trades that for a
+# bounded wait: a node too wedged to answer in 30 s only leaks the probe session
+# to the observation sweep's orphan-kill pass (which covers probe rows), while
+# the watchdog keeps running. The sweep already terminates real sessions with
+# the 10 s client default, so 30 s is generous for a healthy node.
+_PROBE_TERMINATE_TIMEOUT_CAP_SEC = 30
+
 
 async def _terminate_probe_session(base: str, session_id: str, *, timeout_sec: int) -> bool:
     """Terminate a probe session, retrying once so a single transient failure
     (timeout/blip) does not leak the session and its driver-forwarded ports."""
+    terminate_timeout = min(timeout_sec, _PROBE_TERMINATE_TIMEOUT_CAP_SEC)
     for _ in range(_PROBE_TERMINATE_ATTEMPTS):
-        if await appium_direct.terminate_session(base, session_id, timeout=timeout_sec):
+        if await appium_direct.terminate_session(base, session_id, timeout=terminate_timeout):
             return True
     return False
 

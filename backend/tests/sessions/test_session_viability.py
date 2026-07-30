@@ -763,6 +763,27 @@ async def test_probe_session_direct_creates_and_terminates_against_target(
     terminate_mock.assert_awaited_once_with("http://node:4723", "session-1", timeout=5)
 
 
+async def test_probe_terminate_timeout_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The create timeout can legally reach 240 s (both feeding settings raised
+    to their 600 s max). Terminate must not inherit it: uncapped, one attempt
+    costs create + 2 x terminate = 3 x 240 = 720 s — past the ~640 s the
+    scheduler stall watchdog allows the whole appium_sweep cycle."""
+    create_mock = AsyncMock(return_value=("session-1", None, False))
+    terminate_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(session_viability.appium_direct, "create_session", create_mock)
+    monkeypatch.setattr(session_viability.appium_direct, "terminate_session", terminate_mock)
+
+    ok, error = await probe_session_direct({"platformName": "iOS"}, timeout_sec=240, target="http://node:4723")
+
+    assert ok is True
+    assert error is None
+    assert create_mock.await_args is not None
+    assert create_mock.await_args.kwargs["timeout"] == 240
+    terminate_mock.assert_awaited_once_with(
+        "http://node:4723", "session-1", timeout=session_viability._PROBE_TERMINATE_TIMEOUT_CAP_SEC
+    )
+
+
 def test_grid_probe_response_to_result_maps_all_shapes() -> None:
     assert grid_probe_response_to_result((True, None)).status == "ack"
     assert grid_probe_response_to_result((False, None)).status == "refused"
