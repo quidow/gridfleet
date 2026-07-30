@@ -197,7 +197,6 @@ async def test_recovery_availability_from_facts_matches_async(
     live_session = await device_has_live_session(db_session, device.id)
 
     availability = recovery_availability_from_facts(
-        device,
         commands=[command for intent in intents if (command := parse_command(intent, now)) is not None],
         facts=facts,
         ladder=ladder,

@@ -311,9 +311,6 @@ class DeviceRead(BaseModel):
     needs_attention: bool
     health_summary: DeviceHealthSummaryRead
     blocked_reason: str | None = None
-    review_required: bool = False
-    review_reason: str | None = None
-    review_set_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

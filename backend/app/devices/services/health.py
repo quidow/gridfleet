@@ -211,7 +211,6 @@ class DeviceHealthService:
                     snapshot.is_ready_for_use
                     and device_allows_allocation(locked)
                     and not snapshot.state_facts.in_maintenance
-                    and not snapshot.review_required
                 ),
             ),
             recovery_generation=None if not healthy else snapshot.recovery_generation,
@@ -307,7 +306,6 @@ class DeviceHealthService:
                 snapshot.is_ready_for_use
                 and device_allows_allocation(device)
                 and not snapshot.state_facts.in_maintenance
-                and not snapshot.review_required
             ),
         )
         updated = replace(

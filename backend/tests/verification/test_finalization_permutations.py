@@ -322,7 +322,6 @@ async def test_finalize_failure_single_edge_no_flap(
         if name == "device.operational_state_changed"
     ]
     assert edges == [("verifying", "offline")], f"expected one clean edge, got {edges}"
-    assert device.review_required is False
     assert device.session_viability_status == "failed"
     remaining = (
         (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
@@ -337,10 +336,9 @@ async def test_finalize_failure_update_records_viability_failure(
 ) -> None:
     """A failed re-verification must land in Device.session_viability_status.
 
-    Acceptance criterion from the shelve/verification coupling analysis: with
-    review_required forced off, the failed probe result alone keeps the device
-    unallocatable. Before this fix, failure wrote nothing and a stale "passed"
-    survived.
+    Acceptance criterion from the shelve/verification coupling analysis: the
+    failed probe result alone keeps the device unallocatable. Before this fix,
+    failure wrote nothing and a stale "passed" survived.
     """
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     device = await create_device(db_session, host_id=db_host.id, name="reverify-viability")
@@ -363,8 +361,6 @@ async def test_finalize_failure_update_records_viability_failure(
     assert device.session_viability_status == "failed"
     assert device.session_viability_error == "probe failed"
 
-    device.review_required = False
-    await db_session.commit()
     loaded = (
         await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
     ).scalar_one()

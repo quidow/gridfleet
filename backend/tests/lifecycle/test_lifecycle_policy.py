@@ -1840,8 +1840,6 @@ async def test_attempt_auto_recovery_returns_false_when_projection_blocks(
         device=SimpleNamespace(
             id=uuid.uuid4(),
             lifecycle_policy_state={},
-            review_required=False,
-            review_reason=None,
             operational_state=DeviceOperationalState.offline,
             appium_node=None,
         ),
@@ -1872,8 +1870,6 @@ async def test_attempt_auto_recovery_returns_false_when_projection_blocks(
         node_port=None,
         reservation=None,
         is_ready_for_use=False,
-        review_required=False,
-        review_reason=None,
         node_observed_running=False,
         recovery_generation=None,
     )
@@ -1901,8 +1897,6 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
     device = SimpleNamespace(
         id=uuid.uuid4(),
         lifecycle_policy_state={"maintenance_reason": "operator opened maintenance"},
-        review_required=False,
-        review_reason=None,
         operational_state=DeviceOperationalState.offline,
         appium_node=None,
     )
@@ -1943,8 +1937,6 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
         node_port=None,
         reservation=None,
         is_ready_for_use=False,
-        review_required=False,
-        review_reason=None,
         node_observed_running=False,
         recovery_generation=None,
     )

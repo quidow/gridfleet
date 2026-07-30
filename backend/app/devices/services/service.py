@@ -145,7 +145,6 @@ class DeviceCrudService:
                     device_attention.compute_needs_attention(
                         operational_state,
                         readiness.readiness_state,
-                        review_required=bool(device.review_required),
                     )
                     is wanted
                 ):

@@ -165,7 +165,6 @@ def _build_device_read_projection(  # noqa: PLR0913 - one batch-loaded fact per 
         reservation=reservation,
         ladder=ladder,
         recovery=recovery_availability_from_facts(
-            device,
             commands=commands,
             facts=facts,
             ladder=ladder,

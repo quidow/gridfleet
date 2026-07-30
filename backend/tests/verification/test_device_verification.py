@@ -2393,7 +2393,6 @@ async def test_old_finalizer_after_new_verification_is_superseded(
         refreshed = await db.get(Device, device.id)
         assert refreshed is not None
         assert refreshed.verified_at is None, "superseded success must not verify B's device"
-        assert refreshed.review_required is False, "superseded failure must not shelve B's device"
         assert refreshed.name == "Superseded", "superseded finalizers must not overwrite B's fields"
         lease = (
             await db.execute(

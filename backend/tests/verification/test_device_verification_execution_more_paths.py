@@ -197,7 +197,6 @@ async def test_finalize_failure_create_deletes_device_update_restores_fields(
         restored = await db.get(Device, device_u.id)
         assert restored is not None
         assert restored.name == "original-name"
-        assert restored.review_required is False, "verification failure no longer shelves the device"
 
 
 @pytest.mark.db

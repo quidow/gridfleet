@@ -163,7 +163,6 @@ def build_device_group_facts(
     is_reserved: bool,
     readiness_state: str,
     static_group_keys: frozenset[str],
-    review_required: bool | None = None,
 ) -> DeviceGroupFacts:
     """Derive one device's evaluator facts. Pure: no IO, no session.
 
@@ -173,15 +172,10 @@ def build_device_group_facts(
     some axes are known by construction from the SQL gate that produced the
     row — but the derivation from those inputs is identical. Keeping it here
     means ``needs_attention`` in particular cannot drift between the paths.
-
-    ``review_required`` defaults to the device row. Callers whose rows provably
-    cleared the review gate under a lock pass ``False`` explicitly.
     """
-    effective_review_required = bool(device.review_required) if review_required is None else review_required
     needs_attention = device_attention.compute_needs_attention(
         operational_state,
         readiness_state,
-        review_required=effective_review_required,
     )
     return DeviceGroupFacts(
         operational_state=operational_state,

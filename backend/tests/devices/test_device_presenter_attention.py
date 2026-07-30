@@ -40,32 +40,6 @@ async def test_serialize_device_includes_needs_attention(db_session: AsyncSessio
     assert payload["needs_attention"] is True
 
 
-async def test_serialize_device_review_required_needs_attention(db_session: AsyncSession, db_host: Host) -> None:
-    # S10 finding: a device shelved pending operator review IS a device needing
-    # attention, even when it is otherwise healthy/verified/available.
-    device = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="firetv_real",
-        identity_scheme="android_serial",
-        identity_scope="global",
-        identity_value="G070VM9999999999",
-        connection_target="192.168.1.50:5555",
-        name="Review Shelved",
-        os_version="6.0",
-        host_id=db_host.id,
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.network,
-        review_required=True,
-    )
-    db_session.add(device)
-    await db_session.commit()
-    await db_session.refresh(device)
-
-    payload = await DevicePresenterService().serialize_device(db_session, device)
-    assert payload["needs_attention"] is True
-
-
 async def test_serialize_device_includes_extended_device_info(db_session: AsyncSession, db_host: Host) -> None:
     device = Device(
         pack_id="appium-uiautomator2",
@@ -195,7 +169,6 @@ async def test_serialize_orchestration_includes_intent_kinds() -> None:
         lifecycle_policy_state={},
         device_checks_healthy=None,
         verified_at=None,
-        review_required=False,
     )
     payload = await device_presenter._serialize_orchestration(Session(), device)  # type: ignore[arg-type]
 
@@ -220,7 +193,6 @@ async def test_serialize_device_detail_adds_node_and_orchestration(monkeypatch: 
         id=uuid.uuid4(),
         appium_node=_node,
         lifecycle_policy_state={"last_action": "recovery_started"},
-        review_required=False,
     )
     svc = DevicePresenterService()
     monkeypatch.setattr(svc, "serialize_device", AsyncMock(return_value={"id": "device"}))

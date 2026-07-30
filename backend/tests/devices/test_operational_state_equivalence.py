@@ -198,7 +198,6 @@ async def test_operational_state_evaluator_and_sql_agree(
     )
     await db_session.flush()
 
-    await add_device("review-required", DeviceOperationalState.offline, review_required=True)
     await add_device("unverified", DeviceOperationalState.offline, verified=False)
     await add_device("device-checks-failed", DeviceOperationalState.offline, device_checks_healthy=False)
     await add_device("viability-failed", DeviceOperationalState.offline, session_viability_status="failed")

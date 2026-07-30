@@ -110,7 +110,6 @@ def _recovery_ladder(
 
 
 def recovery_availability_from_facts(
-    device: Device,
     *,
     commands: Sequence[Command],
     facts: DecisionFacts,
@@ -147,7 +146,6 @@ async def recovery_availability(
         ready = await is_ready_for_use_async(db, device)
     live = await device_has_live_session(db, device.id)
     return recovery_availability_from_facts(
-        device,
         commands=commands,
         facts=facts,
         ladder=ladder,
