@@ -12,6 +12,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.services.capability import DeviceCapabilityService
+from app.devices.services.health import DeviceHealthService
 from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 from app.devices.services.lifecycle_policy_state import state as ps
 from app.grid.session_create import CREATE_TIMEOUT_MARGIN_SEC, effective_create_timeout
@@ -2245,3 +2246,72 @@ async def test_scheduled_series_stops_when_an_attempt_is_not_permitted(
     assert inner.await_count == 2
     assert inner.await_args_list[0].kwargs["retry_after_viability_failure"] is False
     assert inner.await_args_list[1].kwargs["retry_after_viability_failure"] is True
+
+
+def _series_service_with_real_health(db: AsyncSession) -> SessionViabilityService:
+    """A service whose health writer is the real DeviceHealthService, so a
+    failed attempt genuinely parks the device row (offline projection) and the
+    retry carve-out is exercised end-to-end."""
+    return SessionViabilityService(
+        publisher=_test_event_bus,
+        settings=FakeSettingsReader(dict(_SERIES_SETTINGS)),
+        session_factory=async_sessionmaker(db.bind, class_=AsyncSession, expire_on_commit=False),
+        capability=DeviceCapabilityService(),
+        health=DeviceHealthService(publisher=_test_event_bus),
+    )
+
+
+async def test_scheduled_series_retries_through_the_park_and_restores(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end hiccup: attempt 1 fails and parks the device (real column
+    write → offline projection); attempt 2 is still admitted, passes, and
+    restores the row. Kills any regression of the retry carve-out."""
+    device, node = _make_viability_device(db_host, "integ-hiccup")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    svc = _series_service_with_real_health(db_session)
+    probe = AsyncMock(side_effect=[(False, "hiccup"), (True, None)])
+    monkeypatch.setattr(svc, "probe_session_direct", probe)
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
+    monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock())
+
+    state = await svc.run_scheduled_probe_series(device.id)
+
+    assert state is not None and state["status"] == "passed"
+    assert state["consecutive_failures"] == 0
+    assert probe.await_count == 2
+    await db_session.refresh(device)
+    assert device.session_viability_status == "passed"
+
+
+async def test_scheduled_series_exhaustion_parks_and_escalates_once(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end genuine breakage: all attempts fail, the device row ends
+    parked, and the health-failure handler fires exactly once."""
+    device, node = _make_viability_device(db_host, "integ-broken")
+    db_session.add_all([device, node])
+    await db_session.commit()
+
+    svc = _series_service_with_real_health(db_session)
+    handler = AsyncMock()
+    svc.configure_health_failure_handler(handler)
+    probe = AsyncMock(return_value=(False, "no session"))
+    monkeypatch.setattr(svc, "probe_session_direct", probe)
+    monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
+    monkeypatch.setattr(session_viability.asyncio, "sleep", AsyncMock())
+
+    state = await svc.run_scheduled_probe_series(device.id)
+
+    assert state is not None and state["status"] == "failed"
+    assert state["consecutive_failures"] == 3
+    assert probe.await_count == 3
+    handler.assert_awaited_once()
+    await db_session.refresh(device)
+    assert device.session_viability_status == "failed"
