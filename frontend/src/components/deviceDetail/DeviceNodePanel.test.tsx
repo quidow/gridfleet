@@ -132,16 +132,16 @@ describe('DeviceNodePanel', () => {
     expect(screen.getByText(/Restarting/i)).toBeInTheDocument();
   });
 
-  it('renders Blocked badge when lifecycle policy suppressed recovery', () => {
+  it('renders Error badge when effective_state is error', () => {
     const device = makeDevice();
     device.appium_node = {
       ...device.appium_node!,
-      effective_state: 'blocked',
+      effective_state: 'error',
     };
 
     render(<DeviceNodePanel device={device} />);
 
-    expect(screen.getByText(/Blocked/i)).toBeInTheDocument();
+    expect(screen.getByText(/Error/i)).toBeInTheDocument();
   });
 
   it('shows Stop button when desired_state is running even before convergence', () => {

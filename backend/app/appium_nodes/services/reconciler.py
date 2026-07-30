@@ -388,14 +388,14 @@ async def _record_start_failure(
             # whenever ANY backoff window was open, including one opened by a
             # different source (the ladder is shared), and a re-pin that itself
             # landed on a second occupied port stayed uncorrected until the
-            # window expired — so a host leaking two ports could still walk the
-            # device to review_required.
+            # window expired — so a host leaking two ports could still keep the
+            # device wedged behind repeated failed starts.
             await _repin_desired_port(db, row, conflict_port=conflict_port, settings=settings)
         if snapshot.ladder.backoff_active(now=now) is not None:
             # One escalation per failure episode. The agent keeps retrying (and
             # keeps reporting) on its own cadence while the backend's recovery
             # window is open; climbing a rung per report is what turned a single
-            # transient port conflict into terminal review_required.
+            # transient port conflict into runaway ladder escalation.
             logger.info(
                 "appium_reconciler_start_failure_within_backoff",
                 device_id=str(row.device_id),

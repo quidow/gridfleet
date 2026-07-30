@@ -67,8 +67,6 @@ class DeviceDecisionSnapshot:
     node_port: int | None
     reservation: ReservationDecisionSnapshot | None
     is_ready_for_use: bool
-    review_required: bool
-    review_reason: str | None
     node_observed_running: bool
     recovery_generation: uuid.UUID | None
 
@@ -307,8 +305,6 @@ async def load_device_decision_snapshot(
         node_port=device.appium_node.port if device.appium_node is not None else None,
         reservation=reservation,
         is_ready_for_use=assessment_ready,
-        review_required=device.review_required,
-        review_reason=device.review_reason,
         node_observed_running=device.appium_node.observed_running if device.appium_node is not None else False,
         recovery_generation=recovery_generation,
     )

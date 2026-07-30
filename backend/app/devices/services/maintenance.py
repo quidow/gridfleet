@@ -29,7 +29,6 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.core.type_defs import SessionFactory
     from app.devices.locking import LockedDevice
-    from app.devices.protocols import ReviewProtocol
     from app.events.protocols import EventPublisher
 
 logger = logging.getLogger(__name__)
@@ -52,14 +51,12 @@ class MaintenanceService:
         *,
         settings: SettingsReader,
         publisher: EventPublisher,
-        review: ReviewProtocol,
         session_factory: SessionFactory,
     ) -> None:
         self._settings = settings
         # Publisher is needed so the reconciler's derived maintenance enter/exit
         # emits device.operational_state_changed (SSE).
         self._publisher = publisher
-        self._review = review
         # Only ``schedule_device_recovery`` uses this: the durable enqueue owns its
         # own commit and therefore needs a session the caller's transaction has
         # already released.
@@ -132,15 +129,6 @@ class MaintenanceService:
 
         clear_maintenance_reason(device)
         await record_event(db, device.id, DeviceEventType.maintenance_exited, {"reason": "exit maintenance"})
-        # Maintenance exit is a sanctioned "give it another chance" signal —
-        # clear the review-shelving flag so the recovery loop picks the device
-        # back up.
-        await self._review.clear_review_required(
-            db,
-            device,
-            reason="Operator exited maintenance",
-            source="exit_maintenance",
-        )
 
         # §14.4a: register a verification intent so the device starts re-verifying
         # immediately rather than waiting for the next device_connectivity_loop tick.

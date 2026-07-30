@@ -19,7 +19,7 @@ from app.runs.service_lifecycle import RunLifecycleService
 from app.runs.service_lifecycle_release import RunReleaseService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -102,12 +102,11 @@ async def test_force_release_clears_deferred_stop(
     )
 
     real_deferred_stop = LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=_settings,
         actions=LifecyclePolicyActionsService(
             publisher=event_bus,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),
@@ -438,12 +437,11 @@ async def test_deferred_stop_pass_publishes_the_held_intent_convergence(
     await db_session.commit()
 
     real_policy = LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=_settings,
         actions=LifecyclePolicyActionsService(
             publisher=event_bus,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),

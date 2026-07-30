@@ -59,11 +59,10 @@ class DevicePresenterService:
             operational_state=projection.operational_state,
             now=projection.now,
         )
-        health_summary = device_health.build_public_summary(device, policy_view=policy)
+        health_summary = device_health.build_public_summary(device)
         needs_attention = device_attention.compute_needs_attention(
             projection.operational_state,
             projection.readiness.readiness_state,
-            review_required=bool(device.review_required),
         )
         return {
             "id": device.id,
@@ -98,9 +97,6 @@ class DevicePresenterService:
             "needs_attention": needs_attention,
             "health_summary": health_summary,
             "blocked_reason": projection.blocked_reason,
-            "review_required": device.review_required,
-            "review_reason": device.review_reason,
-            "review_set_at": device.review_set_at,
             "created_at": device.created_at,
             "updated_at": device.updated_at,
         }
@@ -209,7 +205,6 @@ def _serialize_appium_node_for_detail(device: Device, *, policy_view: dict[str, 
         "health_running": node.health_running,
         "health_state": node.health_state,
         "lifecycle_policy_state": copy.deepcopy(policy_view),
-        "review_required": device.review_required,
     }
 
 

@@ -12,6 +12,7 @@ from httpx2 import AsyncClient
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.exceptions import NodeManagerError
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -19,6 +20,8 @@ from app.appium_nodes.services.reconciler_agent import ReconcilerAgentService
 from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceOperationalState, DeviceType
 from app.devices.schemas.device import DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services.capability import DeviceCapabilityService
+from app.devices.services.health import DeviceHealthService
+from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import VERIFICATION_OPERATION_ID_KEY, verification_intent_source
@@ -49,7 +52,7 @@ from app.verification.services.preparation import (
 )
 from app.verification.services.runner import VerificationRunnerService
 from tests.conftest import settings_service
-from tests.fakes import RecordingSessionFactory, build_review_service
+from tests.fakes import RecordingSessionFactory
 from tests.helpers import create_device_record, delete_jobs_by_kind
 from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
@@ -156,6 +159,7 @@ async def _wait_for_job(
     session_factory: async_sessionmaker[AsyncSession],
     probe_result: tuple[bool, str | None] = (True, None),
     node_manager: object = None,
+    health: object = None,
 ) -> dict[str, Any]:
     for _ in range(100):
         resp = await client.get(f"/api/verification/jobs/{job_id}")
@@ -168,7 +172,7 @@ async def _wait_for_job(
             settings=settings_service,
             session_factory=session_factory,
             capability=DeviceCapabilityService(),
-            health=AsyncMock(),
+            health=health if health is not None else AsyncMock(),
         )
         _viability.probe_session_direct = AsyncMock(return_value=probe_result)  # type: ignore[method-assign]
         await DurableJobService(
@@ -191,7 +195,6 @@ async def _wait_for_job(
                     session_factory=session_factory,
                 ),
                 execution=VerificationExecutionService(
-                    review=build_review_service(),
                     publisher=_publisher_mock(),
                     agent=AgentCallContext(settings=settings_service, circuit_breaker=_noop_circuit_breaker()),
                     crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
@@ -203,9 +206,7 @@ async def _wait_for_job(
                     if node_manager is not None
                     else ReconcilerAgentService(
                         settings=settings_service,
-                        operator=OperatorNodeLifecycleService(
-                            review=build_review_service(), settings=settings_service, publisher=event_bus
-                        ),
+                        operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
                     ),
                 ),
             ),
@@ -1014,11 +1015,16 @@ async def test_existing_running_device_verification_can_enter_verifying(
     assert updated["readiness_state"] == "verified"
 
 
-async def test_update_verification_probe_failure_stops_persisted_node(
+async def test_update_verification_probe_failure_holds_device_out_while_node_baseline_restarts(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
+    """A failed update-mode verification does not keep the node stopped: the next
+    reconcile baseline-restarts it (a stopped node could never observe a later
+    passing probe, so the restart is what keeps recovery reachable). Safety is
+    carried entirely by the failed viability result, which holds the device out
+    of allocation until a later probe passes."""
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     device = await create_device_record(
         db_session,
@@ -1056,15 +1062,23 @@ async def test_update_verification_probe_failure_stops_persisted_node(
             resp.json()["job_id"],
             session_factory=session_factory,
             probe_result=(False, "Session startup failed"),
+            health=DeviceHealthService(publisher=_publisher_mock()),
         )
 
     assert job["status"] == "failed"
     node = await db_session.scalar(select(AppiumNode).where(AppiumNode.device_id == device.id))
     assert node is not None
-    assert node.desired_state == AppiumDesiredState.stopped
-    await db_session.refresh(device)
-    assert device.name == "Probe Update Device"
-    assert device.device_config == {"stable": True}
+    assert node.desired_state == AppiumDesiredState.running, "baseline restart is intended post-Task-3"
+    # A fresh session avoids db_session's identity-map staleness: `device` was
+    # already loaded (and its attributes pinned) earlier in this test, before
+    # the finalize-failure transaction committed its viability write.
+    async with session_factory() as db:
+        refreshed = (
+            await db.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
+        ).scalar_one()
+        assert refreshed.name == "Probe Update Device"
+        assert refreshed.device_config == {"stable": True}
+        assert device_allows_allocation(refreshed) is False, "failed viability keeps the device out of allocation"
 
 
 async def test_failed_update_verification_does_not_strand_operator_stopped(
@@ -1144,9 +1158,10 @@ async def test_failed_then_successful_reverify_recovers_device(
     db_session: AsyncSession,
     default_host_id: str,
 ) -> None:
-    """After a failed verification the device is shelved (review_required, node stopped)
-    but NOT operator-stopped, so a subsequent re-verify with a passing probe completes
-    end-to-end — recovery without a DB edit (spec bug-3 §6 R5)."""
+    """After a failed verification the device is held out by the failed viability result
+    (session_viability_status; the node baseline-restarts) but NOT operator-stopped, so a
+    subsequent re-verify with a passing probe completes end-to-end — recovery without a
+    DB edit (spec bug-3 §6 R5)."""
     session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
     device = await create_device_record(
         db_session,
@@ -1169,7 +1184,7 @@ async def test_failed_then_successful_reverify_recovers_device(
             return_value=_mock_http_client(payload={"healthy": True}),
         ),
     ):
-        # Leg 1: failing verification → device shelved, not operator-stopped.
+        # Leg 1: failing verification → device held out, not operator-stopped.
         resp_fail = await client.post(
             f"/api/verification/devices/{device.id}/jobs",
             json={"host_id": default_host_id},
@@ -1180,8 +1195,13 @@ async def test_failed_then_successful_reverify_recovers_device(
             resp_fail.json()["job_id"],
             session_factory=session_factory,
             probe_result=(False, "Session startup failed"),
+            health=DeviceHealthService(publisher=_publisher_mock()),
         )
         assert failed["status"] == "failed"
+        async with session_factory() as db:
+            after_failure = await db.get(Device, device.id)
+            assert after_failure is not None
+            assert after_failure.session_viability_status == "failed"
 
         # Leg 2: re-verify with a passing probe → accepted (not 409) and completes.
         resp_ok = await client.post(
@@ -1194,8 +1214,15 @@ async def test_failed_then_successful_reverify_recovers_device(
             resp_ok.json()["job_id"],
             session_factory=session_factory,
             probe_result=(True, None),
+            health=DeviceHealthService(publisher=_publisher_mock()),
         )
     assert recovered["status"] == "completed"
+    async with session_factory() as db:
+        after_recovery = await db.get(Device, device.id)
+        assert after_recovery is not None
+        assert after_recovery.session_viability_status == "passed"
+        assert after_recovery.verified_at is not None
+        assert after_recovery.verified_at > after_failure.verified_at, "verified_at must be refreshed"
 
 
 async def test_existing_device_verification_requires_missing_setup_fields(
@@ -1673,7 +1700,6 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     session_factory=session_factory,
                 ),
                 execution=VerificationExecutionService(
-                    review=build_review_service(),
                     publisher=_publisher_mock(),
                     agent=AgentCallContext(settings=settings_service, circuit_breaker=_noop_circuit_breaker()),
                     crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
@@ -1683,9 +1709,7 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     session_factory=session_factory,
                     node_manager=ReconcilerAgentService(
                         settings=settings_service,
-                        operator=OperatorNodeLifecycleService(
-                            review=build_review_service(), settings=settings_service, publisher=event_bus
-                        ),
+                        operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
                     ),
                 ),
             ),
@@ -1924,7 +1948,6 @@ def _exec_with_factory(
     node_manager: object | None = None,
 ) -> VerificationExecutionService:
     return VerificationExecutionService(
-        review=build_review_service(),
         publisher=_publisher_mock(),
         agent=AgentCallContext(settings=settings_service, circuit_breaker=_noop_circuit_breaker()),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
@@ -2004,9 +2027,7 @@ async def test_agent_normalize_health_and_probe_run_without_open_transaction(
 
     node_manager = ReconcilerAgentService(
         settings=settings_service,
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=settings_service, publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=settings_service, publisher=event_bus),
     )
     prep = VerificationPreparationService(
         settings=settings_service,
@@ -2372,7 +2393,6 @@ async def test_old_finalizer_after_new_verification_is_superseded(
         refreshed = await db.get(Device, device.id)
         assert refreshed is not None
         assert refreshed.verified_at is None, "superseded success must not verify B's device"
-        assert refreshed.review_required is False, "superseded failure must not shelve B's device"
         assert refreshed.name == "Superseded", "superseded finalizers must not overwrite B's fields"
         lease = (
             await db.execute(

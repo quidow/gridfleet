@@ -3,11 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import and_, or_, select
-from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
 from app.core.timeutil import now_utc
-from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceReservation, ExclusionKind
 from app.devices.services.claims import reservation_active
 from app.devices.services.intent_reconciler import reconcile_locked_device
@@ -21,7 +19,6 @@ if TYPE_CHECKING:
     from sqlalchemy.sql.elements import ColumnElement
 
     from app.devices.locking import LockedDevice
-    from app.devices.protocols import ReviewProtocol
     from app.events.protocols import EventPublisher
 
 
@@ -174,9 +171,6 @@ async def get_device_reservation(db: AsyncSession, device_id: uuid.UUID) -> Test
 
 
 class RunReservationService:
-    def __init__(self, *, review: ReviewProtocol) -> None:
-        self._review = review
-
     async def exclude_device_from_run(
         self,
         db: AsyncSession,
@@ -224,20 +218,6 @@ class RunReservationService:
         locked_entry.excluded_at = None
         locked_entry.excluded_until = None
         locked_entry.cooldown_count = 0
-        try:
-            device = await device_locking.lock_device(db, device_id, load_sessions=False)
-        except NoResultFound, AttributeError:
-            # AttributeError reaches us only from in-process unit tests that
-            # stub the session with a Fake that has no ``execute``. Production
-            # callers always pass a real AsyncSession.
-            device = None
-        if device is not None:
-            await self._review.clear_review_required(
-                db,
-                device,
-                reason="Reservation restored to run",
-                source="restore_device_to_run",
-            )
         return run
 
     async def exclude_locked(
@@ -268,8 +248,8 @@ class RunReservationService:
         locked: LockedDevice,
     ) -> uuid.UUID | None:
         """Clear every exclusion field (and the cooldown count) for an
-        already-locked device, then clear its review flag. Flushes only; returns
-        the reservation's ``run_id`` (or ``None`` when absent)."""
+        already-locked device. Flushes only; returns the reservation's
+        ``run_id`` (or ``None`` when absent)."""
         locked.assert_active(db)
         entry = await lock_active_reservation(db, locked)
         if entry is None:
@@ -280,12 +260,6 @@ class RunReservationService:
         entry.excluded_at = None
         entry.excluded_until = None
         entry.cooldown_count = 0
-        await self._review.clear_review_required(
-            db,
-            locked.device,
-            reason="Reservation restored to run",
-            source="restore_device_to_run",
-        )
         await db.flush()
         return entry.run_id
 
@@ -358,12 +332,6 @@ class RunReservationService:
         entry.excluded_at = None
         entry.excluded_until = None
         entry.cooldown_count = 0
-        await self._review.clear_review_required(
-            db,
-            locked.device,
-            reason="Reservation restored to run",
-            source="restore_device_to_run",
-        )
         return True
 
 

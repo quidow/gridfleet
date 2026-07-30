@@ -27,7 +27,6 @@ from app.devices.services.lifecycle_policy_state import set_maintenance_reason
 from app.devices.services.state import derive_operational_state
 from app.lifecycle.services import remediation_log
 from app.sessions.models import Session, SessionStatus
-from tests.fakes.review import build_review_service
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
@@ -121,25 +120,6 @@ async def test_reconcile_uses_facts_directly_for_maintenance(db_session: AsyncSe
     assert node.stop_pending is True  # graceful: sets the stop-pending flag via map
     intent_rows = (await db_session.execute(select(DeviceIntent))).scalars().all()
     assert intent_rows == []  # no synthesized or stored rows involved
-
-
-async def test_review_required_device_gets_no_baseline_node(db_session: AsyncSession, db_host: Host) -> None:
-    """F-G1: a shelved device (review_required) must not be baseline-started.
-
-    Live finding 2026-06-05: after an update-mode verify failure shelved a
-    device, baseline:idle kept desired_state=running and the hub slot stayed
-    UP/free for >=180s (S10/G3).
-    """
-    device = await create_device(db_session, host_id=db_host.id, name="shelved")
-    device.review_required = True
-    await db_session.commit()
-    node = await _seed_node(db_session, device.id)
-
-    await reconcile_device(db_session, device.id, publisher=event_bus)
-
-    await db_session.refresh(node)
-    assert node.desired_state == AppiumDesiredState.stopped
-    assert node.accepting_new_sessions is False
 
 
 async def test_cooldown_intents_derive_metadata_reservation_and_recovery(
@@ -633,16 +613,14 @@ async def test_maintenance_signal_suppresses_baseline_idle_injection(
 
 
 @pytest.mark.parametrize(
-    ("verified", "maintenance", "review"),
+    ("verified", "maintenance"),
     [
-        (False, False, False),  # unverified
-        (True, True, False),  # maintenance
-        (True, False, True),  # review-shelved (F-G1)
-        (True, True, True),  # both withdrawal flags
+        (False, False),  # unverified
+        (True, True),  # maintenance
     ],
 )
 async def test_withdrawn_device_never_gets_baseline_node(
-    db_session: AsyncSession, db_host: Host, verified: bool, maintenance: bool, review: bool
+    db_session: AsyncSession, db_host: Host, verified: bool, maintenance: bool
 ) -> None:
     """Invariant: withdrawn-from-service => no baseline-started node.
 
@@ -652,7 +630,6 @@ async def test_withdrawn_device_never_gets_baseline_node(
     device = await create_device(db_session, host_id=db_host.id, name="withdrawn")
     if not verified:
         device.verified_at = None
-    device.review_required = review
     if maintenance:
         device.lifecycle_policy_state = {**(device.lifecycle_policy_state or {}), "maintenance_reason": "operator"}
     await db_session.commit()
@@ -665,32 +642,12 @@ async def test_withdrawn_device_never_gets_baseline_node(
     assert node.accepting_new_sessions is False
 
 
-async def test_recovery_promoted_review_device_gets_no_baseline_node(db_session: AsyncSession, db_host: Host) -> None:
-    """A device promoted to review_required by session_viability (recovery
-    threshold) must drop out of baseline node starts — pre-fix, suppressed
-    recovery left no intents and baseline:idle kept restarting the node."""
-    device = await create_device(db_session, host_id=db_host.id, name="promoted")
-    node = await _seed_node(db_session, device.id)
-
-    review = build_review_service()
-    marked = await review.mark_review_required(
-        db_session, device, reason="Recovery probe failed", source="session_viability"
-    )
-    assert marked is True
-    await db_session.commit()
-
-    await reconcile_device(db_session, device.id, publisher=event_bus)
-
-    await db_session.refresh(node)
-    assert node.desired_state == AppiumDesiredState.stopped
-
-
 async def test_no_intent_stop_holds_node_running_while_session_active(db_session: AsyncSession, db_host: Host) -> None:
     """Only an explicit stop_mode='hard' may flip desired_state=stopped while
     a client session is active. The no-intent stop (withdrawn device, F-G1
     gate) must defer like a graceful stop."""
-    device = await create_device(db_session, host_id=db_host.id, name="busy-shelved")
-    device.review_required = True
+    device = await create_device(db_session, host_id=db_host.id, name="busy-withdrawn")
+    device.verified_at = None
     await db_session.commit()
     node = await _seed_node(db_session, device.id)
     node.desired_state = AppiumDesiredState.running

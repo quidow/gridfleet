@@ -16,7 +16,7 @@ from app.devices.routers import control as devices_control
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.service import DeviceCrudService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -34,7 +34,6 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs"
 
 def _maintenance(session_factory: async_sessionmaker[AsyncSession]) -> MaintenanceService:
     return MaintenanceService(
-        review=build_review_service(),
         settings=FakeSettingsReader({}),
         publisher=event_bus,
         session_factory=session_factory,

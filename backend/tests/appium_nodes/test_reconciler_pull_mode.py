@@ -348,7 +348,6 @@ async def test_pull_host_start_failure_uses_shared_exponential_backoff(
             {
                 "general.lifecycle_recovery_backoff_base_sec": 5,
                 "general.lifecycle_recovery_backoff_max_sec": 60,
-                "general.lifecycle_recovery_review_threshold": 5,
             }
         ),
         pool=Mock(),
@@ -494,7 +493,6 @@ async def test_a_burst_of_queued_reports_escalates_the_ladder_once(
         settings=FakeSettingsReader(
             {
                 "general.lifecycle_recovery_backoff_base_sec": 60,
-                "general.lifecycle_recovery_review_threshold": 5,
             }
         ),
         pool=Mock(),
@@ -516,7 +514,6 @@ async def test_a_burst_of_queued_reports_escalates_the_ladder_once(
     ladder = await remediation_log.load_ladder(db_session, device.id)
     assert ladder.attempts == 1, f"burst escalated {ladder.attempts} rungs"
     await db_session.refresh(device)
-    assert device.review_required is False
     assert svc._last_seen_failure_at[device.id] == burst[-1]["at"]
 
 

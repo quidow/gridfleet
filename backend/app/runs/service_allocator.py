@@ -164,8 +164,6 @@ async def _classify_shortfall_gates(
         operational_state = op_states.get(device.id, DeviceOperationalState.offline)
         if operational_state != DeviceOperationalState.available:
             state_counts[operational_state.value] += 1
-        elif device.review_required:
-            gate_counts["review"] += 1
         elif not device_node_is_viable(device, now=now, restart_window_sec=restart_window_sec):
             gate_counts["node"] += 1
         elif device.id in reserved_run_by_device:
@@ -204,8 +202,6 @@ def _format_shortfall_parts(
         parts.append(f"{count} in state {state}")
     if gate_counts["node"]:
         parts.append(f"{gate_counts['node']} with Appium node not viable (stopped or mid-transition)")
-    if gate_counts["review"]:
-        parts.append(f"{gate_counts['review']} flagged review_required")
     if gate_counts["groups"]:
         parts.append(f"{gate_counts['groups']} not matching requested groups")
     if gate_counts["readiness"]:
@@ -432,7 +428,7 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
     pack_catalog = pack_by_id
 
     # Step 4: one candidate-devices SELECT across every (pack_id, platform_id)
-    # pair. Joined to host + appium_node, gated by availability / review / node
+    # pair. Joined to host + appium_node, gated by availability / node
     # viability / no active reservation, ordered by created_at for deterministic
     # FIFO selection.
     now = now_utc()
@@ -443,7 +439,6 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         .options(selectinload(Device.host), selectinload(Device.appium_node))
         .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
         .where(is_available_sql(now=now))
-        .where(Device.review_required.is_(False))
         .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
         .where(~active_reservation_exists())
         .where(pair_clauses)
@@ -530,7 +525,7 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
                 spares += 1
 
     # Step 7b: one locked recheck SELECT ... FOR UPDATE OF devices SKIP LOCKED
-    # over the full selected-id set. Revalidates availability, review, node
+    # over the full selected-id set. Revalidates availability, node
     # viability, and reservation absence under the lock; drops any device that
     # lost a gate or was skipped. Readiness is re-evaluated synchronously against
     # the freshly locked row + the already-loaded pack catalog (no new read).
@@ -546,7 +541,6 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
         .where(Device.id.in_(all_selected_ids))
         .where(is_available_sql(now=now))
-        .where(Device.review_required.is_(False))
         .where(node_viable_predicate(now=now, restart_window_sec=restart_window_sec))
         .where(~active_reservation_exists())
         .with_for_update(of=Device, skip_locked=True)
@@ -566,12 +560,10 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         for locked_device in locked_devices_list:
             pack = pack_catalog.get(locked_device.pack_id)
             locked_facts[locked_device.id] = build_device_group_facts(
-                locked_device,
                 operational_state=DeviceOperationalState.available,
                 is_reserved=False,
                 readiness_state=assess_device_with_pack(locked_device, pack).readiness_state,
                 static_group_keys=locked_static_keys.get(locked_device.id, frozenset()),
-                review_required=False,
             )
         locked_group_index = evaluate_group_memberships(
             groups=groups,

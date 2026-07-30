@@ -9,7 +9,6 @@ from unittest.mock import AsyncMock
 from app.devices.models import ExclusionKind
 from app.runs import service_reservation as run_reservation_service
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -66,7 +65,7 @@ async def test_exclude_device_from_run_updates_entry_transaction_local(monkeypat
         AsyncMock(return_value=entry),
     )
 
-    svc = RunReservationService(review=build_review_service())
+    svc = RunReservationService()
     result = await svc.exclude_device_from_run(AsyncMock(), device_id, reason="bad")
 
     assert result is run
@@ -88,7 +87,7 @@ async def test_exclude_device_from_run_noops_when_already_excluded_for_same_reas
         AsyncMock(return_value=(run, entry)),
     )
 
-    svc = RunReservationService(review=build_review_service())
+    svc = RunReservationService()
     result = await svc.exclude_device_from_run(AsyncMock(), uuid.uuid4(), reason="bad")
 
     assert result is run
@@ -116,9 +115,7 @@ async def test_restore_device_to_run_clears_exclusion_transaction_local(monkeypa
         "_lock_active_reservation_entry_by_id",
         AsyncMock(return_value=entry),
     )
-    # No `.execute` on the stub session -> AttributeError path -> device is None,
-    # exercising the "reservation cleared, no device to un-review" branch.
-    svc = RunReservationService(review=build_review_service())
+    svc = RunReservationService()
     result = await svc.restore_device_to_run(SimpleNamespace(), device_id)
 
     assert result is run
@@ -135,7 +132,7 @@ async def test_restore_device_to_run_noops_for_temporary_or_active_entries(monke
         "get_device_reservation_with_entry",
         AsyncMock(return_value=(run, temporary)),
     )
-    svc = RunReservationService(review=build_review_service())
+    svc = RunReservationService()
     assert await svc.restore_device_to_run(AsyncMock(), uuid.uuid4()) is run
 
     active = SimpleNamespace(excluded=False, excluded_until=None)
@@ -150,7 +147,7 @@ async def test_exclude_locked_sets_fields_and_returns_run_id(monkeypatch: pytest
     )
     monkeypatch.setattr(run_reservation_service, "lock_active_reservation", AsyncMock(return_value=entry))
     db = AsyncMock()
-    svc = RunReservationService(review=build_review_service())
+    svc = RunReservationService()
 
     assert await svc.exclude_locked(db, _fake_locked(), reason="bad") == run_id
     assert entry.excluded is True
@@ -163,14 +160,14 @@ async def test_exclude_locked_sets_fields_and_returns_run_id(monkeypatch: pytest
 async def test_locked_helpers_return_none_when_reservation_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run_reservation_service, "lock_active_reservation", AsyncMock(return_value=None))
     db = AsyncMock()
-    svc = RunReservationService(review=build_review_service())
+    svc = RunReservationService()
 
     assert await svc.exclude_locked(db, _fake_locked(), reason="bad") is None
     assert await svc.restore_locked(db, _fake_locked()) is None
     assert await svc.release_locked(db, _fake_locked(), reason="gone", publisher=event_bus) is None
 
 
-async def test_restore_locked_clears_fields_and_calls_review(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_restore_locked_clears_fields(monkeypatch: pytest.MonkeyPatch) -> None:
     run_id = uuid.uuid4()
     entry = SimpleNamespace(
         run_id=run_id,
@@ -182,15 +179,13 @@ async def test_restore_locked_clears_fields_and_calls_review(monkeypatch: pytest
         cooldown_count=3,
     )
     monkeypatch.setattr(run_reservation_service, "lock_active_reservation", AsyncMock(return_value=entry))
-    review = AsyncMock()
     db = AsyncMock()
-    svc = RunReservationService(review=review)
+    svc = RunReservationService()
 
     assert await svc.restore_locked(db, _fake_locked()) == run_id
     assert entry.excluded is False
     assert entry.exclusion_kind is None
     assert entry.cooldown_count == 0
-    review.clear_review_required.assert_awaited()
 
 
 async def test_release_locked_marks_released_and_reconciles(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,7 +203,7 @@ async def test_release_locked_marks_released_and_reconciles(monkeypatch: pytest.
     reconcile = AsyncMock()
     monkeypatch.setattr(run_reservation_service, "reconcile_locked_device", reconcile)
     db = AsyncMock()
-    svc = RunReservationService(review=build_review_service())
+    svc = RunReservationService()
 
     assert await svc.release_locked(db, _fake_locked(), reason="health", publisher=event_bus) == run_id
     assert entry.released_at is not None

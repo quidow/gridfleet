@@ -158,39 +158,6 @@ async def test_batch_select_devices_filters_os_version(
     assert nonmatching.id not in {device.id for device in devices}
 
 
-async def test_batch_select_devices_excludes_review_required(
-    db_session: AsyncSession,
-    default_host_id: str,
-) -> None:
-    eligible = await create_device_record(
-        db_session,
-        host_id=default_host_id,
-        identity_value="eligible-device",
-        connection_target="eligible-device",
-        name="Eligible Device",
-        operational_state="available",
-        review_required=False,
-    )
-    shelved = await create_device_record(
-        db_session,
-        host_id=default_host_id,
-        identity_value="review-required-device",
-        connection_target="review-required-device",
-        name="Review Required Device",
-        operational_state="available",
-        review_required=True,
-    )
-
-    devices = await select_devices_for_requirement(
-        db_session,
-        DeviceRequirement(pack_id="appium-uiautomator2", platform_id="android_mobile", allocation="all_available"),
-    )
-
-    ids = {d.id for d in devices}
-    assert eligible.id in ids
-    assert shelved.id not in ids
-
-
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_batch_select_devices_excludes_reserved_device_with_null_hold(

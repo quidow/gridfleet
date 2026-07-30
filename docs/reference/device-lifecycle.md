@@ -175,9 +175,11 @@ reads it as a fact: a STOP holds the node stopped until a reset supersedes it, a
 START (gated on `in_service`) outranks it structurally. A `restart_commissioned`
 row's own timestamp is the restart watermark ("the Appium process must have been
 spawned at or after T"); a satisfied watermark is inert, so no TTL is needed. The
-ladder is promoted to
-`Device.review_required` at `general.lifecycle_recovery_review_threshold`; an active
-backoff window defers every automated remediation, not just the one that armed it.
+ladder has no terminal rung: each attempt doubles the backoff window from
+`general.lifecycle_recovery_backoff_base_sec`, capped at
+`general.lifecycle_recovery_backoff_max_sec` (default 900 s), and attempts continue
+indefinitely. An active backoff window defers every automated remediation, not just
+the one that armed it.
 Detection debounce (ip_ping duration windows, `general.node_fail_window_sec`,
 probe-unanswered duration windows, and the link-repair attempt budget) stays
 per-observer and only decides when a failure event is real; the ladder owns what
@@ -189,9 +191,8 @@ restart (`operator_restarted`), `verification` for a passed re-qualification
 recovery pass finds the node already healthy (`already_healthy`), `appium_reconciler`
 for a successful node start when the active episode came from that reconciler, and
 run escalation when entering maintenance. A reset supersedes any live directive or
-pending deferral in the episode. The operator-stop gate remains sticky, and a reset
-never clears
-`Device.review_required`, which is operator-owned. Callers outside the lifecycle
+pending deferral in the episode. The operator-stop gate remains sticky across a
+reset. Callers outside the lifecycle
 `write_state` allowlist escalate via
 `app.lifecycle.services.actions.escalate_device_remediation_failure`.
 
@@ -199,7 +200,7 @@ never clears
 
 "Why can automated recovery act on this device right now" is one recomputable
 projection, not a stored flag. `app.devices.services.recovery_projection.recovery_availability`
-folds, in order: `review_required` > recovery-deny (operator / maintenance /
+folds, in order: recovery-deny (operator / maintenance /
 cooldown, via `decide_recovery`) > not-ready > `deferred_stop` > live session >
 active backoff window, returning `(allowed, reason, kind)`. Both the write path
 (`attempt_auto_recovery` stands down when it reports blocked) and every read path
@@ -208,16 +209,17 @@ consult the same ladder:
 - `lifecycle_policy_summary.build_lifecycle_policy` derives `recovery_state`
   (`idle | eligible | suppressed | backoff | waiting_for_session_end`) and the
   `recovery_suppressed_reason` API key **per read** — nothing is stored. The
-  "Recovery Paused" badge (`kind ∈ SUPPRESSED_KINDS` = review/operator/maintenance/
+  "Recovery Paused" badge (`kind ∈ SUPPRESSED_KINDS` = operator/maintenance/
   cooldown/session) appears and clears the instant the underlying fact does.
-- Node `effective_state` is `blocked` when `review_required` OR an active backoff
-  window is present (stored suppression is no longer consulted).
+- Node `effective_state` always reflects real process state
+  (`starting | running | stopping | stopped | error`); `restarting` is the only
+  synthetic rung, driven by the restart watermark rather than by any stored
+  suppression or recovery-availability fact.
 
 Because the projection is recomputed, there is no stale-badge class: no GC helpers,
 no age-gate, no residue after self-heal or session end. Periodic recovery gating no
 longer emits `lifecycle_recovery_suppressed` incidents — the causes
-(maintenance_entered, operator stop, cooldown, review promotion) keep their own
-events.
+(maintenance_entered, operator stop, cooldown) keep their own events.
 
 **Orphan systemPort cure.** When the control plane reports no live session or
 in-flight probe for a device, the android adapter connect-tests the node's claimed

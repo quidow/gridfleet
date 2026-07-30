@@ -22,7 +22,6 @@ from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
 from app.sessions.service import SessionCrudService, _session_ended_severity
-from tests.fakes import build_review_service
 from tests.helpers import create_device_record, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
@@ -40,12 +39,11 @@ def _make_real_lifecycle(publisher: object = None) -> LifecyclePolicyService:
     """Return a real LifecyclePolicyService for tests that need actual DB mutations."""
     pub = publisher if publisher is not None else event_bus
     return LifecyclePolicyService(
-        review=build_review_service(),
         publisher=pub,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=pub,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),

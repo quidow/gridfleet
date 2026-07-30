@@ -13,7 +13,7 @@ from app.appium_nodes.services.reconciler_agent import build_node_launch_payload
 from app.devices.models import DeviceOperationalState
 from app.hosts.models import Host, HostStatus, OSType
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, test_event_bus
 
 if TYPE_CHECKING:
@@ -207,9 +207,7 @@ async def test_two_nodes_started_via_pull_get_distinct_parallel_ports(
     """Spec acceptance: two same-driver nodes on one host get distinct systemPort via the pull path."""
     dev_a = await create_device(db_session, host_id=db_host.id, name="pull-par-a", verified=True)
     dev_b = await create_device(db_session, host_id=db_host.id, name="pull-par-b", verified=True)
-    operator = OperatorNodeLifecycleService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=test_event_bus
-    )
+    operator = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=test_event_bus)
     await db_session.refresh(dev_a, attribute_names=["appium_node"])
     node_a = await operator.request_start(db_session, dev_a, caller="operator_route", reason="test")
     await db_session.refresh(dev_b, attribute_names=["appium_node"])

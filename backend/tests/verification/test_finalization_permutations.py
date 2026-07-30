@@ -11,11 +11,13 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
-from app.devices.models import DeviceIntent, DeviceOperationalState
+from app.devices.models import Device, DeviceIntent, DeviceOperationalState
+from app.devices.services.health_view import device_allows_allocation
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import (
@@ -34,7 +36,7 @@ from app.verification.services.execution import (
 )
 from app.verification.services.job_state import new_job
 from app.verification.services.preparation import PreparedVerificationEffect
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 from tests.verification._lease_helpers import register_verification_node_intent
@@ -42,7 +44,6 @@ from tests.verification._lease_helpers import register_verification_node_intent
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from app.devices.models import Device
     from app.hosts.models import Host
 
 pytestmark = [pytest.mark.db, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -65,17 +66,18 @@ class _ViabilityStub:
         device: Device,
         *,
         status: str,
+        error: str | None = None,
         checked_by: object,
     ) -> dict[str, Any]:
         del checked_by
         device.session_viability_status = status
+        device.session_viability_error = error
         await db.flush()
         return {"status": status}
 
 
 def _build_execution_service(session_factory: object) -> VerificationExecutionService:
     return VerificationExecutionService(
-        review=build_review_service(),
         publisher=event_bus,
         agent=AgentCallContext(settings=FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=AsyncMock(),
@@ -111,14 +113,38 @@ def _job() -> dict[str, Any]:
 
 
 async def test_failure_finalization_statements_permute(db_session: AsyncSession, db_host: Host) -> None:
-    """WS-15.3 acceptance: the failure-path intent mutations are order-independent.
+    """WS-15.3 acceptance: the failure-path intent mutations are order-independent,
+    up to one legitimate two-way split.
 
-    After the durable-facts block (review_required + outcome stamp), every ordering
-    of the intent mutations, with an adversarial reconcile after each statement,
-    derives the same final state. The stamp makes an unrevoked lease terminal for
-    both claim and command readers.
+    After the durable-facts block (session_viability_status + outcome stamp), every
+    ordering of the intent mutations, with an adversarial reconcile after each
+    statement, derives one of exactly two convergence classes, partitioned by
+    whether the adversarial "stop_intents" register step runs after its own
+    "revoke_stops" in a given permutation:
+
+    - "stop_intents" last: the registered operator:stop intent survives to the
+      final reconcile and outranks everything else in decide_node_process,
+      forcing the node to a hard stop.
+    - "revoke_stops" last: no stop intent survives, so the node falls through to
+      the baseline:idle branch — with review_required gone (post-Task-3), that
+      branch now baseline-restarts the node instead of leaving it stopped.
+
+    This split is a pre-existing property of decide_node_process's precedence
+    ladder, not something Task 3 introduced: `_finalize_failure` itself never
+    registers an operator:stop intent (production only revokes), so the
+    "stop_intents" step models a *concurrent* actor racing the finalizer, not the
+    production path. Before Task 3, review_required=True forced the baseline
+    branch to "stopped" too, uniformly masking the two classes into one; with
+    that masking gone the split is real, and both classes are asserted here
+    rather than collapsed. What stays invariant across every ordering, in both
+    classes, is the allocation-safety claim the ruling depends on:
+    session_viability_status keeps device_allows_allocation False regardless of
+    which actor wins the node race. The stamp makes an unrevoked lease terminal
+    for both claim and command readers.
     """
-    finals: set[tuple[object, ...]] = set()
+    # Bucketed by whether "stop_intents" runs after its own "revoke_stops" — see
+    # docstring. Each bucket must converge to exactly one final tuple on its own.
+    finals: dict[bool, set[tuple[object, ...]]] = {True: set(), False: set()}
     step_names = ("stop_intents", "revoke_lease", "revoke_stops", "revoke_start")
     for index, perm in enumerate(itertools.permutations(step_names)):
         device = await create_device(db_session, host_id=db_host.id, name=f"ws153-perm-{index}")
@@ -140,8 +166,7 @@ async def test_failure_finalization_statements_permute(db_session: AsyncSession,
         await db_session.commit()
 
         locked = await device_locking.lock_device(db_session, device.id)
-        locked.review_required = True
-        locked.review_reason = "verification failed: probe failed"
+        locked.session_viability_status = "failed"
         await db_session.flush()
         await _stamp_verification_outcome(db_session, locked, outcome=VERIFICATION_OUTCOME_FAILED)
 
@@ -175,20 +200,30 @@ async def test_failure_finalization_statements_permute(db_session: AsyncSession,
             states.append(await derive_operational_state(db_session, device, now=now_utc()))
         await db_session.commit()
         await db_session.refresh(node)
+        await db_session.refresh(device, attribute_names=["appium_node"])
         await db_session.refresh(device)
 
         assert all(state == states[-1] for state in states), f"projection flapped under {perm}: {states}"
-        finals.add(
+        stop_survives = perm.index("stop_intents") > perm.index("revoke_stops")
+        finals[stop_survives].add(
             (
                 states[-1],
                 node.desired_state,
                 node.stop_pending,
                 node.accepting_new_sessions,
                 device.operational_state_last_emitted,
-                device.review_required,
+                device_allows_allocation(device),
             )
         )
-    assert len(finals) == 1, f"orderings diverged: {finals}"
+    assert len(finals[True]) == 1, f"stop-survives orderings diverged: {finals[True]}"
+    assert len(finals[False]) == 1, f"no-surviving-stop orderings diverged: {finals[False]}"
+
+    (_, stop_survives_desired_state, _, _, _, stop_survives_allows_allocation) = next(iter(finals[True]))
+    (_, no_stop_desired_state, _, _, _, no_stop_allows_allocation) = next(iter(finals[False]))
+    assert stop_survives_desired_state == AppiumDesiredState.stopped, "surviving operator:stop forces a hard stop"
+    assert no_stop_desired_state == AppiumDesiredState.running, "baseline restart is intended post-Task-3"
+    assert stop_survives_allows_allocation is False, "failed viability keeps the device out of allocation"
+    assert no_stop_allows_allocation is False, "failed viability keeps the device out of allocation"
 
 
 async def test_finalize_success_single_edge_no_flap(
@@ -287,8 +322,46 @@ async def test_finalize_failure_single_edge_no_flap(
         if name == "device.operational_state_changed"
     ]
     assert edges == [("verifying", "offline")], f"expected one clean edge, got {edges}"
-    assert device.review_required is True
+    assert device.session_viability_status == "failed"
     remaining = (
         (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
     )
     assert remaining == []
+
+
+async def test_finalize_failure_update_records_viability_failure(
+    db_session: AsyncSession,
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed re-verification must land in Device.session_viability_status.
+
+    Acceptance criterion from the shelve/verification coupling analysis: the
+    failed probe result alone keeps the device unallocatable. Before this fix,
+    failure wrote nothing and a stale "passed" survived.
+    """
+    session_factory = async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False)
+    device = await create_device(db_session, host_id=db_host.id, name="reverify-viability")
+    node = await _seed_node(db_session, device.id, running=True)
+    device.session_viability_status = "passed"
+    operation_id = uuid.uuid4()
+    await register_verification_node_intent(
+        db_session, device, settings=FakeSettingsReader({}), publisher=event_bus, operation_id=operation_id
+    )
+    await db_session.commit()
+
+    monkeypatch.setattr("app.verification.services.execution.set_stage", AsyncMock())
+    svc = _build_execution_service(session_factory)
+    effect = _effect(device, operation_id, mode="update", payload={})
+    outcome = await svc._finalize_failure(effect, error="probe failed", job=_job(), node_id=node.id)
+    assert outcome.status == "failed"
+    await dispatch_committed_events()
+
+    await db_session.refresh(device)
+    assert device.session_viability_status == "failed"
+    assert device.session_viability_error == "probe failed"
+
+    loaded = (
+        await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
+    ).scalar_one()
+    assert device_allows_allocation(loaded) is False

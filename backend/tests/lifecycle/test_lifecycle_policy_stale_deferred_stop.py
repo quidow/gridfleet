@@ -15,7 +15,7 @@ from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import DeferredStopOutcome, LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -29,12 +29,11 @@ pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 def _service() -> LifecyclePolicyService:
     return LifecyclePolicyService(
-        review=build_review_service(),
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         actions=LifecyclePolicyActionsService(
             publisher=event_bus,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ),
         incidents=LifecycleIncidentService(),

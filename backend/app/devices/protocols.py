@@ -32,11 +32,6 @@ if TYPE_CHECKING:
     from app.sessions.viability_types import SessionViabilityCheckedBy
 
 
-class ReviewProtocol(Protocol):
-    async def mark_review_required(self, db: AsyncSession, device: Device, *, reason: str, source: str) -> bool: ...
-    async def clear_review_required(self, db: AsyncSession, device: Device, *, reason: str, source: str) -> bool: ...
-
-
 class PackDevicePropertiesProvider(Protocol):
     """Narrow cross-domain view of pack discovery needed by the property-refresh fold."""
 

@@ -22,7 +22,7 @@ from app.packs.services import discovery as pack_discovery
 from app.packs.services.discovery import PackDiscoveryService
 from app.verification.services import execution as verification_execution
 from app.verification.services.execution import AgentCallContext, VerificationExecutionService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -56,7 +56,6 @@ async def test_verification_execution_forwards_pool(monkeypatch: pytest.MonkeyPa
     )
 
     await VerificationExecutionService(
-        review=build_review_service(),
         publisher=event_bus,
         agent=AgentCallContext(settings=settings, circuit_breaker=Mock(), pool=pool),
         crud=AsyncMock(),

@@ -14,7 +14,7 @@ from app.devices.services.bulk import BulkOperationsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.service import DeviceCrudService
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -123,9 +123,7 @@ async def test_bulk_start_nodes_uses_per_task_sessions(
             circuit_breaker=MagicMock(),
             maintenance=MagicMock(),
             crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-            operator=OperatorNodeLifecycleService(
-                review=build_review_service(), settings=_settings_runner, publisher=event_bus
-            ),
+            operator=OperatorNodeLifecycleService(settings=_settings_runner, publisher=event_bus),
             session_factory=db_session_maker,
         ).bulk_start_nodes([device_a_id, device_b_id])
 
@@ -200,7 +198,7 @@ async def test_bulk_start_nodes_gives_each_item_its_own_open_transaction(
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(review=build_review_service(), settings=_settings, publisher=event_bus),
+        operator=OperatorNodeLifecycleService(settings=_settings, publisher=event_bus),
         session_factory=db_session_maker,
     ).bulk_start_nodes([device.id for device in devices])
 

@@ -19,7 +19,7 @@ from app.devices.services.identity_conflicts import DeviceIdentityConflictServic
 from app.devices.services.service import DeviceCrudService
 from app.hosts.models import Host, HostStatus, OSType
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record, create_host
 from tests.helpers import test_event_bus as event_bus
 
@@ -108,9 +108,7 @@ async def test_start_node_with_verification_caller_skips_readiness(
     _svc_settings = FakeSettingsReader({})
     svc = ReconcilerAgentService(
         settings=_svc_settings,
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=_svc_settings, publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=_svc_settings, publisher=event_bus),
     )
     from app.devices import locking as device_locking
 

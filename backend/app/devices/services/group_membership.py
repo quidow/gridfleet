@@ -157,15 +157,14 @@ class DeviceGroupFacts:
 
 
 def build_device_group_facts(
-    device: Device,
     *,
     operational_state: DeviceOperationalState,
     is_reserved: bool,
     readiness_state: str,
     static_group_keys: frozenset[str],
-    review_required: bool | None = None,
 ) -> DeviceGroupFacts:
-    """Derive one device's evaluator facts. Pure: no IO, no session.
+    """Derive one device's evaluator facts from already-gathered inputs. Pure:
+    no IO, no session, and no read of the device row itself.
 
     The three fact-gathering call sites (``load_group_membership_index``, the
     grid allocator's ``_facts_from_eligible_rows``, and the run allocator's
@@ -173,15 +172,10 @@ def build_device_group_facts(
     some axes are known by construction from the SQL gate that produced the
     row — but the derivation from those inputs is identical. Keeping it here
     means ``needs_attention`` in particular cannot drift between the paths.
-
-    ``review_required`` defaults to the device row. Callers whose rows provably
-    cleared the review gate under a lock pass ``False`` explicitly.
     """
-    effective_review_required = bool(device.review_required) if review_required is None else review_required
     needs_attention = device_attention.compute_needs_attention(
         operational_state,
         readiness_state,
-        review_required=effective_review_required,
     )
     return DeviceGroupFacts(
         operational_state=operational_state,
@@ -432,7 +426,6 @@ async def load_group_membership_index(  # noqa: PLR0913 - one optional injected 
         else:
             is_reserved = gating_owner_map.get(device.id) is not None
         facts_by_device_id[device.id] = build_device_group_facts(
-            device,
             operational_state=op_map.get(device.id, DeviceOperationalState.offline),
             is_reserved=is_reserved,
             readiness_state=readiness.readiness_state if readiness is not None else "setup_required",

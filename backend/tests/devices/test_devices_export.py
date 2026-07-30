@@ -138,7 +138,6 @@ async def test_export_bundle_does_not_include_runtime_fields(db_session: AsyncSe
         "hold",
         "lifecycle_policy_state",
         "verified_at",
-        "review_required",
         "session_viability_status",
         "host_id",
         "id",

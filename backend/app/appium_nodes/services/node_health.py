@@ -476,14 +476,6 @@ class NodeHealthService:
                 source="node_health",
                 reason="Node health checks kept failing; automated restart escalation",
             )
-            if outcome.shelved:
-                logger.error(
-                    "Node for device %s exhausted automated restarts (%d attempts); shelved for operator review",
-                    device.name,
-                    outcome.attempts,
-                )
-                return snapshot
-
             snapshot = replace(snapshot, ladder=outcome.ladder)
             logger.error("Node for device %s reached failure window, attempting restart", device.name)
             snapshot = await self._attempt_node_restart(db, locked=locked, snapshot=snapshot)

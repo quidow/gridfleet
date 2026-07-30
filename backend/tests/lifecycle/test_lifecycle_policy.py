@@ -40,7 +40,7 @@ from app.lifecycle.services.policy import DeferredStopOutcome, LifecyclePolicySe
 from app.runs.models import RunState, TestRun
 from app.runs.service_reservation import RunReservationService
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run, dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
@@ -66,12 +66,11 @@ def _make_svc(
     nm = node_manager if node_manager is not None else AsyncMock()
     incidents = LifecycleIncidentService(publisher=pub) if publish_incidents else LifecycleIncidentService()
     return LifecyclePolicyService(
-        review=build_review_service(),
         publisher=pub,  # type: ignore[arg-type]
         settings=svc_settings,  # type: ignore[arg-type]
         actions=LifecyclePolicyActionsService(
             publisher=pub,
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=incidents,
         ),  # type: ignore[arg-type]
         incidents=incidents,
@@ -1118,7 +1117,6 @@ async def test_failed_recovery_backoff_survives_restart_and_uses_settings(
         {
             "general.lifecycle_recovery_backoff_base_sec": 5,
             "general.lifecycle_recovery_backoff_max_sec": 20,
-            "general.lifecycle_recovery_review_threshold": 5,
             "appium.port_range_start": 4720,
             "appium.port_range_end": 4800,
         }
@@ -1842,8 +1840,6 @@ async def test_attempt_auto_recovery_returns_false_when_projection_blocks(
         device=SimpleNamespace(
             id=uuid.uuid4(),
             lifecycle_policy_state={},
-            review_required=False,
-            review_reason=None,
             operational_state=DeviceOperationalState.offline,
             appium_node=None,
         ),
@@ -1874,8 +1870,6 @@ async def test_attempt_auto_recovery_returns_false_when_projection_blocks(
         node_port=None,
         reservation=None,
         is_ready_for_use=False,
-        review_required=False,
-        review_reason=None,
         node_observed_running=False,
         recovery_generation=None,
     )
@@ -1903,8 +1897,6 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
     device = SimpleNamespace(
         id=uuid.uuid4(),
         lifecycle_policy_state={"maintenance_reason": "operator opened maintenance"},
-        review_required=False,
-        review_reason=None,
         operational_state=DeviceOperationalState.offline,
         appium_node=None,
     )
@@ -1945,8 +1937,6 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
         node_port=None,
         reservation=None,
         is_ready_for_use=False,
-        review_required=False,
-        review_reason=None,
         node_observed_running=False,
         recovery_generation=None,
     )
@@ -2085,7 +2075,7 @@ async def test_restore_run_after_self_heal_ignores_released_device(db_session: A
     await create_reserved_run(db_session, name="self-heal-released-run", devices=[device])
     # Release the device from the run (the escalation mechanism) — real services, real reconcile.
     locked = await device_locking.lock_device_handle(db_session, device.id)
-    await RunReservationService(review=build_review_service()).release_locked(
+    await RunReservationService().release_locked(
         db_session, locked, reason="CI preparation failed", publisher=event_bus
     )
     await db_session.commit()

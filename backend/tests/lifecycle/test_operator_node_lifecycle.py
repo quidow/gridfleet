@@ -15,7 +15,7 @@ from app.appium_nodes.services import resource_service
 from app.devices.models import DeviceIntent
 from app.devices.services.intent_reconciler import ReconcileCandidate, reconcile_device, reconcile_device_command
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService, operator_stop_active
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -105,9 +105,9 @@ async def test_stale_operator_start_intent_does_not_force_old_desired_port(
     # An operator Restart through the unified path still refreshes the intent row
     # (fresh restart_requested_at + expires_at) and
     # keeps desired_port on the live port.
-    await OperatorNodeLifecycleService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).request_restart(db_session, device, caller="operator_restart", reason="operator restart")
+    await OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus).request_restart(
+        db_session, device, caller="operator_restart", reason="operator restart"
+    )
     await db_session.refresh(node)
 
     assert node.desired_port == 4725, (
@@ -217,9 +217,7 @@ async def test_two_consecutive_request_restarts_refresh_intent_payload(
     # fixture is constructed so the model treats the node as running.
     assert node.observed_running, "test fixture must seed an observed-running node"
 
-    svc = OperatorNodeLifecycleService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
+    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus)
     await svc.request_restart(db_session, device, caller="operator_restart", reason="first")
     intent_first = (
         await db_session.execute(
@@ -300,9 +298,7 @@ async def test_operator_stop_denies_recovery_and_operator_start_restores_it(
         "baseline: a running device allows recovery"
     )
 
-    svc = OperatorNodeLifecycleService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
+    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus)
     await svc.request_stop(db_session, device, reason="operator stop")
     await db_session.commit()
     await db_session.refresh(device)
@@ -337,9 +333,7 @@ async def test_operator_stop_active_tracks_sticky_stop(
     device.appium_node = node
     assert await operator_stop_active(db_session, device.id) is False, "baseline: no operator stop"
 
-    svc = OperatorNodeLifecycleService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
+    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus)
     await svc.request_stop(db_session, device, reason="operator stop")
     await db_session.commit()
     assert await operator_stop_active(db_session, device.id) is True, "operator stop is active"
@@ -375,9 +369,7 @@ async def test_operator_start_supersedes_blocking_stop_directive(
     )
     await db_session.commit()
 
-    svc = OperatorNodeLifecycleService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
+    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus)
     await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
     await db_session.commit()
 
@@ -411,9 +403,7 @@ async def test_request_start_pins_existing_node_port(
     await db_session.flush()
     device.appium_node = node
 
-    svc = OperatorNodeLifecycleService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
+    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus)
     await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
     await db_session.commit()
     await db_session.refresh(node)
@@ -435,9 +425,7 @@ async def test_request_start_first_allocation_uses_candidate_ports(
     # ``device.appium_node`` read is the in-session value (no lazy IO).
     device.appium_node = None
 
-    svc = OperatorNodeLifecycleService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    )
+    svc = OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus)
     node = await svc.request_start(db_session, device, caller="operator_route", reason="operator start")
     await db_session.commit()
     await db_session.refresh(node)
@@ -471,7 +459,6 @@ async def test_request_restart_moved_port_node_converges_without_oscillation(
     device.appium_node = node
 
     svc = OperatorNodeLifecycleService(
-        review=build_review_service(),
         settings=FakeSettingsReader({"appium_reconciler.restart_window_sec": 120}),
         publisher=event_bus,
     )
@@ -495,9 +482,9 @@ async def _request_start(db_session: AsyncSession, device: Device) -> AppiumNode
     # raises MissingGreenlet. Prime it explicitly (same pattern used elsewhere in this
     # suite, e.g. tests/devices/test_device_health.py).
     await db_session.refresh(device, attribute_names=["appium_node"])
-    return await OperatorNodeLifecycleService(
-        review=build_review_service(), settings=FakeSettingsReader({}), publisher=event_bus
-    ).request_start(db_session, device, caller="operator_route", reason="test start")
+    return await OperatorNodeLifecycleService(settings=FakeSettingsReader({}), publisher=event_bus).request_start(
+        db_session, device, caller="operator_route", reason="test start"
+    )
 
 
 async def test_request_start_reserves_distinct_parallel_ports_for_host_neighbors(

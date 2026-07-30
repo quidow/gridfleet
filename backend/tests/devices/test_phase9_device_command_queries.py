@@ -27,7 +27,7 @@ from app.devices.services.service import DeviceCrudService
 from app.events.models import SystemEvent
 from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
 from tests.concurrency.group_lock_helpers import capture_statements
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -88,13 +88,12 @@ def _bulk_service(session_factory: object) -> BulkOperationsService:
         settings=settings,
         circuit_breaker=MagicMock(),
         maintenance=MaintenanceService(
-            review=build_review_service(),
             settings=settings,
             publisher=event_bus,
             session_factory=session_factory,  # type: ignore[arg-type]
         ),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(review=build_review_service(), settings=settings, publisher=event_bus),
+        operator=OperatorNodeLifecycleService(settings=settings, publisher=event_bus),
         session_factory=session_factory,  # type: ignore[arg-type]
     )
 

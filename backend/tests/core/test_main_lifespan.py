@@ -288,8 +288,8 @@ async def test_health_metrics_and_availability_helpers(monkeypatch: MonkeyPatch)
     assert isinstance(metrics, Response)
     assert metrics.body == b"metrics"
 
-    ready_device = SimpleNamespace(id=uuid.uuid4(), review_required=False, appium_node=None)
-    blocked_device = SimpleNamespace(id=uuid.uuid4(), review_required=False, appium_node=None)
+    ready_device = SimpleNamespace(id=uuid.uuid4(), appium_node=None)
+    blocked_device = SimpleNamespace(id=uuid.uuid4(), appium_node=None)
     mock_crud = AsyncMock()
     mock_crud.list_devices_by_filters = AsyncMock(return_value=[ready_device, blocked_device])
     monkeypatch.setattr(

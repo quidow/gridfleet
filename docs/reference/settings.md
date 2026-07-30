@@ -27,7 +27,6 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `general.session_viability_failure_threshold` | `general` | `int` | `3` | `1..20` | Consecutive session-viability failures required before the manager parks the device; tolerates transient Appium hiccups |
 | `general.lifecycle_recovery_backoff_base_sec` | `general` | `int` | `60` | `1..3600` | Base delay for lifecycle automatic recovery backoff |
 | `general.lifecycle_recovery_backoff_max_sec` | `general` | `int` | `900` | `1..86400` | Maximum delay for lifecycle automatic recovery backoff |
-| `general.lifecycle_recovery_review_threshold` | `general` | `int` | `5` | `1..100` | Consecutive automatic recovery failures before the device is shelved into `review_required`; automated recovery loops skip it until an operator action clears the flag |
 | `device_checks.ip_ping.fail_window_sec` | `device_checks` | `int` | `120` | `0..3600` | Wall-clock seconds ICMP ping must keep failing before an opted-in device is marked unhealthy; `0` flips on the first miss |
 | `device_checks.probe_unanswered.fail_window_sec` | `device_checks` | `int` | `120` | `0..3600` | Wall-clock seconds unanswered health probes may persist before a device is marked unhealthy; `0` flips on the first miss |
 | `device_checks.probe_failed.fail_window_sec` | `device_checks` | `int` | `120` | `0..3600` | Wall-clock seconds a manifest-declared debounceable health check may fail before the device is marked unhealthy; `0` flips on the first miss |

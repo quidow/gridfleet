@@ -14,7 +14,6 @@ from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.event import build_device_crashed_payload, record_event
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
-from app.devices.services.review import ReviewService
 from app.devices.services.state import derive_operational_state, evaluate_operational_state
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.escalation import EscalationOutcome, escalate_remediation_failure
@@ -480,7 +479,6 @@ async def escalate_device_remediation_failure(
         db,
         device,
         settings=settings,
-        review=ReviewService(),
         source=source,
         reason=reason,
         prior=ladder,
@@ -501,24 +499,4 @@ async def reset_reconciler_start_failure_if_needed(
     if not (ladder.armed or ladder.last_failure_reason) or ladder.last_failure_source != "appium_reconciler":
         return False
     await remediation_log.append_reset(db, device.id, source="appium_reconciler", action="start_succeeded")
-    # A node that has demonstrably started is not shelved by the episode that
-    # just ended: clearing the ladder without the review flag left healthy,
-    # running nodes blocked as offline. Scoped to this episode's own shelving.
-    #
-    # The scope is the recorded fact, not an inference from the device's mutable
-    # review fields. ``ladder.review_shelved`` is the ACTION_REVIEW_SHELVED
-    # marker this episode appended at the moment it flipped the flag off -> on;
-    # no marker means some other source shelved the device and the flag is not
-    # ours to clear. Matching on ``review_reason`` instead fails open: a re-flag
-    # overwrites the reason in place, so a device shelved by verification and
-    # then escalated by this ladder wears the ladder's reason while keeping the
-    # earlier ``review_set_at`` — both proxies agree and a verification failure
-    # is silently returned to the allocatable pool.
-    #
-    # Known residual: if this episode shelves first and verification shelves
-    # afterwards, the marker is still ours and the clear releases a flag
-    # verification also depends on. One boolean cannot hold two causes; a
-    # follow-up design (per-cause shelving holds) covers it.
-    if getattr(device, "review_required", False) and ladder.review_shelved:
-        await ReviewService().clear_review_required(db, device, reason="start_succeeded", source="appium_reconciler")
     return True

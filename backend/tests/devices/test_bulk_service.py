@@ -10,7 +10,6 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import func, select, text
 
-from tests.fakes import build_review_service
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -96,7 +95,7 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
         circuit_breaker=MagicMock(),
         maintenance=MagicMock(),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(review=build_review_service(), settings=settings, publisher=event_bus),
+        operator=OperatorNodeLifecycleService(settings=settings, publisher=event_bus),
         session_factory=db_session_maker,
     )
     started = await svc.bulk_start_nodes([device.id for device in devices])
@@ -162,9 +161,7 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         circuit_breaker=Mock(),
         maintenance=MagicMock(),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=_settings_rc, publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=_settings_rc, publisher=event_bus),
         session_factory=db_session_maker,
     ).bulk_reconnect([eligible_ok.id, eligible_fail.id, ineligible.id])
 
@@ -208,9 +205,7 @@ async def test_bulk_delete_and_maintenance_operations_collect_failures(
         circuit_breaker=MagicMock(),
         maintenance=mock_maintenance,
         crud=mock_crud,
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=_settings_del, publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=_settings_del, publisher=event_bus),
         session_factory=db_session_maker,
     )
     # The unknown id is dropped by the pre-filter, so it is not in ``total``.
@@ -260,15 +255,12 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
         settings=_settings_exit,
         circuit_breaker=MagicMock(),
         maintenance=MaintenanceService(
-            review=build_review_service(),
             settings=FakeSettingsReader({}),
             publisher=event_bus,
             session_factory=db_session_maker,
         ),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(
-            review=build_review_service(), settings=_settings_exit, publisher=event_bus
-        ),
+        operator=OperatorNodeLifecycleService(settings=_settings_exit, publisher=event_bus),
         session_factory=db_session_maker,
     ).bulk_exit_maintenance([d.id for d in devices])
 
@@ -304,13 +296,12 @@ def _real_service(
         circuit_breaker=MagicMock(),
         maintenance=maintenance  # type: ignore[arg-type]
         or MaintenanceService(
-            review=build_review_service(),
             settings=settings,
             publisher=event_bus,
             session_factory=session_factory,  # type: ignore[arg-type]
         ),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(review=build_review_service(), settings=settings, publisher=event_bus),
+        operator=OperatorNodeLifecycleService(settings=settings, publisher=event_bus),
         session_factory=session_factory,  # type: ignore[arg-type]
     )
 
@@ -362,7 +353,6 @@ async def test_bulk_enter_maintenance_isolates_one_failed_item(
     service = _real_service(
         db_session_maker,
         maintenance=AbortingMaintenance(
-            review=build_review_service(),
             settings=settings,
             publisher=event_bus,
             session_factory=db_session_maker,

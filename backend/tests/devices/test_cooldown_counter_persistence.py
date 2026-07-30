@@ -24,7 +24,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_lifecycle_failures import RunFailureService
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
@@ -43,13 +43,12 @@ def _make_failure_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunF
         settings=_settings,
         circuit_breaker=_circuit_breaker,
         maintenance=MaintenanceService(
-            review=build_review_service(),
             settings=FakeSettingsReader({}),
             publisher=event_bus,
             session_factory=session_factory,
         ),
         lifecycle_actions=AsyncMock(),
-        reservation=RunReservationService(review=build_review_service()),
+        reservation=RunReservationService(),
         incidents=LifecycleIncidentService(),
         session_factory=session_factory,
     )
@@ -175,7 +174,8 @@ async def test_restore_device_to_run_resets_cooldown_counter(db_session: AsyncSe
     reservation.cooldown_count = 3
     await db_session.commit()
 
-    await RunReservationService(review=build_review_service()).restore_device_to_run(db_session, device.id)
+    await RunReservationService().restore_device_to_run(db_session, device.id)
+    await db_session.flush()
     await db_session.refresh(reservation)
     assert reservation.excluded is False
     assert reservation.cooldown_count == 0

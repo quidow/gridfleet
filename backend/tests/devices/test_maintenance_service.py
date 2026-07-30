@@ -14,7 +14,7 @@ from app.devices.services.maintenance import MaintenanceService
 from app.events.protocols import EventPublisher
 from app.lifecycle.services import remediation_log
 from app.sessions.models import Session, SessionStatus
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 
@@ -32,7 +32,6 @@ def _service(
     publisher: EventPublisher | None = None,
 ) -> MaintenanceService:
     return MaintenanceService(
-        review=build_review_service(),
         settings=FakeSettingsReader({}),
         publisher=publisher or event_bus,
         session_factory=session_factory,
@@ -479,7 +478,6 @@ async def test_maintenance_locked_helpers_leave_the_callers_transaction_open(
     await db_session.commit()
 
     service = MaintenanceService(
-        review=build_review_service(),
         settings=FakeSettingsReader({}),
         publisher=event_bus,
         session_factory=db_session_maker,
@@ -509,7 +507,6 @@ async def test_maintenance_locked_helpers_reject_a_proof_from_a_finished_transac
     await db_session.commit()
 
     service = MaintenanceService(
-        review=build_review_service(),
         settings=FakeSettingsReader({}),
         publisher=event_bus,
         session_factory=db_session_maker,

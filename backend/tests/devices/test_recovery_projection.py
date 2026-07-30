@@ -48,17 +48,6 @@ async def test_clean_device_allows_recovery(db_session: AsyncSession, db_host: H
     assert (result.allowed, result.kind) == (True, None)
 
 
-async def test_review_required_blocks_first(db_session: AsyncSession, db_host: Host) -> None:
-    device = await create_device(db_session, host_id=db_host.id, name="shelved")
-    device.review_required = True  # tests may write directly; contract scan covers app/ only
-    device.review_reason = "shelved by test"
-    await db_session.commit()
-    result = await recovery_availability(db_session, device)
-    assert result.allowed is False
-    assert result.kind is RecoveryBlockKind.review
-    assert result.reason == "shelved by test"
-
-
 async def test_operator_recovery_deny_blocks(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="op-deny")
     await IntentService(db_session).register_intents(
@@ -208,7 +197,6 @@ async def test_recovery_availability_from_facts_matches_async(
     live_session = await device_has_live_session(db_session, device.id)
 
     availability = recovery_availability_from_facts(
-        device,
         commands=[command for intent in intents if (command := parse_command(intent, now)) is not None],
         facts=facts,
         ladder=ladder,

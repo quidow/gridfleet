@@ -171,8 +171,8 @@ def decide_node_process(commands: list[Command], facts: DecisionFacts) -> NodePr
         return NodeProcessDecision("stopping_graceful", "graceful", "maintenance hold")
     starts = [c for c in commands if c.kind in _START_KINDS]
     directive = facts.remediation_directive
-    # A derived start is in_service-gated: a shelved or withdrawn device must never
-    # keep a directive-started node alive past the episode.
+    # A derived start is in_service-gated: a withdrawn device (unverified or in
+    # maintenance) must never keep a directive-started node alive past the episode.
     remediation_start = directive is not None and directive.kind == DIRECTIVE_START and facts.in_service
     if directive is not None and directive.kind == DIRECTIVE_STOP and not starts and not remediation_start:
         # Derived failure-stop: an auto-stop episode holds the node stopped until a

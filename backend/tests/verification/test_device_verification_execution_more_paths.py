@@ -21,7 +21,7 @@ from app.verification.services.execution import (
     VerificationExecutionService,
 )
 from app.verification.services.preparation import PreparedVerificationEffect
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 from tests.helpers import test_event_bus as event_bus
 from tests.verification._lease_helpers import register_verification_node_intent
@@ -39,7 +39,6 @@ def _make_svc(**overrides: object) -> VerificationExecutionService:
         "capability": DeviceCapabilityService(),
         "reconciler": AsyncMock(),
         "node_manager": AsyncMock(),
-        "review": build_review_service(),
     }
     defaults.update(overrides)
     return VerificationExecutionService(**defaults)  # type: ignore[arg-type]
@@ -174,7 +173,7 @@ async def test_finalize_failure_create_deletes_device_update_restores_fields(
     async with session_factory() as db:
         assert await db.get(Device, device_c.id) is None
 
-    # Update-mode failure restores the copied original fields and shelves for review.
+    # Update-mode failure restores the copied original fields.
     device_u = await create_device(db_session, host_id=db_host.id, name="renamed-during-verify")
     op_u = uuid.uuid4()
     await register_verification_node_intent(
@@ -198,7 +197,6 @@ async def test_finalize_failure_create_deletes_device_update_restores_fields(
         restored = await db.get(Device, device_u.id)
         assert restored is not None
         assert restored.name == "original-name"
-        assert restored.review_required is True
 
 
 @pytest.mark.db

@@ -119,18 +119,16 @@ class WithdrawalFacts:
 
     verified: bool  # verified_at IS NOT NULL
     in_maintenance: bool  # lifecycle_policy_state["maintenance_reason"] set
-    review_required: bool
 
     @classmethod
     def from_device(cls, device: Device) -> WithdrawalFacts:
         return cls(
             verified=device.verified_at is not None,
             in_maintenance=in_maintenance(device),
-            review_required=device.review_required,
         )
 
     def in_service(self) -> bool:
-        return self.verified and not self.in_maintenance and not self.review_required
+        return self.verified and not self.in_maintenance
 
 
 @dataclass(frozen=True)
@@ -251,7 +249,6 @@ def _ready_sql() -> ColumnElement[bool]:
     return and_(
         Device.verified_at.is_not(None),
         ~maintenance_sql(),
-        Device.review_required.is_(False),
         allows_allocation_sql(),
     )
 

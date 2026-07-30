@@ -118,8 +118,6 @@ async def test_locked_snapshot_matches_current_facts_in_three_reads(
         excluded_until=reservation_row.excluded_until,
     )
     assert snapshot.is_ready_for_use is True
-    assert snapshot.review_required is False
-    assert snapshot.review_reason is None
     assert snapshot.node_observed_running is True
     assert snapshot.recovery_generation == generation
 

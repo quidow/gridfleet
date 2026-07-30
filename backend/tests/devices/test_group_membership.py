@@ -634,14 +634,11 @@ async def test_group_bulk_route_contract_for_empty_and_missing_groups(
 
 
 def _needs_attention_device() -> Device:
-    """A real device whose readiness is ``setup_required`` and whose review flag is
-    clear — the shape that exposed the earlier drift, where the grid allocator
-    hardcoded ``readiness_state="verified"`` and a ``needs_attention`` dynamic
-    group silently never matched there.
+    """A real device whose readiness is ``setup_required`` — the shape that exposed
+    the earlier drift, where the grid allocator hardcoded ``readiness_state="verified"``
+    and a ``needs_attention`` dynamic group silently never matched there.
     """
-    device = _device("attention-parity")
-    device.review_required = False
-    return device
+    return _device("attention-parity")
 
 
 def test_build_device_group_facts_is_identical_across_the_three_call_paths() -> None:
@@ -651,11 +648,11 @@ def test_build_device_group_facts_is_identical_across_the_three_call_paths() -> 
 
     Each call below is shaped exactly like its production site: the canonical
     loader in ``load_group_membership_index`` (operational state and reservation
-    from batch maps, review flag read from the row), the grid allocator's
-    ``_facts_from_eligible_rows`` (``available`` by construction from
-    ``is_available_sql``, reservation from the projected owner column), and the
-    run allocator's locked step-7b rebuild (``is_reserved``/``review_required``
-    ``False`` by construction from the gates its locked rows passed).
+    from batch maps), the grid allocator's ``_facts_from_eligible_rows``
+    (``available`` by construction from ``is_available_sql``, reservation from
+    the projected owner column), and the run allocator's locked step-7b rebuild
+    (``is_reserved`` ``False`` by construction from the gates its locked rows
+    passed).
     """
     device = _needs_attention_device()
     shared = {
@@ -666,7 +663,6 @@ def test_build_device_group_facts_is_identical_across_the_three_call_paths() -> 
     # Canonical loader: reservation via the gating-owner map lookup.
     gating_owner_map: dict[uuid.UUID, uuid.UUID | None] = {}
     canonical = build_device_group_facts(
-        device,
         operational_state=DeviceOperationalState.available,
         is_reserved=gating_owner_map.get(device.id) is not None,
         **shared,
@@ -675,16 +671,13 @@ def test_build_device_group_facts_is_identical_across_the_three_call_paths() -> 
     # column on the eligible row — the same fact by a different access path.
     row_reservation_run_id: uuid.UUID | None = None
     grid = build_device_group_facts(
-        device,
         operational_state=DeviceOperationalState.available,
         is_reserved=row_reservation_run_id is not None,
         **shared,
     )
     run = build_device_group_facts(
-        device,
         operational_state=DeviceOperationalState.available,
         is_reserved=False,
-        review_required=False,
         **shared,
     )
 

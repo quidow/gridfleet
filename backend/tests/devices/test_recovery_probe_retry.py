@@ -15,7 +15,7 @@ from app.sessions.service_viability import (
     SessionViabilityProbeNotPermittedError,
 )
 from app.sessions.viability_types import SessionViabilityCheckedBy
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -37,12 +37,11 @@ def _make_worker(db_session: AsyncSession, viability: object) -> RecoveryJobServ
         publisher=event_bus,
         settings=FakeSettingsReader({}),
         lifecycle_policy=LifecyclePolicyService(
-            review=build_review_service(),
             publisher=event_bus,
             settings=FakeSettingsReader({}),
             actions=LifecyclePolicyActionsService(
                 publisher=event_bus,
-                reservation=RunReservationService(review=build_review_service()),
+                reservation=RunReservationService(),
                 incidents=AsyncMock(),
             ),
             incidents=AsyncMock(),

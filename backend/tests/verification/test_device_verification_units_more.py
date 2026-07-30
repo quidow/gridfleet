@@ -38,7 +38,7 @@ from app.verification.services.preparation import (
     _PackCoords,
 )
 from app.verification.services.service import VerificationService
-from tests.fakes import FakeSettingsReader, build_review_service
+from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
 from tests.helpers import test_event_bus as event_bus
 from tests.verification._lease_helpers import register_verification_node_intent
@@ -67,7 +67,6 @@ def _exec(
     capability: object | None = None,
 ) -> VerificationExecutionService:
     return VerificationExecutionService(
-        review=build_review_service(),
         publisher=event_bus,
         agent=AgentCallContext(settings=settings or FakeSettingsReader({}), circuit_breaker=Mock()),
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),

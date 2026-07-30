@@ -19,7 +19,6 @@ from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.connectivity import ConnectivityService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent_reconciler import reconcile_device
-from app.devices.services.review import ReviewService
 from app.devices.services.state import derive_operational_state
 from app.events.models import SystemEvent
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY
@@ -72,9 +71,8 @@ async def concurrent_unhealthy_fold(
     )
     await db_session.commit()
 
-    review = ReviewService()
     incidents = LifecycleIncidentService(publisher=event_bus)
-    reservation = RunReservationService(review=review)
+    reservation = RunReservationService()
     actions = LifecyclePolicyActionsService(
         publisher=event_bus,
         reservation=reservation,
@@ -87,7 +85,6 @@ async def concurrent_unhealthy_fold(
         incidents=incidents,
         viability=AsyncMock(),
         node_manager=AsyncMock(),
-        review=review,
     )
     service = ConnectivityService(
         publisher=event_bus,

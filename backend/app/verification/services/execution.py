@@ -60,7 +60,6 @@ if TYPE_CHECKING:
         DeviceCrudProtocol,
         NodeConvergence,
         RemoteNodeManager,
-        ReviewProtocol,
         SessionViabilityProbe,
     )
     from app.events.protocols import EventPublisher
@@ -97,7 +96,6 @@ class FailureFinalizers:
     """Collaborators the verification failure-finalization path drives together."""
 
     crud: DeviceCrudProtocol
-    review: ReviewProtocol
 
 
 async def lock_verification_operation(
@@ -127,7 +125,7 @@ async def lock_verification_operation(
 
 
 class VerificationExecutionService:
-    def __init__(  # noqa: PLR0913 — cohesive verification-execution collaborators
+    def __init__(
         self,
         *,
         publisher: EventPublisher,
@@ -137,7 +135,6 @@ class VerificationExecutionService:
         capability: DeviceCapabilityProtocol,
         reconciler: NodeConvergence,
         node_manager: RemoteNodeManager,
-        review: ReviewProtocol,
         session_factory: SessionFactory = async_session,
     ) -> None:
         self._publisher = publisher
@@ -147,11 +144,9 @@ class VerificationExecutionService:
         self._capability = capability
         self._reconciler = reconciler
         self._node_manager = node_manager
-        self._review = review
         self._session_factory = session_factory
         self._failure_finalizers = FailureFinalizers(
             crud=crud,
-            review=review,
         )
 
     async def execute_verification_effect(
@@ -442,11 +437,12 @@ class VerificationExecutionService:
                 return VerificationExecutionOutcome(status="failed", error=error, device_id=None)
 
             _restore_update_original_fields(device, effect.original_fields)
-            await self._failure_finalizers.review.mark_review_required(
+            await self._viability.record_session_viability_result(
                 db,
                 device,
-                reason=f"verification failed: {error}",
-                source="verification",
+                status="failed",
+                error=error,
+                checked_by=SessionViabilityCheckedBy.verification,
             )
             await _stamp_verification_outcome(db, device, outcome=VERIFICATION_OUTCOME_FAILED)
             await _stop_verification_node_if_running(job, db, device, node)

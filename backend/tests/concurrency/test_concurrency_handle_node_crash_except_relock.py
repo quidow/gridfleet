@@ -11,7 +11,6 @@ from app.devices.models import Device, DeviceOperationalState
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.service_reservation import RunReservationService
-from tests.fakes import build_review_service
 from tests.helpers import create_device
 
 if TYPE_CHECKING:
@@ -81,7 +80,7 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
         assert target is not None
         await LifecyclePolicyActionsService(
             publisher=Mock(),
-            reservation=RunReservationService(review=build_review_service()),
+            reservation=RunReservationService(),
             incidents=LifecycleIncidentService(),
         ).handle_node_crash(
             session,

@@ -414,8 +414,7 @@ async def check_availability(
     matched = sum(
         1
         for device in available_devices
-        if not device.review_required
-        and device_node_is_viable(
+        if device_node_is_viable(
             device,
             now=now_utc(),
             restart_window_sec=DEFAULT_RESTART_WINDOW_SEC,

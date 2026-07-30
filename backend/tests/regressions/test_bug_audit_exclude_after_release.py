@@ -28,7 +28,6 @@ from sqlalchemy import select
 import app.runs.service_reservation as _reservation
 from app.devices.models import DeviceOperationalState, DeviceReservation
 from app.runs.models import RunState, TestRun
-from tests.fakes import build_review_service
 from tests.helpers import create_device, create_host
 
 if TYPE_CHECKING:
@@ -97,9 +96,7 @@ async def test_exclude_marks_released_reservation_as_excluded(
     with patch.object(_reservation, "get_device_reservation_with_entry", side_effect=_get_then_release):
         # exclude_device_from_run is transaction-local now (no internal commit);
         # the caller owns the boundary.
-        await _reservation.RunReservationService(review=build_review_service()).exclude_device_from_run(
-            db_session, device_id, reason="test race"
-        )
+        await _reservation.RunReservationService().exclude_device_from_run(db_session, device_id, reason="test race")
         await db_session.commit()
 
     # Re-read the reservation on a fresh session.

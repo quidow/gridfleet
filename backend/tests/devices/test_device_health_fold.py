@@ -24,7 +24,6 @@ from app.devices.services.connectivity import (
 )
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.lifecycle_policy_state import recovery_generation
-from app.devices.services.review import ReviewService
 from app.hosts.service_status_push import OBSERVATION_REVISION_KEY
 from app.jobs import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
@@ -225,9 +224,8 @@ async def test_fold_loads_one_decision_snapshot_per_applied_device(
     real_loader = connectivity.load_device_decision_snapshot
     loader = AsyncMock(wraps=real_loader)
     monkeypatch.setattr(connectivity, "load_device_decision_snapshot", loader)
-    review = ReviewService()
     incidents = LifecycleIncidentService(publisher=event_bus)
-    reservation = RunReservationService(review=review)
+    reservation = RunReservationService()
     actions = LifecyclePolicyActionsService(
         publisher=event_bus,
         reservation=reservation,
@@ -240,7 +238,6 @@ async def test_fold_loads_one_decision_snapshot_per_applied_device(
         incidents=incidents,
         viability=AsyncMock(),
         node_manager=AsyncMock(),
-        review=review,
     )
     service = ConnectivityService(
         publisher=event_bus,
@@ -885,9 +882,8 @@ async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
         "complete_gather": True,
         "devices": [_unhealthy(settled_id), _unhealthy(failed_id)],
     }
-    review = ReviewService()
     incidents = LifecycleIncidentService(publisher=event_bus)
-    reservation = RunReservationService(review=review)
+    reservation = RunReservationService()
     actions = LifecyclePolicyActionsService(
         publisher=event_bus,
         reservation=reservation,
@@ -900,7 +896,6 @@ async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
         incidents=incidents,
         viability=AsyncMock(),
         node_manager=AsyncMock(),
-        review=review,
     )
     service = ConnectivityService(
         publisher=event_bus,
@@ -1110,9 +1105,8 @@ async def test_stale_failing_fold_enqueues_remediation_that_self_cancels(
 def _connectivity_with_real_lifecycle(
     db_session_maker: async_sessionmaker[AsyncSession],
 ) -> ConnectivityService:
-    review = ReviewService()
     incidents = LifecycleIncidentService(publisher=event_bus)
-    reservation = RunReservationService(review=review)
+    reservation = RunReservationService()
     actions = LifecyclePolicyActionsService(
         publisher=event_bus,
         reservation=reservation,
@@ -1125,7 +1119,6 @@ def _connectivity_with_real_lifecycle(
         incidents=incidents,
         viability=AsyncMock(),
         node_manager=AsyncMock(),
-        review=review,
     )
     return ConnectivityService(
         publisher=event_bus,

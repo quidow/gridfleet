@@ -1,7 +1,14 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import get_args
 
-from app.devices.services.health_view import build_public_summary, device_allows_allocation, merged_liveness
+from app.appium_nodes.services.effective_state import EffectiveNodeStateValue
+from app.devices.services.health_view import (
+    _NODE_STATE_TO_STATUS,
+    build_public_summary,
+    device_allows_allocation,
+    merged_liveness,
+)
 
 
 def _node(
@@ -42,8 +49,6 @@ def _device(
         session_viability_status=session_viability_status,
         session_viability_error=session_viability_error,
         session_viability_checked_at=session_viability_checked_at,
-        lifecycle_policy_state=None,
-        review_required=False,
         appium_node=appium_node,
     )
 
@@ -90,6 +95,24 @@ def test_node_verdict_stopped_is_unknown_not_failed() -> None:
 def test_node_verdict_transitional_warn() -> None:
     summary = build_public_summary(_device(appium_node=_node(pid=None, desired_state="running")))
     assert summary["node"]["status"] == "warn"
+
+
+def test_node_status_mapping_stays_in_lockstep_with_effective_state_vocabulary() -> None:
+    """``_NODE_STATE_TO_STATUS`` must cover exactly the live effective-state vocabulary.
+
+    ``blocked`` was removed from both the vocabulary (``EffectiveNodeStateValue``) and
+    this mapping together: a node in an active recovery backoff window no longer masks
+    as a synthetic ``blocked`` state, so it now reports its real process state's verdict
+    (``ok``/``warn``/``unknown``) here instead of being force-mapped to ``failed``. That
+    behavior can't be pinned directly at this layer — ``compute_effective_state`` no
+    longer takes any backoff/review input, so "a node in backoff" isn't a constructible
+    fixture here (the behavioral pin lives one layer down, at
+    ``test_effective_node_state.py::test_blocked_rung_is_gone``). What this test pins
+    instead is the structural guarantee that makes the old ``failed`` mapping
+    unreachable and would catch either half of this drift recurring: a stale entry for a
+    removed state, or a new state landing here with no verdict mapped to it.
+    """
+    assert set(_NODE_STATE_TO_STATUS) == set(get_args(EffectiveNodeStateValue))
 
 
 def test_viability_verdicts() -> None:
