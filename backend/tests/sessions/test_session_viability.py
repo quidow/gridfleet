@@ -753,6 +753,7 @@ async def test_check_due_devices_continues_after_a_series_raises(
     assert {call.args[0] for call in series.await_args_list} == {d1.id, d2.id}
     log_spy.assert_called_once()
     assert log_spy.call_args.args[1] == series.await_args_list[0].args[0]
+    assert log_spy.call_args.kwargs["exc_info"] is True
 
 
 async def test_probe_session_direct_passes_through_transport_error_as_indeterminate(

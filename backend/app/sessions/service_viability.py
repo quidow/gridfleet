@@ -87,8 +87,11 @@ SCHEDULED_PROBE_RETRY_DELAY_SEC = 10
 # worst attempt is 240 + 2 x 30 = 300 s at any supported setting combination.
 # The deadline check sits before the retry sleep, so the last attempt can start
 # at budget + delay: a cycle spends <= 180 + 10 + 300 = 490 s here, inside the
-# ~640 s the scheduler stall watchdog allows an appium_sweep cycle
-# (interval 30 + heartbeat grace 10 + stall grace 600).
+# ~640 s the scheduler stall watchdog allows an appium_sweep cycle (interval 30
+# + heartbeat grace 10 + stall grace 600) — provided the observation sweep
+# itself finishes inside the budget; a sweep slower than that is its own
+# unbounded term, which this constant does not bound and the watchdog still
+# catches.
 #
 # A device the budget *skipped* (no series started) is untouched and stays due;
 # the next pass (<= 60 s later) picks it up. A device *truncated* mid-series has
@@ -738,12 +741,20 @@ _PROBE_TERMINATE_ATTEMPTS = 2
 
 # Terminate is a DELETE against a session that already exists; it never needs the
 # cold-create budget it used to inherit. Uncapped, one probe attempt could cost
-# create + 2 x create = 3 x 240 s at max settings — past the ~640 s the scheduler
-# stall watchdog allows the whole appium_sweep cycle. The cap trades that for a
-# bounded wait: a node too wedged to answer in 30 s only leaks the probe session
-# to the observation sweep's orphan-kill pass (which covers probe rows), while
-# the watchdog keeps running. The sweep already terminates real sessions with
-# the 10 s client default, so 30 s is generous for a healthy node.
+# create + 2 x terminate = 3 x 240 s at max settings — past the ~640 s the
+# scheduler stall watchdog allows the whole appium_sweep cycle. The cap trades
+# that for a bounded wait: a node too wedged to answer in 30 s only leaks the
+# probe session to the observation sweep's orphan-kill pass (which covers probe
+# rows), while the watchdog keeps running. The sweep already terminates real
+# sessions with the 10 s client default, so 30 s is generous for a healthy node.
+#
+# ``_terminate_probe_session`` isn't reached from the scheduled pass alone:
+# ``probe_session_direct`` also backs the verification job's session probe
+# (``execution.VerificationExecutionService._run_probe_phase``, which passes
+# ``general.session_viability_timeout_sec`` straight through) and recovery-class
+# probes (``recovery_job._run_probe``, via ``run_session_viability_probe``). The
+# cap is benign-to-desirable for those callers too — the same bounded-wait
+# tradeoff holds regardless of who dials in.
 _PROBE_TERMINATE_TIMEOUT_CAP_SEC = 30
 
 
