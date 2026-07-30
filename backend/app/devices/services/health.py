@@ -21,7 +21,6 @@ from app.devices.services.health_view import (
 )
 from app.devices.services.intent import IntentService
 from app.devices.services.lifecycle_policy_state import clear_recovery_generation
-from app.lifecycle.services import remediation_log
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -71,10 +70,9 @@ def _maybe_emit_health_changed(
     device: Device,
     previous: dict[str, Any],
     *,
-    policy_view: dict[str, Any],
     publisher: EventPublisher,
 ) -> None:
-    nxt = build_public_summary(device, policy_view=policy_view)
+    nxt = build_public_summary(device)
     if _status_snapshot(previous) == _status_snapshot(nxt):
         return
     publisher.queue_for_session(
@@ -163,12 +161,12 @@ class DeviceHealthService:
         )
         if result is None:
             return None
-        previous, policy_view, updated = result
+        previous, updated = result
         if not healthy:
             if snapshot.recovery_generation is not None:
                 clear_recovery_generation(locked.device, expected=snapshot.recovery_generation)
             await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
-        _maybe_emit_health_changed(db, locked.device, previous, policy_view=policy_view, publisher=self._publisher)
+        _maybe_emit_health_changed(db, locked.device, previous, publisher=self._publisher)
         return updated
 
     async def _update_locked_device_checks_row(
@@ -181,7 +179,7 @@ class DeviceHealthService:
         summary: str,
         revision: int | None,
         observed_at: datetime | None,
-    ) -> tuple[dict[str, Any], dict[str, Any], DeviceDecisionSnapshot] | None:
+    ) -> tuple[dict[str, Any], DeviceDecisionSnapshot] | None:
         # Two-axis guard: a synchronous higher-authority writer passes no revision
         # and draws a fresh one at write time, so it always out-ranks a stale fold
         # observation whose (lower) revision was drawn earlier at ingest. A moved
@@ -190,8 +188,7 @@ class DeviceHealthService:
         rev = revision if revision is not None else await next_observation_revision(db)
         if rev <= locked.device_checks_observation_revision:
             return None
-        policy_view = remediation_log.build_policy_view(snapshot.ladder, locked.lifecycle_policy_state)
-        previous = build_public_summary(locked, policy_view=policy_view)
+        previous = build_public_summary(locked)
         was_failing = locked.device_checks_healthy is False
         locked.device_checks_healthy = healthy
         locked.device_checks_summary = summary
@@ -219,7 +216,7 @@ class DeviceHealthService:
             ),
             recovery_generation=None if not healthy else snapshot.recovery_generation,
         )
-        return previous, policy_view, updated
+        return previous, updated
 
     async def update_session_viability(
         self, db: AsyncSession, device: Device, *, status: str | None, error: str | None
@@ -227,16 +224,14 @@ class DeviceHealthService:
         locked = await _lock(db, device)
         if locked is None:
             return
-        ladder = await remediation_log.load_ladder(db, locked.id)
-        policy_view = remediation_log.build_policy_view(ladder, locked.lifecycle_policy_state)
-        previous = build_public_summary(locked, policy_view=policy_view)
+        previous = build_public_summary(locked)
         locked.session_viability_status = status
         locked.session_viability_error = error
         locked.session_viability_checked_at = now_utc()
         # Same asymmetry as update_device_checks: reconcile immediately on failure
         # (device goes offline), defer on success (rely on apply_node_state_transition
         # or the next reconciler scan tick).
-        _maybe_emit_health_changed(db, locked, previous, policy_view=policy_view, publisher=self._publisher)
+        _maybe_emit_health_changed(db, locked, previous, publisher=self._publisher)
 
     async def apply_node_state_transition(
         self,
@@ -287,10 +282,7 @@ class DeviceHealthService:
         locked.assert_active(db)
         device = locked.device
         device.appium_node = locked_node
-        previous = build_public_summary(
-            device,
-            policy_view=remediation_log.build_policy_view(snapshot.ladder, device.lifecycle_policy_state),
-        )
+        previous = build_public_summary(device)
         prev_running = locked_node.health_running
         prev_state = locked_node.health_state
         health_provided = not isinstance(health_running, UnsetType) or not isinstance(health_state, UnsetType)
@@ -325,11 +317,5 @@ class DeviceHealthService:
         )
         if should_act and should_reconcile:
             await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
-        _maybe_emit_health_changed(
-            db,
-            device,
-            previous,
-            policy_view=remediation_log.build_policy_view(updated.ladder, device.lifecycle_policy_state),
-            publisher=self._publisher,
-        )
+        _maybe_emit_health_changed(db, device, previous, publisher=self._publisher)
         return updated

@@ -98,7 +98,7 @@ def _overall(statuses: list[HealthVerdictStatus]) -> HealthVerdictStatus:
     return "ok"
 
 
-def build_public_summary(device: Device, *, policy_view: dict[str, Any] | None = None) -> dict[str, Any]:
+def build_public_summary(device: Device) -> dict[str, Any]:
     device_v = _device_verdict(device)
     node_v = _node_verdict(device)
     viability_v = _viability_verdict(device)

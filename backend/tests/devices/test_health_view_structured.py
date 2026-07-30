@@ -42,7 +42,6 @@ def _device(
         session_viability_status=session_viability_status,
         session_viability_error=session_viability_error,
         session_viability_checked_at=session_viability_checked_at,
-        lifecycle_policy_state=None,
         appium_node=appium_node,
     )
 

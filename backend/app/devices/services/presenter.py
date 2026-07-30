@@ -59,7 +59,7 @@ class DevicePresenterService:
             operational_state=projection.operational_state,
             now=projection.now,
         )
-        health_summary = device_health.build_public_summary(device, policy_view=policy)
+        health_summary = device_health.build_public_summary(device)
         needs_attention = device_attention.compute_needs_attention(
             projection.operational_state,
             projection.readiness.readiness_state,

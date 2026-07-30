@@ -7,6 +7,7 @@ from typing import get_args
 
 from app.appium_nodes.services.effective_state import EffectiveNodeStateValue, compute_effective_state
 from app.core.timeutil import now_utc
+from app.devices.schemas.device import EffectiveNodeState
 
 NOW = datetime(2026, 6, 7, 12, 0, 0, tzinfo=UTC)
 
@@ -65,11 +66,16 @@ def test_expired_watermark_self_clears_at_read_time() -> None:
 def test_blocked_rung_is_gone() -> None:
     """Backoff/review no longer mask the real process state (drift review 1.1/1.5).
 
-    ``EffectiveNodeStateValue`` is public vocabulary (OpenAPI -> frontend); this
-    pins that the synthetic ``blocked`` state stays removed. ``restarting`` is
+    ``EffectiveNodeStateValue`` is the computation vocabulary; ``EffectiveNodeState``
+    (``app.devices.schemas.device``) is the hand-maintained public OpenAPI copy the
+    frontend derives from. This pins that the synthetic ``blocked`` state stays
+    removed from both, and that the two vocabularies stay in lockstep — a schema
+    copy that drifts back to including ``"blocked"`` would type-check clean but
+    slip past a check that only looked at the service literal. ``restarting`` is
     the only synthetic rung left.
     """
     assert "blocked" not in get_args(EffectiveNodeStateValue)
+    assert set(get_args(EffectiveNodeState)) == set(get_args(EffectiveNodeStateValue))
     now = now_utc()
     state = compute_effective_state(
         pid=1234,
