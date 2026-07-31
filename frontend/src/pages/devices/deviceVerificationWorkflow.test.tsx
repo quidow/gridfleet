@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuthSession, DeviceVerificationJob, PlatformDescriptor } from '../../types';
+import type { AuthSession, DeviceVerificationJob, DeviceVerificationUpdate, PlatformDescriptor } from '../../types';
 import {
   getAllowedConnectionTypes,
   getAllowedDeviceTypes,
@@ -87,7 +87,12 @@ const androidMobileReal: PlatformDescriptor = {
   healthChecks: [],
   deviceFieldsSchema: [],
   defaultCapabilities: {},
-  connectionBehavior: {},
+  connectionBehavior: {
+    allow_transport_identity_until_host_resolution: true,
+    requires_connection_target: true,
+    requires_ip_address: false,
+  },
+  deviceTypeOverrides: {},
 };
 
 const genericNetworkEndpoint: PlatformDescriptor = {
@@ -105,11 +110,13 @@ const genericNetworkEndpoint: PlatformDescriptor = {
   deviceFieldsSchema: [],
   defaultCapabilities: {},
   connectionBehavior: {
+    allow_transport_identity_until_host_resolution: false,
     default_device_type: 'real_device',
     default_connection_type: 'network',
     requires_connection_target: true,
     requires_ip_address: false,
   },
+  deviceTypeOverrides: {},
 };
 
 const rokuNetworkEndpoint: PlatformDescriptor = {
@@ -121,6 +128,7 @@ const rokuNetworkEndpoint: PlatformDescriptor = {
   identityScheme: 'roku_serial',
   identityScope: 'global',
   connectionBehavior: {
+    allow_transport_identity_until_host_resolution: false,
     default_device_type: 'real_device',
     default_connection_type: 'network',
     requires_connection_target: false,
@@ -150,11 +158,11 @@ describe('descriptor-backed verification helpers', () => {
       deviceTypes: ['real_device'],
       connectionTypes: ['network'],
       deviceFieldsSchema: [
-        { id: 'use_preinstalled_wda', label: 'WDA', type: 'bool', default: true },
+        { id: 'use_preinstalled_wda', label: 'WDA', type: 'bool', default: true, required_for_session: false, sensitive: false },
       ],
     };
 
-    const form = normalizeFormForDescriptor({ platform_id: 'tvos' } as never, tvosReal);
+    const form = normalizeFormForDescriptor<DeviceVerificationUpdate>({ host_id: 'host-1', platform_id: 'tvos' }, tvosReal);
 
     expect((form.device_config as Record<string, unknown>)?.use_preinstalled_wda).toBe(true);
     expect(form.device_type).toBe('real_device');

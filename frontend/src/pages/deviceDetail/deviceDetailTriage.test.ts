@@ -15,10 +15,12 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     name: 'Lab Pixel',
     manufacturer: null,
     model: null,
+    model_number: null,
     needs_attention: false,
     os_version: '14',
     host_id: 'host-1',
     operational_state: 'available',
+    allocatable: true,
     device_type: 'real_device',
     connection_type: 'usb',
     ip_address: null,
@@ -26,6 +28,8 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     missing_setup_fields: [],
     verified_at: '2026-03-30T10:00:03Z',
     reservation: null,
+    is_reserved: false,
+    software_versions: null,
     lifecycle_policy_summary: {
       state: 'idle',
       label: 'Idle',
@@ -49,16 +53,13 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
       effective_state: 'running',
       started_at: '2026-03-30T10:00:03Z',
     },
-    sessions: [],
     ...overrides,
   };
 }
 
 function makeHealth(overrides: Partial<DeviceHealth> = {}): DeviceHealth {
   return {
-    pack_id: 'appium-uiautomator2',
-    platform_id: 'android_mobile',
-    platform_label: null,
+    platform: 'android_mobile',
     healthy: true,
     node: {
       running: true,
