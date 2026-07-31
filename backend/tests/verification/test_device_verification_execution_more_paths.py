@@ -37,7 +37,6 @@ def _make_svc(**overrides: object) -> VerificationExecutionService:
         "crud": DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         "viability": AsyncMock(),
         "capability": DeviceCapabilityService(),
-        "reconciler": AsyncMock(),
         "node_manager": AsyncMock(),
     }
     defaults.update(overrides)

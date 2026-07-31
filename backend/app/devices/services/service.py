@@ -233,22 +233,6 @@ class DeviceCrudService:
         page = list(result.scalars().all())
         return page, total
 
-    async def count_devices_by_filters(self, db: AsyncSession, filters: DeviceQueryFilters) -> int:
-        static_keys, dynamic_groups, member_of_keys = await self._partition_group_filters(db, filters)
-        if _has_post_filters(filters) or dynamic_groups:
-            return len(
-                await self._list_devices(
-                    db,
-                    filters,
-                    static_group_keys=static_keys,
-                    dynamic_groups=dynamic_groups,
-                    member_of_keys_by_dynamic_group_id=member_of_keys,
-                )
-            )
-
-        result = await db.execute(_build_device_count_stmt(filters, static_group_keys=static_keys))
-        return int(result.scalar() or 0)
-
     async def get_device(self, db: AsyncSession, device_id: uuid.UUID) -> Device | None:
         stmt = (
             select(Device)

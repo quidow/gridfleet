@@ -24,7 +24,6 @@ from app.devices.services.lifecycle_policy_state import (
     recovery_generation,
     set_recovery_generation,
 )
-from app.devices.services.lifecycle_policy_state import state as policy_state
 from app.devices.services.recovery_projection import recovery_availability_from_snapshot
 from app.devices.services.state import derive_operational_state, evaluate_operational_state
 from app.jobs import queue as job_queue
@@ -310,43 +309,6 @@ class LifecyclePolicyService:
             detail="Manager stopped the device automatically after a lifecycle failure",
         )
 
-    async def _prepare_health_failure(
-        self,
-        db: AsyncSession,
-        device: Device,
-        *,
-        source: str,
-        reason: str,
-    ) -> str:
-        locked = await device_locking.lock_device_handle(db, device.id)
-        await remediation_log.append_failure(db, locked, source=source, reason=reason)
-
-        if policy_state(device).get("maintenance_reason") is not None:
-            logger.info("health failure on maintenance-held device %s suppressed: %s", device.id, reason)
-            return "suppressed"
-
-        if await self._actions.has_running_client_session(db, device.id):
-            await remediation_log.append_action(
-                db,
-                locked,
-                source=source,
-                action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
-                reason=reason,
-            )
-            await self._incidents.record_lifecycle_incident(
-                db,
-                device,
-                DeviceEventType.lifecycle_deferred_stop,
-                LifecycleIncidentDetails(
-                    summary_state=DeviceLifecyclePolicySummaryState.deferred_stop,
-                    reason=reason,
-                    detail="Waiting for the active client session to finish",
-                    source=source,
-                ),
-            )
-            return "deferred"
-        return "stopped"
-
     async def handle_session_finished(self, db: AsyncSession, device: Device) -> DeferredStopOutcome:
         locked = await _reload_device(db, device)
         device = locked.device
@@ -402,23 +364,6 @@ class LifecyclePolicyService:
         so callers do not need to (and must not) pre-validate state.
         """
         return await self.handle_session_finished(db, device)
-
-    async def note_connectivity_loss(self, db: AsyncSession, device: Device, *, reason: str) -> None:
-        locked = await _reload_device(db, device)
-        await remediation_log.append_failure(db, locked, source="connectivity", reason=reason)
-
-        # D1: connectivity loss is not exclusion-worthy. The device transitions
-        # to offline through the connectivity loop's _stop_disconnected_node /
-        # node_health paths; the reservation entry stays intact and the scheduler
-        # treats offline devices as temporarily unavailable until recovery.
-        await self._actions.record_auto_stopped_incident(
-            db,
-            locked,
-            run=None,
-            reason=reason,
-            source="connectivity",
-            detail="Manager marked the device offline after connectivity loss",
-        )
 
     async def clear_escalation_residue_on_self_heal(self, db: AsyncSession, device: Device, *, reason: str) -> bool:
         """Reset the shared escalation ladder when a healthy device self-healed.
@@ -692,25 +637,6 @@ class LifecyclePolicyService:
             )
         await IntentService(db).reconcile_locked(locked, publisher=self._publisher, snapshot=updated)
         return True, updated
-
-    async def record_control_action(
-        self,
-        db: AsyncSession,
-        device: Device,
-        *,
-        action: str,
-        failure_source: str | None = None,
-        failure_reason: str | None = None,
-    ) -> None:
-        locked = await _reload_device(db, device)
-        if failure_source is not None:
-            await remediation_log.append_failure(
-                db,
-                locked,
-                source=failure_source,
-                reason=failure_reason or "Control action failure",
-            )
-        await remediation_log.append_action(db, locked, source=failure_source or "lifecycle", action=action)
 
     async def record_control_action_locked(
         self,

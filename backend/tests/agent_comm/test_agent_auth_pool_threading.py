@@ -61,7 +61,6 @@ async def test_verification_execution_forwards_pool(monkeypatch: pytest.MonkeyPa
         crud=AsyncMock(),
         viability=Mock(),
         capability=Mock(),
-        reconciler=AsyncMock(),
         node_manager=AsyncMock(),
     ).run_device_health({"stages": []}, effect, http_client_factory=MagicMock())
 

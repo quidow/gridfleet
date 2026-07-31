@@ -130,7 +130,7 @@ from tests.fold_fixtures import (
     device_health_loop_section,
     seed_fleet,
 )
-from tests.helpers import build_connectivity_service, dispatch_committed_events
+from tests.helpers import build_connectivity_service, dispatch_committed_events, run_status_push_observations
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -697,12 +697,12 @@ def test_bench_real_lifecycle_composition() -> None:
 
 
 def _observation_failure_total() -> float:
-    """Sum every child counter of HOST_PUSH_OBSERVATION_FAILURES. process_observations
-    swallows per-stage exceptions and bumps this; a stubbing gap would silently skip a
-    stage and undercount, so the whole-push bench asserts this does not rise.
+    """Sum every child counter of HOST_PUSH_OBSERVATION_FAILURES. The observation
+    stages swallow per-stage exceptions and bump this; a stubbing gap would silently
+    skip a stage and undercount, so the whole-push bench asserts this does not rise.
 
     Catches STAGE-level failures only: restart ingest, convergence, and each fold that
-    raises out of process_observations (including the dial-seam-bearing device_health
+    raises out of the observation stages (including the dial-seam-bearing device_health
     fold). It does NOT catch per-device/per-section errors that the properties and
     host_telemetry folds swallow internally within their own session boundaries +
     logger.exception -- acceptable here because those two folds have no agent-dial
@@ -878,7 +878,9 @@ async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: asyn
         tap.armed = True
         commits.armed = True
         t0 = perf_counter()
-        await service.process_observations(target=StatusPushTarget(host.id, host.ip, host.agent_port), payload=payload)
+        await run_status_push_observations(
+            service, target=StatusPushTarget(host.id, host.ip, host.agent_port), payload=payload
+        )
         wall_ms.append((perf_counter() - t0) * 1000)
         tap.armed = False
         commits.armed = False
@@ -886,7 +888,7 @@ async def test_bench_whole_push(db_session: AsyncSession, db_session_maker: asyn
     event.remove(engine, "before_cursor_execute", tap)
     event.remove(engine, "commit", commits)
     _report_whole_push(tap, commits, wall_ms)
-    # Guard: a stubbing gap would make process_observations silently skip a stage.
+    # Guard: a stubbing gap would make an observation stage silently skip.
     assert _observation_failure_total() == failures_before, "a whole-push stage failed (check dial stubs / wiring)"
 
 

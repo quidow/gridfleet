@@ -3,8 +3,8 @@
 
 Bug history: lifecycle JSON ownership is fragmented when modules outside the
 lifecycle policy facade mutate the column directly. Engineers reading older
-docs can misread ``record_control_action`` as the only writer and add a new
-direct JSON patch elsewhere. This static guard keeps the writer boundary
+docs can misread one of the remediation-log helpers as the only writer and add
+a new direct JSON patch elsewhere. This static guard keeps the writer boundary
 mechanical.
 """
 

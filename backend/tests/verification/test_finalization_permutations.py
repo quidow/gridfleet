@@ -83,7 +83,6 @@ def _build_execution_service(session_factory: object) -> VerificationExecutionSe
         crud=AsyncMock(),
         viability=_ViabilityStub(),
         capability=AsyncMock(),
-        reconciler=AsyncMock(),
         node_manager=AsyncMock(),
         session_factory=session_factory,  # type: ignore[arg-type]
     )

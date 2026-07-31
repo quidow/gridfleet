@@ -28,6 +28,7 @@ from tests.packs.factories import seed_test_packs
 if TYPE_CHECKING:
     from collections.abc import Collection
 
+    from app.core.type_defs import SessionFactory
     from app.devices.models import Device
 
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
@@ -119,7 +120,7 @@ async def test_create_session_handler_claims_then_creates(
     services: GridServices, seeded_available_device: Device, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,
@@ -183,7 +184,7 @@ async def test_cancel_and_lifecycle_handlers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,
@@ -250,7 +251,7 @@ async def test_same_ticket_race_produces_at_most_one_live_session(
     # Fake create_and_promote so the handler returns immediately after a claim,
     # leaving the pending row in place (ended_at is None -> counts as live).
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,
@@ -341,7 +342,7 @@ async def test_resume_interrupted_terminates_appium_with_no_open_transaction(
     # address, which is unroutable under test and costs a full OS TCP connect
     # timeout (75 s on macOS) before the handler falls through to "queued".
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,

@@ -13,7 +13,6 @@ from app.core import metrics_recorders as metrics
 from app.core.leader import state_store as control_plane_state_store
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc, parse_iso
-from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.schemas.device_health_push import DeviceHealthItem, parse_device_health_items
 from app.devices.services import link_repair
@@ -166,18 +165,6 @@ def _failure_elapsed_seconds(value: object, *, observed_at: datetime) -> float:
     if failing_since is None:
         return 0.0
     return max(0.0, (observed_at - failing_since).total_seconds())
-
-
-async def _stop_disconnected_node(db: AsyncSession, device: Device, *, health: DeviceHealthProtocol) -> None:
-    locked_device = await device_locking.lock_device(db, device.id)
-    if locked_device.appium_node is None or not locked_device.appium_node.observed_running:
-        return None
-
-    # The connectivity defer-stop is derived from device_checks_healthy IS FALSE (already
-    # written by the caller's update_device_checks). apply_node_state_transition reconciles
-    # inline on mark_offline=True, so the synthesized connectivity: stop takes effect here.
-    await health.apply_node_state_transition(db, locked_device, mark_offline=True)
-    return None
 
 
 class ConnectivityService:

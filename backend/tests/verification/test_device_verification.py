@@ -202,7 +202,6 @@ async def _wait_for_job(
                     crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     viability=_viability,
                     capability=DeviceCapabilityService(),
-                    reconciler=AsyncMock(),
                     session_factory=session_factory,
                     node_manager=node_manager
                     if node_manager is not None
@@ -1707,7 +1706,6 @@ async def test_stale_running_verification_jobs_are_reset_and_resumed(
                     crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                     viability=_viability2,
                     capability=DeviceCapabilityService(),
-                    reconciler=AsyncMock(),
                     session_factory=session_factory,
                     node_manager=ReconcilerAgentService(
                         settings=settings_service,
@@ -1955,7 +1953,6 @@ def _exec_with_factory(
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=viability if viability is not None else AsyncMock(),
         capability=DeviceCapabilityService(),
-        reconciler=AsyncMock(),
         node_manager=node_manager if node_manager is not None else AsyncMock(),
         session_factory=session_factory,  # type: ignore[arg-type]
     )

@@ -178,7 +178,6 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
     page, total = await crud.list_devices_paginated(db_session, filters, limit=1, offset=0)
     assert total == 1
     assert [device.id for device in page] == [available.id]
-    assert await crud.count_devices_by_filters(db_session, filters) == 1
 
     page, total = await crud.list_devices_paginated(
         db_session,
@@ -188,13 +187,6 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
     )
     assert total >= 2
     assert any(device.id == available.id for device in page)
-    assert (
-        await crud.count_devices_by_filters(
-            db_session,
-            DeviceQueryFilters(platform_id="android_mobile"),
-        )
-        >= 2
-    )
 
     maintenance_devices = await crud.list_devices_by_filters(
         db_session,

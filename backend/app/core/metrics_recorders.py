@@ -90,16 +90,6 @@ APPIUM_RECONCILER_HOST_CYCLE_SECONDS = Histogram(
     "Wall-clock duration of one host's Appium convergence cycle.",
     labelnames=("host_id",),
 )
-APPIUM_RECONCILER_START_FAILURES = Counter(
-    "appium_reconciler_start_failures_total",
-    "Agent-start failures observed by the Appium reconciler, labeled by reason.",
-    labelnames=("reason",),
-)
-APPIUM_RECONCILER_STOP_FAILURES = Counter(
-    "appium_reconciler_stop_failures_total",
-    "Agent-stop failures observed by the Appium reconciler, labeled by reason.",
-    labelnames=("reason",),
-)
 APPIUM_PULL_MODE_SKIPPED_ACTIONS = Counter(
     "gridfleet_appium_pull_mode_skipped_actions_total",
     "Agent-touching convergence actions skipped in pull mode, labeled by the action kind; "

@@ -293,7 +293,6 @@ async def test_device_verification_runner_missing_job_branches() -> None:
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=Mock(),
         capability=DeviceCapabilityService(),
-        reconciler=AsyncMock(),
         node_manager=AsyncMock(),
     )
     runner = VerificationRunnerService(
@@ -650,7 +649,6 @@ async def test_remaining_small_service_branches(monkeypatch: pytest.MonkeyPatch,
                 crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
-                reconciler=AsyncMock(),
                 node_manager=AsyncMock(),
             ),
         ),

@@ -64,7 +64,6 @@ def _make_service(db_session: AsyncSession) -> DurableJobService:
                 crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
                 viability=Mock(),
                 capability=DeviceCapabilityService(),
-                reconciler=AsyncMock(),
                 node_manager=AsyncMock(),
             ),
         ),

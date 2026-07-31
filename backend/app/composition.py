@@ -290,7 +290,6 @@ def compose_app(
         crud=crud_svc,
         viability=viability_svc,
         capability=device_capability_svc,
-        reconciler=reconciler_svc,
         node_manager=reconciler_agent_svc,
         session_factory=session_factory,
     )
