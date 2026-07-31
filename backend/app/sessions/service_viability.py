@@ -5,6 +5,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from prometheus_client import Counter
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -99,6 +100,18 @@ SCHEDULED_PROBE_RETRY_DELAY_SEC = 10
 # the next pass's available-only due set; it re-enters through device recovery
 # (connectivity._maybe_auto_recover), not through the scheduled pass.
 SCHEDULED_PASS_BUDGET_SEC = 180.0
+
+# The pass's only budget-pressure signal. F4 (its own BackgroundLoop) is gated
+# on these being steadily non-zero; a flat zero is the evidence to re-defer it.
+SESSION_VIABILITY_DEFERRED_TOTAL = Counter(
+    "gridfleet_session_viability_deferred",
+    "Due devices the scheduled pass did not start a series for, because the pass budget elapsed.",
+)
+
+SESSION_VIABILITY_TRUNCATED_TOTAL = Counter(
+    "gridfleet_session_viability_truncated",
+    "Series cut short mid-attempt because the pass budget elapsed.",
+)
 
 # §14.4a: a recovery-class probe may run on a device that is not yet ``available``.
 # It validates an ``offline`` device coming back from a node failure, or a
@@ -528,6 +541,7 @@ class SessionViabilityService:
                 return last
             if attempt < threshold - 1:
                 if deadline is not None and time.monotonic() >= deadline:
+                    SESSION_VIABILITY_TRUNCATED_TOTAL.inc()
                     logger.info(
                         "session_viability pass budget exhausted mid-series; truncating device %s after %d attempts",
                         device_id,
@@ -574,6 +588,7 @@ class SessionViabilityService:
             deadline = time.monotonic() + SCHEDULED_PASS_BUDGET_SEC
         for index, device_id in enumerate(due_ids):
             if time.monotonic() >= deadline:
+                SESSION_VIABILITY_DEFERRED_TOTAL.inc(len(due_ids) - index)
                 logger.info(
                     "session_viability pass budget exhausted; deferring %d of %d due devices to the next pass",
                     len(due_ids) - index,

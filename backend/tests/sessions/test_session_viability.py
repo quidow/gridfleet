@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from prometheus_client import REGISTRY
 from sqlalchemy import select, text
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -84,6 +85,13 @@ def _isolate_module_svc() -> Iterator[None]:
     yield
     _svc.__dict__.clear()
     _svc.__dict__.update(baseline)
+
+
+def _counter_total(name: str) -> float:
+    """Current value of an unlabelled counter. These are process-global and
+    other tests in the same xdist worker increment them, so every assertion
+    below is a delta across one call, never an absolute."""
+    return REGISTRY.get_sample_value(name) or 0.0
 
 
 async def run_session_viability_probe(
@@ -690,9 +698,17 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
 
     series = AsyncMock(side_effect=_stamping_series)
     monkeypatch.setattr(_svc, "run_scheduled_probe_series", series)
+    deferred_before = _counter_total("gridfleet_session_viability_deferred_total")
     await _check_due_devices(db_session)
+    deferred_after = _counter_total("gridfleet_session_viability_deferred_total")
 
     assert series.await_count == 1
+    # Two devices are due and the second is deferred, so the counter moves by
+    # exactly the number of devices the break skipped: len(due_ids) - index.
+    # This is the metric F4's "does the delay matter in practice" question
+    # reads, so a wrong arithmetic (e.g. inc(1) instead of the remaining
+    # count) has to fail here.
+    assert deferred_after - deferred_before == 1.0
     assert series.await_args is not None
     assert series.await_args.kwargs["deadline"] == session_viability.SCHEDULED_PASS_BUDGET_SEC
 
@@ -2467,17 +2483,21 @@ async def test_scheduled_series_stops_at_the_pass_deadline(
     monkeypatch.setattr(_svc, "probe_session_direct", probe)
     monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
 
+    truncated_before = _counter_total("gridfleet_session_viability_truncated_total")
     state = await _run_scheduled_probe_series(
         db_session,
         device,
         settings=FakeSettingsReader(dict(_SERIES_SETTINGS)),
         deadline=time.monotonic() - 1.0,
     )
+    truncated_after = _counter_total("gridfleet_session_viability_truncated_total")
 
     assert state is not None and state["status"] == "failed"
     assert state["consecutive_failures"] == 1
     assert probe.await_count == 1
     sleeper.assert_not_awaited()
+    # One series, cut short once: the counter counts series, not attempts.
+    assert truncated_after - truncated_before == 1.0
 
 
 def _series_service_with_real_health(db: AsyncSession) -> SessionViabilityService:
