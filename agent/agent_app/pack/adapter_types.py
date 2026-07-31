@@ -82,9 +82,12 @@ class HealthContext(Protocol):
     ip_ping_count: int | None
     # Manifest-claimed parallel-resource ports for the device's node, keyed by
     # capability name (e.g. "appium:systemPort"); None when the caller supplies
-    # no claims. ``has_live_session`` is False only when the control plane
-    # positively knows no client session or viability probe is live for this
-    # device; None = unknown. Adapters must read both via
+    # no claims. ``has_live_session`` is False only when the agent positively
+    # knows nothing is live for this device: no client session, no viability
+    # probe, no unresolved enumeration, and nothing that ended inside the
+    # session settle grace (a driver-forwarded port outlives its session). True
+    # therefore covers live, unknown, and settling alike; None = the caller
+    # supplied nothing. Adapters must read both via
     # ``getattr(ctx, "...", None)`` so old/new agent-adapter combos degrade to
     # skipping port checks.
     claimed_ports: dict[str, int] | None
