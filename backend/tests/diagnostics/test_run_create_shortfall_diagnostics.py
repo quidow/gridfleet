@@ -27,7 +27,7 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
+pytestmark = pytest.mark.usefixtures("seeded_driver_packs", "stub_node_poke")
 
 
 def _make_allocator_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunAllocatorService:

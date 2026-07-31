@@ -65,6 +65,8 @@ if TYPE_CHECKING:
     from app.agent_comm.client import AgentClientFactory
     from app.hosts.models import Host
 
+pytestmark = pytest.mark.usefixtures("stub_node_poke")
+
 
 def _noop_circuit_breaker() -> Mock:
     """Return a permissive circuit-breaker mock (before_request always allows)."""

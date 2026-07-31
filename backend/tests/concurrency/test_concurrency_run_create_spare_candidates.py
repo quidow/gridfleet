@@ -26,7 +26,7 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs", "stub_node_poke")]
 
 
 async def test_create_run_falls_back_to_spare_when_first_pick_is_locked(

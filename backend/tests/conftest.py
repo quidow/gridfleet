@@ -289,6 +289,26 @@ async def reset_test_http_pool() -> AsyncGenerator[None]:
     await test_http_pool.reopen()
 
 
+@pytest.fixture
+def stub_node_poke(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the agent wake hint off the network. Opt in via ``usefixtures``.
+
+    ``poke_node_refresh_target`` is best-effort and swallows its own failures, so
+    a test that triggers one still passes -- it just blocks first. Host fixtures
+    carry RFC1918 addresses that blackhole rather than refuse, so the connect
+    burns the full ``NODE_POKE_TIMEOUT_SEC`` before the exception is discarded.
+    Node control, run creation and verification all reach the agent through this
+    one shared function, so stubbing it covers every caller in a module.
+
+    Deliberately not ``autouse``: ``tests/agent_comm/test_agent_operations.py``
+    exercises ``agent_nodes_refresh`` itself, and suppressing the poke fleet-wide
+    also keeps failures off the circuit breaker, which changes whether later
+    agent calls dial out at all. Tests that assert a poke happened patch their
+    own module's reference to ``poke_node_refresh_target``, one level above this.
+    """
+    monkeypatch.setattr(agent_operations, "agent_nodes_refresh", AsyncMock())
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def reset_process_config() -> AsyncGenerator[None]:
     from app.agent_comm import agent_settings

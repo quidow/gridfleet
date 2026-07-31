@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 _settings = FakeSettingsReader({})
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs", "stub_node_poke")]
 
 
 async def test_create_run_retries_when_candidate_row_transiently_locked(

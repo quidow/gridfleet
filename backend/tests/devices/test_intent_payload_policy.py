@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
     from app.hosts.models import Host
 
-pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs", "stub_node_poke")]
 
 
 # ---------------------------------------------------------------------------
