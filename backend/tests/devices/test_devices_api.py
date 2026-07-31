@@ -11,6 +11,7 @@ from sqlalchemy.orm import raiseload, selectinload
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import (
     ConnectionType,
     Device,
@@ -625,8 +626,13 @@ async def test_list_devices_filter_status_busy_overrides_reserved_hold(
     from tests.helpers import create_reservation
 
     db_session.add(Session(session_id="status-busy", device_id=busy_reserved.id, status=SessionStatus.running))
+    # Flush the fixture row from this test frame before the lock/intent calls below:
+    # otherwise their first SELECT autoflushes it and the device-lock guard attributes
+    # the write to whichever app module triggered that autoflush.
+    await db_session.flush()
+    verifying_reserved_locked = await device_locking.lock_device_handle(db_session, verifying_reserved.id)
     await IntentService(db_session).register_intents(
-        device_id=verifying_reserved.id,
+        locked=verifying_reserved_locked,
         intents=[
             IntentRegistration(
                 source=verification_intent_source(verifying_reserved.id),

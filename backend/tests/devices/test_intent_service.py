@@ -34,9 +34,10 @@ def test_appium_node_has_orchestration_columns() -> None:
 async def test_register_intents_batches(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="intent-batch")
     service = IntentService(db_session)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
 
     registered = await service.register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:stop:node:{device.id}",
@@ -77,10 +78,11 @@ async def test_register_intents_rejects_duplicate_sources_before_upsert(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="intent-duplicate-source")
     service = IntentService(db_session)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
 
     with pytest.raises(ValueError, match="Duplicate intent source"):
         await service.register_intents(
-            device_id=device.id,
+            locked=locked,
             intents=[
                 IntentRegistration(
                     source=f"operator:stop:node:{device.id}",
@@ -104,8 +106,9 @@ async def test_register_intents_rejects_duplicate_sources_before_upsert(
 async def test_revoke_intent_deletes(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="intent-revoke")
     service = IntentService(db_session)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await service.register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:start:{device.id}",
@@ -117,8 +120,9 @@ async def test_revoke_intent_deletes(db_session: AsyncSession, db_host: Host) ->
     await db_session.commit()
 
     source = f"operator:start:{device.id}"
-    revoked = await service.revoke_intent(device_id=device.id, source=source)
-    missing = await service.revoke_intent(device_id=device.id, source=source)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    revoked = await service.revoke_intent(locked=locked, source=source)
+    missing = await service.revoke_intent(locked=locked, source=source)
     await db_session.commit()
 
     intents = (
@@ -143,8 +147,9 @@ async def test_register_rollout_preserves_concurrent_stamp_for_same_target(
     service = IntentService(db_session)
     source = release_rollout_intent_source(device.id)
     # Seed a stamped rollout intent (the concurrent inline reconcile's write).
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await service.register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=source,
@@ -156,8 +161,9 @@ async def test_register_rollout_preserves_concurrent_stamp_for_same_target(
     await db_session.commit()
 
     # Stage re-registers from a stale snapshot (no stamp) for the same target.
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await service.register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=source,
@@ -187,8 +193,9 @@ async def test_register_rollout_resets_stamp_when_target_changes(db_session: Asy
     device = await create_device(db_session, host_id=db_host.id, name="rollout-reset")
     service = IntentService(db_session)
     source = release_rollout_intent_source(device.id)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await service.register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=source,
@@ -199,8 +206,9 @@ async def test_register_rollout_resets_stamp_when_target_changes(db_session: Asy
     )
     await db_session.commit()
 
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await service.register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=source,
@@ -284,8 +292,9 @@ async def test_reconcile_locked_rejects_inactive_lock_proof(db_session: AsyncSes
 async def test_register_intents_empty_batch_is_noop(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="intent-empty")
     service = IntentService(db_session)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
 
-    assert await service.register_intents(device_id=device.id, intents=[]) == []
+    assert await service.register_intents(locked=locked, intents=[]) == []
     intents = (
         (await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device.id))).scalars().all()
     )

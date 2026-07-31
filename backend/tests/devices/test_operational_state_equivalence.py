@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.fleet_capacity import _count_devices
 from app.devices.services.intent import IntentService
@@ -152,8 +153,9 @@ async def test_operational_state_evaluator_and_sql_agree(
     await db_session.flush()
 
     leased = await add_device("verification-live", DeviceOperationalState.verifying)
+    leased_locked = await device_locking.lock_device_handle(db_session, leased.id)
     await IntentService(db_session).register_intents(
-        device_id=leased.id,
+        locked=leased_locked,
         intents=[
             IntentRegistration(
                 source=verification_intent_source(leased.id),
@@ -166,8 +168,9 @@ async def test_operational_state_evaluator_and_sql_agree(
     await db_session.flush()
 
     expired = await add_device("verification-expired", DeviceOperationalState.available)
+    expired_locked = await device_locking.lock_device_handle(db_session, expired.id)
     await IntentService(db_session).register_intents(
-        device_id=expired.id,
+        locked=expired_locked,
         intents=[
             IntentRegistration(
                 source=verification_intent_source(expired.id),

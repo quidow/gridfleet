@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import select
 
 import app.sessions.live_session_predicate as session_axis
+from app.devices import locking as device_locking
 from app.devices.models import Device
 from app.devices.services import claims
 from app.devices.services.intent import IntentService
@@ -95,8 +96,9 @@ def test_live_status_pair_is_not_recomposed_inline() -> None:
 async def test_verification_lease_sql_predicate_matches_row_helper(db_session: AsyncSession, db_host: Host) -> None:
     now = datetime.now(UTC)
     device = await create_device(db_session, host_id=db_host.id, name="claims-contract-verification")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     registered = await IntentService(db_session).register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=verification_intent_source(device.id),

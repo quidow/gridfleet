@@ -50,8 +50,9 @@ async def test_clean_device_allows_recovery(db_session: AsyncSession, db_host: H
 
 async def test_operator_recovery_deny_blocks(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="op-deny")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await IntentService(db_session).register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:stop:recovery:{device.id}",
@@ -126,8 +127,9 @@ async def test_backoff_window_blocks(db_session: AsyncSession, db_host: Host) ->
 
 
 async def _seed_operator_deny(db_session: AsyncSession, device: Device) -> None:
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await IntentService(db_session).register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:stop:recovery:{device.id}",

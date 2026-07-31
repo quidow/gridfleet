@@ -70,8 +70,9 @@ async def _make_available_device(db_session: AsyncSession, db_host: Host, *, ide
 async def _register_operator_deny(db_session: AsyncSession, device: Device) -> None:
     # A real operator stop registers both the node-process stop and the recovery
     # deny; operator_stop_active (the N13 stickiness gate) keys on the node stop.
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await IntentService(db_session).register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:stop:node:{device.id}",

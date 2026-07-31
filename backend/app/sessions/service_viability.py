@@ -427,7 +427,7 @@ class SessionViabilityService:
             # background auto-recovery on an `offline` device (no lease present).
             if checked_by == SessionViabilityCheckedBy.recovery:
                 await IntentService(db).revoke_intents(
-                    device_id=locked.device.id,
+                    locked=locked,
                     sources=[verification_intent_source(locked.device.id)],
                 )
             # Derive the post-probe state inline: the probe row is terminal and a

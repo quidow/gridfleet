@@ -356,6 +356,7 @@ async def reconcile_locked_device(
 async def _apply_rollout_stamp(
     db: AsyncSession,
     *,
+    locked: LockedDevice,
     device_id: uuid.UUID,
     observed_pack_release: str | None,
     stored: tuple[IntentSnapshot, ...],
@@ -369,6 +370,7 @@ async def _apply_rollout_stamp(
     Returns the intent list with a converged rollout row removed so the
     decision ladder below does not see it.
     """
+    locked.assert_active(db)
     rollout_source = release_rollout_intent_source(device_id)
     rollout_row = next((row for row in stored if row.source == rollout_source), None)
     target_release = rollout_row.payload.get("target_release") if rollout_row is not None else None
@@ -379,11 +381,16 @@ async def _apply_rollout_stamp(
     # remains the backstop for the no-longer-candidate cases.
     if rollout_row is not None and target_release is not None and observed_pack_release == target_release:
         # No explicit synchronize_session: the implicit "auto" default resolves to
-        # "evaluate" for this single-column PK equality and already evicts the
+        # "evaluate" for this PK-and-device_id equality and already evicts the
         # matched row from the identity map (measured on SQLAlchemy 2.0.51).
         # synchronize_session=False is the one setting that would leave a ghost —
-        # this statement must not adopt it.
-        await db.execute(delete(DeviceIntent).where(DeviceIntent.id == rollout_row.id))
+        # this statement must not adopt it. The device_id conjunct is redundant
+        # with the PK (a row's device_id never changes) but is what lets the
+        # device-lock guard derive this statement's target device from its own
+        # WHERE clause rather than an id lookup it cannot correlate.
+        await db.execute(
+            delete(DeviceIntent).where(DeviceIntent.id == rollout_row.id, DeviceIntent.device_id == device_id)
+        )
         return tuple(row for row in stored if row.id != rollout_row.id)
     # Stamp gate: mint restart_requested_at once the rollout can safely apply.
     # Finding 7: parse_command is the single liveness authority (expiry,
@@ -407,7 +414,11 @@ async def _apply_rollout_stamp(
         and not has_live_session
     ):
         payload = {**rollout_row.payload, "restart_requested_at": now.isoformat()}
-        await db.execute(update(DeviceIntent).where(DeviceIntent.id == rollout_row.id).values(payload=payload))
+        await db.execute(
+            update(DeviceIntent)
+            .where(DeviceIntent.id == rollout_row.id, DeviceIntent.device_id == device_id)
+            .values(payload=payload)
+        )
         return tuple(replace(row, payload=payload) if row.id == rollout_row.id else row for row in stored)
     return stored
 
@@ -444,6 +455,7 @@ async def _reconcile_locked_device(
         return False
     stored = await _apply_rollout_stamp(
         db,
+        locked=locked,
         device_id=device.id,
         observed_pack_release=snapshot.node_observed_pack_release,
         stored=snapshot.intents,
@@ -455,7 +467,7 @@ async def _reconcile_locked_device(
     commands = [command for row in stored if (command := parse_command(row, now)) is not None]
     return await _apply_reconcile_decisions(
         db,
-        device=device,
+        locked=locked,
         node=node,
         commands=commands,
         facts=snapshot.decision_facts,
@@ -471,7 +483,7 @@ async def _reconcile_locked_device(
 async def _apply_reconcile_decisions(  # noqa: PLR0913 - keyword-only snapshot facts folded into one write pass
     db: AsyncSession,
     *,
-    device: Device,
+    locked: LockedDevice,
     node: AppiumNode,
     commands: list[Command],
     facts: DecisionFacts,
@@ -482,6 +494,8 @@ async def _apply_reconcile_decisions(  # noqa: PLR0913 - keyword-only snapshot f
     state_facts: DeviceStateFacts,
     publisher: EventPublisher,
 ) -> bool:
+    locked.assert_active(db)
+    device = locked.device
     node_decision = decide_node_process(commands, facts)
     grid_decision = decide_grid_routing(facts)
     target_state, node_accepting_new_sessions, stop_pending = map_node_process_decision(node_decision)

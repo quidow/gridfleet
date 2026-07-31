@@ -29,9 +29,11 @@ class IntentService:
     async def register_intents(
         self,
         *,
-        device_id: UUID,
+        locked: LockedDevice,
         intents: list[IntentRegistration],
     ) -> list[DeviceIntent]:
+        locked.assert_active(self._db)
+        device_id = locked.device.id
         if not intents:
             return []
         seen_sources: set[str] = set()
@@ -129,7 +131,9 @@ class IntentService:
         intents_by_id = {intent.id: intent for intent in result.scalars().all()}
         return [intents_by_id[ids_by_source[intent.source]] for intent in intents]
 
-    async def revoke_intent(self, *, device_id: UUID, source: str) -> bool:
+    async def revoke_intent(self, *, locked: LockedDevice, source: str) -> bool:
+        locked.assert_active(self._db)
+        device_id = locked.device.id
         stmt = (
             delete(DeviceIntent)
             .where(DeviceIntent.device_id == device_id, DeviceIntent.source == source)
@@ -138,10 +142,10 @@ class IntentService:
         intent_id = (await self._db.execute(stmt)).scalar_one_or_none()
         return intent_id is not None
 
-    async def revoke_intents(self, *, device_id: UUID, sources: list[str]) -> int:
+    async def revoke_intents(self, *, locked: LockedDevice, sources: list[str]) -> int:
         revoked = 0
         for source in sources:
-            if await self.revoke_intent(device_id=device_id, source=source):
+            if await self.revoke_intent(locked=locked, source=source):
                 revoked += 1
         return revoked
 
@@ -149,7 +153,7 @@ class IntentService:
         self,
         device_id: UUID,
         *,
-        mutate: Callable[[], Awaitable[object]] | None = None,
+        mutate: Callable[[LockedDevice], Awaitable[object]] | None = None,
         publisher: EventPublisher,
         flush_first: bool = False,
     ) -> None:
@@ -162,7 +166,7 @@ class IntentService:
         # and the background scan serialize on the same single lock.
         locked = await device_locking.lock_device_handle(self._db, device_id)
         if mutate is not None:
-            await mutate()
+            await mutate(locked)
         await reconcile_locked_device(self._db, locked, publisher=publisher)
 
     async def reconcile_now(
@@ -210,7 +214,7 @@ class IntentService:
     ) -> None:
         await self._lock_mutate_reconcile(
             device_id,
-            mutate=lambda: self.register_intents(device_id=device_id, intents=intents),
+            mutate=lambda locked: self.register_intents(locked=locked, intents=intents),
             publisher=publisher,
         )
 
@@ -223,6 +227,6 @@ class IntentService:
     ) -> None:
         await self._lock_mutate_reconcile(
             device_id,
-            mutate=lambda: self.revoke_intents(device_id=device_id, sources=sources),
+            mutate=lambda locked: self.revoke_intents(locked=locked, sources=sources),
             publisher=publisher,
         )

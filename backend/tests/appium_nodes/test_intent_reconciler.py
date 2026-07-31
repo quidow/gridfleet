@@ -158,8 +158,9 @@ async def test_expired_intents_are_deleted_and_reconciled(
     device = await create_device(db_session, host_id=db_host.id, name="expired")
     await _seed_node(db_session, device.id)
     service = IntentService(db_session)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await service.register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:start:{device.id}",
@@ -189,8 +190,9 @@ async def test_inventory_flags_only_devices_with_expired_intents(
 ) -> None:
     expired = await create_device(db_session, host_id=db_host.id, name="inventory-expired")
     healthy = await create_device(db_session, host_id=db_host.id, name="inventory-healthy")
+    expired_locked = await device_locking.lock_device_handle(db_session, expired.id)
     await IntentService(db_session).register_intents(
-        device_id=expired.id,
+        locked=expired_locked,
         intents=[
             IntentRegistration(
                 source=f"operator:start:{expired.id}",
@@ -315,8 +317,9 @@ async def test_hard_stop_on_idle_device_stages_agent_drain(
     node.active_connection_target = device.connection_target
     await db_session.commit()
     service = IntentService(db_session)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await service.register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:stop:node:{device.id}",
@@ -474,8 +477,9 @@ async def test_pull_host_metadata_only_change_gates_the_poke(
     node.accepting_new_sessions = False
     await db_session.commit()
     service = IntentService(db_session)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await service.register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:start:{device.id}",
@@ -566,8 +570,9 @@ async def test_gc_expired_intents_deletes_rows_only(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="gc-expired")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await IntentService(db_session).register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:start:{device.id}",
@@ -675,8 +680,9 @@ async def test_start_intent_stale_payload_port_is_overridden_by_live_node_port(
     node = await _seed_node(db_session, device.id)
     node.port = 4725  # fallback start moved the node here; payload below predates the move
     await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await IntentService(db_session).register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:start:{device.id}",

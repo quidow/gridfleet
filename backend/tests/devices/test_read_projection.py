@@ -13,6 +13,7 @@ from sqlalchemy import event, select
 from sqlalchemy.orm import raiseload, selectinload
 
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceGroup, DeviceGroupMembership, DeviceOperationalState, GroupType
 from app.devices.services import presenter as presenter_module
 from app.devices.services import read_projection as read_projection_module
@@ -186,8 +187,9 @@ async def _seed_projected_device(
         verified=True,
     )
     run = await create_reserved_run(db_session, name=f"run-{prefix}", devices=[device])
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await IntentService(db_session).register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:stop:recovery:{device.id}",

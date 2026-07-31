@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
+from app.devices import locking as device_locking
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceRemediationLogEntry
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import CommandKind, IntentRegistration
@@ -158,8 +159,9 @@ async def test_reconciler_reset_is_conditioned_on_episode_source(db_session: Asy
 async def test_operator_stop_keeps_self_heal_sticky(db_session: AsyncSession, db_host: Host) -> None:
     settings = _settings()
     device = await create_device(db_session, host_id=db_host.id, name="supersession-operator-sticky")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await IntentService(db_session).register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:stop:node:{device.id}",

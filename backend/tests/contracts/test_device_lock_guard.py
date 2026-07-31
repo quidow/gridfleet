@@ -232,8 +232,6 @@ def test_unproven_sites_only_shrink() -> None:
             # property this test exists to deny. Do not deduplicate.
             "app/appium_nodes/services/desired_state_writer.py",
             "app/devices/services/data_cleanup.py",
-            "app/devices/services/intent.py",
-            "app/devices/services/intent_reconciler.py",
             "app/devices/services/remediation.py",
             "app/devices/services/state.py",
             "app/grid/allocation.py",
