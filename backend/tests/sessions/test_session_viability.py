@@ -724,9 +724,6 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
     assert series.await_args is not None
     assert series.await_args.kwargs["deadline"] == session_viability.SCHEDULED_PASS_BUDGET_SEC
 
-    # The probed device was stamped; the deferred one was not. The stale stamp
-    # survives only on the deferred device, so the next pass finds exactly it
-    # still due.
     # The due-set query has no ORDER BY, so which device is probed is not
     # fixed — whichever it was, the other two must be untouched and still due.
     remaining = {device.id: device for device in (d1, d2, d3)}

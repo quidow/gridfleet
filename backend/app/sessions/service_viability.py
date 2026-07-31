@@ -106,6 +106,15 @@ SCHEDULED_PASS_BUDGET_SEC = 180.0
 
 # The pass's only budget-pressure signal. F4 (its own BackgroundLoop) is gated
 # on these being steadily non-zero; a flat zero is the evidence to re-defer it.
+#
+# Read them on the scheduler, not on the port-mapped API service: both counters
+# are registered in every process but only ever incremented where the loops run
+# (GRIDFLEET_RUN_BACKGROUND_LOOPS), and the registry is per-process — there is
+# no multiprocess aggregation. In prod that means backend:8000/metrics reports a
+# permanent 0.0 no matter the pressure, while backend-scheduler:8000/metrics (no
+# host port; scrape from inside the network) carries the real values. See
+# docs/runbooks/slow-system.md for the exec-and-urllib recipe the outbox gauges
+# already use.
 SESSION_VIABILITY_DEFERRED_TOTAL = Counter(
     "gridfleet_session_viability_deferred",
     "Due devices the scheduled pass did not start a series for, because the pass budget elapsed.",
@@ -564,12 +573,12 @@ class SessionViabilityService:
         the pass stops starting new series once ``deadline`` elapses (the owning
         sweep anchors it at tick start and every caller must, so the anchoring
         is enforced at the call site) and passes the same deadline into the
-        series so a running one also stops retrying past it. A string of broken devices therefore cannot hold the
-        appium_sweep cycle past the scheduler stall watchdog. A device skipped
-        before its first attempt is untouched and stays due for the next pass;
-        a device truncated mid-series has recorded a failed attempt and is
-        parked offline, and comes back through device recovery rather than the
-        next due set.
+        series so a running one also stops retrying past it. A string of broken
+        devices therefore cannot hold the appium_sweep cycle past the scheduler
+        stall watchdog. A device skipped before its first attempt is untouched
+        and stays due for the next pass; a device truncated mid-series has
+        recorded a failed attempt and is parked offline, and comes back through
+        device recovery rather than the next due set.
 
         A failing series is contained to its own device: the device row can be
         deleted between the due-set build and its series (``lock_device_handle``

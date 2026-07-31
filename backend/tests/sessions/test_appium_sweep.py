@@ -115,9 +115,12 @@ async def test_cycle_anchors_the_viability_deadline_at_tick_start() -> None:
 
 
 async def test_a_slow_sweep_starves_the_viability_pass(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A sync slower than the whole pass budget leaves the viability pass with
-    a deadline already in the past, so ``check_due_devices`` admits no series
-    at all — while the throttle stamp still records that a pass "ran".
+    """A sync slower than the whole pass budget hands the viability pass a
+    deadline that is already in the past — while the throttle stamp still
+    records that a pass "ran". What that past deadline then does inside the
+    pass (admit no series at all) is pinned separately, by
+    ``test_check_due_devices_defers_series_past_the_pass_budget``; this test
+    stops at the loop boundary, where ``check_due_devices`` is a stub.
 
     This is the load-bearing consequence of anchoring the budget at tick start
     (the ``SCHEDULED_PASS_BUDGET_SEC`` comment block documents it), and it was
