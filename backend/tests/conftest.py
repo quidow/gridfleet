@@ -733,6 +733,7 @@ async def client(db_session: AsyncSession, pack_storage_root: Path) -> AsyncGene
                 pool=test_http_pool,
                 circuit_breaker=test_circuit_breaker,
                 session_factory=sf,
+                incidents=LifecycleIncidentService(),
             ),
             reconciler_agent=ReconcilerAgentService(
                 settings=settings_service,

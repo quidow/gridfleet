@@ -10,6 +10,7 @@ from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services.reconciler_agent import NodeStartDetails
 from app.appium_nodes.services.reconciler_convergence import DesiredRow
 from app.hosts.models import HostStatus
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader
 
 if TYPE_CHECKING:
@@ -27,6 +28,7 @@ async def test_converge_device_now_return_paths(monkeypatch: pytest.MonkeyPatch)
         pool=None,
         circuit_breaker=Mock(),
         session_factory=factory,  # type: ignore[arg-type]
+        incidents=LifecycleIncidentService(),
     )
 
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_row", AsyncMock(return_value=None))
@@ -51,6 +53,7 @@ async def test_converge_device_now_pokes_agent_without_agent_io(monkeypatch: pyt
         pool=None,
         circuit_breaker=circuit_breaker,
         session_factory=factory,  # type: ignore[arg-type]
+        incidents=LifecycleIncidentService(),
     )
     row = SimpleNamespace(device_id=device_id, host_id=uuid.uuid4(), node_id=uuid.uuid4())
     monkeypatch.setattr(appium_reconciler, "_fetch_desired_row", AsyncMock(return_value=row))
@@ -117,6 +120,7 @@ def _service(session_factory: object) -> ReconcilerService:
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=session_factory,  # type: ignore[arg-type]
+        incidents=LifecycleIncidentService(),
     )
 
 
@@ -223,6 +227,7 @@ async def test_reconcile_host_returns_for_malformed_appium_processes(monkeypatch
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=_mock_session_factory,
+        incidents=LifecycleIncidentService(),
     )
     await service.reconcile_host(
         host_id=row.host_id,

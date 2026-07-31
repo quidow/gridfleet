@@ -15,6 +15,7 @@ from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
 from app.devices.services.intent_reconciler import reconcile_device
 from app.lifecycle.services import remediation_log
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.contracts.test_no_direct_device_state_writes import PROTECTED_COLUMN_WRITERS
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -126,6 +127,7 @@ async def test_repin_survives_a_backoff_window_opened_by_another_source(
     await _record_start_failure(
         _row(device, db_host.id, node),
         reason="port_conflict",
+        incidents=LifecycleIncidentService(),
         conflict_port=CONFLICT_PORT,
         session_factory=db_session_maker,
         settings=SETTINGS,

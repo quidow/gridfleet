@@ -74,8 +74,8 @@ async def test_probe_create_window_spared_by_pending_row(
     await db_session.commit()
     terminated: list[Any] = []
 
-    async def fake_list(_target: str, **_: object) -> list[str]:
-        return ["probe-live-uuid"]
+    async def fake_list(_target: str, **_: object) -> tuple[list[str], bool]:
+        return ["probe-live-uuid"], False
 
     async def fake_terminate(t: str, sid: str, **_: object) -> bool:
         terminated.append((t, sid))
@@ -107,8 +107,8 @@ async def test_running_probe_row_matches_like_any_session(
     await db_session.commit()
     terminated: list[Any] = []
 
-    async def fake_list(_target: str, **_: object) -> list[str]:
-        return ["probe-live-uuid"]
+    async def fake_list(_target: str, **_: object) -> tuple[list[str], bool]:
+        return ["probe-live-uuid"], False
 
     async def fake_terminate(t: str, sid: str, **_: object) -> bool:
         terminated.append((t, sid))
@@ -152,8 +152,8 @@ async def test_crash_orphaned_probe_row_reaped_and_appium_session_killed(
         terminated.append((t, sid))
         return True
 
-    async def fake_list(_target: str, **_: object) -> list[str]:
-        return []
+    async def fake_list(_target: str, **_: object) -> tuple[list[str], bool]:
+        return [], False
 
     monkeypatch.setattr(service_sync.appium_direct, "terminate_session", fake_terminate)
     monkeypatch.setattr(service_sync.appium_direct, "list_sessions", fake_list)
@@ -184,8 +184,8 @@ async def test_orphan_session_killed_when_no_probe(
     target = f"http://{db_host.ip}:4723"
     terminated: list[Any] = []
 
-    async def fake_list(_target: str, **_: object) -> list[str]:
-        return ["orphan-uuid"]
+    async def fake_list(_target: str, **_: object) -> tuple[list[str], bool]:
+        return ["orphan-uuid"], False
 
     async def fake_terminate(t: str, sid: str, **_: object) -> bool:
         terminated.append((t, sid))

@@ -125,8 +125,8 @@ def _stub_appium_direct(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def fake_session_alive(target: str, session_id: str, **_: object) -> bool | None:
         return state["alive"].get(session_id, True)
 
-    async def fake_list_sessions(target: str, **_: object) -> list[str] | None:
-        return state["list"].get(target)
+    async def fake_list_sessions(target: str, **_: object) -> tuple[list[str] | None, bool]:
+        return state["list"].get(target), False
 
     async def fake_terminate(target: str, session_id: str, **_: object) -> bool:
         state["terminated"].append((target, session_id))
@@ -337,7 +337,7 @@ async def test_all_running_sessions_probed_concurrently(
         return True
 
     monkeypatch.setattr(service_sync.appium_direct, "session_alive", recording_alive)
-    monkeypatch.setattr(service_sync.appium_direct, "list_sessions", AsyncMock(return_value=None))
+    monkeypatch.setattr(service_sync.appium_direct, "list_sessions", AsyncMock(return_value=(None, False)))
     monkeypatch.setattr(service_sync.appium_direct, "terminate_session", AsyncMock(return_value=True))
 
     expected: set[str] = set()
@@ -933,18 +933,58 @@ async def test_list_sessions_none_skips_node(
 ) -> None:
     """A node without session_discovery returns None — no enumeration, no kills, and
     the unavailable-enumeration counter (#17) increments."""
-    await _seed_device_with_node(
+    device = await _seed_device_with_node(
         db_session, db_host, identity_value="orph-none", operational_state=DeviceOperationalState.busy
     )
     await db_session.commit()
 
     target = f"http://{db_host.ip}:4723"
     _stub_appium_direct["list"][target] = None  # default already None, but explicit
-    before = service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL._value.get()
-    await _make_sync_service().sync(db_session)
+    before = service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="refused")._value.get()
+    reachability = await _make_sync_service().sync(db_session)
 
     assert _stub_appium_direct["terminated"] == []
-    assert service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL._value.get() == before + 1
+    assert service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="refused")._value.get() == before + 1
+    # A refusal (node answered but could not enumerate) is not evidence the node
+    # itself is unreachable (P1) — the device is observed but not parked.
+    assert device.id in reachability.observed
+    assert reachability.unreachable == frozenset()
+
+
+async def test_list_sessions_transport_error_increments_transport_not_refused(
+    db_session: AsyncSession,
+    db_host: Host,
+    _stub_appium_direct: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A node that never answers (transport failure) must land on the 'transport'
+    outcome, not 'refused' — proving the flag survives _enumerate_orphan_targets ->
+    _terminate_orphans plumbing onto the counter (#17). ``_stub_appium_direct``'s
+    default fake always reports ``transport_error=False``, so this overrides
+    ``list_sessions`` directly to force the transport branch."""
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="orph-transport", operational_state=DeviceOperationalState.busy
+    )
+    await db_session.commit()
+
+    async def fake_list_sessions_transport_error(_target: str, **_: object) -> tuple[list[str] | None, bool]:
+        return None, True
+
+    monkeypatch.setattr(service_sync.appium_direct, "list_sessions", fake_list_sessions_transport_error)
+
+    before_transport = service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="transport")._value.get()
+    before_refused = service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="refused")._value.get()
+    reachability = await _make_sync_service().sync(db_session)
+
+    assert _stub_appium_direct["terminated"] == []
+    assert (
+        service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="transport")._value.get() == before_transport + 1
+    )
+    assert service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="refused")._value.get() == before_refused
+    # A transport failure (the node never answered) is exactly the P1 evidence the
+    # reachability fold acts on — the device is observed and marked unreachable.
+    assert device.id in reachability.observed
+    assert reachability.unreachable == frozenset({device.id})
 
 
 async def test_stopped_node_not_enumerated(

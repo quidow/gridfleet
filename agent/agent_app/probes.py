@@ -22,6 +22,13 @@ ROSTER_REFRESH_INTERVAL_SEC = 300.0
 _TICK_SEC = 5.0
 _PROBE_CONCURRENCY = 4
 
+# How long after the last observed live session a device's session-scoped
+# resources may still legitimately be held. A driver-forwarded port outlives
+# session teardown by seconds, so the first sample after a reap would
+# otherwise read as an orphan. One device_health cadence is generous and
+# costs only a delayed orphan verdict.
+SESSION_SETTLE_GRACE_SEC = 60.0
+
 type ProbeRunner = Callable[[dict[str, Any], bool], Awaitable[dict[str, Any] | None]]
 type ProbeCallable = Callable[..., Awaitable[dict[str, Any] | None]]
 
@@ -46,6 +53,7 @@ class ProbeLoop:
     _section_seq: dict[str, int] = field(default_factory=dict, init=False)
     _due_overrides: set[str] = field(default_factory=set, init=False)
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
+    _last_live_at: dict[str, float] = field(default_factory=dict, init=False)
 
     def latest_results(self) -> dict[str, Any] | None:
         return self._results or None
@@ -137,18 +145,58 @@ class ProbeLoop:
             )
         return {"reported_at": _now_iso(), "nodes": nodes}
 
+    def _resolve_live(self, target: str, active: object, *, now: float) -> bool:
+        """Whether session-scoped resources may still legitimately be held for *target*.
+
+        This is the value adapters read as ``has_live_session``, and its contract
+        (``adapter_types.py``) is that ``False`` means the agent positively
+        knows nothing is live. Two states must therefore report ``True`` rather
+        than ``False``: an enumeration whose result is unknown, and a session that
+        ended inside ``SESSION_SETTLE_GRACE_SEC``.
+        """
+        if active is None:
+            # Unknown, not "no session": Appium unreachable, non-200, or a node
+            # without session_discovery. Stamp it so the grace runs from here.
+            self._last_live_at[target] = now
+            return True
+        if active:
+            self._last_live_at[target] = now
+            return True
+        last = self._last_live_at.get(target)
+        if last is None:
+            # First sighting (agent restart, new node): start the grace rather
+            # than call a bound port orphaned against an empty cache.
+            self._last_live_at[target] = now
+            return True
+        return now - last < SESSION_SETTLE_GRACE_SEC
+
+    def _live_session_flags(self, snapshot: dict[str, Any], *, now: float) -> dict[str, bool]:
+        """Per-connection-target live-session verdicts for one gather."""
+        flags: dict[str, bool] = {}
+        for node in snapshot.get("running_nodes", []):
+            target = node.get("connection_target")
+            if not isinstance(target, str):
+                continue
+            flags[target] = self._resolve_live(target, node.get("has_active_session"), now=now)
+        return flags
+
     async def _probe_devices(self, runner: ProbeRunner) -> dict[str, Any]:
         semaphore = asyncio.Semaphore(_PROBE_CONCURRENCY)
         snapshot = await self.manager.process_snapshot()
-        live = {
-            node.get("connection_target"): bool(node.get("has_active_session"))
-            for node in snapshot.get("running_nodes", [])
-        }
+        now = time.monotonic()
+        live = self._live_session_flags(snapshot, now=now)
 
         async def one(entry: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+            target = entry.get("connection_target")
+            if isinstance(target, str):
+                has_live_session = live[target] if target in live else self._resolve_live(target, False, now=now)
+            else:
+                # connection_target is contractually a required str (ProbeTargetOut);
+                # a malformed roster entry must not coerce into a shared "None" cache key.
+                has_live_session = False
             async with semaphore:
                 try:
-                    observation = await runner(entry, live.get(entry.get("connection_target"), False))
+                    observation = await runner(entry, has_live_session)
                 except Exception:
                     logger.warning("device_probe_failed", exc_info=True)
                     return None
@@ -170,14 +218,19 @@ class ProbeLoop:
         plus a section-level ``complete_gather`` flag."""
         semaphore = asyncio.Semaphore(_PROBE_CONCURRENCY)
         snapshot = await self.manager.process_snapshot()
-        live = {
-            node.get("connection_target"): bool(node.get("has_active_session"))
-            for node in snapshot.get("running_nodes", [])
-        }
+        now = time.monotonic()
+        live = self._live_session_flags(snapshot, now=now)
 
         async def one(entry: dict[str, Any]) -> dict[str, Any]:
+            target = entry.get("connection_target")
+            if isinstance(target, str):
+                has_live_session = live[target] if target in live else self._resolve_live(target, False, now=now)
+            else:
+                # connection_target is contractually a required str (ProbeTargetOut);
+                # a malformed roster entry must not coerce into a shared "None" cache key.
+                has_live_session = False
             async with semaphore:
-                health = await self._run_health(entry, live.get(entry.get("connection_target"), False))
+                health = await self._run_health(entry, has_live_session)
             return {
                 "device_id": entry["device_id"],
                 "probe_status": "observed" if health is not None else "error",

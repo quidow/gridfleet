@@ -92,7 +92,7 @@ async def mark_target_node_down(
 
 
 async def _sweep_target(target: str) -> None:
-    ids = await appium_direct.list_sessions(target)
+    ids, _ = await appium_direct.list_sessions(target)
     for sid in ids or []:
         await appium_direct.terminate_session(target, sid)
 

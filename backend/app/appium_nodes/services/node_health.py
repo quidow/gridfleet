@@ -23,6 +23,7 @@ from app.devices.services.event import record_event
 from app.devices.services.intent import IntentService
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.actions import escalate_device_remediation_failure
+from app.lifecycle.services.escalation import EscalationContext
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.packs.services.catalog_view import load_pack_catalog
 
@@ -475,6 +476,11 @@ class NodeHealthService:
                 settings=self._settings,
                 source="node_health",
                 reason="Node health checks kept failing; automated restart escalation",
+                context=EscalationContext(
+                    incidents=self._incidents,
+                    detail="Node health checks kept failing",
+                    reservation=snapshot.reservation,
+                ),
             )
             snapshot = replace(snapshot, ladder=outcome.ladder)
             logger.error("Node for device %s reached failure window, attempting restart", device.name)

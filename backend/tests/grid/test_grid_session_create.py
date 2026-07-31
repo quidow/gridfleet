@@ -302,9 +302,9 @@ async def test_2xx_missing_session_id_sweeps_and_fails(
     listed: list[str] = []
     killed: list[str] = []
 
-    async def fake_list(target: str, *, timeout: float = 10.0) -> list[str] | None:
+    async def fake_list(target: str, *, timeout: float = 10.0) -> tuple[list[str], bool]:
         listed.append(target)
-        return ["stray-1"]
+        return ["stray-1"], False
 
     async def fake_kill(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
         killed.append(session_id)
@@ -397,8 +397,8 @@ async def test_create_outcome_truth_table_records_attempt_metric(
         _raw_result(status=status, body=body, transport_error=transport_error),
     )
 
-    async def fake_list(target: str, *, timeout: float = 10.0) -> list[str] | None:
-        return []
+    async def fake_list(target: str, *, timeout: float = 10.0) -> tuple[list[str], bool]:
+        return [], False
 
     async def fake_kill(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
         return True

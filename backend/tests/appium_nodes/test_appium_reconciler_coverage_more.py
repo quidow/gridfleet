@@ -14,6 +14,7 @@ from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
 from app.hosts.models import Host, HostStatus
 from app.lifecycle.services import remediation_log
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
@@ -132,6 +133,7 @@ async def test_reconcile_host_filters_backoff_rows_from_explicit_health_payload(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=_mock_session_factory,
+        incidents=LifecycleIncidentService(),
     )
     await svc.reconcile_host(
         host_id=host_id,
@@ -166,6 +168,7 @@ async def test_record_and_reset_start_failure_state(
     await appium_reconciler._record_start_failure(
         row,
         reason="timeout",
+        incidents=LifecycleIncidentService(),
         session_factory=db_session_maker,
         settings=FakeSettingsReader({}),
     )
@@ -189,6 +192,7 @@ async def test_record_and_reset_start_failure_state(
     await appium_reconciler._record_start_failure(
         _desired_row(device_id=uuid.uuid4()),
         reason="timeout",
+        incidents=LifecycleIncidentService(),
         session_factory=db_session_maker,
         settings=FakeSettingsReader({}),
     )
@@ -267,6 +271,7 @@ async def test_confirm_running_skips_lock_when_no_failure_residue(
         pool=None,
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )._make_reset_start_failure()
 
     # Row with no failure residue in lifecycle_policy_state
@@ -311,6 +316,7 @@ async def test_confirm_running_acquires_lock_when_failure_residue_present(
         pool=None,
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )._make_reset_start_failure()
 
     # Row carries the same residue state lock-free

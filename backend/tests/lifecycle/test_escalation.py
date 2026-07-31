@@ -1,14 +1,19 @@
 """Unit-level coverage for the shared remediation-escalation ladder."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import select
 
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
+from app.devices.models import DeviceEvent, DeviceEventType
+from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.lifecycle.services import remediation_log
-from app.lifecycle.services.escalation import escalate_remediation_failure
+from app.lifecycle.services.escalation import EscalationContext, escalate_remediation_failure
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device, create_device_record
 
@@ -43,6 +48,7 @@ async def test_escalate_increments_attempts_and_arms_backoff(db_session: AsyncSe
         settings=SETTINGS,
         source="node_health",
         reason="first failure",
+        context=EscalationContext(incidents=LifecycleIncidentService(), detail="test escalation"),
     )
     second = await escalate_remediation_failure(
         db_session,
@@ -50,6 +56,7 @@ async def test_escalate_increments_attempts_and_arms_backoff(db_session: AsyncSe
         settings=SETTINGS,
         source="node_health",
         reason="second failure",
+        context=EscalationContext(incidents=LifecycleIncidentService(), detail="test escalation"),
     )
 
     assert (first.attempts, second.attempts) == (1, 2)
@@ -78,7 +85,13 @@ async def test_escalation_caps_backoff_and_never_stops(db_session: AsyncSession,
     for _ in range(7):
         before = now_utc()
         outcome = await escalate_remediation_failure(
-            db_session, locked, settings=settings, source="node_health", reason="probe failed", prior=ladder
+            db_session,
+            locked,
+            settings=settings,
+            source="node_health",
+            reason="probe failed",
+            context=EscalationContext(incidents=LifecycleIncidentService(), detail="test escalation"),
+            prior=ladder,
         )
         ladder = outcome.ladder
         assert ladder.backoff_until is not None
@@ -126,6 +139,7 @@ async def test_escalate_remediation_failure_with_prior_ladder_skips_select(
             settings=SETTINGS,
             source="test",
             reason="failed",
+            context=EscalationContext(incidents=LifecycleIncidentService(), detail="test escalation"),
             prior=EMPTY_LADDER,
         )
 
@@ -134,3 +148,62 @@ async def test_escalate_remediation_failure_with_prior_ladder_skips_select(
     ]
     assert ladder_reads == [], f"Expected no ladder SELECT (prior was supplied), got {ladder_reads}"
     assert outcome.ladder.attempts == 1
+
+
+async def test_escalation_announces_the_backoff_it_just_armed(db_session: AsyncSession, db_host: Host) -> None:
+    """Arming a backoff window without a durable event is what left a device
+    wedged in appium start-failure backoff invisible to the event feed (P2).
+    The ladder announces every escalation, whatever the source."""
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="escalation-announce",
+        name="escalation-announce",
+    )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+
+    await escalate_remediation_failure(
+        db_session,
+        locked,
+        settings=SETTINGS,
+        source="appium_reconciler",
+        reason="spawn_failed",
+        context=EscalationContext(
+            incidents=LifecycleIncidentService(),
+            detail="Appium process failed to start",
+        ),
+    )
+    await db_session.flush()
+
+    rows = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(DeviceEvent.device_id == device.id).order_by(DeviceEvent.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [row.event_type for row in rows] == [
+        DeviceEventType.lifecycle_recovery_failed,
+        DeviceEventType.lifecycle_recovery_backoff,
+    ]
+    failed = rows[0].details or {}
+    assert failed["source"] == "appium_reconciler"
+    assert failed["reason"] == "spawn_failed"
+    assert failed["detail"] == "Appium process failed to start"
+    assert failed["summary_state"] == DeviceLifecyclePolicySummaryState.backoff.value
+    assert failed["backoff_until"]
+
+
+def test_the_ladder_is_the_only_emitter_of_the_backoff_pair() -> None:
+    """P2 moved the incident pair into ``escalate_remediation_failure``. A second
+    emitter left behind in the policy would double every lifecycle_recovery_failed
+    and lifecycle_recovery_backoff row, which no runtime assertion in one test
+    would reliably catch."""
+    backend_root = Path(__file__).resolve().parents[2]
+    policy_source = (backend_root / "app/lifecycle/services/policy.py").read_text()
+
+    assert "_record_backoff_incident_pair" not in policy_source
+    assert "lifecycle_recovery_backoff" not in policy_source
+    assert "lifecycle_recovery_failed" not in policy_source

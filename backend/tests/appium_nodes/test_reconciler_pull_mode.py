@@ -28,6 +28,7 @@ from app.core.metrics_recorders import (
 from app.core.timeutil import now_utc
 from app.devices.models import DeviceOperationalState
 from app.lifecycle.services import remediation_log
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
@@ -76,6 +77,7 @@ def _make_service(*, session_factory: object = None) -> ReconcilerService:
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=session_factory or Mock(),
+        incidents=LifecycleIncidentService(),
     )
 
 
@@ -283,6 +285,7 @@ async def test_pull_host_port_conflict_repins_port_and_records_backoff_once(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )
 
     await svc._ingest_start_failure_reports([row], [failure])
@@ -353,6 +356,7 @@ async def test_pull_host_start_failure_uses_shared_exponential_backoff(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )
 
     t0 = datetime.now(UTC).isoformat()
@@ -435,6 +439,7 @@ async def test_start_failures_are_ingested_for_a_row_in_recovery_backoff(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )
 
     first = _start_failure(connection_target=device.connection_target, kind="spawn_failed")
@@ -498,6 +503,7 @@ async def test_a_burst_of_queued_reports_escalates_the_ladder_once(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )
     base = datetime.now(UTC)
     burst = [
@@ -558,6 +564,7 @@ async def test_escalation_resumes_once_the_backoff_window_has_elapsed(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )
 
     await svc._ingest_start_failure_reports(
@@ -629,6 +636,7 @@ async def test_pull_host_spawn_failed_records_backoff_without_repin(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )
 
     await svc._ingest_start_failure_reports([row], [failure])
@@ -685,6 +693,7 @@ async def test_pull_host_port_conflict_repin_preserves_restart_watermark(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )
 
     await svc._ingest_start_failure_reports([row], [failure])
@@ -745,6 +754,7 @@ async def test_port_conflict_report_replays_until_its_transaction_commits(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )
 
     repin_attempts = 0

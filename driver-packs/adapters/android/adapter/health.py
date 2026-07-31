@@ -86,9 +86,9 @@ async def health_check(ctx: HealthContext) -> list[HealthCheckResult]:
 async def _orphan_system_port_check(ctx: HealthContext) -> HealthCheckResult | None:
     """Detect the orphan adb-server systemPort binding.
 
-    Runs only when the control plane positively reports no live session or
-    in-flight probe (``has_live_session is False``, not None): with nothing
-    live, no one may legitimately hold the claimed systemPort on this host.
+    Runs only when the agent positively knows nothing is live for this device
+    (``has_live_session is False``, not None): with nothing live, no one may
+    legitimately hold the claimed systemPort on this host.
     The adb forward table is the wrong detector — the orphan server socket
     survives with an EMPTY table — so connect-test the port, exactly the
     uia2 driver's own busy check that fails the next create.

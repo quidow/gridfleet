@@ -19,6 +19,7 @@ def test_enum_includes_all_known_checkers() -> None:
         "manual",
         "recovery",
         "verification",
+        "observation",
     }
 
 

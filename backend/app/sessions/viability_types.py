@@ -11,7 +11,12 @@ raise it without importing the service module.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import uuid
 
 
 class SessionViabilityCheckedBy(StrEnum):
@@ -19,6 +24,26 @@ class SessionViabilityCheckedBy(StrEnum):
     manual = "manual"
     recovery = "recovery"
     verification = "verification"
+    # Not a probe: the observation sweep's own direct evidence that a node's
+    # Appium is unreachable (P1). Named separately so the device health panel
+    # says where a failure came from.
+    observation = "observation"
+
+
+@dataclass(frozen=True, slots=True)
+class NodeReachability:
+    """One observation sweep's per-device enumeration verdict.
+
+    ``observed`` is every device the sweep enumerated this tick (candidates with
+    ``desired_state == running``); ``unreachable`` is the subset whose Appium
+    never answered — a transport failure, not a refusal from a node that is alive
+    but cannot enumerate. Lives here rather than in ``service_sync`` so the sweep
+    that produces it and the viability service that consumes it share one
+    definition without importing each other.
+    """
+
+    observed: tuple[uuid.UUID, ...]
+    unreachable: frozenset[uuid.UUID]
 
 
 class SessionViabilityProbeInProgressError(ValueError):

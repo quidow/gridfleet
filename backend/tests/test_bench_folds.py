@@ -103,6 +103,7 @@ from app.devices.services.state import derive_operational_state
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.service_status_push import HostStatusPushService, ObservationFold, StatusPushTarget
 from app.lifecycle.services import remediation_log
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.packs.services.discovery import PackDiscoveryService
 from app.runs.models import RunState, TestRun
@@ -722,7 +723,12 @@ def _build_push_service(session_factory: async_sessionmaker[AsyncSession]) -> Ho
     property_refresh = PropertyRefreshService(discovery=discovery)
     resource_telemetry = HostResourceTelemetryService(settings=settings)
     reconciler = ReconcilerService(
-        publisher=event_bus, settings=settings, pool=None, circuit_breaker=Mock(), session_factory=session_factory
+        publisher=event_bus,
+        settings=settings,
+        pool=None,
+        circuit_breaker=Mock(),
+        session_factory=session_factory,
+        incidents=LifecycleIncidentService(),
     )
     heartbeat = HeartbeatService(
         publisher=event_bus, settings=settings, pool=Mock(), circuit_breaker=Mock(), session_factory=session_factory

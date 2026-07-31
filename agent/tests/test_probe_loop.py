@@ -6,7 +6,7 @@ from typing import Any, cast
 import pytest
 
 from agent_app.pack.host_identity import HostIdentity
-from agent_app.probes import DEVICE_HEALTH_INTERVAL_SEC, ProbeLoop
+from agent_app.probes import DEVICE_HEALTH_INTERVAL_SEC, SESSION_SETTLE_GRACE_SEC, ProbeLoop
 
 
 class _Roster:
@@ -305,3 +305,53 @@ def test_canonical_section_hash_matches_backend_golden() -> None:
         "payload_sha256": "ignored",
     }
     assert canonical_section_hash(section) == "7c50675aa686cac3e8c02272cefcf6564e5ea61873933a3cdaa519eeec27110e"
+
+
+def _loop_with(manager: object) -> ProbeLoop:
+    return ProbeLoop(
+        roster_client=_Roster(),
+        manager=manager,
+        host_identity=_identity(),
+        health_probe=_health_probe,
+        properties_probe=_properties_probe,
+    )
+
+
+def test_unknown_enumeration_is_a_blocker_not_a_no_session_verdict() -> None:
+    """A node whose session count could not be read is unknown, never
+    "positively no session" — the precondition the Android orphan-port check
+    documents. Collapsing unknown to False is what let a teardown look like an
+    orphaned port."""
+    loop = _loop_with(_Manager())
+
+    # No ``has_active_session`` key at all: the enumeration failed.
+    flags = loop._live_session_flags({"running_nodes": [{"connection_target": "t1"}]}, now=100.0)
+
+    assert flags["t1"] is True
+
+
+def test_live_session_stays_sticky_through_the_settle_grace() -> None:
+    loop = _loop_with(_Manager())
+    snapshot_live = {"running_nodes": [{"connection_target": "t1", "has_active_session": True}]}
+    snapshot_idle = {"running_nodes": [{"connection_target": "t1", "has_active_session": False}]}
+
+    assert loop._live_session_flags(snapshot_live, now=100.0)["t1"] is True
+    # Teardown just happened: the driver-forwarded port outlives the session.
+    assert loop._live_session_flags(snapshot_idle, now=130.0)["t1"] is True
+    assert loop._live_session_flags(snapshot_idle, now=100.0 + SESSION_SETTLE_GRACE_SEC)["t1"] is False
+
+
+def test_first_sighting_starts_the_grace_rather_than_declaring_an_orphan() -> None:
+    """A cold cache (agent restart) is not evidence that a bound port is orphaned."""
+    loop = _loop_with(_Manager())
+    snapshot_idle = {"running_nodes": [{"connection_target": "t1", "has_active_session": False}]}
+
+    assert loop._live_session_flags(snapshot_idle, now=100.0)["t1"] is True
+    assert loop._live_session_flags(snapshot_idle, now=100.0 + SESSION_SETTLE_GRACE_SEC)["t1"] is False
+
+
+def test_a_target_with_no_running_node_still_gets_the_grace() -> None:
+    loop = _loop_with(_Manager())
+
+    assert loop._resolve_live("t-absent", False, now=100.0) is True
+    assert loop._resolve_live("t-absent", False, now=100.0 + SESSION_SETTLE_GRACE_SEC) is False

@@ -31,7 +31,7 @@ from app.jobs import queue as job_queue
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.statuses import JOB_STATUS_PENDING
 from app.lifecycle.services import remediation_log
-from app.lifecycle.services.escalation import escalate_remediation_failure
+from app.lifecycle.services.escalation import EscalationContext, escalate_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.lifecycle.services.operator_node import operator_stop_active
 from app.runs import service_reservation as run_reservation_service
@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from app.core.protocols import SettingsReader
     from app.devices.locking import LockedDevice
     from app.devices.protocols import RemoteNodeManager, SessionViabilityProbe
-    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot, ReservationDecisionSnapshot
+    from app.devices.services.decision_snapshot import DeviceDecisionSnapshot
     from app.events.protocols import EventPublisher
     from app.lifecycle.services.actions import LifecyclePolicyActionsService
     from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -121,22 +121,18 @@ class LifecyclePolicyService:
                     raise NodeManagerError(f"No Appium port available for device {device.id}")
                 desired_port = ports[0]
             except NodeManagerError as exc:
-                outcome = await escalate_remediation_failure(
+                await escalate_remediation_failure(
                     db,
                     locked,
                     settings=self._settings,
                     source=source,
                     reason=str(exc),
+                    context=EscalationContext(
+                        incidents=self._incidents,
+                        detail="Automatic restart failed",
+                        reservation=snapshot.reservation,
+                    ),
                     prior=snapshot.ladder,
-                )
-                await self._record_backoff_incident_pair(
-                    db,
-                    device,
-                    reason=str(exc),
-                    failure_detail="Automatic restart failed",
-                    source=source,
-                    reservation=snapshot.reservation,
-                    backoff_until_iso=outcome.backoff_until_iso,
                 )
                 clear_recovery_generation(device, expected=generation)
                 return False
@@ -170,48 +166,6 @@ class LifecyclePolicyService:
         )
         return True
 
-    async def _record_backoff_incident_pair(
-        self,
-        db: AsyncSession,
-        device: Device,
-        *,
-        reason: str,
-        failure_detail: str,
-        source: str,
-        reservation: ReservationDecisionSnapshot | None,
-        backoff_until_iso: str | None,
-    ) -> None:
-        run_id = reservation.run_id if reservation is not None else None
-        run_name = reservation.run_name if reservation is not None else None
-        await self._incidents.record_lifecycle_incident(
-            db,
-            device,
-            DeviceEventType.lifecycle_recovery_failed,
-            LifecycleIncidentDetails(
-                summary_state=DeviceLifecyclePolicySummaryState.backoff,
-                reason=reason,
-                detail=failure_detail,
-                source=source,
-                run_id=run_id,
-                run_name=run_name,
-                backoff_until=backoff_until_iso,
-            ),
-        )
-        await self._incidents.record_lifecycle_incident(
-            db,
-            device,
-            DeviceEventType.lifecycle_recovery_backoff,
-            LifecycleIncidentDetails(
-                summary_state=DeviceLifecyclePolicySummaryState.backoff,
-                reason=reason,
-                detail="Automatic recovery is backing off before the next retry",
-                source=source,
-                run_id=run_id,
-                run_name=run_name,
-                backoff_until=backoff_until_iso,
-            ),
-        )
-
     async def finalize_auto_recovery_locked(
         self,
         db: AsyncSession,
@@ -239,22 +193,18 @@ class LifecyclePolicyService:
                 reason=failure_reason,
                 detail="Manager stopped the device after a failed recovery viability probe",
             )
-            outcome = await escalate_remediation_failure(
+            await escalate_remediation_failure(
                 db,
                 locked,
                 settings=self._settings,
                 source="session_viability",
                 reason=failure_reason,
+                context=EscalationContext(
+                    incidents=self._incidents,
+                    detail="Recovery probe failed",
+                    reservation=updated.reservation,
+                ),
                 prior=updated.ladder,
-            )
-            await self._record_backoff_incident_pair(
-                db,
-                locked.device,
-                reason=failure_reason,
-                failure_detail="Recovery probe failed",
-                source="session_viability",
-                reservation=updated.reservation,
-                backoff_until_iso=outcome.backoff_until_iso,
             )
             clear_recovery_generation(locked.device, expected=generation)
             return "failed"

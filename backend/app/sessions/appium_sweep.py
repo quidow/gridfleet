@@ -56,9 +56,14 @@ class AppiumSweepLoop(BackgroundLoop):
         # from the same allowance as the probe series.
         deadline = time.monotonic() + SCHEDULED_PASS_BUDGET_SEC
         try:
-            await self._services.sync.sync(db)
+            reachability = await self._services.sync.sync(db)
         except Exception:
             logger.exception("appium_sweep_sync_failed")
+        else:
+            try:
+                await self._services.viability.fold_node_reachability(reachability)
+            except Exception:
+                logger.exception("appium_sweep_reachability_fold_failed")
 
         now = time.monotonic()
         if self._last_viability_pass is not None:

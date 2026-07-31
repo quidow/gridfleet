@@ -69,20 +69,32 @@ async def test_session_alive_true_on_200_false_on_invalid_session(monkeypatch: p
 async def test_list_sessions_parses_value_array_and_none_on_404(monkeypatch: pytest.MonkeyPatch) -> None:
     payload = {"value": [{"id": "a", "capabilities": {}}, {"id": "b"}, {"nope": 1}]}
     _patch_transport(monkeypatch, lambda req: httpx.Response(200, json=payload))
-    assert await appium_direct.list_sessions(TARGET) == ["a", "b"]
+    assert await appium_direct.list_sessions(TARGET) == (["a", "b"], False)
 
     _patch_transport(monkeypatch, lambda req: httpx.Response(404, json={}))
-    assert await appium_direct.list_sessions(TARGET) is None
+    assert await appium_direct.list_sessions(TARGET) == (None, False)
 
-    # Gated /appium/sessions (missing insecure feature) returns 500.
+    # Gated /appium/sessions (missing insecure feature) returns 500 — the node
+    # answered, so this is a refusal, not a transport error.
     _patch_transport(monkeypatch, lambda req: httpx.Response(500, json={}))
-    assert await appium_direct.list_sessions(TARGET) is None
+    assert await appium_direct.list_sessions(TARGET) == (None, False)
 
     def boom(req: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("down")
 
     _patch_transport(monkeypatch, boom)
-    assert await appium_direct.list_sessions(TARGET) is None
+    assert await appium_direct.list_sessions(TARGET) == (None, True)
+
+
+async def test_list_sessions_non_json_body_is_refused_not_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 2xx response with an unparseable body must not raise ``ValueError`` out of
+    ``list_sessions`` — the node answered, so this is a refusal (enumeration could
+    not be parsed), not a transport error. Mirrors ``create_session``."""
+    _patch_transport(
+        monkeypatch,
+        lambda req: httpx.Response(200, text="not json", headers={"content-type": "text/plain"}),
+    )
+    assert await appium_direct.list_sessions(TARGET) == (None, False)
 
 
 async def test_create_session_returns_session_id_or_error(monkeypatch: pytest.MonkeyPatch) -> None:
