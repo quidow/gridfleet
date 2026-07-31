@@ -9,15 +9,17 @@ lives. Without these a silently inert guard would report a clean suite.
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, delete, not_, or_, select, update
 
 from app.core.timeutil import now_utc
 from app.devices.locking import lock_device_handle
-from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceRemediationLogEntry, DeviceType
 from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
 from tests.contracts import _lock_guard_probe as probe
 from tests.contracts import device_lock_guard as guard
 from tests.contracts.device_lock_guard import (
@@ -31,8 +33,11 @@ from tests.helpers import create_device
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from datetime import datetime
 
+    from sqlalchemy import Delete
     from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.sql.elements import ColumnElement
 
     from app.hosts.models import Host
 
@@ -340,6 +345,270 @@ async def test_an_unregistered_site_gets_no_carve_out(db_session: AsyncSession, 
     await db_session.rollback()
 
 
+async def test_a_device_id_in_an_or_branch_is_not_derivable(db_session: AsyncSession, db_host: Host) -> None:
+    """A disjunct pins nothing: the statement also matches rows of other devices.
+
+    The device IS locked here, so an arm that read ``device_id`` out of the
+    ``or_`` would find it in the ledger and wave the statement through — while
+    the statement itself reaches every session whose id matches the other
+    branch, on any device in the fleet. Fail-closed means the OR makes the
+    target underivable, lock or no lock.
+    """
+    device, _row = await _seed_session_row(db_session, db_host)
+    await lock_device_handle(db_session, device.id)
+    stmt = (
+        update(Session)
+        .where(or_(Session.device_id == device.id, Session.session_id == "some-other-device-row"))
+        .values(status=SessionStatus.passed)
+    )
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+async def test_a_negated_device_id_is_not_derivable(db_session: AsyncSession, db_host: Host) -> None:
+    """``NOT (device_id = X AND ...)`` matches every device EXCEPT the locked one.
+
+    SQLAlchemy folds a negated single comparison into ``!=``, so the shape that
+    actually produces a ``UnaryExpression`` is a negated conjunction. Reading the
+    id out of it would be the worst possible inversion: authorized by the one
+    device the statement is guaranteed not to touch.
+    """
+    device, _row = await _seed_session_row(db_session, db_host)
+    await lock_device_handle(db_session, device.id)
+    stmt = (
+        update(Session)
+        .where(not_(and_(Session.device_id == device.id, Session.status == SessionStatus.running)))
+        .values(status=SessionStatus.passed)
+    )
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+async def test_a_device_id_in_a_subquery_is_not_derivable(db_session: AsyncSession, db_host: Host) -> None:
+    """The outer statement's target is whatever the subquery returns, not one device.
+
+    The subquery is scoped to the locked device *today*; nothing in the outer
+    WHERE says so, and a subquery is free to widen. The guard reads only the
+    statement's own top-level conjuncts, so this stays underivable.
+    """
+    device, _row = await _seed_session_row(db_session, db_host)
+    await lock_device_handle(db_session, device.id)
+    stmt = (
+        update(Session)
+        .where(Session.id.in_(select(Session.id).where(Session.device_id == device.id)))
+        .values(status=SessionStatus.passed)
+    )
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+def _cutoff() -> datetime:
+    return now_utc() - timedelta(days=14)
+
+
+def _future() -> datetime:
+    return now_utc() + timedelta(days=1)
+
+
+def _batched_session_delete(*conjuncts: ColumnElement[bool]) -> Delete:
+    """The batch shape ``data_cleanup`` issues: ``DELETE ... WHERE id IN (SELECT ...)``."""
+    return delete(Session).where(Session.id.in_(select(Session.id).where(*conjuncts).limit(1000)))
+
+
+def _batched_remediation_delete(*conjuncts: ColumnElement[bool]) -> Delete:
+    """The same batch shape against the remediation log."""
+    return delete(DeviceRemediationLogEntry).where(
+        DeviceRemediationLogEntry.id.in_(select(DeviceRemediationLogEntry.id).where(*conjuncts).limit(1000))
+    )
+
+
+@pytest.fixture
+def _retention_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(guard.FLEET_RETENTION_SITES, _PROBE_SITE, frozenset({"live_session", "remediation_log_entry"}))
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_a_registered_fleet_retention_delete_passes(db_session: AsyncSession) -> None:
+    """Unlocked, fleet-wide, target underivable — and carved out, because it removes
+    only rows an age cutoff has aged out and ``ended_at`` proves are already closed."""
+    stmt = _batched_session_delete(Session.started_at < _cutoff(), Session.ended_at.is_not(None))
+    await probe.probe_execute(db_session, stmt)  # must not raise
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_a_retention_delete_without_a_dead_row_predicate_fails(db_session: AsyncSession) -> None:
+    """The near-miss this mode exists to reject, and the exact shape the probe-session
+    pass had: aged, fleet-wide, and perfectly willing to delete a live claim."""
+    stmt = _batched_session_delete(Session.started_at < _cutoff(), Session.test_name == PROBE_TEST_NAME)
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_a_retention_delete_without_an_age_cutoff_fails(db_session: AsyncSession) -> None:
+    """Dead rows, but all of them: an unbounded fleet-wide delete is not retention."""
+    stmt = _batched_session_delete(Session.ended_at.is_not(None))
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_a_non_datetime_bound_is_not_an_age_cutoff(db_session: AsyncSession) -> None:
+    """``<`` against a string bound orders session ids, not time."""
+    stmt = _batched_session_delete(Session.session_id < "zzzz", Session.ended_at.is_not(None))
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_a_dead_row_disjunction_with_one_live_branch_is_no_proof(db_session: AsyncSession) -> None:
+    """A row can reach the delete through either branch, so both must prove deadness."""
+    stmt = _batched_session_delete(
+        Session.started_at < _cutoff(),
+        or_(Session.ended_at.is_not(None), Session.session_id == "still-live-but-named"),
+    )
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_a_dead_row_disjunction_of_recognized_branches_passes(db_session: AsyncSession) -> None:
+    """The remediation-log shape: never armed a backoff, or armed one already expired."""
+    cutoff = _cutoff()
+    stmt = _batched_remediation_delete(
+        DeviceRemediationLogEntry.at < cutoff,
+        or_(
+            DeviceRemediationLogEntry.backoff_until.is_(None),
+            DeviceRemediationLogEntry.backoff_until < cutoff,
+        ),
+    )
+    await probe.probe_execute(db_session, stmt)  # must not raise
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_a_dead_row_conjunct_cannot_also_be_the_age_bound(db_session: AsyncSession) -> None:
+    """The two halves must be two conjuncts, and the pinned age column is what forces it.
+
+    A *bare* ``backoff_until < <past>`` is simultaneously a recognized cutoff leaf
+    and a remediation dead-row shape, so without the pin it satisfies both halves
+    on its own — and this statement, which has no ``at`` bound whatsoever, reads
+    as retention while deleting every expired-backoff row in the lab. The bare
+    form is the one that matters: wrapped in an ``or_`` the conjunct is a
+    ``BooleanClauseList``, which was never a cutoff leaf, so the disjunction shape
+    never had this defect.
+    """
+    stmt = _batched_remediation_delete(DeviceRemediationLogEntry.backoff_until < _cutoff())
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_a_forward_dated_dead_row_bound_proves_nothing(db_session: AsyncSession) -> None:
+    """``backoff_until < <tomorrow>`` selects exactly the rows it claims to exclude.
+
+    A ``datetime`` bind is not a cutoff by virtue of its type. This one is the
+    live-backoff rows, dressed as the expired ones.
+    """
+    stmt = _batched_remediation_delete(
+        DeviceRemediationLogEntry.at < _cutoff(),
+        or_(
+            DeviceRemediationLogEntry.backoff_until.is_(None),
+            DeviceRemediationLogEntry.backoff_until < _future(),
+        ),
+    )
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_no_age_bound_and_a_forward_dated_dead_row_bound_fails(db_session: AsyncSession) -> None:
+    """Both defects at once: the two previous tests must not be covering for each other.
+
+    The worst of the set. Under the old rule this single leaf supplied the age
+    bound and the dead-row proof simultaneously, and the rows it selects are
+    precisely the ones still arming a live backoff.
+    """
+    stmt = _batched_remediation_delete(DeviceRemediationLogEntry.backoff_until < _future())
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_a_forward_dated_age_cutoff_is_the_whole_fleet(db_session: AsyncSession) -> None:
+    """``started_at < <tomorrow>`` bounds nothing: every ended session ever recorded."""
+    stmt = _batched_session_delete(Session.started_at < _future(), Session.ended_at.is_not(None))
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_an_age_cutoff_on_an_unpinned_column_fails(db_session: AsyncSession) -> None:
+    """A past bound on some other datetime column is not this fact's age.
+
+    ``last_activity_at`` is nullable and moves with traffic; ordering retention by
+    it deletes a different set than ordering by birth. The pinned column says
+    which one "age" means, so this is refused rather than quietly re-interpreted.
+    """
+    stmt = _batched_session_delete(Session.last_activity_at < _cutoff(), Session.ended_at.is_not(None))
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_a_retention_shaped_update_gets_no_carve_out(db_session: AsyncSession) -> None:
+    """Retention removes rows; it never assigns a decision column.
+
+    Same registered site, same two halves in the WHERE — but this one writes
+    ``status``, which is a decision about every device it reaches.
+    """
+    stmt = (
+        update(Session)
+        .where(Session.id.in_(select(Session.id).where(Session.started_at < _cutoff(), Session.ended_at.is_not(None))))
+        .values(status=SessionStatus.error)
+    )
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+@pytest.mark.usefixtures("_retention_probe")
+async def test_a_retention_delete_outside_the_batch_shape_fails(db_session: AsyncSession) -> None:
+    """Both halves, stated directly rather than through the batch subquery.
+
+    Arguably as sound, and deliberately still refused: the carve-out reads the
+    one shape ``app/`` issues, and a statement in some other shape has not been
+    read at all. Widening it is a decision someone has to take on purpose.
+    """
+    cutoff = _cutoff()
+    stmt = delete(Session).where(Session.started_at < cutoff, Session.ended_at.is_not(None))
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+async def test_an_unregistered_site_gets_no_retention_carve_out(db_session: AsyncSession) -> None:
+    """Both halves are not enough: the module has to be registered too."""
+    assert _PROBE_SITE not in guard.FLEET_RETENTION_SITES
+    stmt = _batched_session_delete(Session.started_at < _cutoff(), Session.ended_at.is_not(None))
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
 def test_guarded_update_sites_carry_their_predicate() -> None:
     """A guarded_update site's authority is its WHERE predicate. If someone
     drops the guard from a statement, this fails before the race does.
@@ -393,19 +662,89 @@ def test_the_predicate_scan_rejects_a_dropped_guard() -> None:
     assert columns("TestRun.ended_at.is_(None)") == set()
 
 
-def test_unproven_sites_only_shrink() -> None:
-    """Every entry is conversion work. Additions are new unlocked writes: fix them instead."""
-    from tests.contracts.device_lock_guard import UNPROVEN_WRITE_SITES
+def test_fleet_retention_sites_carry_their_authority() -> None:
+    """A fleet_retention site's authority is an age cutoff plus a dead-row predicate.
 
-    seeded = UNPROVEN_WRITE_SITES  # a local: SIM300 reads the upper-case name on the left as a Yoda condition
-    assert seeded == frozenset(
-        {
-            # The seeded literal, a second time, verbatim. The duplication is
-            # DELIBERATE, not an oversight: the guard consumes one copy, review
-            # sees the other, so every shrink (and any attempted regrowth) is a
-            # two-file diff a reviewer cannot miss. A snapshot file or shared
-            # constant would make edits one-touch and silent -- exactly the
-            # property this test exists to deny. Do not deduplicate.
-            "app/devices/services/data_cleanup.py",
-        }
+    Both halves, at every call site. Drop the cutoff and the statement stops
+    being about history; drop the dead-row predicate and it deletes rows that
+    still carry the fact — which is exactly what the probe-session pass did
+    before this mode existed, and what the runtime guard now refuses.
+    """
+    from tests.contracts.device_lock_guard import (
+        FLEET_RETENTION_SITES,
+        RETENTION_AGE_COLUMNS,
+        RETENTION_DEAD_ROW_SHAPES,
     )
+    from tests.contracts.test_no_direct_device_state_writes import fleet_retention_statement_scan
+
+    assert FLEET_RETENTION_SITES, "registry emptied: delete this test with the last entry"
+    problems: list[str] = []
+    for module, facts in sorted(FLEET_RETENTION_SITES.items()):
+        for fact in sorted(facts):
+            assert fact in RETENTION_DEAD_ROW_SHAPES, f"{module}: {fact!r} declares no dead-row shapes"
+            assert fact in RETENTION_AGE_COLUMNS, f"{module}: {fact!r} pins no age column"
+            # What makes "the halves cannot be the same conjunct" structural
+            # rather than a hope: a conjunct proving one half names columns the
+            # other half's rule cannot accept. Overlap the two tables and a bare
+            # dead-row comparison starts reading as an age bound again.
+            dead_row_columns = {column for column, _shape in RETENTION_DEAD_ROW_SHAPES[fact]}
+            assert RETENTION_AGE_COLUMNS[fact] not in dead_row_columns, (
+                f"{fact}: the pinned age column {RETENTION_AGE_COLUMNS[fact]!r} is also a dead-row column, "
+                f"so one conjunct can satisfy both halves of the authority"
+            )
+            authorized, unauthorized = fleet_retention_statement_scan(module, fact)
+            problems.extend(unauthorized)
+            if not authorized and not unauthorized:
+                problems.append(f"{module}: no {fact} retention delete found at all; the claim is hollow")
+    assert problems == [], "fleet_retention call sites without their authority:\n  " + "\n  ".join(problems)
+
+
+def test_the_retention_scan_rejects_a_weakened_predicate() -> None:
+    """The companion above only protects anything if it can fail.
+
+    Every shape the runtime arm refuses has to be refused here too: a test on the
+    wrong column, the inverse test, a disjunction with one branch that proves
+    nothing, and a same-titled column on another model.
+    """
+    import ast
+
+    from tests.contracts.test_no_direct_device_state_writes import _dead_row_shapes
+
+    def shapes(source: str) -> set[tuple[str, str]] | None:
+        return _dead_row_shapes(ast.parse(source, mode="eval").body, "Session")
+
+    assert shapes("Session.ended_at.is_not(None)") == {("ended_at", "is_not_null")}
+    assert shapes("Session.started_at < cutoff") == {("started_at", "lt_cutoff")}
+    assert shapes("or_(Session.ended_at.is_(None), Session.ended_at < cutoff)") == {
+        ("ended_at", "is_null"),
+        ("ended_at", "lt_cutoff"),
+    }
+    # One unrecognized branch poisons the whole disjunction: a row can reach the
+    # delete through it while the other branch proves nothing about that row.
+    assert shapes("or_(Session.ended_at.is_not(None), Session.session_id == keep)") is None
+    assert shapes("Session.status != SessionStatus.running") is None
+    assert shapes("Session.ended_at > cutoff") is None
+    assert shapes("Session.ended_at.is_not(some_value)") is None
+    # Not the statement's own model: the lexical stand-in for the runtime
+    # target-table check.
+    assert shapes("TestRun.ended_at.is_not(None)") is None
+
+
+def test_the_retention_scan_reads_the_helper_that_applies_the_cutoff() -> None:
+    """Passing a cutoff keyword is not applying it; the helper has to compare with ``<``.
+
+    Every call site's age half rests on one comparison in the batch helper. Widen
+    it to ``<=``, flip it, or drop it, and the call sites read exactly the same.
+    """
+    import ast
+
+    from tests.contracts.test_no_direct_device_state_writes import _applies_its_cutoff
+
+    def applies(source: str) -> bool:
+        return _applies_its_cutoff(ast.parse(source))
+
+    assert applies("select(id_column).where(timestamp_column < cutoff, *extra_predicates)")
+    assert not applies("select(id_column).where(timestamp_column <= cutoff, *extra_predicates)")
+    assert not applies("select(id_column).where(cutoff < timestamp_column, *extra_predicates)")
+    assert not applies("select(id_column).where(timestamp_column < other_bound, *extra_predicates)")
+    assert not applies("select(id_column).where(*extra_predicates)")

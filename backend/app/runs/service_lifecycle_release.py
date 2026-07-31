@@ -104,6 +104,14 @@ class RunReleaseService:
         run's live session rows and releases the reservation children under those
         held proofs.
 
+        ``locked_by_id`` MUST be the full, unfiltered result of
+        ``lock_run_devices`` — that is the only sanctioned source. The loop below
+        treats a missing proof as "the Device row is gone" and skips the
+        reservation with a WARNING. Narrow the mapping in any way (a
+        ``skip_locked`` acquire, a filtered id set, a partial retry) and that
+        branch stops meaning what it says: it will leave a live device reserved
+        forever, logging a warning instead of raising.
+
         ``close_session_ids`` selects which live rows to terminalize. ``None``
         (the ordinary complete path) closes every live session. A set (the
         durable cancel/expire/force finalize path, whose Appium teardown already

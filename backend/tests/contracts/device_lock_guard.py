@@ -1,13 +1,15 @@
 """Runtime device-lock proof guard. Installed suite-wide by tests/conftest.py.
 
 Asserts every decision-fact write happens in a transaction that holds the
-device's row lock (the ledger stamped by ``app.devices.locking``), with four
+device's row lock (the ledger stamped by ``app.devices.locking``), with five
 sanctioned pass conditions: the Device row was INSERTed in the same
 transaction; the write's call-site module is a registered ``guarded_update``
-site whose statement carries the fact's guard predicate; the fact row names no
-device at all (only ``Session.device_id`` is nullable, and every reader of the
-live-session fact is device-scoped); or the write has no application frame at
-all (a test fixture seeding rows — the contract governs ``app/`` code).
+site whose statement carries the fact's guard predicate; it is a registered
+``fleet_retention`` site whose statement is an age-bounded delete of rows its
+own predicate proves already dead; the fact row names no device at all (only
+``Session.device_id`` is nullable, and every reader of the live-session fact is
+device-scoped); or the write has no application frame at all (a test fixture
+seeding rows — the contract governs ``app/`` code).
 
 Call sites are captured twice over, because neither capture alone is complete.
 ``_record_write_site`` runs synchronously in the writer's own stack on every
@@ -21,8 +23,9 @@ actionable. Both walks cross greenlet boundaries; see ``_app_frames``.
 Recorded sites are bounded to their transaction: ``_after_flush`` drops the
 sites of everything it flushed and ``_after_transaction_end`` purges the rest.
 Without that, a site recorded under a lock outlives its flush and gets charged
-to a later, unrelated write on the same live instance — and because the
-registry check is a subset test, one stale site is enough to defeat it.
+to a later, unrelated write on the same live instance, naming a module that had
+nothing to do with it — and, because a recorded site suppresses the flush-frame
+fallback, hiding the module that did.
 
 CEILINGS, disclosed and none load-bearing today:
 - raw ``Table``-object statements bypass ``do_orm_execute``; the lexical scan
@@ -38,9 +41,10 @@ CEILINGS, disclosed and none load-bearing today:
   is invisible outright, not merely misattributed: ``_do_orm_execute`` only
   acts on ``is_update``/``is_delete``, and a Core INSERT populates none of
   ``session.new``/``dirty``/``deleted``, so ``_before_flush`` never sees it
-  either. A registry entry for such a writer can be removed with the suite
-  staying green while the statement itself was never exercised by either half
-  of the guard.
+  either. A ``GUARDED_UPDATE_SITES``/``FLEET_RETENTION_SITES`` entry covering
+  such a writer could be deleted with the suite staying green, because the
+  statement itself was never exercised by either half of the guard; the lexical
+  companions in test_device_lock_guard.py are what cover that case.
 - a device lock, or a new-device receipt, taken *inside* a savepoint outlives
   its own row lock: ``get_transaction()`` returns the root transaction, so
   rolling the savepoint back releases the PostgreSQL row lock while the entry,
@@ -73,12 +77,13 @@ import os
 import sys
 import weakref
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import greenlet
-from sqlalchemy import event, inspect
+from sqlalchemy import Select, event, inspect
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import object_session
 from sqlalchemy.sql import operators
@@ -117,17 +122,6 @@ def _violation(message: str) -> None:
     raise DeviceLockGuardViolation(message)
 
 
-# Seeded from a full-suite report run; emptied writer-by-writer by the
-# conversion tasks; deleted with the last entry. Module paths relative to
-# backend/. Every entry is a decision-fact write the suite exercises today
-# without proof of the device row lock -- work not done, not an allowance.
-# It may only shrink; test_unproven_sites_only_shrink holds the second copy.
-UNPROVEN_WRITE_SITES: frozenset[str] = frozenset(
-    {
-        "app/devices/services/data_cleanup.py",
-    }
-)
-
 # module path -> fact name whose guard predicate sanctions its bulk statements.
 #
 # A guarded_update site is NOT an exemption. Its statements are conditional
@@ -160,6 +154,72 @@ GUARDED_UPDATE_SITES: dict[str, str] = {
 # statement applicable to the same rows after it runs, so two racing copies both
 # apply. Only "constrains the very column it writes" cannot apply twice.
 GUARD_PREDICATE_COLUMNS: dict[str, frozenset[str]] = {"live_session": DECISION_COLUMNS["live_session"]}
+
+# module path -> the facts whose rows its bulk DELETEs may remove as fleet-wide
+# retention.
+#
+# A fleet_retention site is not an exemption either. Its statements delete
+# history: rows an age cutoff has put behind every live decision, and whose own
+# predicate proves they do not carry the fact now. Nothing about any device's
+# current state changes, so there is no decision for a row lock to serialize --
+# and there is no single device to lock, because the target set spans the fleet
+# by construction. Like guarded_update the carve-out is per *statement*, not per
+# module: ``_do_orm_execute`` re-derives both halves from every executing
+# statement. It is granted to DELETEs only. An UPDATE from a registered module
+# assigns a decision column by definition, which is a decision, not a removal,
+# and never qualifies. The lexical companion
+# (test_device_lock_guard.py::test_fleet_retention_sites_carry_their_authority)
+# pins the same two halves at authoring time, call site by call site.
+FLEET_RETENTION_SITES: dict[str, frozenset[str]] = {
+    # DataCleanupService's retention passes: batched deletes of aged Session and
+    # DeviceRemediationLogEntry rows, selected by age across the whole fleet.
+    "app/devices/services/data_cleanup.py": frozenset({"live_session", "remediation_log_entry"}),
+}
+
+# A cutoff bind must already be in the past when the statement runs. One second,
+# and not a knob -- see ``_leaf_shape``.
+_CUTOFF_SLACK = timedelta(seconds=1)
+
+# fact -> the single column a retention DELETE's age cutoff must be on: the
+# instant the row entered history.
+#
+# Pinning the column is what keeps the two halves from collapsing into one
+# conjunct. Without it, a bare ``backoff_until < <past>`` satisfies both at once
+# -- it is a recognized cutoff leaf AND a dead-row shape -- so a fleet-wide
+# delete of every expired-backoff row in the lab, with no age bound whatsoever,
+# reads as retention. It also fixes what "age" means: the row's own creation
+# instant, not whichever datetime column happens to carry a past bound.
+#
+# Consequence, accepted deliberately: a statement whose cutoff sits on some other
+# column is refused even when it is sound (``ended_at < <past>`` implies
+# ``ended_at IS NOT NULL``, so it carries both halves in one conjunct honestly).
+# The carve-out reads the one shape ``app/`` issues; widening it is a decision
+# someone takes on purpose, with a registry line to show for it.
+RETENTION_AGE_COLUMNS: dict[str, str] = {"live_session": "started_at", "remediation_log_entry": "at"}
+
+# fact -> the ``(column, comparison)`` leaf shapes that prove a removed row is
+# not a live carrier of that fact. A retention DELETE has to carry one top-level
+# conjunct built *only* out of these -- either such a leaf, or an ``or_`` whose
+# every branch is one, since a row reached the delete through some branch and a
+# disjunction of dead-row tests is still a dead-row test.
+#
+# The age cutoff is the other half and is NOT interchangeable with this one. An
+# age cutoff on its own still deletes a session that has been live for a
+# fortnight; a dead-row test on its own is an ordinary unbounded fleet-wide
+# delete. ``_is_fleet_retention_delete`` requires both, on different columns.
+RETENTION_DEAD_ROW_SHAPES: dict[str, frozenset[tuple[str, str]]] = {
+    # ``live_session_predicate`` is ``status IN (running, pending) AND ended_at
+    # IS NULL``; a row with ``ended_at`` set fails it outright, whatever its
+    # status column says.
+    "live_session": frozenset({("ended_at", "is_not_null")}),
+    # This fact's decision column is ``backoff_until`` (DECISION_COLUMNS). A row
+    # that never armed a backoff, or armed one that had already expired at the
+    # cutoff, arms nothing a reader can still be inside of. Note that no
+    # per-column test can be written for the ladder's *shape* -- ``derive_ladder``
+    # reads every row of the device's log -- which is why the fact's declared
+    # decision column is what the contract holds this statement to.
+    "remediation_log_entry": frozenset({("backoff_until", "is_null"), ("backoff_until", "lt_cutoff")}),
+}
 
 # Devices INSERTed earlier in the current transaction. The new-device rule says
 # a device created in this transaction needs no lock for its own facts, and the
@@ -349,8 +409,6 @@ def _before_flush(session: OrmSession, flush_context: UOWTransaction, instances:
             sites = {flush_frames[0]}
         if not sites:
             return  # test fixture: no application frame anywhere in the write path
-        if sites <= UNPROVEN_WRITE_SITES:
-            return
         _violation(
             f"unlocked decision-fact write: model={type(target).__name__} "
             f"fact={_facts.get(type(target), 'device_column')} columns={sorted(changed)} "
@@ -437,6 +495,132 @@ def _where_column_hits(stmt: Any, column_key: str) -> tuple[bool, set[Any]]:  # 
     return bool(values), values
 
 
+def _is_past_bound(value: object) -> bool:
+    """A timezone-aware ``datetime`` that has already elapsed. See ``_leaf_shape``."""
+    return isinstance(value, datetime) and value.tzinfo is not None and value <= datetime.now(UTC) + _CUTOFF_SLACK
+
+
+def _leaf_shape(leaf: Any, table: Any) -> tuple[str, str] | None:  # noqa: ANN401 - a WHERE leaf / Table
+    """``(column key, comparison shape)`` for a WHERE leaf on *table*, else None.
+
+    Exactly three shapes are recognized, each a claim a reader can check:
+    ``col IS NULL``, ``col IS NOT NULL``, and ``col < <past datetime literal>``.
+    Anything else -- another operator, a column-to-column comparison, a column
+    belonging to some other table -- returns None, which is what keeps every
+    caller below fail-closed.
+
+    ``lt_cutoff`` reads the bind's *value*, not just its type. A ``datetime``
+    bind alone proves nothing: ``backoff_until < <tomorrow>`` selects exactly the
+    rows that still arm a live backoff while reading as a cutoff, and
+    ``started_at < <tomorrow>`` is the whole fleet. So the bound must be
+    timezone-aware (a naive one cannot be compared to now without guessing a
+    zone) and must already be in the past. The slack below is one second, not a
+    policy dial: it absorbs a cutoff of literally ``now`` built a moment before
+    execution, and every real cutoff is days behind.
+
+    The table comparison is ``!=`` and not ``is not`` on purpose, as in
+    ``_where_column_hits``: a statement's ``.table`` is an ``AnnotatedTable``
+    while the columns in its WHERE carry the plain ``Table``, so the two are
+    never the same object. ``Annotated.__eq__`` compares the underlying element,
+    and ``Table`` inherits ``object.__eq__``, which returns ``NotImplemented``
+    and lets Python fall back to the annotated side -- so ``==`` is right in
+    either order and ``is`` silently matches nothing.
+    """
+    if not isinstance(leaf, BinaryExpression):
+        return None
+    key = getattr(leaf.left, "key", None)
+    if key is None or getattr(leaf.left, "table", None) != table:
+        return None
+    right = leaf.right
+    if leaf.operator is operators.is_ and isinstance(right, Null):
+        return (key, "is_null")
+    if leaf.operator is operators.is_not and isinstance(right, Null):
+        return (key, "is_not_null")
+    if leaf.operator is operators.lt and isinstance(right, BindParameter) and _is_past_bound(right.value):
+        return (key, "lt_cutoff")
+    return None
+
+
+def _conjunct_shapes(conjunct: Any, table: Any) -> set[tuple[str, str]] | None:  # noqa: ANN401 - a WHERE node / Table
+    """Shapes one top-level conjunct asserts, or None when it is not fully recognized.
+
+    An ``or_`` contributes only when *every* branch is a recognized leaf. A row
+    reached the statement through one branch and the caller cannot tell which,
+    so each branch on its own has to carry the claim; a partially recognized
+    disjunction yields None rather than the recognized subset. This is the one
+    place anything descends into an ``or_`` -- ``_and_conjuncts`` refuses to,
+    and must keep refusing, because there the question is "what does this
+    statement pin", which a disjunction answers with nothing.
+    """
+    if isinstance(conjunct, BooleanClauseList) and conjunct.operator is operators.or_:
+        shapes: set[tuple[str, str]] = set()
+        for branch in conjunct.clauses:
+            shape = _leaf_shape(branch, table)
+            if shape is None:
+                return None
+            shapes.add(shape)
+        return shapes or None
+    shape = _leaf_shape(conjunct, table)
+    return None if shape is None else {shape}
+
+
+def _retention_target_subquery(stmt: Any) -> Select[Any] | None:  # noqa: ANN401 - Delete, read via private attrs
+    """The ``SELECT`` behind a DELETE whose whole WHERE is ``pk IN (SELECT ...)``.
+
+    The narrowest reading of the batch shape: exactly one top-level conjunct, an
+    ``IN`` whose left side is a primary-key column of the statement's own table
+    and whose right side is a scalar subquery. A second conjunct, a non-PK left
+    side, or any other operator makes this None and the carve-out unavailable --
+    the predicate the authority rests on lives inside that subquery, and a
+    statement of some other shape has not been read at all.
+    """
+    conjuncts = [leaf for criterion in getattr(stmt, "_where_criteria", ()) for leaf in _and_conjuncts(criterion)]
+    if len(conjuncts) != 1:
+        return None
+    leaf = conjuncts[0]
+    if not isinstance(leaf, BinaryExpression) or leaf.operator is not operators.in_op:
+        return None
+    if getattr(leaf.left, "table", None) != stmt.table:  # annotated vs plain Table; see _leaf_shape
+        return None
+    if getattr(leaf.left, "key", None) not in {column.key for column in stmt.table.primary_key.columns}:
+        return None
+    element = getattr(leaf.right, "element", None)
+    return element if isinstance(element, Select) else None
+
+
+def _is_fleet_retention_delete(stmt: Any, fact: str) -> bool:  # noqa: ANN401 - Delete, read via private attrs
+    """Both halves of the retention authority, re-derived from this statement.
+
+    Half one, the age bound: a top-level ``<age column> < <past datetime>`` leaf
+    on the target table, so the rows are history and not the fleet. Half two, the
+    dead-row proof: a top-level conjunct drawn entirely from
+    ``RETENTION_DEAD_ROW_SHAPES[fact]``, so no row the statement can reach
+    carries the fact now.
+
+    The halves cannot be the same conjunct: the age column is pinned per fact and
+    is never one of that fact's dead-row columns, so a conjunct that proves one
+    half is structurally incapable of proving the other. A fact missing either
+    declaration can never qualify, so registering a new one is two deliberate
+    acts rather than a side effect of adding a module to
+    ``FLEET_RETENTION_SITES``.
+    """
+    subquery = _retention_target_subquery(stmt)
+    dead_row = RETENTION_DEAD_ROW_SHAPES.get(fact)
+    age_column = RETENTION_AGE_COLUMNS.get(fact)
+    if subquery is None or not dead_row or age_column is None:
+        return False
+    age_bounded = False
+    proved_dead = False
+    for criterion in getattr(subquery, "_where_criteria", ()):
+        for conjunct in _and_conjuncts(criterion):
+            if _leaf_shape(conjunct, stmt.table) == (age_column, "lt_cutoff"):
+                age_bounded = True
+            shapes = _conjunct_shapes(conjunct, stmt.table)
+            if shapes is not None and shapes <= dead_row:
+                proved_dead = True
+    return age_bounded and proved_dead
+
+
 def _do_orm_execute(state: ORMExecuteState) -> None:
     """Catch bulk ``update()``/``delete()`` statements the identity-map half misses.
 
@@ -473,15 +657,22 @@ def _do_orm_execute(state: ORMExecuteState) -> None:
     # while assigning four columns).
     #
     # A bulk delete arrives here with ``columns == {"<delete>"}``, so the
-    # intersection is empty and no delete is ever carved out. Deliberate and
-    # fail-closed: a conditional delete is arguably a swap on every column at
-    # once, but no registered module deletes a fact row today, so the shape is
-    # unexercised and gets no unexercised permission.
+    # intersection is empty and no delete is ever carved out by *this* rule.
+    # Deliberate and fail-closed: a conditional delete is arguably a swap on
+    # every column at once, but no guarded_update module deletes a fact row, so
+    # the shape is unexercised and gets no unexercised permission. The retention
+    # deletes that do exist are carved out below, on a different authority.
     guard_columns = GUARD_PREDICATE_COLUMNS.get(fact, frozenset()) & columns
     if GUARDED_UPDATE_SITES.get(site) == fact and any(
         _where_column_hits(state.statement, column)[0] for column in guard_columns
     ):
         return  # registered guarded_update site with its predicate present
+    if (
+        state.is_delete
+        and fact in FLEET_RETENTION_SITES.get(site, frozenset())
+        and _is_fleet_retention_delete(state.statement, fact)
+    ):
+        return  # registered fleet_retention site: age-bounded delete of already-dead rows
     _, device_ids = _where_column_hits(state.statement, "device_id")
     if device_ids:
         locked = _effective_locked_ids(state.session)
@@ -490,8 +681,6 @@ def _do_orm_execute(state: ORMExecuteState) -> None:
         reason = f"device_ids={sorted(map(str, device_ids))} not in ledger"
     else:
         reason = "underivable target (no device_id in WHERE)"
-    if site in UNPROVEN_WRITE_SITES:
-        return
     _violation(
         f"unlocked bulk decision-fact write: model={model.__name__} fact={fact} columns={sorted(columns)} "
         f"{reason} site={site} chain={list(frames)}"

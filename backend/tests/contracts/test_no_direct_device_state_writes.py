@@ -21,16 +21,20 @@ import pytest
 
 from app.devices.services import read_projection
 from tests.contracts.decision_fact_columns import DECISION_COLUMNS, DECISION_FACT_MODELS
-from tests.contracts.device_lock_guard import GUARD_PREDICATE_COLUMNS, GUARDED_UPDATE_SITES
+from tests.contracts.device_lock_guard import (
+    FLEET_RETENTION_SITES,
+    GUARD_PREDICATE_COLUMNS,
+    GUARDED_UPDATE_SITES,
+    RETENTION_AGE_COLUMNS,
+    RETENTION_DEAD_ROW_SHAPES,
+)
 from tests.contracts.test_repository_transaction_boundaries import (
-    BEGIN_OWNER_REGISTRY,
     PRODUCTION,
     call_tail,
     iter_owned,
     parse_module,
     relative_module,
 )
-from tests.contracts.transaction_local_modules import MIGRATED_TRANSACTION_LOCAL_MODULES
 
 BACKEND_APP = Path(__file__).resolve().parents[2] / "app"
 BACKEND_ROOT = BACKEND_APP.parent
@@ -212,7 +216,17 @@ def test_the_call_scan_sees_the_transition_writer() -> None:
 #   * an ``insert()``/``delete()`` naming it, or an ``update()`` naming it whose
 #     ``.values()`` touches one of that fact's decision columns — a bulk
 #     ``update(Session).values(last_activity_at=...)`` is a timestamp the reaper
-#     reads, not a fact any lock protects, and is deliberately not a writer;
+#     reads, not a fact any lock protects, and is deliberately not a writer; or
+#   * a ``model=<FactModel>`` keyword on any call. A helper that takes the model
+#     as a parameter (``_delete_in_batches(model=Session, ...)``) issues the
+#     statement as ``delete(model)``, which the rule above resolves to nothing;
+#     the keyword at the call site is where the fact is actually named, and the
+#     enclosing function is the one that decided to delete it. This rule is
+#     deliberately blind to what the helper does with the model: a pure *read*
+#     helper taking ``model=Session`` would be discovered as a writer too. That
+#     is over-discovery, not a hole — the set-equality below fails loudly naming
+#     the call site, and the fix is a registry entry or a keyword rename, either
+#     of which someone must look at;
 #   * a call to ``write_desired_state``; or
 #   * an assignment to ``failure_episode_id`` / ``operational_state_last_emitted``.
 #
@@ -238,7 +252,7 @@ def test_the_call_scan_sees_the_transition_writer() -> None:
 #        app/sessions/service.py:148,156,194,466-478,522
 #        app/runs/service_reservation.py:197,221,257,277,310,312,336,355
 #            Every reservation release/exclude/restore path.
-#        app/runs/service_lifecycle_release.py:133,134,148,150
+#        app/runs/service_lifecycle_release.py:159,161  release_devices
 #        app/runs/service_lifecycle_failures.py:226
 #        app/verification/services/execution.py:541
 #        app/verification/services/preparation.py:573   (DeviceIntent.payload)
@@ -250,6 +264,8 @@ def test_the_call_scan_sees_the_transition_writer() -> None:
 # the rules above discover -- it is not a claim of coverage over every
 # decision-fact write in the repository.
 DECISION_FACT_CALLS = {"write_desired_state": "appium_desired_state"}
+# The keyword a model-parameterised helper is handed its target through.
+DECISION_FACT_MODEL_KEYWORD = "model"
 DECISION_FACT_ATTRIBUTES = {
     "failure_episode_id": "failure_episode_id",
     "operational_state_last_emitted": "operational_state_last_emitted",
@@ -279,8 +295,12 @@ class DecisionFactWriter:
     """One function that mutates decision facts, and what is checked about it.
 
     The four ``proof_mode`` values are NOT four strengths of the same claim.
-    Two of them prove a device lock, one proves a different thing entirely, and
-    one proves nothing much; saying so plainly is the point of this docstring:
+    Two of them prove a device lock and two prove a different thing entirely;
+    saying so plainly is the point of this docstring. Every one of them proves
+    *something* checkable — a mode that only described what a writer happened to
+    do would be worse than no mode at all, which is why the transaction-locality
+    placeholder this map used to carry was retired rather than kept as a
+    disclosure.
 
     * ``accepts_locked`` — **proves a lock.** Declares a ``LockedDevice``
       parameter and calls ``locked.assert_active(db)`` before its first write.
@@ -298,22 +318,21 @@ class DecisionFactWriter:
       the predicate from every executing statement — and that the lexical
       companion in ``test_device_lock_guard.py`` covers the module, so dropping
       the guard from a statement fails at authoring time rather than in a race.
-    * ``caller_locked`` — **proves transaction-locality, not a lock.** The
-      function must own no ``begin()`` (absent from ``BEGIN_OWNER_REGISTRY``) and
-      its module must be in ``MIGRATED_TRANSACTION_LOCAL_MODULES``. Both
-      conditions are about transaction *ownership*: neither mentions a lock, and
-      neither inspects the call chain. A writer with no lock anywhere above it
-      passes this branch. It establishes only that the write happens inside some
-      caller's transaction — and, since the sibling contract already proves every
-      module but two owns no commit/rollback, the second condition is close to
-      free.
-
-    ``caller_locked`` is therefore a placeholder for work not done, not a proof.
-    Prefer threading a real ``LockedDevice`` when a path is touched; every
-    conversion moves an entry into a mode that actually proves something. It
-    stays a disclosed placeholder here because converting each of the thirteen
-    ``caller_locked`` entries means threading a real ``LockedDevice`` through
-    roughly ten production modules -- a phase, not an item.
+    * ``fleet_retention`` — **proves the write decides nothing, not a lock.**
+      The writer deletes history fleet-wide: rows an age cutoff has put behind
+      every live decision, whose predicate additionally proves they do not carry
+      the fact now. There is no device to lock (the target set spans the fleet)
+      and no decision to serialize (nothing about any device's current state
+      changes). What is checked is that the module is registered in
+      ``FLEET_RETENTION_SITES`` for this fact — the runtime guard re-derives both
+      halves from every executing statement, and grants the carve-out to DELETEs
+      only — and that the lexical companion finds both halves at every call site.
+      Neither half is the mode on its own: an age cutoff alone still deletes a
+      session that has been live for a fortnight, and a dead-row test alone is an
+      ordinary unbounded fleet-wide delete. They are also required to be
+      *different conjuncts*, which is what ``RETENTION_AGE_COLUMNS`` buys — it
+      pins the cutoff to a column that is never one of the fact's dead-row
+      columns, so a single comparison cannot quietly supply both.
     """
 
     module: str
@@ -333,6 +352,18 @@ DECISION_FACT_WRITERS: frozenset[DecisionFactWriter] = frozenset(
             "_clear_elapsed_cooldown_for_locked_device",
             frozenset({"device_reservation"}),
             "accepts_locked",
+        ),
+        DecisionFactWriter(
+            "app/devices/services/data_cleanup.py",
+            "DataCleanupService._cleanup_sessions_and_tickets",
+            frozenset({"live_session"}),
+            "fleet_retention",
+        ),
+        DecisionFactWriter(
+            "app/devices/services/data_cleanup.py",
+            "DataCleanupService._cleanup_events_and_telemetry",
+            frozenset({"remediation_log_entry"}),
+            "fleet_retention",
         ),
         DecisionFactWriter(
             "app/devices/services/intent_reconciler.py",
@@ -457,6 +488,15 @@ def _model_facts(node: ast.Call, chained: dict[int, set[str]]) -> set[str]:
     tail = call_tail(node.func)
     if tail in DECISION_FACT_MODELS:
         return {DECISION_FACT_MODELS[tail]}
+    keyword_facts = {
+        DECISION_FACT_MODELS[named]
+        for keyword in node.keywords
+        if keyword.arg == DECISION_FACT_MODEL_KEYWORD
+        for named in (call_tail(keyword.value),)
+        if named in DECISION_FACT_MODELS
+    }
+    if keyword_facts:
+        return keyword_facts
     if tail not in {"insert", "update", "delete"}:
         return set()
     facts: set[str] = set()
@@ -610,6 +650,154 @@ def guarded_update_statement_scan(module: str, fact: str, *, function: str | Non
     return guarded, unguarded
 
 
+# --- the fleet_retention lexical companion -----------------------------------
+#
+# A fleet_retention site's authority has two halves and neither is optional: an
+# age cutoff, so the rows are history, and a dead-row predicate, so none of the
+# rows it can reach carries the fact now. The runtime guard re-derives both from
+# each executing statement; this scan reads the source, so dropping either half
+# fails at authoring time.
+#
+# The statements themselves are issued by a model-parameterised batch helper
+# (``delete(model).where(id_column.in_(subquery))``), so there is no
+# ``delete(Session)`` in the source to read. The call site is: it names the
+# model, the timestamp column, the cutoff and the extra predicates, and it is
+# the function that decided to delete. The three keyword names below are that
+# contract; rename one in ``app/`` and this scan finds no call site and reports
+# the claim hollow rather than passing silently.
+_RETENTION_CUTOFF_KEYWORDS = ("timestamp_column", "cutoff")
+_RETENTION_PREDICATE_KEYWORD = "extra_predicates"
+_RETENTION_NULL_TESTS = {"is_": "is_null", "is_not": "is_not_null"}
+
+
+def _dead_row_leaf(node: ast.expr, model: str) -> tuple[str, str] | None:
+    """``(column, shape)`` for one recognized dead-row leaf on *model*, else None.
+
+    The lexical twin of ``device_lock_guard._leaf_shape`` and deliberately the
+    same three shapes: ``Model.col.is_(None)``, ``Model.col.is_not(None)`` and
+    ``Model.col < x``.
+
+    One axis it cannot mirror: the runtime arm reads the bind's *value* and
+    requires an already-elapsed, timezone-aware datetime, which rejects
+    ``backoff_until < <tomorrow>``. Lexically ``x`` is a name. So this scan is the
+    more permissive of the two, and a statement it blesses can still be refused
+    at runtime — the failure lands, loudly, on the next suite run rather than at
+    authoring time. It is never the other way round: nothing this scan rejects is
+    accepted by the guard.
+    """
+    if isinstance(node, ast.Compare):
+        if len(node.ops) == 1 and isinstance(node.ops[0], ast.Lt):
+            column = _column_of(node.left, model)
+            return (column, "lt_cutoff") if column is not None else None
+        return None
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        shape = _RETENTION_NULL_TESTS.get(node.func.attr)
+        column = _column_of(node.func.value, model)
+        if shape is None or column is None:
+            return None
+        argument = node.args[0] if len(node.args) == 1 else None
+        if not (isinstance(argument, ast.Constant) and argument.value is None):
+            return None
+        return (column, shape)
+    return None
+
+
+def _dead_row_shapes(argument: ast.expr, model: str) -> set[tuple[str, str]] | None:
+    """Shapes one retention conjunct asserts, or None when not fully recognized.
+
+    An ``or_()`` contributes only when every branch is a recognized leaf, for the
+    reason ``device_lock_guard._conjunct_shapes`` gives: the row reached the
+    delete through some branch and nobody can tell which, so each branch has to
+    carry the claim on its own. Branches are leaves, never nested disjunctions —
+    the runtime arm does not descend twice either, and a scan that accepted a
+    shape the guard rejects would pass work the guard then fails.
+    """
+    if isinstance(argument, ast.Call) and call_tail(argument.func) == "or_":
+        shapes: set[tuple[str, str]] = set()
+        for branch in argument.args:
+            leaf = _dead_row_leaf(branch, model)
+            if leaf is None:
+                return None
+            shapes.add(leaf)
+        return shapes or None
+    leaf = _dead_row_leaf(argument, model)
+    return None if leaf is None else {leaf}
+
+
+def _applies_its_cutoff(tree: ast.Module) -> bool:
+    """The module compares its ``timestamp_column`` parameter to ``cutoff`` with ``<``.
+
+    A call site can pass both keywords to a helper that ignores them. This reads
+    the helper: turn ``<`` into ``<=``, or drop the comparison, and the age half
+    of every call site's authority is gone with it.
+    """
+    return any(
+        isinstance(node, ast.Compare)
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], ast.Lt)
+        and isinstance(node.left, ast.Name)
+        and node.left.id == _RETENTION_CUTOFF_KEYWORDS[0]
+        and isinstance(node.comparators[0], ast.Name)
+        and node.comparators[0].id == _RETENTION_CUTOFF_KEYWORDS[1]
+        for node in ast.walk(tree)
+    )
+
+
+def fleet_retention_statement_scan(module: str, fact: str, *, function: str | None = None) -> tuple[int, list[str]]:
+    """``(authorized call sites, unauthorized descriptions)`` for *module*.
+
+    A call site counts when it hands the batch helper *fact*'s model, a
+    ``timestamp_column`` that is the fact's pinned ``RETENTION_AGE_COLUMNS``
+    entry, a ``cutoff``, and an ``extra_predicates`` tuple containing a conjunct
+    drawn only from ``RETENTION_DEAD_ROW_SHAPES[fact]``. *function* narrows the
+    scan to one qualified function so a per-writer caller reports its own call
+    site rather than a sibling's.
+    """
+    model = next(name for name, discovered in DECISION_FACT_MODELS.items() if discovered == fact)
+    dead_row = RETENTION_DEAD_ROW_SHAPES[fact]
+    age_column = RETENTION_AGE_COLUMNS[fact]
+    tree = parse_module(BACKEND_ROOT / module)
+    authorized = 0
+    problems: list[str] = []
+    if not _applies_its_cutoff(tree):
+        problems.append(f"{module}: no `{_RETENTION_CUTOFF_KEYWORDS[0]} < {_RETENTION_CUTOFF_KEYWORDS[1]}` anywhere")
+    for node, owner in iter_owned(tree, ""):
+        if not isinstance(node, ast.Call):
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords if keyword.arg}
+        target = keywords.get(DECISION_FACT_MODEL_KEYWORD)
+        if target is None or call_tail(target) != model:
+            continue
+        if function is not None and owner != function:
+            continue
+        where = f"{module}:{node.lineno} {owner or '<module>'}"
+        missing = [name for name in _RETENTION_CUTOFF_KEYWORDS if name not in keywords]
+        if missing:
+            problems.append(f"{where}: no age cutoff — the call passes no {', '.join(missing)}")
+            continue
+        # The cutoff has to be on the fact's pinned age column, as the runtime
+        # arm requires. Any other datetime column would let the age half and the
+        # dead-row half be carried by the same conjunct.
+        timestamp = _column_of(keywords[_RETENTION_CUTOFF_KEYWORDS[0]], model)
+        if timestamp != age_column:
+            problems.append(
+                f"{where}: wrong age column — the cutoff is on {model}.{timestamp} and {fact}'s pinned "
+                f"RETENTION_AGE_COLUMNS entry is {age_column!r}"
+            )
+            continue
+        predicates = keywords.get(_RETENTION_PREDICATE_KEYWORD)
+        conjuncts = list(predicates.elts) if isinstance(predicates, ast.Tuple) else []
+        shapes = [_dead_row_shapes(conjunct, model) for conjunct in conjuncts]
+        if any(shape is not None and shape <= dead_row for shape in shapes):
+            authorized += 1
+        else:
+            problems.append(
+                f"{where}: no dead-row predicate — a {model} retention delete must carry a conjunct drawn only "
+                f"from {sorted(dead_row)}, so the rows it removes provably do not carry {fact} today"
+            )
+    return authorized, problems
+
+
 def _function_node(module: str, qualified_function: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     found: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     for node, owner in iter_owned(parse_module(BACKEND_ROOT / module), ""):
@@ -642,24 +830,23 @@ def test_decision_fact_writer_inventory_is_registered() -> None:
 
 def test_decision_fact_proof_modes_are_known() -> None:
     modes = {writer.proof_mode for writer in DECISION_FACT_WRITERS}
-    assert modes <= {"accepts_locked", "acquires_locked", "caller_locked", "guarded_update"}, (
+    assert modes <= {"accepts_locked", "acquires_locked", "fleet_retention", "guarded_update"}, (
         f"unknown proof modes: {sorted(modes)}"
     )
 
 
-def test_decision_fact_writers_match_their_declared_proof_mode() -> None:
-    """Each registered writer satisfies the checks its own ``proof_mode`` names.
+def test_decision_fact_writers_prove_their_declared_mode() -> None:
+    """Each registered writer proves what its own ``proof_mode`` claims.
 
-    Deliberately not called "proves their device lock": only the
-    ``accepts_locked`` and ``acquires_locked`` branches do that. The
-    ``guarded_update`` branch checks predicate authority instead, and the
-    ``caller_locked`` branch checks transaction-locality and never looks for a
-    lock, so a writer with no lock anywhere up its call chain passes it. Every
-    violation message below names the mode it was checked under, so a failure can
-    never be misread as a lock proof that was only a locality check.
+    Still not "proves their device lock": only the ``accepts_locked`` and
+    ``acquires_locked`` branches do that. ``guarded_update`` proves predicate
+    authority and ``fleet_retention`` proves the write decides nothing — neither
+    looks for a lock, and neither pretends to. What every branch now has in
+    common is that it checks a property, so a writer cannot sit in this map on a
+    declaration alone. Every violation message below names the mode it was
+    checked under, so a failure can never be misread as a lock proof.
     """
     writes = decision_fact_writes()
-    begin_owners = {owner.key for owner in BEGIN_OWNER_REGISTRY}
     violations: list[str] = []
     for writer in sorted(DECISION_FACT_WRITERS, key=lambda entry: (entry.module, entry.qualified_function)):
         key = (writer.module, writer.qualified_function)
@@ -720,18 +907,31 @@ def test_decision_fact_writers_match_their_declared_proof_mode() -> None:
                         f"{fact} UPDATE in this function at all, so it covers nothing"
                     )
         else:
-            # No lock is checked here, by design; see the class docstring.
-            if key in begin_owners:
-                violations.append(f"{where}: transaction-locality broken — owns a begin() context")
-            if writer.module not in MIGRATED_TRANSACTION_LOCAL_MODULES:
-                violations.append(
-                    f"{where}: transaction-locality broken — the module is not pinned transaction-local by "
-                    "MIGRATED_TRANSACTION_LOCAL_MODULES"
+            # fleet_retention. No lock is checked here either, by design; see the
+            # class docstring. What is checked is that the runtime guard would
+            # actually grant this module/fact the carve-out, and that every call
+            # site carries both halves of the authority it rests on.
+            for fact in sorted(writer.facts):
+                if fact not in FLEET_RETENTION_SITES.get(writer.module, frozenset()):
+                    violations.append(
+                        f"{where}: retention authority unproven — {writer.module} is not registered in "
+                        f"FLEET_RETENTION_SITES for {fact!r}, so the runtime guard grants it no carve-out"
+                    )
+                    continue
+                authorized, unauthorized = fleet_retention_statement_scan(
+                    writer.module, fact, function=writer.qualified_function
                 )
+                if unauthorized:
+                    violations.append(f"{where}: retention authority unproven — " + "; ".join(unauthorized))
+                elif not authorized:
+                    violations.append(
+                        f"{where}: retention authority unproven — the lexical companion found no {fact} "
+                        f"retention delete in this function at all, so it covers nothing"
+                    )
     assert violations == [], (
         "decision-fact writers that do not satisfy their declared proof_mode "
         "(accepts_locked/acquires_locked check a device lock; guarded_update checks predicate authority; "
-        "caller_locked checks transaction-locality only):\n  " + "\n  ".join(violations)
+        "fleet_retention checks an age cutoff plus a dead-row predicate):\n  " + "\n  ".join(violations)
     )
 
 
