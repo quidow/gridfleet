@@ -1,32 +1,17 @@
 import { useCursorQueryState } from '../../hooks/useCursorQueryState';
 import { useLifecycleIncidents } from '../../hooks/useLifecycle';
 import type { LifecycleIncidentRead } from '../../types';
-import { Badge, type BadgeTone } from '../ui/Badge';
+import { Badge } from '../ui/Badge';
 import { Card } from '../ui/Card';
 import { CursorPagination } from '../ui/CursorPagination';
+import { incidentToneFromEventType } from '../dashboard/dashboardSummary';
 import { formatDate } from './utils';
 
-const EVENT_BADGE_MAP: Record<string, { label: string; tone: BadgeTone }> = {
-  lifecycle_auto_stopped: { label: 'Auto-Stopped', tone: 'critical' },
-  lifecycle_deferred_stop: { label: 'Stopping Soon', tone: 'warning' },
-  lifecycle_recovery_suppressed: { label: 'Recovery Paused', tone: 'warning' },
-  lifecycle_recovery_failed: { label: 'Recovery Failed', tone: 'critical' },
-  lifecycle_recovery_backoff: { label: 'Waiting to Retry', tone: 'warning' },
-  lifecycle_recovered: { label: 'Recovered', tone: 'success' },
-  lifecycle_run_excluded: { label: 'Removed from Run', tone: 'critical' },
-  lifecycle_run_restored: { label: 'Rejoined Run', tone: 'success' },
-  health_check_fail: { label: 'Health Fail', tone: 'critical' },
-  connectivity_lost: { label: 'Disconnected', tone: 'critical' },
-  connectivity_restored: { label: 'Connected', tone: 'success' },
-  node_crash: { label: 'Node Crash', tone: 'critical' },
-  node_restart: { label: 'Node Restart', tone: 'info' },
-  maintenance_entered: { label: 'Maintenance Entered', tone: 'warning' },
-  maintenance_exited: { label: 'Maintenance Exited', tone: 'success' },
-};
-
-function eventBadge(eventType: string) {
-  const badge = EVENT_BADGE_MAP[eventType] ?? { label: eventType, tone: 'neutral' as BadgeTone };
-  return <Badge tone={badge.tone}>{badge.label}</Badge>;
+function eventBadge(incident: LifecycleIncidentRead) {
+  // Label text is the backend's (LIFECYCLE_INCIDENT_LABELS), so this panel can never
+  // drift out of sync with the set of types the endpoint returns. Tone is shared with
+  // the dashboard so the same event never renders two different severities.
+  return <Badge tone={incidentToneFromEventType(incident.event_type)}>{incident.label}</Badge>;
 }
 
 type Props = {
@@ -75,7 +60,7 @@ export function StateHistoryPanel({ deviceId }: Props) {
             <tbody className="divide-y divide-border">
               {incidents.map((incident: LifecycleIncidentRead) => (
                 <tr key={incident.id} className="hover:bg-surface-2">
-                  <td className="px-5 py-3 text-sm">{eventBadge(incident.event_type)}</td>
+                  <td className="px-5 py-3 text-sm">{eventBadge(incident)}</td>
                   <td className="max-w-xs truncate px-5 py-3 text-sm text-text-1" title={incident.reason ?? ''}>
                     {incident.reason ?? '-'}
                   </td>
