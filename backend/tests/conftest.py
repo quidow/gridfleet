@@ -144,6 +144,17 @@ def _quote_identifier(name: str) -> str:
     return f'"{escaped}"'
 
 
+def _truncate_all_tables_statement() -> str:
+    """Empty every mapped table in one statement, as a fresh schema would be.
+
+    Built on call rather than at import so it cannot race model registration:
+    a table whose module had not been imported yet would silently be left out,
+    and its rows would leak into the next test.
+    """
+    tables = ", ".join(_quote_identifier(table.name) for table in Base.metadata.sorted_tables)
+    return f"TRUNCATE TABLE {tables} RESTART IDENTITY CASCADE"
+
+
 async def _ensure_test_database_exists() -> None:
     test_url = make_url(TEST_DATABASE_URL)
     if not test_url.database:
@@ -211,37 +222,62 @@ async def ensure_test_database_for_db_tests(request: pytest.FixtureRequest) -> N
     _test_database.ready = True
 
 
-@pytest_asyncio.fixture
-async def setup_database(ensure_test_database: None) -> AsyncGenerator[AsyncEngine]:
+@pytest_asyncio.fixture(scope="session")
+async def test_schema(ensure_test_database: None) -> AsyncGenerator[str]:
+    """Build the schema once per worker; tests get a clean one by truncating it.
+
+    Every xdist worker already owns a separate database (``_test_database_url``
+    appends the worker id), so the schema never needed to be per-test to keep
+    workers apart -- it only kept consecutive tests in one worker apart, and
+    ``TRUNCATE`` does that for a fraction of the cost. ``create_all`` emits DDL
+    for 28 tables, 49 indexes and 72 constraints and measured 0.18-0.35 s, which
+    every db test used to pay in setup and undo again in teardown.
+    """
     _ = ensure_test_database
     schema_name = f"test_{uuid.uuid4().hex}"
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'CREATE SCHEMA "{schema_name}"'))
+            await conn.execute(text(f'SET search_path TO "{schema_name}"'))
+            await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True))
+        yield schema_name
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
+        await engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def setup_database(test_schema: str) -> AsyncGenerator[AsyncEngine]:
     # Pooled, unlike the AUTOCOMMIT admin engines above. NullPool here made every
     # session a fresh TCP connect plus a SCRAM-SHA-256 handshake (4096 PBKDF2
     # iterations): 19.7 ms per connection against 0.9 ms pooled, and the suite
     # opens hundreds of thousands of them. Pooling is safe because this engine is
     # built per test and disposed at teardown below, so a connection is never
     # reused across event loops -- the usual reason to reach for NullPool under
-    # asyncio. Sized well above the default 5+10 so that a test holding many
-    # concurrent sessions cannot exhaust the pool and stall on checkout.
+    # asyncio. That is also why the engine stays per-test while the schema above
+    # is per-session. Sized well above the default 5+10 so that a test holding
+    # many concurrent sessions cannot exhaust the pool and stall on checkout.
     engine = create_async_engine(
         TEST_DATABASE_URL,
         pool_size=20,
         max_overflow=40,
-        connect_args={"server_settings": {"search_path": schema_name}},
+        connect_args={"server_settings": {"search_path": test_schema}},
     )
+    # Reset on the way in, not on the way out, so a test that dies mid-transaction
+    # cannot strand rows for its successor. The previous test's teardown has already
+    # drained the event bus and disposed its engine, so nothing holds a lock here.
     async with engine.begin() as conn:
-        await conn.execute(text(f'CREATE SCHEMA "{schema_name}"'))
-        await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True))
+        await conn.execute(text(_truncate_all_tables_statement()))
     yield engine
-    # Drain event-bus handler tasks before DROP SCHEMA. After-commit handlers
-    # spawned during the test query tables in the per-test schema; if they
+    # Drain event-bus handler tasks before disposing the engine. After-commit
+    # handlers spawned during the test query tables in the shared schema; if they
     # outlive the test body they hold AccessShareLock that deadlocks the
-    # AccessExclusiveLock taken by DROP SCHEMA CASCADE. autouse
+    # AccessExclusiveLock taken by the next test's TRUNCATE. autouse
     # reset_test_event_bus runs its post-yield shutdown LATER than this
     # fixture's teardown, so we must shut the event bus down here too.
     await test_event_bus.shutdown()
-    async with engine.begin() as conn:
-        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
     await engine.dispose()
 
 
