@@ -71,9 +71,9 @@ describe('QueuedRequestsCard', () => {
     expect(screen.getByText('2m 0s')).toBeInTheDocument();
   });
 
-  it('renders "—" for waiting column when requestTimestamp cannot be parsed', () => {
+  it('renders "—" for waiting column when requestTimestamp is empty', () => {
     // requestTimestamp is a required string on the DTO — the backend never omits it —
-    // but formatWaitTime still degrades gracefully for an unparseable value.
+    // but formatWaitTime still degrades gracefully for an empty value.
     renderCard([makeQueueRequest({ requestTimestamp: '' })]);
     const waitingCells = screen.getAllByText('—');
     expect(waitingCells.length).toBeGreaterThanOrEqual(1);
