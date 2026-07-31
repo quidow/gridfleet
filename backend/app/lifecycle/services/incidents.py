@@ -5,8 +5,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
-from sqlalchemy import select
+from sqlalchemy import asc, desc, select
 
+from app.core.pagination import (
+    CursorPage,
+    CursorToken,
+    decode_cursor,
+    encode_cursor,
+    keyset_newer,
+    keyset_older,
+)
 from app.core.timeutil import parse_iso as _parse_datetime
 from app.devices.models import Device, DeviceEvent, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
@@ -14,7 +22,9 @@ from app.devices.schemas.lifecycle import LifecycleIncidentRead
 from app.devices.services.event import record_event
 
 if TYPE_CHECKING:
+    from sqlalchemy import Select
     from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.sql.elements import ColumnElement
 
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
@@ -134,6 +144,15 @@ class LifecycleIncidentDetails:
     backoff_until: str | datetime | None = None
 
 
+async def _has_incident_rows(
+    db: AsyncSession,
+    stmt: Select[tuple[DeviceEvent, Device]],
+    predicate: ColumnElement[bool],
+) -> bool:
+    result = await db.execute(stmt.where(predicate).order_by(None).limit(1))
+    return result.first() is not None
+
+
 class LifecycleIncidentService:
     """Container-held facade for the device lifecycle-incident surface."""
 
@@ -200,11 +219,12 @@ class LifecycleIncidentService:
         cursor: str | None = None,
         direction: str = "older",
         scope: Literal["all", "policy"] = "all",
-    ) -> tuple[list[LifecycleIncidentRead], str | None, str | None]:
-        """Return lifecycle incidents with cursor-based pagination.
+    ) -> CursorPage[LifecycleIncidentRead]:
+        """Return lifecycle incidents with keyset cursor pagination.
 
-        Returns (items, next_cursor, prev_cursor).
-        Cursor is the ISO timestamp of the boundary event's created_at.
+        Cursors are opaque ``(created_at, id)`` tokens from ``app.core.pagination``,
+        matching sessions and runs. The ``id`` tiebreak is what keeps events sharing a
+        ``created_at`` from being skipped or duplicated across a page boundary.
         ``scope="policy"`` restricts to the original 10 lifecycle_* types, so a small
         fixed-size window (e.g. AttentionCard) can't be starved by the 7 failure/
         maintenance types a single host flap can emit several of per device.
@@ -218,35 +238,45 @@ class LifecycleIncidentService:
         if device_id is not None:
             stmt = stmt.where(DeviceEvent.device_id == device_id)
 
-        if cursor:
-            cursor_dt = _parse_datetime(cursor)
-            if cursor_dt is not None:
-                if direction == "newer":
-                    stmt = stmt.where(DeviceEvent.created_at > cursor_dt).order_by(DeviceEvent.created_at.asc())
-                else:
-                    stmt = stmt.where(DeviceEvent.created_at < cursor_dt).order_by(DeviceEvent.created_at.desc())
-            else:
-                stmt = stmt.order_by(DeviceEvent.created_at.desc())
+        page_stmt = stmt
+        cursor_token = decode_cursor(cursor) if cursor else None
+        if cursor_token is not None:
+            predicate = (
+                keyset_newer(DeviceEvent.created_at, DeviceEvent.id, cursor_token)
+                if direction == "newer"
+                else keyset_older(DeviceEvent.created_at, DeviceEvent.id, cursor_token)
+            )
+            page_stmt = page_stmt.where(predicate)
+
+        if direction == "newer":
+            page_stmt = page_stmt.order_by(asc(DeviceEvent.created_at), asc(DeviceEvent.id))
         else:
-            stmt = stmt.order_by(DeviceEvent.created_at.desc())
+            page_stmt = page_stmt.order_by(desc(DeviceEvent.created_at), desc(DeviceEvent.id))
 
-        stmt = stmt.limit(limit + 1)
-        result = await db.execute(stmt)
-        rows = result.all()
+        result = await db.execute(page_stmt.limit(limit))
+        rows = list(result.all())
+        if direction == "newer":
+            rows.reverse()
 
-        has_more = len(rows) > limit
-        if has_more:
-            rows = rows[:limit]
-
-        if direction == "newer" and cursor:
-            rows = list(reversed(rows))
+        if not rows:
+            return CursorPage(items=[], limit=limit, next_cursor=None, prev_cursor=None)
 
         items = [serialize_lifecycle_incident(event, device) for event, device in rows]
-
-        next_cursor: str | None = None
-        prev_cursor: str | None = None
-        if items:
-            next_cursor = items[-1].created_at.isoformat() if has_more else None
-            prev_cursor = items[0].created_at.isoformat() if cursor else None
-
-        return items, next_cursor, prev_cursor
+        first_event = rows[0][0]
+        last_event = rows[-1][0]
+        has_newer = await _has_incident_rows(
+            db,
+            stmt,
+            keyset_newer(DeviceEvent.created_at, DeviceEvent.id, CursorToken(first_event.created_at, first_event.id)),
+        )
+        has_older = await _has_incident_rows(
+            db,
+            stmt,
+            keyset_older(DeviceEvent.created_at, DeviceEvent.id, CursorToken(last_event.created_at, last_event.id)),
+        )
+        return CursorPage(
+            items=items,
+            limit=limit,
+            next_cursor=encode_cursor(last_event.created_at, last_event.id) if has_older else None,
+            prev_cursor=encode_cursor(first_event.created_at, first_event.id) if has_newer else None,
+        )

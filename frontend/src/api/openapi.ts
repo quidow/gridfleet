@@ -9963,7 +9963,7 @@ export interface operations {
                 limit?: number;
                 device_id?: string | null;
                 cursor?: string | null;
-                direction?: string;
+                direction?: "older" | "newer";
                 scope?: "all" | "policy";
             };
             header?: never;

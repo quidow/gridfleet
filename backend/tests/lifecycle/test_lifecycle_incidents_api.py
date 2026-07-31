@@ -248,3 +248,64 @@ async def test_lifecycle_incidents_api_policy_scope_excludes_failure_and_mainten
         "lifecycle_recovered",
         "lifecycle_recovery_failed",
     ]
+
+
+async def test_lifecycle_incidents_api_rejects_an_invalid_cursor(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    await _create_device(db_session, default_host_id, identity_value="lifecycle-api-5", name="Lifecycle Five")
+    await db_session.commit()
+
+    resp = await client.get("/api/lifecycle/incidents", params={"cursor": "not-a-real-cursor"})
+    assert resp.status_code == 422
+
+
+async def test_lifecycle_incidents_api_rejects_an_unknown_direction(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    await _create_device(db_session, default_host_id, identity_value="lifecycle-api-6", name="Lifecycle Six")
+    await db_session.commit()
+
+    resp = await client.get("/api/lifecycle/incidents", params={"direction": "sideways"})
+    assert resp.status_code == 422
+
+
+async def test_lifecycle_incidents_api_round_trips_its_own_cursor(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    device = await _create_device(db_session, default_host_id, identity_value="lifecycle-api-7", name="Lifecycle Seven")
+    base = datetime.now(UTC) - timedelta(minutes=10)
+    db_session.add_all(
+        [
+            DeviceEvent(
+                device_id=device["id"],
+                event_type=DeviceEventType.lifecycle_recovered,
+                details={"summary_state": "idle"},
+                created_at=base + timedelta(minutes=index),
+            )
+            for index in range(5)
+        ]
+    )
+    await db_session.commit()
+
+    first = await client.get("/api/lifecycle/incidents", params={"device_id": device["id"], "limit": 2})
+    assert first.status_code == 200
+    first_body = first.json()
+    assert len(first_body["items"]) == 2
+    assert first_body["next_cursor"] is not None
+
+    second = await client.get(
+        "/api/lifecycle/incidents",
+        params={"device_id": device["id"], "limit": 2, "cursor": first_body["next_cursor"], "direction": "older"},
+    )
+    assert second.status_code == 200
+    second_body = second.json()
+    first_ids = {item["id"] for item in first_body["items"]}
+    second_ids = {item["id"] for item in second_body["items"]}
+    assert first_ids.isdisjoint(second_ids), "the second page repeated a row from the first"
