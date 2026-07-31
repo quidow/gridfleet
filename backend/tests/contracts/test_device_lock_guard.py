@@ -12,10 +12,10 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 
 from app.devices.locking import lock_device_handle
-from app.devices.models import ConnectionType, Device, DeviceType
+from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceType
 from app.sessions.models import Session, SessionStatus
 from tests.contracts import _lock_guard_probe as probe
 from tests.contracts.device_lock_guard import (
@@ -69,6 +69,14 @@ def _stage_device(db_session: AsyncSession, db_host: Host, name: str) -> Device:
 async def _seed_session_row(db_session: AsyncSession, db_host: Host) -> tuple[Device, Session]:
     device = await create_device(db_session, host_id=db_host.id, name="guard-target")
     row = Session(session_id="guard-probe", device_id=device.id, status=SessionStatus.running)
+    db_session.add(row)
+    await db_session.commit()  # fixture write: no app frame, guard skips it
+    return device, row
+
+
+async def _seed_intent_row(db_session: AsyncSession, db_host: Host) -> tuple[Device, DeviceIntent]:
+    device = await create_device(db_session, host_id=db_host.id, name="guard-target")
+    row = DeviceIntent(device_id=device.id, source="guard-probe", kind="deny", payload={})
     db_session.add(row)
     await db_session.commit()  # fixture write: no app frame, guard skips it
     return device, row
@@ -161,8 +169,9 @@ async def test_a_recorded_site_does_not_survive_its_transaction(db_session: Asyn
 async def test_a_derivable_unlocked_bulk_update_fails(db_session: AsyncSession, db_host: Host) -> None:
     device, _row = await _seed_session_row(db_session, db_host)
     stmt = update(Session).where(Session.device_id == device.id).values(status=SessionStatus.passed)
-    with pytest.raises(DeviceLockGuardViolation):
+    with pytest.raises(DeviceLockGuardViolation, match="not in ledger") as excinfo:
         await probe.probe_execute(db_session, stmt)
+    assert str(device.id) in str(excinfo.value)
     await db_session.rollback()
 
 
@@ -179,4 +188,30 @@ async def test_an_underivable_bulk_update_fails(db_session: AsyncSession, db_hos
     stmt = update(Session).where(Session.session_id == "guard-probe").values(status=SessionStatus.passed)
     with pytest.raises(DeviceLockGuardViolation, match="underivable"):
         await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+async def test_an_unlocked_bulk_update_of_a_non_decision_column_is_ignored(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    device, _row = await _seed_session_row(db_session, db_host)
+    stmt = update(Session).where(Session.device_id == device.id).values(session_id="renamed-not-a-decision-column")
+    await probe.probe_execute(db_session, stmt)  # must not raise: no decision column touched, lock or not
+    await db_session.rollback()
+
+
+async def test_a_derivable_unlocked_bulk_delete_fails(db_session: AsyncSession, db_host: Host) -> None:
+    device, _intent = await _seed_intent_row(db_session, db_host)
+    stmt = delete(DeviceIntent).where(DeviceIntent.device_id == device.id)
+    with pytest.raises(DeviceLockGuardViolation, match="not in ledger") as excinfo:
+        await probe.probe_execute(db_session, stmt)
+    assert str(device.id) in str(excinfo.value)
+    await db_session.rollback()
+
+
+async def test_a_derivable_locked_bulk_delete_passes(db_session: AsyncSession, db_host: Host) -> None:
+    device, _intent = await _seed_intent_row(db_session, db_host)
+    await lock_device_handle(db_session, device.id)
+    stmt = delete(DeviceIntent).where(DeviceIntent.device_id == device.id)
+    await probe.probe_execute(db_session, stmt)  # must not raise
     await db_session.rollback()

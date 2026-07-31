@@ -50,6 +50,13 @@ CEILINGS, disclosed and none load-bearing today:
   later fact write.
 - ``Update._values`` / ``_where_criteria`` are private SQLAlchemy 2.0 API,
   acceptable in test-only code against the pinned 2.0.51.
+- the bulk path only recognizes the four ``DECISION_FACT_MODELS``: ``_facts``
+  (unlike ``_watched``) has no entry for ``Device``/``AppiumNode``, so a bulk
+  ``update()``/``delete()`` against either skips ``_do_orm_execute`` entirely
+  and rides only on ``_before_flush`` for non-bulk writes. Latent today — the
+  only bulk ``AppiumNode`` update in ``app/`` writes ``last_observed_at``, an
+  unwatched observation column — but a future bulk write to a watched
+  ``Device``/``AppiumNode`` column would be silently uncovered by this half.
 """
 
 from __future__ import annotations
@@ -65,8 +72,8 @@ import greenlet
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import object_session
-from sqlalchemy.sql import operators, visitors
-from sqlalchemy.sql.elements import BinaryExpression, BindParameter
+from sqlalchemy.sql import operators
+from sqlalchemy.sql.elements import BinaryExpression, BindParameter, BooleanClauseList
 
 from app.devices.locking import DEVICE_LOCK_LEDGER_KEY
 from app.devices.models import Device
@@ -306,28 +313,57 @@ def _statement_columns(stmt: Any) -> set[str]:  # noqa: ANN401 - Update, read vi
     return {getattr(column, "key", str(column)) for column in raw}
 
 
+def _and_conjuncts(clause: Any) -> Iterator[Any]:  # noqa: ANN401 - a WHERE-tree node of any clause type
+    """Flatten *clause* into its top-level AND leaves, innermost structure only.
+
+    Descends only through an ``and_``-typed ``BooleanClauseList``. An ``or_``
+    branch, a ``not_`` (a ``UnaryExpression``), and a subquery's own criteria
+    are never descended into — each is yielded as an opaque leaf that no
+    column-key match below can see inside of. A column mentioned only there
+    is therefore treated as absent rather than as constraining the statement,
+    which is what keeps ``_where_column_hits`` fail-closed: an OR branch, a
+    negation, or a correlated subquery makes the statement underivable
+    instead of wrongly authorized (see the module docstring's CEILINGS block
+    for the residual gaps this does not close).
+    """
+    if isinstance(clause, BooleanClauseList) and clause.operator is operators.and_:
+        for sub in clause.clauses:
+            yield from _and_conjuncts(sub)
+    else:
+        yield clause
+
+
 def _where_column_hits(stmt: Any, column_key: str) -> tuple[bool, set[Any]]:  # noqa: ANN401 - Update or Delete
-    """(present, equality/IN values) for *column_key* across the WHERE tree."""
-    present = False
+    """(present, equality/IN/is values) for *column_key* in the statement's own WHERE.
+
+    Two restrictions beyond "the column is mentioned somewhere": the column
+    must belong to *stmt*'s own target table (never a same-named column from
+    a nested subquery), and the comparison must be ``eq``/``in_op``/``is_``
+    against a literal (never a bare mention under another operator, and never
+    a column-to-column comparison, which carries no derivable value at all).
+    """
     values: set[Any] = set()
     for criterion in getattr(stmt, "_where_criteria", ()):
-        for node in visitors.iterate(criterion):
-            if not isinstance(node, BinaryExpression):
+        for leaf in _and_conjuncts(criterion):
+            if not isinstance(leaf, BinaryExpression):
                 continue
-            if getattr(node.left, "key", None) != column_key:
+            if getattr(leaf.left, "key", None) != column_key:
                 continue
-            present = True
-            right = node.right
-            if node.operator is operators.eq and isinstance(right, BindParameter):
+            if getattr(leaf.left, "table", None) != stmt.table:
+                continue
+            right = leaf.right
+            if leaf.operator in (operators.eq, operators.is_) and isinstance(right, BindParameter):
                 values.add(right.value)
-            elif node.operator is operators.in_op and isinstance(right, BindParameter) and right.expanding:
+            elif leaf.operator is operators.in_op and isinstance(right, BindParameter) and right.expanding:
                 values.update(right.value or ())
-    return present, values
+    return bool(values), values
 
 
 def _do_orm_execute(state: ORMExecuteState) -> None:
-    """Catch bulk ``update()``/``delete()`` statements, which never populate
-    ``session.new``/``dirty``/``deleted`` and so are invisible to ``_before_flush``.
+    """Catch bulk ``update()``/``delete()`` statements the identity-map half misses.
+
+    ``_before_flush`` only ever sees ``session.new``/``dirty``/``deleted``, and a
+    Core-style bulk statement populates none of those.
     """
     if not _active or not (state.is_update or state.is_delete):
         return
@@ -338,8 +374,12 @@ def _do_orm_execute(state: ORMExecuteState) -> None:
     fact = _facts.get(model)
     if fact is None:
         return
-    if state.is_update and not (_statement_columns(state.statement) & DECISION_COLUMNS[fact]):
-        return
+    if state.is_update:
+        columns = _statement_columns(state.statement)
+        if not (columns & DECISION_COLUMNS[fact]):
+            return
+    else:
+        columns = {"<delete>"}
     frames = _app_frames()  # ordered innermost-first
     if not frames:
         return  # test-only statement
@@ -360,8 +400,8 @@ def _do_orm_execute(state: ORMExecuteState) -> None:
     if site in UNPROVEN_WRITE_SITES:
         return
     raise DeviceLockGuardViolation(
-        f"unlocked bulk decision-fact write: model={model.__name__} fact={fact} {reason} "
-        f"site={site} chain={list(frames)}"
+        f"unlocked bulk decision-fact write: model={model.__name__} fact={fact} columns={sorted(columns)} "
+        f"{reason} site={site} chain={list(frames)}"
     )
 
 
