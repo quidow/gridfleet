@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.desired_state_writer import DesiredStateWrite, write_desired_state
 from app.core import metrics_recorders
+from app.devices import locking as device_locking
 from app.devices.models import DeviceEvent, DeviceEventType
 from tests.helpers import create_device
 
@@ -42,6 +43,7 @@ async def test_write_desired_state_running_mutates_node_and_records_event(
         caller="operator_route", target_state="running"
     )._value.get()
 
+    await device_locking.lock_device_handle(db_session, device.id)
     await write_desired_state(
         db_session,
         node=node,
@@ -87,6 +89,7 @@ async def test_write_desired_state_stopped_clears_desired_port_and_watermark(
     db_session.add(node)
     await db_session.flush()
 
+    await device_locking.lock_device_handle(db_session, device.id)
     await write_desired_state(
         db_session,
         node=node,
@@ -119,6 +122,7 @@ async def test_write_desired_state_records_restart_watermark(
 
     restart_requested_at = datetime(2026, 7, 9, 15, 0, tzinfo=UTC)
 
+    await device_locking.lock_device_handle(db_session, device.id)
     await write_desired_state(
         db_session,
         node=node,
@@ -166,6 +170,7 @@ async def test_write_desired_state_newer_watermark_silently_replaces_old_waterma
     db_session.add(node)
     await db_session.flush()
 
+    await device_locking.lock_device_handle(db_session, device.id)
     await write_desired_state(
         db_session,
         node=node,

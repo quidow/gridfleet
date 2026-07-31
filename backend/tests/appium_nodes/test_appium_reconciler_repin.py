@@ -69,8 +69,9 @@ async def _seed(db_session: AsyncSession, host_id: object, name: str) -> tuple[o
 async def test_repin_moves_node_port_with_desired_port(db_session: AsyncSession, db_host: Host) -> None:
     device, node = await _seed(db_session, db_host.id, "repin-owner")
 
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await _repin_desired_port(
-        db_session, _row(device, db_host.id, node), conflict_port=CONFLICT_PORT, settings=SETTINGS
+        db_session, locked, _row(device, db_host.id, node), conflict_port=CONFLICT_PORT, settings=SETTINGS
     )
     await db_session.commit()
     await db_session.refresh(node)
@@ -86,8 +87,9 @@ async def test_repin_survives_the_next_intent_reconciler_tick(db_session: AsyncS
     With ownership moved, that recompute lands on the re-pinned port."""
     device, node = await _seed(db_session, db_host.id, "repin-survives")
 
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await _repin_desired_port(
-        db_session, _row(device, db_host.id, node), conflict_port=CONFLICT_PORT, settings=SETTINGS
+        db_session, locked, _row(device, db_host.id, node), conflict_port=CONFLICT_PORT, settings=SETTINGS
     )
     await db_session.commit()
     await db_session.refresh(node)

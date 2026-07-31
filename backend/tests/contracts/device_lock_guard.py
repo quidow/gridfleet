@@ -123,7 +123,6 @@ def _violation(message: str) -> None:
 # It may only shrink; test_unproven_sites_only_shrink holds the second copy.
 UNPROVEN_WRITE_SITES: frozenset[str] = frozenset(
     {
-        "app/appium_nodes/services/desired_state_writer.py",
         "app/devices/services/data_cleanup.py",
         "app/devices/services/remediation.py",
         "app/grid/allocation.py",
@@ -134,7 +133,6 @@ UNPROVEN_WRITE_SITES: frozenset[str] = frozenset(
         "app/sessions/service.py",
         "app/sessions/service_probes.py",
         "app/sessions/service_viability.py",
-        "app/verification/services/execution.py",
     }
 )
 

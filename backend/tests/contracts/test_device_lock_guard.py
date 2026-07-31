@@ -230,7 +230,6 @@ def test_unproven_sites_only_shrink() -> None:
             # two-file diff a reviewer cannot miss. A snapshot file or shared
             # constant would make edits one-touch and silent -- exactly the
             # property this test exists to deny. Do not deduplicate.
-            "app/appium_nodes/services/desired_state_writer.py",
             "app/devices/services/data_cleanup.py",
             "app/devices/services/remediation.py",
             "app/grid/allocation.py",
@@ -241,6 +240,5 @@ def test_unproven_sites_only_shrink() -> None:
             "app/sessions/service.py",
             "app/sessions/service_probes.py",
             "app/sessions/service_viability.py",
-            "app/verification/services/execution.py",
         }
     )

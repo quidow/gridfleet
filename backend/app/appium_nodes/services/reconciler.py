@@ -245,9 +245,10 @@ def _superseded_by_a_running_node(
 
 
 async def _repin_desired_port(
-    db: AsyncSession, row: DesiredRow, *, conflict_port: int, settings: SettingsReader
+    db: AsyncSession, locked: LockedDevice, row: DesiredRow, *, conflict_port: int, settings: SettingsReader
 ) -> None:
     """Re-pin ``desired_port`` inside the caller's Device-locked transaction."""
+    locked.assert_active(db)
     node = await lock_appium_node_for_device(db, row.device_id)
     if node is None:
         return
@@ -390,7 +391,7 @@ async def _record_start_failure(
             # landed on a second occupied port stayed uncorrected until the
             # window expired — so a host leaking two ports could still keep the
             # device wedged behind repeated failed starts.
-            await _repin_desired_port(db, row, conflict_port=conflict_port, settings=settings)
+            await _repin_desired_port(db, locked, row, conflict_port=conflict_port, settings=settings)
         if snapshot.ladder.backoff_active(now=now) is not None:
             # One escalation per failure episode. The agent keeps retrying (and
             # keeps reporting) on its own cadence while the backend's recovery

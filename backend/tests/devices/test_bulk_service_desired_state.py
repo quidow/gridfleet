@@ -48,6 +48,7 @@ async def test_bulk_restart_persists_watermark_when_recovery_directive_present(
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node
+    await device_locking.lock_device_handle(db_session, device.id)
     await write_desired_state(
         db_session,
         node=node,

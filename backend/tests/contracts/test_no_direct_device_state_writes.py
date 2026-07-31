@@ -354,7 +354,7 @@ DECISION_FACT_WRITERS: frozenset[DecisionFactWriter] = frozenset(
             "app/appium_nodes/services/reconciler.py",
             "_repin_desired_port",
             frozenset({"appium_desired_state"}),
-            "caller_locked",
+            "accepts_locked",
         ),
         DecisionFactWriter(
             "app/devices/services/health.py",
@@ -417,7 +417,7 @@ DECISION_FACT_WRITERS: frozenset[DecisionFactWriter] = frozenset(
             "app/verification/services/execution.py",
             "_stop_verification_node_if_running",
             frozenset({"appium_desired_state"}),
-            "caller_locked",
+            "accepts_locked",
         ),
     }
 )
