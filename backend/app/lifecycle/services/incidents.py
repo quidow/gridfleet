@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy import select
 
@@ -23,7 +23,10 @@ if TYPE_CHECKING:
 # event catalog under ``device_and_node_lifecycle``.
 LIFECYCLE_INCIDENT_EVENT_TYPE = "device.lifecycle_incident"
 
-LIFECYCLE_INCIDENT_LABELS: dict[DeviceEventType, str] = {
+# The original 10 lifecycle_* policy incidents. Kept as its own literal (rather than
+# derived by string-prefix matching on the enum value) so it can be exported as the
+# policy-only scope below without drifting from LIFECYCLE_INCIDENT_LABELS.
+_LIFECYCLE_POLICY_INCIDENT_LABELS: dict[DeviceEventType, str] = {
     DeviceEventType.lifecycle_deferred_stop: "Stopping Soon",
     DeviceEventType.lifecycle_auto_stopped: "Auto-Stopped",
     DeviceEventType.lifecycle_recovery_suppressed: "Recovery Paused",
@@ -36,7 +39,29 @@ LIFECYCLE_INCIDENT_LABELS: dict[DeviceEventType, str] = {
     DeviceEventType.lifecycle_run_cooldown_escalated: "Cooldown Extended",
 }
 
+# Widened beyond lifecycle_* so device history shows the failure that preceded a
+# recovery, not just the recovery. Session/desired-state churn stays excluded as noise.
+_LIFECYCLE_FAILURE_AND_MAINTENANCE_INCIDENT_LABELS: dict[DeviceEventType, str] = {
+    DeviceEventType.health_check_fail: "Health Fail",
+    DeviceEventType.connectivity_lost: "Disconnected",
+    DeviceEventType.connectivity_restored: "Connected",
+    DeviceEventType.node_crash: "Node Crash",
+    DeviceEventType.node_restart: "Node Restart",
+    DeviceEventType.maintenance_entered: "Maintenance Entered",
+    DeviceEventType.maintenance_exited: "Maintenance Exited",
+}
+
+LIFECYCLE_INCIDENT_LABELS: dict[DeviceEventType, str] = {
+    **_LIFECYCLE_POLICY_INCIDENT_LABELS,
+    **_LIFECYCLE_FAILURE_AND_MAINTENANCE_INCIDENT_LABELS,
+}
+
 LIFECYCLE_INCIDENT_TYPES: tuple[DeviceEventType, ...] = tuple(LIFECYCLE_INCIDENT_LABELS)
+
+# Policy-only subset (the original 10 lifecycle_* types), for callers that enrich a
+# small fixed-size window (e.g. AttentionCard) and would otherwise be starved by a
+# single host flap writing several connectivity_lost/health_check_fail rows per device.
+LIFECYCLE_POLICY_INCIDENT_TYPES: tuple[DeviceEventType, ...] = tuple(_LIFECYCLE_POLICY_INCIDENT_LABELS)
 
 # SSE severity per incident type. A recovered/rejoined device is good news (success);
 # a failed recovery is operator-actionable (critical); auto-stop / paused / extended
@@ -174,16 +199,21 @@ class LifecycleIncidentService:
         device_id: uuid.UUID | None = None,
         cursor: str | None = None,
         direction: str = "older",
+        scope: Literal["all", "policy"] = "all",
     ) -> tuple[list[LifecycleIncidentRead], str | None, str | None]:
         """Return lifecycle incidents with cursor-based pagination.
 
         Returns (items, next_cursor, prev_cursor).
         Cursor is the ISO timestamp of the boundary event's created_at.
+        ``scope="policy"`` restricts to the original 10 lifecycle_* types, so a small
+        fixed-size window (e.g. AttentionCard) can't be starved by the 7 failure/
+        maintenance types a single host flap can emit several of per device.
         """
+        incident_types = LIFECYCLE_POLICY_INCIDENT_TYPES if scope == "policy" else LIFECYCLE_INCIDENT_TYPES
         stmt = (
             select(DeviceEvent, Device)
             .join(Device, Device.id == DeviceEvent.device_id)
-            .where(DeviceEvent.event_type.in_(LIFECYCLE_INCIDENT_TYPES))
+            .where(DeviceEvent.event_type.in_(incident_types))
         )
         if device_id is not None:
             stmt = stmt.where(DeviceEvent.device_id == device_id)
@@ -204,12 +234,12 @@ class LifecycleIncidentService:
         result = await db.execute(stmt)
         rows = result.all()
 
-        if direction == "newer" and cursor:
-            rows = list(reversed(rows))
-
         has_more = len(rows) > limit
         if has_more:
             rows = rows[:limit]
+
+        if direction == "newer" and cursor:
+            rows = list(reversed(rows))
 
         items = [serialize_lifecycle_incident(event, device) for event, device in rows]
 

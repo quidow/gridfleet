@@ -9964,6 +9964,7 @@ export interface operations {
                 device_id?: string | null;
                 cursor?: string | null;
                 direction?: string;
+                scope?: "all" | "policy";
             };
             header?: never;
             path?: never;

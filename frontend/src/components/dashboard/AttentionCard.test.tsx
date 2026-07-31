@@ -7,12 +7,12 @@ import { AttentionCard } from './AttentionCard';
 const mockDevices = vi.fn<() => { data: DeviceRead[] | undefined; status: string }>(
   () => ({ data: [], status: 'success' }),
 );
-const mockIncidents = vi.fn<() => { data: LifecycleIncidentRead[] | undefined; status: string }>(
-  () => ({ data: [], status: 'success' }),
-);
+const mockIncidents = vi.fn<
+  (params?: { limit?: number; scope?: 'all' | 'policy' }) => { data: LifecycleIncidentRead[] | undefined; status: string }
+>(() => ({ data: [], status: 'success' }));
 vi.mock('../../hooks/useDevices', () => ({ useDevices: () => mockDevices() }));
 vi.mock('../../hooks/useLifecycle', () => ({
-  useRecentLifecycleIncidents: () => mockIncidents(),
+  useRecentLifecycleIncidents: (params?: { limit?: number; scope?: 'all' | 'policy' }) => mockIncidents(params),
 }));
 
 function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
@@ -93,6 +93,11 @@ describe('AttentionCard', () => {
     renderCard();
     expect(screen.getByText('Nothing needs attention.')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: /Needs attention/ })).toBeInTheDocument();
+  });
+
+  it('requests the policy scope so a host flap cannot starve the enrichment window', () => {
+    renderCard();
+    expect(mockIncidents).toHaveBeenCalledWith({ limit: 20, scope: 'policy' });
   });
 
   it('renders rows with device link, reason, and badge', () => {

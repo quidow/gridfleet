@@ -452,7 +452,7 @@ Error responses specific to groups:
 | `GET` | `/api/analytics/devices/reliability` | Read device reliability analytics | `date_from`, `date_to`, `format` | `DeviceReliabilityRow[]` |
 | `GET` | `/api/analytics/fleet/overview` | Read aggregate fleet analytics | `date_from`, `date_to` | `FleetOverview` |
 | `GET` | `/api/analytics/fleet/capacity-timeline` | Read fleet capacity time series | `date_from`, `date_to`, `bucket_minutes` | `FleetCapacityTimeline` |
-| `GET` | `/api/lifecycle/incidents` | Read recent lifecycle incident history | `limit`, optional `device_id`, `cursor`, `direction` | `LifecycleIncidentListRead` (`{ items: LifecycleIncidentRead[], limit, next_cursor, prev_cursor }`) |
+| `GET` | `/api/lifecycle/incidents` | Read recent lifecycle incident history | `limit`, optional `device_id`, `cursor`, `direction`, `scope` (`all` or `policy`, default `all`) | `LifecycleIncidentListRead` (`{ items: LifecycleIncidentRead[], limit, next_cursor, prev_cursor }`) |
 
 ## Notes
 

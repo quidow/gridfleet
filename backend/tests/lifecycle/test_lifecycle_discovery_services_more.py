@@ -88,6 +88,62 @@ async def test_lifecycle_incident_record_serialize_and_paginate(
     assert invalid_cursor_items
 
 
+async def test_lifecycle_incident_pagination_newer_direction_is_contiguous(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Regression test for an off-by-one: truncating to `limit` rows must happen before
+    reversing for direction="newer", not after. Truncating after reversal keeps the
+    `limit` rows *farthest* from the cursor instead of the nearest, which skips the row
+    immediately newer than the cursor.
+    """
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="pagination-device-001",
+        connection_target="pagination-device-001",
+        name="Pagination Device",
+    )
+    base = datetime.now(UTC) - timedelta(minutes=10)
+    events = [
+        DeviceEvent(
+            device_id=device.id,
+            event_type=DeviceEventType.lifecycle_recovery_backoff,
+            details={"summary_state": "backoff"},
+            created_at=base + timedelta(minutes=index),
+        )
+        for index in range(8)
+    ]
+    db_session.add_all(events)
+    await db_session.commit()
+    for event in events:
+        await db_session.refresh(event)
+
+    service = LifecycleIncidentService()
+
+    # Cursor sits at events[3]; four rows are newer (events[4..7]), but only limit+1=3 are
+    # ever fetched (events[4..6]). The page must be the two rows closest to the cursor,
+    # newest-first: [events[5], events[4]]. The pre-fix order (reverse-then-truncate)
+    # would instead return [events[6], events[5]], skipping events[4] entirely.
+    newer_items, _next, _prev = await service.list_lifecycle_incidents_paginated(
+        db_session,
+        limit=2,
+        cursor=events[3].created_at.isoformat(),
+        direction="newer",
+    )
+    assert [item.id for item in newer_items] == [events[5].id, events[4].id]
+
+    # "older" from the same cursor is unaffected: the two rows closest to the cursor on
+    # the older side (events[2], events[1]), newest-first.
+    older_items, _next2, _prev2 = await service.list_lifecycle_incidents_paginated(
+        db_session,
+        limit=2,
+        cursor=events[3].created_at.isoformat(),
+        direction="older",
+    )
+    assert [item.id for item in older_items] == [events[2].id, events[1].id]
+
+
 async def test_pack_discovery_candidate_refresh_and_confirm_paths(
     db_session: AsyncSession,
     db_host: Host,

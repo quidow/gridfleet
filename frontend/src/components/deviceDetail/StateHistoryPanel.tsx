@@ -20,7 +20,8 @@ const EVENT_BADGE_MAP: Record<string, { label: string; tone: BadgeTone }> = {
   connectivity_restored: { label: 'Connected', tone: 'success' },
   node_crash: { label: 'Node Crash', tone: 'critical' },
   node_restart: { label: 'Node Restart', tone: 'info' },
-  hardware_health_changed: { label: 'Hardware', tone: 'warning' },
+  maintenance_entered: { label: 'Maintenance Entered', tone: 'warning' },
+  maintenance_exited: { label: 'Maintenance Exited', tone: 'success' },
 };
 
 function eventBadge(eventType: string) {
