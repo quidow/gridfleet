@@ -21,7 +21,9 @@ def _get_client() -> httpx.AsyncClient:
     A fresh ``httpx.AsyncClient()`` per call re-runs ``create_ssl_context`` every
     time — pathological here because the session-observation sweep hits this module
     on every tick for every running session. Per-call ``timeout=`` arguments stay on
-    each request; the shared client carries no default timeout that would fight them.
+    each request because a per-request timeout overrides the client's; the client is
+    not built timeout-free, it carries httpx's own default (5s), which backstops a
+    call site that passes none rather than leaving the connect to the OS limit.
     The cache is the process-lifetime singleton; ``aclose`` clears it.
     """
     return httpx.AsyncClient(
