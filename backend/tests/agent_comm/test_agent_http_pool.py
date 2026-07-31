@@ -3,12 +3,31 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.agent_comm import http_pool as pool_module
 from app.agent_comm.http_pool import AgentHttpPool, PoolClosedError
+
+
+def test_get_client_takes_no_caller_supplied_timeout() -> None:
+    """A caller must not be able to seed the shared client's default timeout.
+
+    One client is shared per (host, port), so the first caller's value would
+    silently govern every later caller of that host: a 2s wake-hint poke and a
+    45s pack command dial the same agent through the same client, and whichever
+    ran first won. Nothing observable broke, because ``_send_request`` passes an
+    explicit per-request timeout that overrides the client default -- but that
+    made the parameter a trap rather than a control, since the only call that
+    could ever read it is one that forgot its own timeout.
+
+    Keying the cache on the timeout instead would fragment connection reuse,
+    which is the pool's entire purpose. So the parameter is gone: per-request
+    timeouts govern, and ``_send_request`` requires one (non-optional).
+    """
+    assert "timeout" not in inspect.signature(AgentHttpPool.get_client).parameters
 
 
 @pytest.mark.asyncio

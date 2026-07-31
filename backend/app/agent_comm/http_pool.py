@@ -52,13 +52,14 @@ class AgentHttpPool:
     def size(self) -> int:
         return len(self._entries)
 
-    async def get_client(
-        self,
-        host_ip: str,
-        agent_port: int,
-        *,
-        timeout: float | int = 30,
-    ) -> httpx.AsyncClient:
+    async def get_client(self, host_ip: str, agent_port: int) -> httpx.AsyncClient:
+        """Return the shared client for a host. Timeouts belong to the request.
+
+        One client serves every caller of a (host, port), so it deliberately
+        takes no caller-supplied timeout: the first caller's value would become
+        the default for everyone after it. ``_send_request`` passes an explicit
+        per-request timeout, which overrides the client default in any case.
+        """
         key = (host_ip, agent_port)
         async with self._lock:
             if self._closed:
@@ -66,7 +67,7 @@ class AgentHttpPool:
             entry = self._entries.get(key)
             if entry is not None and not entry.is_closed:
                 return entry
-            client = httpx.AsyncClient(timeout=timeout, limits=self._limits)
+            client = httpx.AsyncClient(limits=self._limits)
             self._entries[key] = client
             return client
 

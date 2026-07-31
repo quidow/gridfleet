@@ -80,7 +80,7 @@ async def _send_request(
     use_pool = pool is not None and http_client_factory is _DEFAULT_HTTP_CLIENT_FACTORY
     if use_pool:
         assert pool is not None  # narrowing for mypy
-        client = await pool.get_client(host, agent_port, timeout=timeout)
+        client = await pool.get_client(host, agent_port)
         return await agent_request(
             method,
             url,
