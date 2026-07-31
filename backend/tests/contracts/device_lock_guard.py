@@ -61,6 +61,7 @@ CEILINGS, disclosed and none load-bearing today:
 
 from __future__ import annotations
 
+import os
 import sys
 import weakref
 from contextlib import contextmanager
@@ -91,9 +92,48 @@ class DeviceLockGuardViolation(AssertionError):  # noqa: N818 - the phase's spec
     """A decision-fact write without proof of the device row lock."""
 
 
-# Seeded by Task 5 from a full-suite report run; emptied by Stream 2; deleted
-# by Task 11. Module paths relative to backend/ (e.g. "app/sessions/service.py").
-UNPROVEN_WRITE_SITES: frozenset[str] = frozenset()
+# Survey mode, used once per registry re-seed: with DEVICE_LOCK_GUARD_REPORT set
+# to a path, violations are appended there and execution continues, so one suite
+# run enumerates every violating site instead of stopping at the first per test.
+# Unset (the normal case, including CI) every violation raises.
+_REPORT_PATH = os.getenv("DEVICE_LOCK_GUARD_REPORT")
+
+
+def _violation(message: str) -> None:
+    if _REPORT_PATH:
+        # One open/append/close per violation: concurrent xdist workers share
+        # the sink and a single short write() to an O_APPEND fd is atomic.
+        with open(_REPORT_PATH, "a", encoding="utf-8") as sink:
+            sink.write(message + "\n")
+        return
+    raise DeviceLockGuardViolation(message)
+
+
+# Seeded from a full-suite report run; emptied writer-by-writer by the
+# conversion tasks; deleted with the last entry. Module paths relative to
+# backend/. Every entry is a decision-fact write the suite exercises today
+# without proof of the device row lock -- work not done, not an allowance.
+# It may only shrink; test_unproven_sites_only_shrink holds the second copy.
+UNPROVEN_WRITE_SITES: frozenset[str] = frozenset(
+    {
+        "app/appium_nodes/services/desired_state_writer.py",
+        "app/devices/services/data_cleanup.py",
+        "app/devices/services/intent.py",
+        "app/devices/services/intent_reconciler.py",
+        "app/devices/services/remediation.py",
+        "app/devices/services/state.py",
+        "app/grid/allocation.py",
+        "app/lifecycle/services/remediation_log.py",
+        "app/packs/services/lifecycle.py",
+        "app/runs/models.py",
+        "app/runs/service_allocator.py",
+        "app/runs/service_reservation.py",
+        "app/sessions/service.py",
+        "app/sessions/service_probes.py",
+        "app/sessions/service_viability.py",
+        "app/verification/services/execution.py",
+    }
+)
 
 # module path -> fact name whose guard predicate sanctions its bulk statements.
 GUARDED_UPDATE_SITES: dict[str, str] = {}
@@ -280,7 +320,7 @@ def _before_flush(session: OrmSession, flush_context: UOWTransaction, instances:
             return  # test fixture: no application frame anywhere in the write path
         if sites <= UNPROVEN_WRITE_SITES:
             return
-        raise DeviceLockGuardViolation(
+        _violation(
             f"unlocked decision-fact write: model={type(target).__name__} "
             f"fact={_facts.get(type(target), 'device_column')} columns={sorted(changed)} "
             f"device_id={device_id} site={sorted(sites)} chain={list(flush_frames)}"
@@ -399,7 +439,7 @@ def _do_orm_execute(state: ORMExecuteState) -> None:
         reason = "underivable target (no device_id in WHERE)"
     if site in UNPROVEN_WRITE_SITES:
         return
-    raise DeviceLockGuardViolation(
+    _violation(
         f"unlocked bulk decision-fact write: model={model.__name__} fact={fact} columns={sorted(columns)} "
         f"{reason} site={site} chain={list(frames)}"
     )

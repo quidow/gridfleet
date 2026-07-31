@@ -215,3 +215,36 @@ async def test_a_derivable_locked_bulk_delete_passes(db_session: AsyncSession, d
     stmt = delete(DeviceIntent).where(DeviceIntent.device_id == device.id)
     await probe.probe_execute(db_session, stmt)  # must not raise
     await db_session.rollback()
+
+
+def test_unproven_sites_only_shrink() -> None:
+    """Every entry is conversion work. Additions are new unlocked writes: fix them instead."""
+    from tests.contracts.device_lock_guard import UNPROVEN_WRITE_SITES
+
+    seeded = UNPROVEN_WRITE_SITES  # a local: SIM300 reads the upper-case name on the left as a Yoda condition
+    assert seeded == frozenset(
+        {
+            # The seeded literal, a second time, verbatim. The duplication is
+            # DELIBERATE, not an oversight: the guard consumes one copy, review
+            # sees the other, so every shrink (and any attempted regrowth) is a
+            # two-file diff a reviewer cannot miss. A snapshot file or shared
+            # constant would make edits one-touch and silent -- exactly the
+            # property this test exists to deny. Do not deduplicate.
+            "app/appium_nodes/services/desired_state_writer.py",
+            "app/devices/services/data_cleanup.py",
+            "app/devices/services/intent.py",
+            "app/devices/services/intent_reconciler.py",
+            "app/devices/services/remediation.py",
+            "app/devices/services/state.py",
+            "app/grid/allocation.py",
+            "app/lifecycle/services/remediation_log.py",
+            "app/packs/services/lifecycle.py",
+            "app/runs/models.py",
+            "app/runs/service_allocator.py",
+            "app/runs/service_reservation.py",
+            "app/sessions/service.py",
+            "app/sessions/service_probes.py",
+            "app/sessions/service_viability.py",
+            "app/verification/services/execution.py",
+        }
+    )
