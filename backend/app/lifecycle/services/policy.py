@@ -93,7 +93,7 @@ class LifecyclePolicyService:
         if evaluate_operational_state(snapshot.state_facts) == DeviceOperationalState.available:
             if snapshot.ladder.episode_active:
                 reset = await remediation_log.append_reset(
-                    db, device.id, source=source, action="already_healthy", reason=reason
+                    db, locked, source=source, action="already_healthy", reason=reason
                 )
                 updated_ladder = remediation_log.advance_ladder(snapshot.ladder, reset)
                 updated = replace(
@@ -106,7 +106,7 @@ class LifecyclePolicyService:
         set_recovery_generation(device, generation)
         entry = await remediation_log.append_action(
             db,
-            device.id,
+            locked,
             source=source,
             action=remediation_log.ACTION_RECOVERY_STARTED,
             reason=reason,
@@ -123,7 +123,7 @@ class LifecyclePolicyService:
             except NodeManagerError as exc:
                 outcome = await escalate_remediation_failure(
                     db,
-                    device,
+                    locked,
                     settings=self._settings,
                     source=source,
                     reason=str(exc),
@@ -241,7 +241,7 @@ class LifecyclePolicyService:
             )
             outcome = await escalate_remediation_failure(
                 db,
-                locked.device,
+                locked,
                 settings=self._settings,
                 source="session_viability",
                 reason=failure_reason,
@@ -274,7 +274,7 @@ class LifecyclePolicyService:
         )
         reset = await remediation_log.append_reset(
             db,
-            locked.device.id,
+            locked,
             source=source,
             action="auto_recovered",
             reason=reason,
@@ -322,7 +322,7 @@ class LifecyclePolicyService:
         reason: str,
     ) -> DeviceDecisionSnapshot:
         locked.assert_active(db)
-        entry = await remediation_log.append_failure(db, locked.device.id, source=source, reason=reason)
+        entry = await remediation_log.append_failure(db, locked, source=source, reason=reason)
         ladder = remediation_log.advance_ladder(snapshot.ladder, entry)
         updated = replace(
             snapshot,
@@ -334,7 +334,7 @@ class LifecyclePolicyService:
         if updated.has_live_session:
             deferred = await remediation_log.append_action(
                 db,
-                locked.device.id,
+                locked,
                 source=source,
                 action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
                 reason=reason,
@@ -368,7 +368,8 @@ class LifecyclePolicyService:
         source: str,
         reason: str,
     ) -> str:
-        await remediation_log.append_failure(db, device.id, source=source, reason=reason)
+        locked = await device_locking.lock_device_handle(db, device.id)
+        await remediation_log.append_failure(db, locked, source=source, reason=reason)
 
         if policy_state(device).get("maintenance_reason") is not None:
             logger.info("health failure on maintenance-held device %s suppressed: %s", device.id, reason)
@@ -377,7 +378,7 @@ class LifecyclePolicyService:
         if await self._actions.has_running_client_session(db, device.id):
             await remediation_log.append_action(
                 db,
-                device.id,
+                locked,
                 source=source,
                 action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
                 reason=reason,
@@ -397,7 +398,8 @@ class LifecyclePolicyService:
         return "stopped"
 
     async def handle_session_finished(self, db: AsyncSession, device: Device) -> DeferredStopOutcome:
-        device = await _reload_device(db, device)
+        locked = await _reload_device(db, device)
+        device = locked.device
         # Re-run intent reconciliation now that the session has ended. A previous
         # reconcile may have held a graceful-stop directive because the session was
         # running (see ``intent_reconciler.reconcile_device`` session-safety
@@ -452,8 +454,8 @@ class LifecyclePolicyService:
         return await self.handle_session_finished(db, device)
 
     async def note_connectivity_loss(self, db: AsyncSession, device: Device, *, reason: str) -> None:
-        device = await _reload_device(db, device)
-        await remediation_log.append_failure(db, device.id, source="connectivity", reason=reason)
+        locked = await _reload_device(db, device)
+        await remediation_log.append_failure(db, locked, source="connectivity", reason=reason)
 
         # D1: connectivity loss is not exclusion-worthy. The device transitions
         # to offline through the connectivity loop's _stop_disconnected_node /
@@ -461,7 +463,7 @@ class LifecyclePolicyService:
         # treats offline devices as temporarily unavailable until recovery.
         await self._actions.record_auto_stopped_incident(
             db,
-            device,
+            locked,
             run=None,
             reason=reason,
             source="connectivity",
@@ -491,7 +493,7 @@ class LifecyclePolicyService:
         operator_stopped = await operator_stop_active(db, locked.device.id)
         return await self._clear_escalation_residue_locked(
             db,
-            locked.device,
+            locked,
             operator_stopped=operator_stopped,
             reason=reason,
         )
@@ -499,17 +501,18 @@ class LifecyclePolicyService:
     async def _clear_escalation_residue_locked(
         self,
         db: AsyncSession,
-        device: Device,
+        locked: LockedDevice,
         *,
         operator_stopped: bool,
         reason: str,
     ) -> bool:
+        device = locked.device
         if operator_stopped:
             return False
         ladder = await remediation_log.load_ladder(db, device.id)
         if not ladder.episode_active:
             return False
-        await remediation_log.append_reset(db, device.id, source="device_checks", action="self_healed", reason=reason)
+        await remediation_log.append_reset(db, locked, source="device_checks", action="self_healed", reason=reason)
         await self._incidents.record_lifecycle_incident(
             db,
             device,
@@ -547,7 +550,7 @@ class LifecyclePolicyService:
         if not operator_stopped and snapshot.ladder.episode_active:
             reset = await remediation_log.append_reset(
                 db,
-                locked.device.id,
+                locked,
                 source="device_checks",
                 action="self_healed",
                 reason=residue_reason,
@@ -648,7 +651,8 @@ class LifecyclePolicyService:
         is emitted. Callers that already publish their own dedicated recovery
         incident (e.g. ``node_health``) pass ``False`` to avoid duplicates.
         """
-        device = await _reload_device(db, device)
+        locked = await _reload_device(db, device)
+        device = locked.device
         ladder = await remediation_log.load_ladder(db, device.id)
         if not ladder.deferred_stop_pending:
             return False
@@ -657,7 +661,7 @@ class LifecyclePolicyService:
         pending_reason = ladder.deferred_stop_reason
         await remediation_log.append_action(
             db,
-            device.id,
+            locked,
             source=source,
             action=action or remediation_log.ACTION_AUTO_STOP_CLEARED,
             reason=reason,
@@ -704,7 +708,7 @@ class LifecyclePolicyService:
         pending_reason = snapshot.ladder.deferred_stop_reason
         entry = await remediation_log.append_action(
             db,
-            device.id,
+            locked,
             source=source,
             action=action or remediation_log.ACTION_AUTO_STOP_CLEARED,
             reason=reason,
@@ -748,15 +752,15 @@ class LifecyclePolicyService:
         failure_source: str | None = None,
         failure_reason: str | None = None,
     ) -> None:
-        device = await _reload_device(db, device)
+        locked = await _reload_device(db, device)
         if failure_source is not None:
             await remediation_log.append_failure(
                 db,
-                device.id,
+                locked,
                 source=failure_source,
                 reason=failure_reason or "Control action failure",
             )
-        await remediation_log.append_action(db, device.id, source=failure_source or "lifecycle", action=action)
+        await remediation_log.append_action(db, locked, source=failure_source or "lifecycle", action=action)
 
     async def record_control_action_locked(
         self,
@@ -768,19 +772,18 @@ class LifecyclePolicyService:
         failure_source: str | None = None,
         failure_reason: str | None = None,
     ) -> DeviceDecisionSnapshot:
-        device = locked.device
         ladder = snapshot.ladder
         if failure_source is not None:
             failure_entry = await remediation_log.append_failure(
                 db,
-                device.id,
+                locked,
                 source=failure_source,
                 reason=failure_reason or "Control action failure",
             )
             ladder = remediation_log.advance_ladder(ladder, failure_entry)
 
         action_entry = await remediation_log.append_action(
-            db, device.id, source=failure_source or "lifecycle", action=action
+            db, locked, source=failure_source or "lifecycle", action=action
         )
         ladder = remediation_log.advance_ladder(ladder, action_entry)
 
@@ -811,5 +814,5 @@ class DeferredStopOutcome(StrEnum):
     AUTO_STOPPED = "auto_stopped"
 
 
-async def _reload_device(db: AsyncSession, device: Device) -> Device:
-    return await device_locking.lock_device(db, device.id, load_sessions=True)
+async def _reload_device(db: AsyncSession, device: Device) -> LockedDevice:
+    return await device_locking.lock_device_handle(db, device.id, load_sessions=True)

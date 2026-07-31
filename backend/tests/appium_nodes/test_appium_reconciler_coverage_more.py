@@ -10,6 +10,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import reconciler as appium_reconciler
 from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services.reconciler_convergence import DesiredRow
+from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
 from app.hosts.models import Host, HostStatus
 from app.lifecycle.services import remediation_log
@@ -63,9 +64,10 @@ async def test_appium_reconciler_fetches_db_rows_and_backoff(
         connection_target="reconciler-target",
         operational_state=DeviceOperationalState.available,
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_entry(
         db_session,
-        device.id,
+        locked,
         kind=remediation_log.KIND_ATTEMPT,
         source="node_health",
         action="recovery_failed",
@@ -205,7 +207,8 @@ async def test_reset_start_failure_noop_for_non_reconciler_source(
         identity_value="non-reconciler-001",
         operational_state=DeviceOperationalState.available,
     )
-    await remediation_log.append_failure(db_session, device.id, source="connectivity", reason="ping_timeout")
+    entry_locked = await device_locking.lock_device_handle(db_session, device.id)
+    await remediation_log.append_failure(db_session, entry_locked, source="connectivity", reason="ping_timeout")
     await db_session.commit()
 
     row = _desired_row(device_id=device.id)
@@ -311,9 +314,10 @@ async def test_confirm_running_acquires_lock_when_failure_residue_present(
     )._make_reset_start_failure()
 
     # Row carries the same residue state lock-free
+    entry_locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_attempt(
         db_session,
-        device.id,
+        entry_locked,
         source="appium_reconciler",
         reason="timeout",
         settings=FakeSettingsReader({}),

@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
-    from app.devices.models import Device
+    from app.devices.locking import LockedDevice
     from app.lifecycle.services.remediation_log import LadderState
 
 
@@ -40,7 +40,7 @@ class EscalationOutcome:
 
 async def escalate_remediation_failure(
     db: AsyncSession,
-    device: Device,
+    locked: LockedDevice,
     *,
     settings: SettingsReader,
     source: str,
@@ -50,7 +50,7 @@ async def escalate_remediation_failure(
     """Record one failed automated remediation as an append-only attempt row."""
     entry, ladder = await remediation_log.append_attempt(
         db,
-        device.id,
+        locked,
         source=source,
         reason=reason,
         settings=settings,

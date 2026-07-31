@@ -56,9 +56,10 @@ async def test_bulk_restart_persists_watermark_when_recovery_directive_present(
     )
     # Simulate a recovery start on the same axis as the operator restart, but
     # without a watermark.
+    entry_locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        entry_locked,
         source="recovery",
         action=remediation_log.ACTION_RECOVERY_STARTED,
     )

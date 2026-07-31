@@ -67,11 +67,17 @@ async def test_locked_snapshot_matches_current_facts_in_three_reads(
         )
     )
     db_session.add(Session(session_id="snapshot-session", device_id=device.id, status=SessionStatus.running))
-    await remediation_log.append_failure(db_session, device.id, source="test", reason="old episode")
-    await remediation_log.append_reset(db_session, device.id, source="test", action="reset")
+    # Flush the fixture rows before the lock's own SELECT triggers autoflush,
+    # so any unattributed write is charged to no application frame (test
+    # fixture) rather than to app/devices/locking.py, whose SELECT happened
+    # to be the flush trigger.
+    await db_session.flush()
+    seed_locked = await device_locking.lock_device_handle(db_session, device.id)
+    await remediation_log.append_failure(db_session, seed_locked, source="test", reason="old episode")
+    await remediation_log.append_reset(db_session, seed_locked, source="test", action="reset")
     current = await remediation_log.append_action(
         db_session,
-        device.id,
+        seed_locked,
         source="test",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="current episode",
@@ -130,8 +136,9 @@ async def test_locked_snapshot_preserves_terminal_reset_metadata(
         db_session,
         identity=f"snapshot-reset-{uuid.uuid4().hex[:8]}",
     )
-    await remediation_log.append_failure(db_session, device.id, source="test", reason="old episode")
-    reset = await remediation_log.append_reset(db_session, device.id, source="test", action="operator_reset")
+    seed_locked = await device_locking.lock_device_handle(db_session, device.id)
+    await remediation_log.append_failure(db_session, seed_locked, source="test", reason="old episode")
+    reset = await remediation_log.append_reset(db_session, seed_locked, source="test", action="operator_reset")
     await db_session.commit()
     device_id = device.id
     pack_id = device.pack_id

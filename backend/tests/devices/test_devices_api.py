@@ -1098,9 +1098,10 @@ async def test_device_detail_surfaces_lifecycle_policy_summary(
 ) -> None:
     device = await _create_device(db_session, default_host_id)
     device_id = str(device.id)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
         reason="ADB not responsive",

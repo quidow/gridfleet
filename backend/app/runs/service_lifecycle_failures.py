@@ -282,7 +282,7 @@ class RunFailureService:
         escalate = self._settings.get_bool("general.run_failure_escalates_to_maintenance")
         if escalate:
             await self._lifecycle_actions.record_run_escalation_failure(
-                db, locked.device, reason=reason, source=source, action=escalation_action
+                db, locked, reason=reason, source=source, action=escalation_action
             )
             await self._enter_maintenance(db, locked, maintenance_reason=maintenance_reason)
         return escalate

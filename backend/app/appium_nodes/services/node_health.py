@@ -241,7 +241,7 @@ class NodeHealthService:
     ) -> DeviceDecisionSnapshot:
         entry = await remediation_log.append_action(
             db,
-            locked.device.id,
+            locked,
             source="node_health",
             action=remediation_log.ACTION_RESTART_COMMISSIONED,
             reason="Node health restart",
@@ -470,7 +470,7 @@ class NodeHealthService:
 
             outcome = await escalate_device_remediation_failure(
                 db,
-                device,
+                locked,
                 ladder=snapshot.ladder,
                 settings=self._settings,
                 source="node_health",

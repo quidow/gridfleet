@@ -48,7 +48,7 @@ async def test_restore_run_if_needed_early_return_branches() -> None:
 async def test_reset_start_failure_keeps_recovery_sourced_backoff(db_session: AsyncSession, db_host: Host) -> None:
     """A successful node start must not wipe backoff recorded by a failed recovery probe."""
     device = await create_device(db_session, host_id=db_host.id, name="keep-recovery-sourced-backoff")
-    locked = await device_locking.lock_device(db_session, device.id)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     settings = FakeSettingsReader(
         {
             "general.lifecycle_recovery_backoff_base_sec": 60,
@@ -56,16 +56,16 @@ async def test_reset_start_failure_keeps_recovery_sourced_backoff(db_session: As
         }
     )
     await remediation_log.append_attempt(
-        db_session, locked.id, source="session_viability", reason="Recovery probe failed", settings=settings
+        db_session, locked, source="session_viability", reason="Recovery probe failed", settings=settings
     )
     await remediation_log.append_attempt(
-        db_session, locked.id, source="session_viability", reason="Recovery probe failed", settings=settings
+        db_session, locked, source="session_viability", reason="Recovery probe failed", settings=settings
     )
     await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     assert await reset_reconciler_start_failure_if_needed(db_session, locked) is False
-    after = await remediation_log.load_ladder(db_session, locked.id)
+    after = await remediation_log.load_ladder(db_session, locked.device.id)
     assert after.attempts == 2
     assert after.backoff_until is not None
     assert after.last_failure_source == "session_viability"
@@ -74,7 +74,7 @@ async def test_reset_start_failure_keeps_recovery_sourced_backoff(db_session: As
 @pytest.mark.db
 async def test_reset_start_failure_clears_reconciler_sourced_residue(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="clear-reconciler-sourced-residue")
-    locked = await device_locking.lock_device(db_session, device.id)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     settings = FakeSettingsReader(
         {
             "general.lifecycle_recovery_backoff_base_sec": 60,
@@ -82,16 +82,16 @@ async def test_reset_start_failure_clears_reconciler_sourced_residue(db_session:
         }
     )
     await remediation_log.append_attempt(
-        db_session, locked.id, source="appium_reconciler", reason="port_conflict", settings=settings
+        db_session, locked, source="appium_reconciler", reason="port_conflict", settings=settings
     )
     await remediation_log.append_attempt(
-        db_session, locked.id, source="appium_reconciler", reason="port_conflict", settings=settings
+        db_session, locked, source="appium_reconciler", reason="port_conflict", settings=settings
     )
     await db_session.commit()
 
-    locked = await device_locking.lock_device(db_session, device.id)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     assert await reset_reconciler_start_failure_if_needed(db_session, locked) is True
-    after = await remediation_log.load_ladder(db_session, locked.id)
+    after = await remediation_log.load_ladder(db_session, locked.device.id)
     assert after.attempts == 0
     assert after.backoff_until is None
     assert after.last_failure_source is None
@@ -107,17 +107,17 @@ async def test_escalate_device_remediation_failure_backs_off(db_session: AsyncSe
     )
     device = await create_device(db_session, host_id=db_host.id, name="escalate-device-remediation-failure")
 
-    locked = await device_locking.lock_device(db_session, device.id)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     first = await escalate_device_remediation_failure(
         db_session, locked, settings=settings, source="appium_reconciler", reason="spawn_failed"
     )
     await db_session.commit()
     assert first.attempts == 1
-    after = await remediation_log.load_ladder(db_session, locked.id)
+    after = await remediation_log.load_ladder(db_session, locked.device.id)
     assert after.backoff_until is not None
     assert after.last_failure_source == "appium_reconciler"
 
-    locked = await device_locking.lock_device(db_session, device.id)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     second = await escalate_device_remediation_failure(
         db_session, locked, settings=settings, source="appium_reconciler", reason="spawn_failed"
     )

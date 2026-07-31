@@ -465,9 +465,10 @@ async def test_restart_node_clears_stale_recovery_suppression(
             "recovery_backoff_attempts": 0,
         },
     )
+    entry_locked = await device_locking.lock_device_handle(db_session, uuid.UUID(device_id))
     await remediation_log.append_failure(
         db_session,
-        uuid.UUID(device_id),
+        entry_locked,
         source="node_health",
         reason="Node health checks recovered",
     )
@@ -522,9 +523,10 @@ async def test_start_node_clears_operator_stop_suppression(
             "recovery_backoff_attempts": 0,
         },
     )
+    entry_locked = await device_locking.lock_device_handle(db_session, uuid.UUID(device_id))
     await remediation_log.append_failure(
         db_session,
-        uuid.UUID(device_id),
+        entry_locked,
         source="node_health",
         reason="Node health checks recovered",
     )

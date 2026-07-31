@@ -133,9 +133,10 @@ async def _seed_maintenance_hold(db_session: AsyncSession, device: Device) -> No
 
 
 async def _seed_deferred_stop(db_session: AsyncSession, device: Device) -> None:
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
         reason="probe failed",

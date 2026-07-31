@@ -239,9 +239,10 @@ async def test_finalize_success_single_edge_no_flap(
     node = await _seed_node(db_session, device.id, running=True)
     device.verified_at = None
     device.session_viability_status = "failed"
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="episode in flight",

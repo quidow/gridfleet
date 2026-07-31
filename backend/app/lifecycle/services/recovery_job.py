@@ -175,7 +175,7 @@ class RecoveryJobService:
                     ):
                         if snapshot.ladder.episode_active:
                             reset = await remediation_log.append_reset(
-                                db, locked.device.id, source=source, action="already_healthy", reason=reason
+                                db, locked, source=source, action="already_healthy", reason=reason
                             )
                             updated = replace(
                                 snapshot,

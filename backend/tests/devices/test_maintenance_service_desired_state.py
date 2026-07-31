@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import func, select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import DeviceEvent, DeviceEventType, DeviceOperationalState, DeviceRemediationLogEntry
 from app.devices.services.lifecycle_policy_state import MAINTENANCE_HOLD_SUPPRESSION_REASON
 from app.devices.services.recovery_projection import recovery_availability
@@ -128,7 +129,8 @@ async def test_enter_maintenance_resets_remediation_episode(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="maint-reset")
     # Pre-existing failure residue in the episode.
-    await remediation_log.append_failure(db_session, device.id, source="device_checks", reason="boom")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    await remediation_log.append_failure(db_session, locked, source="device_checks", reason="boom")
     await db_session.commit()
 
     from app.devices.services.maintenance import MaintenanceService

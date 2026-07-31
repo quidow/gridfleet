@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 async def derive_and_apply_operational_state(
     db: AsyncSession,
-    device: Device,
+    locked: LockedDevice,
     *,
     now: datetime,
     publisher: EventPublisher,
@@ -54,8 +54,8 @@ async def derive_and_apply_operational_state(
     """
     from app.devices.services.state import apply_operational_state_transition, derive_operational_state
 
-    derived_op = await derive_operational_state(db, device, now=now, packs=packs)
-    return apply_operational_state_transition(device, derived_op, publisher=publisher)
+    derived_op = await derive_operational_state(db, locked.device, now=now, packs=packs)
+    return apply_operational_state_transition(locked, db, derived_op, publisher=publisher)
 
 
 async def committed_session(db: AsyncSession) -> AsyncSession:

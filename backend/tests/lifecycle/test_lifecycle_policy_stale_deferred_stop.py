@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
 from app.devices.services.lifecycle_policy_summary import build_lifecycle_policy
 from app.devices.services.recovery_projection import RecoveryBlockKind, recovery_availability
@@ -103,9 +104,10 @@ async def test_deferred_stop_is_live_session_gated_in_recovery_projection(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="projection-gated")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
         reason="probe failed",
@@ -125,9 +127,10 @@ async def test_clear_pending_auto_stop_appends_action_without_explicit_action(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="clear-pending")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
         reason="probe failed",
@@ -154,15 +157,16 @@ async def test_reset_supersedes_pending_deferred_stop(
     db_host: Host,
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="reset-pending")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
         reason="probe failed",
     )
     await remediation_log.append_reset(
-        db_session, device.id, source="device_checks", action="self_healed", reason="recovered"
+        db_session, locked, source="device_checks", action="self_healed", reason="recovered"
     )
 
     ladder = await remediation_log.load_ladder(db_session, device.id)

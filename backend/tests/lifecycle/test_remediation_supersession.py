@@ -26,6 +26,7 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from app.devices.locking import LockedDevice
     from app.hosts.models import Host
 
 
@@ -62,7 +63,7 @@ def _policy(settings: FakeSettingsReader) -> LifecyclePolicyService:
 
 async def _escalate(
     db: AsyncSession,
-    device: object,
+    locked: LockedDevice,
     *,
     source: str,
     reason: str,
@@ -70,7 +71,7 @@ async def _escalate(
 ) -> None:
     await escalate_device_remediation_failure(
         db,
-        device,  # type: ignore[arg-type]
+        locked,
         settings=settings,
         source=source,
         reason=reason,
@@ -81,13 +82,14 @@ async def test_failure_reset_failure_retains_append_only_history(db_session: Asy
     """A reset supersedes the ladder window without erasing its prior attempts."""
     settings = _settings()
     device = await create_device(db_session, host_id=db_host.id, name="supersession-history")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
 
-    await _escalate(db_session, device, source="node_health", reason="first", settings=settings)
-    await _escalate(db_session, device, source="node_health", reason="second", settings=settings)
+    await _escalate(db_session, locked, source="node_health", reason="first", settings=settings)
+    await _escalate(db_session, locked, source="node_health", reason="second", settings=settings)
     assert (await remediation_log.load_ladder(db_session, device.id)).attempts == 2
 
     assert await _policy(settings).clear_escalation_residue_on_self_heal(db_session, device, reason="healthy again")
-    await _escalate(db_session, device, source="node_health", reason="fresh failure", settings=settings)
+    await _escalate(db_session, locked, source="node_health", reason="fresh failure", settings=settings)
     await db_session.commit()
 
     ladder = await remediation_log.load_ladder(db_session, device.id)
@@ -114,7 +116,8 @@ async def test_self_heal_immediately_resets_and_emits_one_recovery_incident(
     """Accepted S10 successor semantics have no min-age wait."""
     settings = _settings()
     device = await create_device(db_session, host_id=db_host.id, name="supersession-immediate")
-    await _escalate(db_session, device, source="session_viability", reason="probe failed", settings=settings)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    await _escalate(db_session, locked, source="session_viability", reason="probe failed", settings=settings)
 
     svc = _policy(settings)
     assert await svc.clear_escalation_residue_on_self_heal(db_session, device, reason="self-heal") is True
@@ -140,19 +143,21 @@ async def test_self_heal_immediately_resets_and_emits_one_recovery_incident(
 async def test_reconciler_reset_is_conditioned_on_episode_source(db_session: AsyncSession, db_host: Host) -> None:
     settings = _settings()
     reconciler_device = await create_device(db_session, host_id=db_host.id, name="supersession-reconciler")
+    reconciler_locked = await device_locking.lock_device_handle(db_session, reconciler_device.id)
     await _escalate(
         db_session,
-        reconciler_device,
+        reconciler_locked,
         source="appium_reconciler",
         reason="spawn failed",
         settings=settings,
     )
-    assert await reset_reconciler_start_failure_if_needed(db_session, reconciler_device) is True
+    assert await reset_reconciler_start_failure_if_needed(db_session, reconciler_locked) is True
     assert (await remediation_log.load_ladder(db_session, reconciler_device.id)).attempts == 0
 
     health_device = await create_device(db_session, host_id=db_host.id, name="supersession-health")
-    await _escalate(db_session, health_device, source="node_health", reason="health failed", settings=settings)
-    assert await reset_reconciler_start_failure_if_needed(db_session, health_device) is False
+    health_locked = await device_locking.lock_device_handle(db_session, health_device.id)
+    await _escalate(db_session, health_locked, source="node_health", reason="health failed", settings=settings)
+    assert await reset_reconciler_start_failure_if_needed(db_session, health_locked) is False
     assert (await remediation_log.load_ladder(db_session, health_device.id)).attempts == 1
 
 
@@ -175,7 +180,7 @@ async def test_operator_stop_keeps_self_heal_sticky(db_session: AsyncSession, db
             ),
         ],
     )
-    await _escalate(db_session, device, source="node_health", reason="health failed", settings=settings)
+    await _escalate(db_session, locked, source="node_health", reason="health failed", settings=settings)
     await db_session.commit()
 
     assert (

@@ -19,6 +19,7 @@ from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent, DeviceOperationalState
 from app.devices.services.intent_reconciler import reconcile_device
 from app.devices.services.intent_types import VERIFICATION_OUTCOME_PASSED, CommandKind
@@ -111,7 +112,8 @@ async def test_verification_lease_outranks_derived_stop_without_revoke(
     # reset; the outcome stamp that tombstones the lease), then the hygiene
     # revoke + reconcile. The reset ends the episode; baseline sustains the
     # verified, in-service device running — no stop flap.
-    await remediation_log.append_reset(db_session, device.id, source="verification", action="verification_passed")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    await remediation_log.append_reset(db_session, locked, source="verification", action="verification_passed")
     await _stamp_verification_outcome(db_session, device, outcome=VERIFICATION_OUTCOME_PASSED)
     await _revoke_verification_node_intent(db_session, device, publisher=event_bus)
     await db_session.commit()
@@ -131,9 +133,10 @@ async def test_restart_commission_watermark_is_do_once_per_episode(
     device = await create_device(db_session, host_id=db_host.id, name="restart-once")
     node = await _seed_node(db_session, device.id)
 
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     first = await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="node_health",
         action=remediation_log.ACTION_RESTART_COMMISSIONED,
         reason="Node health restart",
@@ -152,12 +155,13 @@ async def test_restart_commission_watermark_is_do_once_per_episode(
     assert node.restart_requested_at == first.at
 
     # A later attempt + fresh commission moves the watermark forward.
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_attempt(
-        db_session, device.id, source="node_health", reason="still down", settings=FakeSettingsReader({})
+        db_session, locked, source="node_health", reason="still down", settings=FakeSettingsReader({})
     )
     second = await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="node_health",
         action=remediation_log.ACTION_RESTART_COMMISSIONED,
         reason="Node health restart",
@@ -255,9 +259,10 @@ async def test_operator_start_and_restart_supersede_stop_directive(
     started = await create_device(db_session, host_id=db_host.id, name="operator-start")
     start_node = await _seed_node(db_session, started.id, running=True)
     await db_session.refresh(started, ["appium_node"])
+    started_locked = await device_locking.lock_device_handle(db_session, started.id)
     await remediation_log.append_action(
         db_session,
-        started.id,
+        started_locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="node crashed",
@@ -280,9 +285,10 @@ async def test_operator_start_and_restart_supersede_stop_directive(
     restarted = await create_device(db_session, host_id=db_host.id, name="operator-restart")
     restart_node = await _seed_node(db_session, restarted.id, running=True)
     await db_session.refresh(restarted, ["appium_node"])
+    restarted_locked = await device_locking.lock_device_handle(db_session, restarted.id)
     await remediation_log.append_action(
         db_session,
-        restarted.id,
+        restarted_locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="node crashed",

@@ -132,9 +132,10 @@ async def test_register_verification_node_intent_suppresses_stop_directive(
         name="Verify Revoke HealthFail",
         operational_state=DeviceOperationalState.offline,
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="stale stop",

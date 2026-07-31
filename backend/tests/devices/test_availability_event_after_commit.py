@@ -30,7 +30,7 @@ async def test_event_dispatches_after_commit(
     _, device = await seed_host_and_device(db_session, identity="after-commit-1")
     device.device_checks_healthy = False
     event_bus_capture.clear()
-    locked = await device_locking.lock_device(db_session, device.id)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
     # Pre-commit: nothing dispatched yet.
     await dispatch_committed_events()
@@ -52,7 +52,7 @@ async def test_event_dropped_on_rollback(
     _, device = await seed_host_and_device(db_session, identity="rollback-1")
     device.device_checks_healthy = False
     event_bus_capture.clear()
-    locked = await device_locking.lock_device(db_session, device.id)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
 
     await db_session.rollback()
@@ -73,7 +73,7 @@ async def test_multiple_events_dispatch_in_queue_order(
     d2.device_checks_healthy = False
     event_bus_capture.clear()
     for d in (d1, d2):
-        locked = await device_locking.lock_device(db_session, d.id)
+        locked = await device_locking.lock_device_handle(db_session, d.id)
         await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
 
     await db_session.commit()

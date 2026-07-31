@@ -20,6 +20,7 @@ from app.appium_nodes.models import AppiumNode
 from app.appium_nodes.services import resource_service
 from app.appium_nodes.services.reconciler_allocation import candidate_ports
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent
 from app.devices.services.intent import IntentService
 from app.devices.services.intent_types import (
@@ -219,7 +220,11 @@ class OperatorNodeLifecycleService:
         if caller in {"operator_route", "operator_restart"}:
             ladder = await remediation_log.load_ladder(db, device.id)
             if ladder.episode_active:
-                await remediation_log.append_reset(db, device.id, source="operator", action="operator_started")
+                # The device row is already locked in this transaction by the
+                # register/revoke intent-reconcile calls above; this re-derives
+                # a LockedDevice proof for the same already-held row lock.
+                locked = await device_locking.lock_device_handle(db, device.id)
+                await remediation_log.append_reset(db, locked, source="operator", action="operator_started")
         await db.refresh(node)
         return node
 
@@ -267,6 +272,10 @@ class OperatorNodeLifecycleService:
         if caller == "operator_restart":
             ladder = await remediation_log.load_ladder(db, device.id)
             if ladder.episode_active:
-                await remediation_log.append_reset(db, device.id, source="operator", action="operator_restarted")
+                # The device row is already locked in this transaction by the
+                # register-intent-reconcile call above; this re-derives a
+                # LockedDevice proof for the same already-held row lock.
+                locked = await device_locking.lock_device_handle(db, device.id)
+                await remediation_log.append_reset(db, locked, source="operator", action="operator_restarted")
         await db.refresh(node)
         return node

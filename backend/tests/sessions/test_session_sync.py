@@ -21,6 +21,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.devices.models.remediation_log import DeviceRemediationLogEntry
 from app.devices.services.health import DeviceHealthService
@@ -367,9 +368,10 @@ async def test_dead_session_marks_offline_when_node_stop_pending(
     db_session.add(session)
     await db_session.commit()
 
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="session dead",
@@ -1182,9 +1184,10 @@ async def test_restore_after_session_end_rollback_takes_the_lifecycle_writes_wit
         operational_state=DeviceOperationalState.busy,
     )
     device_id = device.id
+    locked = await device_locking.lock_device_handle(db_session, device_id)
     await remediation_log.append_action(
         db_session,
-        device_id,
+        locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
         reason="ADB not responsive",

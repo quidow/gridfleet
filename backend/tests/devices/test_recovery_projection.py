@@ -85,9 +85,10 @@ async def test_not_ready_blocks(db_session: AsyncSession, db_host: Host) -> None
 
 async def test_deferred_stop_blocks(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="stop-pending")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
         reason="probe failed",
@@ -109,9 +110,10 @@ async def test_live_session_blocks(db_session: AsyncSession, db_host: Host) -> N
 
 async def test_backoff_window_blocks(db_session: AsyncSession, db_host: Host) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="backoff")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_attempt(
         db_session,
-        device.id,
+        locked,
         source="node_health",
         reason="backoff",
         settings=FakeSettingsReader(
@@ -145,9 +147,10 @@ async def _seed_live_session(db_session: AsyncSession, device: Device) -> None:
 
 
 async def _seed_deferred_stop(db_session: AsyncSession, device: Device) -> None:
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
         reason="probe failed",
@@ -156,9 +159,10 @@ async def _seed_deferred_stop(db_session: AsyncSession, device: Device) -> None:
 
 
 async def _seed_backoff(db_session: AsyncSession, device: Device) -> None:
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_attempt(
         db_session,
-        device.id,
+        locked,
         source="node_health",
         reason="backoff",
         settings=FakeSettingsReader(

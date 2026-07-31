@@ -95,10 +95,11 @@ async def _seed_escalation_residue(db_session: AsyncSession, device: Device) -> 
             "general.lifecycle_recovery_backoff_max_sec": 900,
         }
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     for _ in range(2):
         await remediation_log.append_attempt(
             db_session,
-            device.id,
+            locked,
             source="session_viability",
             reason="Recovery viability probe failed",
             settings=settings,

@@ -301,9 +301,10 @@ async def test_operational_state_edge_detector_is_exact_under_jitter(
     )
     publisher = _RecordingPub()
     now = datetime.now(UTC)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
 
-    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is True
-    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is False
+    assert await derive_and_apply_operational_state(db_session, locked, now=now, publisher=publisher) is True
+    assert await derive_and_apply_operational_state(db_session, locked, now=now, publisher=publisher) is False
     assert len(publisher.events) == 1
     assert publisher.events[0]["old_operational_state"] == DeviceOperationalState.offline.value
     assert publisher.events[0]["new_operational_state"] == DeviceOperationalState.available.value
@@ -311,8 +312,8 @@ async def test_operational_state_edge_detector_is_exact_under_jitter(
 
     device.lifecycle_policy_state = {"maintenance_reason": "operator"}
     await db_session.flush()
-    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is True
-    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is False
+    assert await derive_and_apply_operational_state(db_session, locked, now=now, publisher=publisher) is True
+    assert await derive_and_apply_operational_state(db_session, locked, now=now, publisher=publisher) is False
     assert len(publisher.events) == 2
     assert publisher.events[-1]["old_operational_state"] == DeviceOperationalState.available.value
     assert publisher.events[-1]["new_operational_state"] == DeviceOperationalState.maintenance.value

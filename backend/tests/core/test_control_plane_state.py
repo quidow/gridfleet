@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceType
 from app.jobs import JOB_KIND_DEVICE_VERIFICATION
 from app.jobs.models import Job
@@ -111,7 +112,8 @@ async def test_operational_state_edge_publishes_only_on_change(db_session: Async
     db_session.add(device)
     await db_session.commit()
 
-    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    changed = await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
     assert changed is False
     await db_session.commit()
     await dispatch_committed_events()
@@ -119,7 +121,8 @@ async def test_operational_state_edge_publishes_only_on_change(db_session: Async
 
     db_session.add(Session(session_id="availability-session", device_id=device.id, status=SessionStatus.running))
     await db_session.flush()
-    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    changed = await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
     assert changed is True
     await db_session.commit()
     await dispatch_committed_events()

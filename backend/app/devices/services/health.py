@@ -152,7 +152,7 @@ class DeviceHealthService:
         locked.assert_active(db)
         result = await self._update_locked_device_checks_row(
             db,
-            locked.device,
+            locked,
             snapshot,
             healthy=healthy,
             summary=summary,
@@ -172,7 +172,7 @@ class DeviceHealthService:
     async def _update_locked_device_checks_row(
         self,
         db: AsyncSession,
-        locked: Device,
+        locked: LockedDevice,
         snapshot: DeviceDecisionSnapshot,
         *,
         healthy: bool,
@@ -180,24 +180,25 @@ class DeviceHealthService:
         revision: int | None,
         observed_at: datetime | None,
     ) -> tuple[dict[str, Any], DeviceDecisionSnapshot] | None:
+        locked.assert_active(db)
         # Two-axis guard: a synchronous higher-authority writer passes no revision
         # and draws a fresh one at write time, so it always out-ranks a stale fold
         # observation whose (lower) revision was drawn earlier at ingest. A moved
         # fold passes its ingest-time revision and loses the strictly-greater
         # comparison when a fresher write landed first.
         rev = revision if revision is not None else await next_observation_revision(db)
-        if rev <= locked.device_checks_observation_revision:
+        if rev <= locked.device.device_checks_observation_revision:
             return None
-        previous = build_public_summary(locked)
-        was_failing = locked.device_checks_healthy is False
-        locked.device_checks_healthy = healthy
-        locked.device_checks_summary = summary
-        locked.device_checks_checked_at = observed_at or now_utc()
-        locked.device_checks_observation_revision = rev
+        previous = build_public_summary(locked.device)
+        was_failing = locked.device.device_checks_healthy is False
+        locked.device.device_checks_healthy = healthy
+        locked.device.device_checks_summary = summary
+        locked.device.device_checks_checked_at = observed_at or now_utc()
+        locked.device.device_checks_observation_revision = rev
         if healthy:
-            locked.failure_episode_id = None
+            locked.device.failure_episode_id = None
         elif not was_failing:
-            locked.failure_episode_id = uuid.uuid4()
+            locked.device.failure_episode_id = uuid.uuid4()
         # On success, defer to apply_node_state_transition (which reconciles on
         # state transitions) or the next reconciler scan tick (≤ one
         # intent_reconcile_interval): a healthy device_checks signal alone does
@@ -209,7 +210,7 @@ class DeviceHealthService:
                 snapshot.state_facts,
                 ready=(
                     snapshot.is_ready_for_use
-                    and device_allows_allocation(locked)
+                    and device_allows_allocation(locked.device)
                     and not snapshot.state_facts.in_maintenance
                 ),
             ),

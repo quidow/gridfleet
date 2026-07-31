@@ -448,7 +448,8 @@ async def _reconcile_locked_device(
     node = device.appium_node
     if node is None:
         apply_operational_state_transition(
-            device,
+            locked,
+            db,
             evaluate_operational_state(snapshot.state_facts),
             publisher=publisher,
         )
@@ -597,7 +598,8 @@ async def _apply_reconcile_decisions(  # noqa: PLR0913 - keyword-only snapshot f
         stop_in_flight=node.desired_state == AppiumDesiredState.stopped or bool(node.stop_pending),
     )
     apply_operational_state_transition(
-        device,
+        locked,
+        db,
         evaluate_operational_state(post_write_state_facts),
         publisher=publisher,
     )

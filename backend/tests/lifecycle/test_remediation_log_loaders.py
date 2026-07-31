@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from app.devices import locking as device_locking
 from app.lifecycle.services import remediation_log
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device_record
@@ -39,12 +40,13 @@ async def test_append_attempt_uses_exponential_backoff_and_loads_ladder(
     fixed_now = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
     monkeypatch.setattr(remediation_log, "now_utc", lambda: fixed_now)
     settings = _settings()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
 
     deadlines = []
     for attempt_no, expected_seconds in enumerate((10, 20, 40, 40), start=1):
         entry, ladder = await remediation_log.append_attempt(
             db_session,
-            device.id,
+            locked,
             source="node_health",
             reason=f"failure {attempt_no}",
             settings=settings,
@@ -83,15 +85,16 @@ async def test_append_reset_supersedes_ladder_and_load_ladders_fills_empty_ids(
     )
     fixed_now = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
     monkeypatch.setattr(remediation_log, "now_utc", lambda: fixed_now)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
 
     await remediation_log.append_attempt(
         db_session,
-        device.id,
+        locked,
         source="node_health",
         reason="failure",
         settings=_settings(),
     )
-    await remediation_log.append_reset(db_session, device.id, source="device_checks", action="self_healed")
+    await remediation_log.append_reset(db_session, locked, source="device_checks", action="self_healed")
     await db_session.commit()
 
     ladder = await remediation_log.load_ladder(db_session, device.id)
@@ -128,25 +131,28 @@ async def test_load_active_backoffs_filters_expired_and_reset_entries(
     fixed_now = datetime(2026, 7, 12, 12, 0, tzinfo=UTC)
     monkeypatch.setattr(remediation_log, "now_utc", lambda: fixed_now)
     settings = _settings()
+    active_locked = await device_locking.lock_device_handle(db_session, active_device.id)
+    reset_locked = await device_locking.lock_device_handle(db_session, reset_device.id)
+    expired_locked = await device_locking.lock_device_handle(db_session, expired_device.id)
 
     await remediation_log.append_attempt(
         db_session,
-        active_device.id,
+        active_locked,
         source="node_health",
         reason="active",
         settings=settings,
     )
     await remediation_log.append_attempt(
         db_session,
-        reset_device.id,
+        reset_locked,
         source="node_health",
         reason="superseded",
         settings=settings,
     )
-    await remediation_log.append_reset(db_session, reset_device.id, source="device_checks", action="self_healed")
+    await remediation_log.append_reset(db_session, reset_locked, source="device_checks", action="self_healed")
     await remediation_log.append_entry(
         db_session,
-        expired_device.id,
+        expired_locked,
         kind=remediation_log.KIND_ATTEMPT,
         source="node_health",
         action="recovery_failed",

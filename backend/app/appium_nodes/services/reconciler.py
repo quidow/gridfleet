@@ -404,7 +404,7 @@ async def _record_start_failure(
             return
         await escalate_device_remediation_failure(
             db,
-            locked.device,
+            locked,
             settings=settings,
             source="appium_reconciler",
             reason=reason,
@@ -423,7 +423,7 @@ async def _reset_start_failure(
         if locked is None:
             return
         snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
-        await reset_reconciler_start_failure_if_needed(db, locked.device, ladder=snapshot.ladder)
+        await reset_reconciler_start_failure_if_needed(db, locked, ladder=snapshot.ladder)
 
 
 class ReconcilerService:

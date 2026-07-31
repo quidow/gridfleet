@@ -214,7 +214,8 @@ async def test_mark_node_started_clears_stale_reconciler_failure(
     """The reconciler's start-failure ladder entry is reset from the snapshot's
     ladder, without a second ladder query inside the same transaction."""
     device = await _loaded_device(db_session, db_host, "mark-start-clear")
-    await remediation_log.append_failure(db_session, device.id, source="appium_reconciler", reason="http_error")
+    entry_locked = await device_locking.lock_device_handle(db_session, device.id)
+    await remediation_log.append_failure(db_session, entry_locked, source="appium_reconciler", reason="http_error")
     await db_session.commit()
 
     locked = await device_locking.lock_device_handle(db_session, device.id)

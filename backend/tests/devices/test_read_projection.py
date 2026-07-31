@@ -201,7 +201,7 @@ async def _seed_projected_device(
     db_session.add(Session(session_id=f"sess-{prefix}", device_id=device.id, status=SessionStatus.running))
     await remediation_log.append_attempt(
         db_session,
-        device.id,
+        locked,
         source="node_health",
         reason="probe failed",
         settings=FakeSettingsReader(

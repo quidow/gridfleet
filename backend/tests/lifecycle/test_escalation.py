@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.escalation import escalate_remediation_failure
 from tests.fakes import FakeSettingsReader
@@ -34,17 +35,18 @@ async def test_escalate_increments_attempts_and_arms_backoff(db_session: AsyncSe
         identity_value="escalation-attempts",
         name="escalation-attempts",
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
 
     first = await escalate_remediation_failure(
         db_session,
-        device,
+        locked,
         settings=SETTINGS,
         source="node_health",
         reason="first failure",
     )
     second = await escalate_remediation_failure(
         db_session,
-        device,
+        locked,
         settings=SETTINGS,
         source="node_health",
         reason="second failure",
@@ -63,6 +65,7 @@ async def test_escalation_caps_backoff_and_never_stops(db_session: AsyncSession,
     for n = 1..7 -> 60, 120, 240, 480, 900, 900, 900.
     """
     device = await create_device(db_session, host_id=db_host.id, name="cap-forever")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     settings = FakeSettingsReader(
         {
             "general.lifecycle_recovery_backoff_base_sec": 60,
@@ -75,7 +78,7 @@ async def test_escalation_caps_backoff_and_never_stops(db_session: AsyncSession,
     for _ in range(7):
         before = now_utc()
         outcome = await escalate_remediation_failure(
-            db_session, device, settings=settings, source="node_health", reason="probe failed", prior=ladder
+            db_session, locked, settings=settings, source="node_health", reason="probe failed", prior=ladder
         )
         ladder = outcome.ladder
         assert ladder.backoff_until is not None
@@ -107,9 +110,10 @@ async def test_escalate_remediation_failure_with_prior_ladder_skips_select(
     await db_session.commit()
 
     async with capture_statements(db_session) as statements:
+        locked = await device_locking.lock_device_handle(db_session, device.id)
         outcome = await escalate_remediation_failure(
             db_session,
-            device,
+            locked,
             settings=SETTINGS,
             source="test",
             reason="failed",
@@ -117,5 +121,7 @@ async def test_escalate_remediation_failure_with_prior_ladder_skips_select(
         )
 
     reads = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
-    assert len(reads) == 0, f"Expected no SELECT statements, got {reads}"
+    # The lock acquisition's own SELECT ... FOR UPDATE is expected; the ladder
+    # SELECT that load_ladder would otherwise issue must still be skipped.
+    assert len(reads) == 1, f"Expected only the device-lock SELECT, got {reads}"
     assert outcome.ladder.attempts == 1

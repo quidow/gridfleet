@@ -396,7 +396,7 @@ class VerificationExecutionService:
             device.verified_at = now_utc()
             ladder = await remediation_log.load_ladder(db, device.id)
             if ladder.episode_active:
-                await remediation_log.append_reset(db, device.id, source="verification", action="verification_passed")
+                await remediation_log.append_reset(db, locked, source="verification", action="verification_passed")
             await self._viability.record_session_viability_result(
                 db,
                 device,

@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from app.devices import locking as device_locking
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,9 +53,10 @@ async def test_advance_ladder_matches_full_derivation(
         identity_value=f"dev-{kind}-{action}",
         name="dev",
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     prior_entry = await append_action(
         db_session,
-        device.id,
+        locked,
         source="test",
         action=ACTION_RESTART_COMMISSIONED,
         reason="prior",
@@ -61,7 +64,7 @@ async def test_advance_ladder_matches_full_derivation(
     prior = derive_ladder([prior_entry])
     entry = await append_entry(
         db_session,
-        device.id,
+        locked,
         kind=kind,
         source="test",
         action=action,
@@ -81,23 +84,24 @@ async def test_advance_ladder_preserves_restart_watermark_behind_stop(
         identity_value="dev-watermark",
         name="dev",
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     restart = await append_action(
         db_session,
-        device.id,
+        locked,
         source="node_health",
         action=ACTION_RESTART_COMMISSIONED,
         reason="restart",
     )
     stop = await append_action(
         db_session,
-        device.id,
+        locked,
         source="device_checks",
         action=ACTION_AUTO_STOP_COMMISSIONED,
         reason="stop",
     )
     recovery = await append_action(
         db_session,
-        device.id,
+        locked,
         source="device_checks",
         action=ACTION_RECOVERY_STARTED,
         reason="recover",

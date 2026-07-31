@@ -46,5 +46,5 @@ class DeviceLifecycleFailureWriter(Protocol):
     ) -> tuple[TestRun | None, DeviceReservation | None]: ...
 
     async def record_run_escalation_failure(
-        self, db: AsyncSession, device: Device, *, reason: str, source: str, action: str
+        self, db: AsyncSession, locked: LockedDevice, *, reason: str, source: str, action: str
     ) -> None: ...

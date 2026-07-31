@@ -33,6 +33,13 @@ CEILINGS, disclosed and none load-bearing today:
   fact-row constructors do assign one (``app/runs/service_allocator.py``
   passes ``excluded``, ``app/lifecycle/services/remediation_log.py`` passes
   ``backoff_until``), so this is latent.
+- a Core-style ``insert()`` (e.g. ``insert(Model).on_conflict_do_update(...)``)
+  is invisible outright, not merely misattributed: ``_do_orm_execute`` only
+  acts on ``is_update``/``is_delete``, and a Core INSERT populates none of
+  ``session.new``/``dirty``/``deleted``, so ``_before_flush`` never sees it
+  either. A registry entry for such a writer can be removed with the suite
+  staying green while the statement itself was never exercised by either half
+  of the guard.
 - a device lock, or a new-device receipt, taken *inside* a savepoint outlives
   its own row lock: ``get_transaction()`` returns the root transaction, so
   rolling the savepoint back releases the PostgreSQL row lock while the entry,
@@ -119,9 +126,7 @@ UNPROVEN_WRITE_SITES: frozenset[str] = frozenset(
         "app/appium_nodes/services/desired_state_writer.py",
         "app/devices/services/data_cleanup.py",
         "app/devices/services/remediation.py",
-        "app/devices/services/state.py",
         "app/grid/allocation.py",
-        "app/lifecycle/services/remediation_log.py",
         "app/packs/services/lifecycle.py",
         "app/runs/models.py",
         "app/runs/service_allocator.py",

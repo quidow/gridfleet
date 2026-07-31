@@ -360,7 +360,7 @@ DECISION_FACT_WRITERS: frozenset[DecisionFactWriter] = frozenset(
             "app/devices/services/health.py",
             "DeviceHealthService._update_locked_device_checks_row",
             frozenset({"failure_episode_id"}),
-            "caller_locked",
+            "accepts_locked",
         ),
         DecisionFactWriter(
             "app/devices/services/intent.py",
@@ -390,13 +390,13 @@ DECISION_FACT_WRITERS: frozenset[DecisionFactWriter] = frozenset(
             "app/devices/services/state.py",
             "apply_operational_state_transition",
             frozenset({"operational_state_last_emitted"}),
-            "caller_locked",
+            "accepts_locked",
         ),
         DecisionFactWriter(
             "app/lifecycle/services/remediation_log.py",
             "append_entry",
             frozenset({"remediation_log_entry"}),
-            "caller_locked",
+            "accepts_locked",
         ),
         DecisionFactWriter(
             "app/runs/service_allocator.py",

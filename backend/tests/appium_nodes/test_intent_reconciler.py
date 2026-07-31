@@ -224,9 +224,10 @@ async def test_graceful_stop_stages_agent_drain_before_convergence_can_stop(
     node.pid = 1234
     node.active_connection_target = device.connection_target
     await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="health failure",
@@ -253,9 +254,13 @@ async def test_derived_auto_stop_commission_stages_graceful_agent_drain(
     node.port = 4723
     node.pid = 1234
     node.active_connection_target = device.connection_target
+    # Flush the node mutations before the lock's own SELECT triggers autoflush,
+    # so they are not misattributed to app/devices/locking.py.
+    await db_session.flush()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="node_health",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="node crashed",
@@ -277,9 +282,10 @@ async def test_derived_restart_commission_sets_running_and_watermark(
 ) -> None:
     device = await create_device(db_session, host_id=db_host.id, name="derived-restart")
     node = await _seed_node(db_session, device.id)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     entry = await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="node_health",
         action=remediation_log.ACTION_RESTART_COMMISSIONED,
         reason="Node health restart",
@@ -361,9 +367,10 @@ async def test_graceful_stop_holds_node_running_while_session_active(
     node.active_connection_target = device.connection_target
     db_session.add(Session(session_id="active-sess-1", device_id=device.id, status=SessionStatus.running))
     await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="health failure",
@@ -396,9 +403,10 @@ async def test_graceful_stop_holds_node_running_while_session_pending(
     node.active_connection_target = device.connection_target
     db_session.add(Session(session_id="alloc-pending-1", device_id=device.id, status=SessionStatus.pending))
     await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="health failure",
@@ -431,9 +439,10 @@ async def test_graceful_stop_applies_once_session_ends(
     session = Session(session_id="ending-sess-1", device_id=device.id, status=SessionStatus.running)
     db_session.add(session)
     await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="health failure",
@@ -512,9 +521,10 @@ async def test_pull_host_watermark_only_change_pokes_agent(
     node.desired_state = AppiumDesiredState.running
     node.desired_port = 4723
     await db_session.commit()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     entry = await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="node_health",
         action=remediation_log.ACTION_RESTART_COMMISSIONED,
         reason="Node health restart",

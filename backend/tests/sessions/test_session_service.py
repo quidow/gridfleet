@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import (
     ConnectionType,
     Device,
@@ -375,9 +376,11 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     # stop_pending=True (universal session-safety downgrade). When the
     # session ends, the active_session intent is revoked and reconcile picks
     # the stop intent as the winner, taking the node to desired_state=stopped.
+    await db_session.flush()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="session ended",

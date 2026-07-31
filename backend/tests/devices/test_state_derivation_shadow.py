@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
 from app.events.protocols import EventPublisher
 from tests.helpers import (
@@ -41,7 +42,8 @@ async def test_operational_state_transition_writes_and_emits(
     await dispatch_committed_events()
     event_bus_capture.clear()
 
-    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    changed = await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
 
     assert changed is True
     # Column was updated in-memory by the sanctioned writer.
@@ -73,7 +75,8 @@ async def test_operational_state_transition_no_op_when_state_matches(
     )
 
     publisher = AsyncMock(spec=EventPublisher)
-    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=publisher)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    changed = await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=publisher)
 
     assert changed is False
     assert device.operational_state_last_emitted is DeviceOperationalState.available

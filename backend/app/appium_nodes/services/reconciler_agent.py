@@ -156,7 +156,7 @@ async def mark_node_started(  # noqa: PLR0913 - lock proof, locked child, and sn
         snapshot,
         mark_offline=False,
     )
-    await reset_reconciler_start_failure_if_needed(db, device, ladder=snapshot.ladder)
+    await reset_reconciler_start_failure_if_needed(db, locked, ladder=snapshot.ladder)
     # Pull re-applies drain/stop flags from the last pull on crash-restart (the
     # agent re-derives accepting_new_sessions/stop_pending from desired state
     # every launch), so the belt-and-suspenders outbox re-push that used to run
