@@ -15,6 +15,7 @@ from app.appium_nodes.services.reconciler import ReconcilerService
 from app.appium_nodes.services.reconciler_convergence import DesiredRow, ObservedEntry
 from app.devices.models import DeviceOperationalState
 from app.lifecycle.services import remediation_log
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
 
@@ -72,6 +73,7 @@ async def test_a_report_from_a_superseded_episode_never_escalates(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )
 
     await svc._ingest_start_failure_reports(
@@ -147,6 +149,7 @@ async def test_a_foreign_node_sharing_the_port_does_not_supersede_the_report(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=db_session_maker,
+        incidents=LifecycleIncidentService(),
     )
 
     await svc._ingest_start_failure_reports(
@@ -185,6 +188,7 @@ async def test_reconcile_host_folds_reports_before_convergence(monkeypatch: pyte
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=Mock(),
+        incidents=LifecycleIncidentService(),
     )
     monkeypatch.setattr(appium_reconciler, "_touch_last_observed", AsyncMock())
 
@@ -238,6 +242,7 @@ async def test_reconcile_host_folds_reports_even_when_every_row_is_in_backoff(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=Mock(),
+        incidents=LifecycleIncidentService(),
     )
     monkeypatch.setattr(appium_reconciler, "_touch_last_observed", AsyncMock())
 

@@ -16,6 +16,7 @@ from app.lifecycle.services.actions import (
     escalate_device_remediation_failure,
     reset_reconciler_start_failure_if_needed,
 )
+from app.lifecycle.services.escalation import EscalationContext
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.lifecycle.services.policy import LifecyclePolicyService
 from app.runs.service_reservation import RunReservationService
@@ -75,6 +76,7 @@ async def _escalate(
         settings=settings,
         source=source,
         reason=reason,
+        context=EscalationContext(incidents=LifecycleIncidentService(), detail="test escalation"),
     )
 
 

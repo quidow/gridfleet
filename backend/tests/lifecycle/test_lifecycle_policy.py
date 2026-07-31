@@ -991,6 +991,24 @@ async def test_failed_recovery_sets_backoff_and_keeps_exclusion(
     assert DeviceEventType.lifecycle_recovery_failed in event_types
     assert DeviceEventType.lifecycle_recovery_backoff in event_types
 
+    rows = (
+        (
+            await db_session.execute(
+                select(DeviceEvent.event_type).where(
+                    DeviceEvent.device_id == device.id,
+                    DeviceEvent.event_type.in_(
+                        (DeviceEventType.lifecycle_recovery_failed, DeviceEventType.lifecycle_recovery_backoff)
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert sorted(rows) == sorted(
+        [DeviceEventType.lifecycle_recovery_failed, DeviceEventType.lifecycle_recovery_backoff]
+    )
+
 
 async def test_recovery_retries_transient_probe_failure_before_stopping_node(
     db_session: AsyncSession,

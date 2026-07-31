@@ -16,7 +16,7 @@ from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
 from app.devices.services.state import derive_operational_state, evaluate_operational_state
 from app.lifecycle.services import remediation_log
-from app.lifecycle.services.escalation import EscalationOutcome, escalate_remediation_failure
+from app.lifecycle.services.escalation import EscalationContext, EscalationOutcome, escalate_remediation_failure
 from app.lifecycle.services.incidents import LifecycleIncidentDetails
 from app.runs import service as run_reservation_service
 from app.runs.models import TERMINAL_STATES
@@ -475,6 +475,7 @@ async def escalate_device_remediation_failure(
     settings: SettingsReader,
     source: str,
     reason: str,
+    context: EscalationContext,
     ladder: LadderState | None = None,
 ) -> EscalationOutcome:
     """Shared-ladder escalation for callers outside the lifecycle write_state allowlist."""
@@ -484,6 +485,7 @@ async def escalate_device_remediation_failure(
         settings=settings,
         source=source,
         reason=reason,
+        context=context,
         prior=ladder,
     )
 

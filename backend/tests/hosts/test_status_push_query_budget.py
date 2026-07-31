@@ -49,6 +49,7 @@ from app.hosts.service_host_events import HostEventsService
 from app.hosts.service_resource_telemetry import HostResourceTelemetryService
 from app.hosts.service_status_push import HostStatusPushService, ObservationFold
 from app.hosts.services_container import HostServices
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.main import app
 from app.packs.services.discovery import PackDiscoveryService
 from tests.bench_instrumentation import CommitTap, QueryTap
@@ -134,7 +135,12 @@ def _build_push_service(session_factory: async_sessionmaker[AsyncSession]) -> Ho
     property_refresh = PropertyRefreshService(discovery=discovery)
     resource_telemetry = HostResourceTelemetryService(settings=settings)
     reconciler = ReconcilerService(
-        publisher=event_bus, settings=settings, pool=None, circuit_breaker=Mock(), session_factory=session_factory
+        publisher=event_bus,
+        settings=settings,
+        pool=None,
+        circuit_breaker=Mock(),
+        session_factory=session_factory,
+        incidents=LifecycleIncidentService(),
     )
     heartbeat = HeartbeatService(
         publisher=event_bus, settings=settings, pool=Mock(), circuit_breaker=Mock(), session_factory=session_factory

@@ -14,6 +14,7 @@ from app.lifecycle.services.actions import (
     escalate_device_remediation_failure,
     reset_reconciler_start_failure_if_needed,
 )
+from app.lifecycle.services.escalation import EscalationContext
 from app.lifecycle.services.incidents import LifecycleIncidentService
 from app.runs.models import RunState
 from app.runs.service_reservation import RunReservationService
@@ -109,7 +110,12 @@ async def test_escalate_device_remediation_failure_backs_off(db_session: AsyncSe
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
     first = await escalate_device_remediation_failure(
-        db_session, locked, settings=settings, source="appium_reconciler", reason="spawn_failed"
+        db_session,
+        locked,
+        settings=settings,
+        source="appium_reconciler",
+        reason="spawn_failed",
+        context=EscalationContext(incidents=LifecycleIncidentService(), detail="test escalation"),
     )
     await db_session.commit()
     assert first.attempts == 1
@@ -119,7 +125,12 @@ async def test_escalate_device_remediation_failure_backs_off(db_session: AsyncSe
 
     locked = await device_locking.lock_device_handle(db_session, device.id)
     second = await escalate_device_remediation_failure(
-        db_session, locked, settings=settings, source="appium_reconciler", reason="spawn_failed"
+        db_session,
+        locked,
+        settings=settings,
+        source="appium_reconciler",
+        reason="spawn_failed",
+        context=EscalationContext(incidents=LifecycleIncidentService(), detail="test escalation"),
     )
     await db_session.commit()
     assert second.attempts == 2

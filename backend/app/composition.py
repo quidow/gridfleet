@@ -256,6 +256,7 @@ def compose_app(
         pool=http_pool,
         circuit_breaker=circuit_breaker,
         session_factory=session_factory,
+        incidents=incidents_svc,
     )
     node_health_svc, heartbeat_svc = (
         NodeHealthService(

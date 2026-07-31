@@ -10,6 +10,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.reconciler import ReconcilerService, converge_pushed_host, fetch_desired_rows_for_host
 from app.core.timeutil import now_utc
 from app.devices.models import DeviceOperationalState
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader
 from tests.fold_fixtures import HOMOGENEOUS_FLEET, seed_fleet
 from tests.helpers import create_device
@@ -64,6 +65,7 @@ def _real_reconciler(session_factory: async_sessionmaker[AsyncSession]) -> Recon
         pool=None,
         circuit_breaker=Mock(),
         session_factory=session_factory,
+        incidents=LifecycleIncidentService(),
     )
 
 

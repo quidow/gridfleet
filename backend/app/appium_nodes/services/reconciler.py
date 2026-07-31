@@ -62,6 +62,7 @@ from app.lifecycle.services.actions import (
     escalate_device_remediation_failure,
     reset_reconciler_start_failure_if_needed,
 )
+from app.lifecycle.services.escalation import EscalationContext
 from app.packs.services.catalog_view import load_pack_catalog
 
 if TYPE_CHECKING:
@@ -77,6 +78,7 @@ if TYPE_CHECKING:
     from app.core.type_defs import SessionFactory
     from app.devices.locking import LockedDevice
     from app.events.protocols import EventPublisher
+    from app.lifecycle.services.incidents import LifecycleIncidentService
 
 logger = get_logger(__name__)
 
@@ -369,6 +371,7 @@ async def _record_start_failure(
     row: DesiredRow,
     *,
     reason: str,
+    incidents: LifecycleIncidentService,
     conflict_port: int | None = None,
     session_factory: SessionFactory,
     settings: SettingsReader,
@@ -409,6 +412,11 @@ async def _record_start_failure(
             settings=settings,
             source="appium_reconciler",
             reason=reason,
+            context=EscalationContext(
+                incidents=incidents,
+                detail="Appium process failed to start",
+                reservation=snapshot.reservation,
+            ),
             ladder=snapshot.ladder,
         )
 
@@ -438,12 +446,14 @@ class ReconcilerService:
         pool: AgentHttpPool | None,
         circuit_breaker: CircuitBreakerProtocol,
         session_factory: async_sessionmaker[AsyncSession],
+        incidents: LifecycleIncidentService,
     ) -> None:
         self._publisher = publisher
         self._settings = settings
         self._pool = pool
         self._circuit_breaker = circuit_breaker
         self._session_factory = session_factory
+        self._incidents = incidents
         # Sweep-local dedupe cursor for agent-reported start_failures (Task 4):
         # keyed by device_id, holds the max ``at`` already processed so the
         # same ring entry lingering across sweeps doesn't re-fire the re-pin
@@ -677,13 +687,18 @@ class ReconcilerService:
                 await _record_start_failure(
                     row,
                     reason="port_conflict",
+                    incidents=self._incidents,
                     conflict_port=port if isinstance(port, int) else None,
                     session_factory=self._session_factory,
                     settings=self._settings,
                 )
             elif kind == "spawn_failed":
                 await _record_start_failure(
-                    row, reason="spawn_failed", session_factory=self._session_factory, settings=self._settings
+                    row,
+                    reason="spawn_failed",
+                    incidents=self._incidents,
+                    session_factory=self._session_factory,
+                    settings=self._settings,
                 )
             # Cursor advances only here, after the command's transaction context
             # exited successfully: a raised command leaves it behind so the same

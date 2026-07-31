@@ -11,6 +11,7 @@ from app.appium_nodes.services.host_sweep import run_host_sweep_once, stage_due
 from app.appium_nodes.services.reconciler import ReconcilerService
 from app.core.timeutil import now_utc
 from app.hosts.models import Host, HostStatus
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -43,6 +44,7 @@ def _reconciler_service(
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=session_factory,
+        incidents=LifecycleIncidentService(),
     )
 
 

@@ -27,6 +27,7 @@ from app.appium_nodes.services.reconciler_convergence import (
 from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.events.models import SystemEvent
+from app.lifecycle.services.incidents import LifecycleIncidentService
 from tests.bench_instrumentation import QueryTap
 from tests.fakes import FakeSettingsReader
 from tests.helpers import create_device
@@ -566,6 +567,7 @@ def _reconciler(session_factory: async_sessionmaker[AsyncSession]) -> Reconciler
         pool=Mock(),
         circuit_breaker=Mock(),
         session_factory=session_factory,
+        incidents=LifecycleIncidentService(),
     )
 
 
