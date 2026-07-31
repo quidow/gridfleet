@@ -188,12 +188,15 @@ class ProbeLoop:
 
         async def one(entry: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
             target = entry.get("connection_target")
+            if isinstance(target, str):
+                has_live_session = live[target] if target in live else self._resolve_live(target, False, now=now)
+            else:
+                # connection_target is contractually a required str (ProbeTargetOut);
+                # a malformed roster entry must not coerce into a shared "None" cache key.
+                has_live_session = False
             async with semaphore:
                 try:
-                    observation = await runner(
-                        entry,
-                        live[target] if target in live else self._resolve_live(str(target), False, now=now),
-                    )
+                    observation = await runner(entry, has_live_session)
                 except Exception:
                     logger.warning("device_probe_failed", exc_info=True)
                     return None
@@ -220,11 +223,14 @@ class ProbeLoop:
 
         async def one(entry: dict[str, Any]) -> dict[str, Any]:
             target = entry.get("connection_target")
+            if isinstance(target, str):
+                has_live_session = live[target] if target in live else self._resolve_live(target, False, now=now)
+            else:
+                # connection_target is contractually a required str (ProbeTargetOut);
+                # a malformed roster entry must not coerce into a shared "None" cache key.
+                has_live_session = False
             async with semaphore:
-                health = await self._run_health(
-                    entry,
-                    live[target] if target in live else self._resolve_live(str(target), False, now=now),
-                )
+                health = await self._run_health(entry, has_live_session)
             return {
                 "device_id": entry["device_id"],
                 "probe_status": "observed" if health is not None else "error",
