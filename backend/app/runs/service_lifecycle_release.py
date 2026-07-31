@@ -130,11 +130,14 @@ class RunReleaseService:
         for reservation in active_reservations:
             locked = locked_by_id.get(reservation.device_id)
             if locked is None:
-                reservation.released_at = released_at
-                reservation.excluded = False
-                reservation.exclusion_kind = None
-                reservation.excluded_at = None
-                reservation.excluded_until = None
+                # ``lock_run_devices`` returns a proof per Device row it actually
+                # locked, so a missing proof means the Device row is gone — and
+                # ``device_reservations.device_id`` is ON DELETE CASCADE, so the
+                # same delete took this reservation row with it. Writing release
+                # fields here would be an unlocked decision-fact write onto a
+                # phantom row, and its UPDATE would match zero rows and raise
+                # StaleDataError, failing the whole run finalization over a
+                # reservation that no longer exists. Skip it.
                 logger.warning(
                     "Reservation %s references missing device %s; skipping availability restore",
                     reservation.id,
