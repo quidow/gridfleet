@@ -113,6 +113,18 @@ time, mirrored from the agent snapshot), `health_running`, `health_state`,
 it into another document. Add any new sanctioned writer to that table in the same
 change as the production write.
 
+`PROTECTED_COLUMN_WRITERS` is a lexical scan; the row-lock claim itself is proven
+at runtime by `backend/tests/contracts/device_lock_guard.py`, which hooks
+SQLAlchemy ORM events across every `db`-marked test and raises
+`DeviceLockGuardViolation` for a decision-fact write (`DeviceIntent`, `Session`,
+`DeviceReservation`, `DeviceRemediationLogEntry`, plus the two `Device` ledger
+columns) whose transaction does not hold the device row lock. Four proof modes
+cover every registered writer in `test_no_direct_device_state_writes.py`:
+`accepts_locked` and `acquires_locked` prove the lock was taken; `guarded_update`
+proves predicate authority for an ID-based compare-and-swap instead; and
+`fleet_retention` proves a fleet-wide retention DELETE decides nothing, by an
+already-elapsed age cutoff plus a dead-row predicate on a different column.
+
 ### Pack release rollout
 
 The `release_rollout` command drains a node for a selected-pack release change. In the node-process decision ladder it sits below stored and derived starts and above the in-service baseline, and maps to `running_draining`: `desired_state=running`, `accepting_new_sessions=false`, and `stop_pending=false`. The 60-second detector registers it only for a running node with a reported release that differs from the selected release; it skips legacy `observed_pack_release=NULL` nodes and revokes any existing rollout when the node is stopped, partial, legacy, converged, or no longer selected.
