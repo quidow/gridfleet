@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from app.devices.services import read_projection
+from tests.contracts.decision_fact_columns import DECISION_COLUMNS, DECISION_FACT_MODELS
 from tests.contracts.test_repository_transaction_boundaries import (
     BEGIN_OWNER_REGISTRY,
     PRODUCTION,
@@ -247,19 +248,6 @@ def test_the_call_scan_sees_the_transition_writer() -> None:
 # ``test_decision_fact_writer_inventory_is_registered`` is exact only over what
 # the rules above discover -- it is not a claim of coverage over every
 # decision-fact write in the repository.
-DECISION_FACT_MODELS = {
-    "DeviceIntent": "device_intent",
-    "Session": "live_session",
-    "DeviceReservation": "device_reservation",
-    "DeviceRemediationLogEntry": "remediation_log_entry",
-}
-# The columns whose change makes a bulk UPDATE a decision-fact write.
-DECISION_COLUMNS: dict[str, frozenset[str]] = {
-    "device_intent": frozenset({"payload", "expires_at"}),
-    "live_session": frozenset({"status", "ended_at"}),
-    "device_reservation": frozenset({"released_at", "excluded"}),
-    "remediation_log_entry": frozenset({"backoff_until"}),
-}
 DECISION_FACT_CALLS = {"write_desired_state": "appium_desired_state"}
 DECISION_FACT_ATTRIBUTES = {
     "failure_episode_id": "failure_episode_id",
