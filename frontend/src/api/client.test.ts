@@ -15,7 +15,8 @@ describe('api client request payload headers', () => {
     let capturedContentType: string | undefined;
     const adapter: AxiosAdapter = async (config): Promise<AxiosResponse> => {
       capturedData = config.data;
-      capturedContentType = config.headers.get('Content-Type') ?? undefined;
+      const contentTypeHeader = config.headers.get('Content-Type');
+      capturedContentType = typeof contentTypeHeader === 'string' ? contentTypeHeader : undefined;
       return {
         data: {},
         status: 200,

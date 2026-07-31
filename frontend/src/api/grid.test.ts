@@ -22,7 +22,7 @@ describe('fetchHealth', () => {
     const result = await fetchHealth();
 
     expect(result.status).toBe('unhealthy');
-    expect(result.checks.database).toBe('connection refused');
+    expect(result.checks?.database).toBe('connection refused');
 
     // The degraded signal must not be treated as a transport error by axios.
     const config = mockedGet.mock.calls[0]![1] as { validateStatus?: (status: number) => boolean } | undefined;
