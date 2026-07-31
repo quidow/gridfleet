@@ -21,9 +21,11 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     name: 'Pixel 8',
     manufacturer: null,
     model: null,
+    model_number: null,
     os_version: '14',
     host_id: 'host-1',
     operational_state: 'available',
+    allocatable: true,
     needs_attention: false,
     device_type: 'real_device',
     connection_type: 'usb',
@@ -32,6 +34,8 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     missing_setup_fields: [],
     verified_at: '2026-04-16T12:00:00Z',
     reservation: null,
+    is_reserved: false,
+    software_versions: null,
     lifecycle_policy_summary: {
       state: 'idle',
       label: 'Idle',
@@ -56,9 +60,7 @@ function makeIncident(overrides: Partial<LifecycleIncidentRead> = {}): Lifecycle
     device_id: 'device-1',
     device_name: 'Pixel 8',
     device_identity_value: 'serial-001',
-    pack_id: 'appium-uiautomator2',
     platform_id: 'android_mobile',
-    platform_label: null,
     event_type: 'lifecycle_recovery_backoff',
     label: 'Waiting to Retry',
     summary_state: 'backoff',
@@ -80,8 +82,8 @@ describe('dashboardSummary', () => {
       makeIncident({ id: 'newer', created_at: '2026-04-16T12:03:00Z', reason: 'Latest reason' }),
       makeIncident({
         id: 'other-state',
-        summary_state: 'manual',
-        label: 'Manual Recovery',
+        summary_state: 'excluded',
+        label: 'Excluded from Run',
         created_at: '2026-04-16T12:02:00Z',
       }),
     ]);
@@ -92,7 +94,7 @@ describe('dashboardSummary', () => {
       latestCreatedAt: '2026-04-16T12:03:00Z',
       reason: 'Latest reason',
     });
-    expect(grouped[1]).toMatchObject({ count: 1, summaryState: 'manual' });
+    expect(grouped[1]).toMatchObject({ count: 1, summaryState: 'excluded' });
   });
 
   it('counts needsAttention, maintenance, and availability in fleet summary', () => {
@@ -165,7 +167,7 @@ describe('dashboardSummary', () => {
   });
 
   it('does not expose attention aggregate fields', () => {
-    const summary = deriveDashboardFleetSummary([]) as Record<string, unknown>;
+    const summary = deriveDashboardFleetSummary([]);
     expect(summary).not.toHaveProperty('actionDeviceCount');
     expect(summary).not.toHaveProperty('actionTone');
   });

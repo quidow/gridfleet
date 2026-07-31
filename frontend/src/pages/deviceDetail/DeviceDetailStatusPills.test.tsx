@@ -17,10 +17,12 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     name: 'Lab Pixel',
     manufacturer: null,
     model: null,
+    model_number: null,
     needs_attention: false,
     os_version: '14',
     host_id: 'host-1',
     operational_state: 'available',
+    allocatable: true,
     device_type: 'real_device',
     connection_type: 'network',
     ip_address: '10.0.0.50',
@@ -28,6 +30,8 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     missing_setup_fields: [],
     verified_at: '2026-03-30T10:00:03Z',
     reservation: null,
+    is_reserved: false,
+    software_versions: null,
     lifecycle_policy_summary: {
       state: 'idle',
       label: 'Idle',
@@ -43,7 +47,6 @@ function makeDevice(overrides: Partial<DeviceDetail> = {}): DeviceDetail {
     created_at: '2026-03-30T10:00:03Z',
     updated_at: '2026-03-30T10:00:03Z',
     appium_node: null,
-    sessions: [],
     ...overrides,
   };
 }

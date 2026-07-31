@@ -1,12 +1,43 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchDriverPackCatalog } from './driverPacks';
 import { buildPlatformLabelMap } from '../hooks/useDriverPacks';
-import type { DriverPack } from '../types/driverPacks';
+import type { DriverPack, DriverPackPlatform } from '../types/driverPacks';
 import api from './client';
 
 vi.mock('./client', () => ({
   default: { get: vi.fn() },
 }));
+
+function makeDriverPack(overrides: Partial<DriverPack> = {}): DriverPack {
+  return {
+    id: 'appium-uiautomator2',
+    display_name: 'Appium UiAutomator2',
+    maintainer: 'gridfleet-team',
+    license: 'Apache-2.0',
+    state: 'enabled',
+    active_runs: 0,
+    live_sessions: 0,
+    current_release: '2026.04.0',
+    runtime_policy: { strategy: 'recommended' },
+    ...overrides,
+  };
+}
+
+function makePlatform(overrides: Partial<DriverPackPlatform> = {}): DriverPackPlatform {
+  return {
+    id: 'test_network',
+    display_name: 'Test Network Platform',
+    automation_name: 'TestAutomation',
+    appium_platform_name: 'TestPlatform',
+    device_types: ['real_device'],
+    connection_types: ['network'],
+    identity_scheme: 'test_serial',
+    identity_scope: 'global',
+    device_fields_schema: [],
+    capabilities: {},
+    ...overrides,
+  };
+}
 
 describe('fetchDriverPackCatalog', () => {
   beforeEach(() => {
@@ -55,7 +86,6 @@ describe('fetchDriverPackCatalog', () => {
                 connection_types: ['network'],
                 identity_scheme: 'test_serial',
                 identity_scope: 'global',
-                discovery_kind: 'adb',
                 device_fields_schema: [
                   {
                     id: 'api_token',
@@ -115,29 +145,11 @@ describe('fetchDriverPackCatalog', () => {
 
 describe('buildPlatformLabelMap with uploaded pack', () => {
   it('indexes uploaded pack platform label by pack:platform key', () => {
-    const uploadedPack: DriverPack = {
+    const uploadedPack = makeDriverPack({
       id: 'vendor/test-driver',
       display_name: 'Vendor Test Driver',
-      state: 'enabled',
-      active_runs: 0,
-      live_sessions: 0,
-      current_release: '2026.04.0',
-      platforms: [
-        {
-          id: 'test_network',
-          display_name: 'Test Network Platform',
-          automation_name: 'TestAutomation',
-          appium_platform_name: 'TestPlatform',
-          device_types: ['real_device'],
-          connection_types: ['network'],
-          identity_scheme: 'test_serial',
-          identity_scope: 'global',
-          discovery_kind: 'adb',
-          device_fields_schema: [],
-          capabilities: {},
-        },
-      ],
-    };
+      platforms: [makePlatform()],
+    });
 
     const labels = buildPlatformLabelMap([uploadedPack]);
 
@@ -145,53 +157,35 @@ describe('buildPlatformLabelMap with uploaded pack', () => {
   });
 
   it('distinguishes packs with same platform id by pack-qualified key', () => {
-    const firstPack: DriverPack = {
-      id: 'appium-uiautomator2',
-      display_name: 'Appium UiAutomator2',
-      state: 'enabled',
-      active_runs: 0,
-      live_sessions: 0,
-      current_release: '2026.04.0',
+    const firstPack = makeDriverPack({
       platforms: [
-        {
+        makePlatform({
           id: 'android_mobile',
           display_name: 'Android Mobile (real device)',
           automation_name: 'UiAutomator2',
           appium_platform_name: 'Android',
-          device_types: ['real_device'],
           connection_types: ['usb'],
           identity_scheme: 'android_serial',
           identity_scope: 'host',
-          discovery_kind: 'adb',
-          device_fields_schema: [],
-          capabilities: {},
-        },
+        }),
       ],
-    };
+    });
 
-    const uploadedPack: DriverPack = {
+    const uploadedPack = makeDriverPack({
       id: 'vendor/test-driver',
       display_name: 'Vendor Test Driver',
-      state: 'enabled',
-      active_runs: 0,
-      live_sessions: 0,
-      current_release: '2026.04.0',
       platforms: [
-        {
+        makePlatform({
           id: 'android_mobile',
           display_name: 'Uploaded Android Override',
           automation_name: 'CustomAuto',
           appium_platform_name: 'Android',
-          device_types: ['real_device'],
           connection_types: ['usb'],
           identity_scheme: 'android_serial',
           identity_scope: 'host',
-          discovery_kind: 'adb',
-          device_fields_schema: [],
-          capabilities: {},
-        },
+        }),
       ],
-    };
+    });
 
     const labels = buildPlatformLabelMap([firstPack, uploadedPack]);
 
@@ -200,29 +194,11 @@ describe('buildPlatformLabelMap with uploaded pack', () => {
   });
 
   it('uploaded pack display_name is returned separately from platform label', () => {
-    const uploadedPack: DriverPack = {
+    const uploadedPack = makeDriverPack({
       id: 'vendor/test-driver',
       display_name: 'Vendor Test Driver',
-      state: 'enabled',
-      active_runs: 0,
-      live_sessions: 0,
-      current_release: '2026.04.0',
-      platforms: [
-        {
-          id: 'test_network',
-          display_name: 'Test Network Platform',
-          automation_name: 'TestAutomation',
-          appium_platform_name: 'TestPlatform',
-          device_types: ['real_device'],
-          connection_types: ['network'],
-          identity_scheme: 'test_serial',
-          identity_scope: 'global',
-          discovery_kind: 'adb',
-          device_fields_schema: [],
-          capabilities: {},
-        },
-      ],
-    };
+      platforms: [makePlatform()],
+    });
 
     // The pack-level display_name is separate from platform display_name
     expect(uploadedPack.display_name).toBe('Vendor Test Driver');

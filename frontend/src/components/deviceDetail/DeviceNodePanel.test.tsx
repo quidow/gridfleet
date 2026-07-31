@@ -38,6 +38,7 @@ function makeDevice(): DeviceDetail {
     os_version: '15',
     host_id: 'host-1',
     operational_state: 'available',
+    allocatable: true,
     needs_attention: false,
     manufacturer: 'Google',
     model: 'Pixel 9',
@@ -51,6 +52,7 @@ function makeDevice(): DeviceDetail {
     missing_setup_fields: [],
     verified_at: null,
     reservation: null,
+    is_reserved: false,
     lifecycle_policy_summary: {
       state: 'idle',
       label: 'Idle',
@@ -70,14 +72,12 @@ function makeDevice(): DeviceDetail {
       port: 4723,
       pid: 36492,
       active_connection_target: '192.168.1.254:5555',
-      state: 'running',
       effective_state: 'running',
       started_at: '2026-04-28T13:51:00Z',
       desired_state: 'running',
       desired_port: 4723,
       last_observed_at: null,
     },
-    sessions: [],
   };
 }
 
@@ -95,7 +95,6 @@ describe('DeviceNodePanel', () => {
     const device = makeDevice();
     device.appium_node = {
       ...device.appium_node!,
-      state: 'running',
       desired_state: 'running',
       effective_state: 'running',
     };
@@ -109,7 +108,6 @@ describe('DeviceNodePanel', () => {
     const device = makeDevice();
     device.appium_node = {
       ...device.appium_node!,
-      state: 'stopped',
       desired_state: 'running',
       desired_port: 4723,
       effective_state: 'starting',

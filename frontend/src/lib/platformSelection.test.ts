@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { findPlatformDescriptorByKey, makePlatformKey, parsePlatformKey } from './platformSelection';
-import type { DriverPack } from '../types/driverPacks';
+import type { DriverPack, PlatformConnectionBehavior } from '../types/driverPacks';
+
+function makeConnectionBehavior(
+  overrides: Partial<PlatformConnectionBehavior> = {},
+): PlatformConnectionBehavior {
+  return {
+    allow_transport_identity_until_host_resolution: false,
+    requires_connection_target: true,
+    requires_ip_address: false,
+    ...overrides,
+  };
+}
 
 const packs = [
   {
@@ -8,6 +19,8 @@ const packs = [
     display_name: 'Built in',
     state: 'enabled',
     current_release: '1.0.0',
+    license: 'Apache-2.0',
+    maintainer: 'gridfleet-team',
     platforms: [
       {
         id: 'android_mobile',
@@ -18,13 +31,12 @@ const packs = [
         connection_types: ['usb'],
         identity_scheme: 'android_serial',
         identity_scope: 'host',
-        discovery_kind: 'adb',
         lifecycle_actions: [{ id: 'reconnect' }],
         device_fields_schema: [],
         capabilities: {},
         display_metadata: { icon_kind: 'mobile' },
         default_capabilities: {},
-        connection_behavior: {},
+        connection_behavior: makeConnectionBehavior(),
       },
     ],
     runtime_policy: { strategy: 'recommended' },
@@ -36,6 +48,8 @@ const packs = [
     display_name: 'Local fork',
     state: 'enabled',
     current_release: '1.0.0',
+    license: 'Apache-2.0',
+    maintainer: 'gridfleet-team',
     platforms: [
       {
         id: 'android_mobile',
@@ -46,12 +60,11 @@ const packs = [
         connection_types: ['network'],
         identity_scheme: 'android_serial',
         identity_scope: 'host',
-        discovery_kind: 'adb',
         device_fields_schema: [],
         capabilities: {},
         display_metadata: { icon_kind: 'mobile' },
         default_capabilities: {},
-        connection_behavior: { requires_ip_address: true },
+        connection_behavior: makeConnectionBehavior({ requires_ip_address: true }),
       },
     ],
     runtime_policy: { strategy: 'recommended' },

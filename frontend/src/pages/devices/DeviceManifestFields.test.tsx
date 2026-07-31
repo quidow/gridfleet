@@ -5,7 +5,7 @@ import type { PlatformDeviceField } from '../../types';
 
 const fields: PlatformDeviceField[] = [
   { id: 'roku_password', label: 'Developer password', type: 'string', sensitive: true, required_for_session: true },
-  { id: 'use_preinstalled_wda', label: 'Use pre-installed WDA', type: 'bool', default: true },
+  { id: 'use_preinstalled_wda', label: 'Use pre-installed WDA', type: 'bool', default: true, required_for_session: false, sensitive: false },
 ];
 
 describe('DeviceManifestFields', () => {

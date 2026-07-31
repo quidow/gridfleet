@@ -285,6 +285,7 @@ describe('AddDeviceModal manual driver registration', () => {
         os_version: '14',
         manufacturer: 'Generic',
         model: 'TV',
+        model_number: '',
         detected_properties: null,
         device_type: 'real_device',
         connection_type: 'network',

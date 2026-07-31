@@ -15,9 +15,11 @@ const device = {
   os_version: '12',
   host_id: 'host-1',
   operational_state: 'available',
+  allocatable: true,
   needs_attention: false,
   manufacturer: 'Roku',
   model: 'Ultra',
+  model_number: null,
   device_type: 'real_device',
   connection_type: 'network',
   ip_address: '192.168.1.55',
@@ -25,6 +27,8 @@ const device = {
   missing_setup_fields: ['roku_password'],
   verified_at: null,
   reservation: null,
+  is_reserved: false,
+  software_versions: null,
   lifecycle_policy_summary: { state: 'idle', label: 'Idle', detail: null, backoff_until: null },
   health_summary: { device: { status: 'unknown', detail: 'not checked', checked_at: null }, node: { status: 'unknown', detail: 'no node', checked_at: null }, viability: { status: 'unknown', detail: 'not run', checked_at: null }, overall: 'unknown' },
   created_at: '2026-04-27T00:00:00Z',
@@ -36,7 +40,6 @@ describe('buildUpdatePayload', () => {
     const payload = buildUpdatePayload(
       { name: 'Living Room Roku', device_config: { roku_password: '********' } },
       { ...device, name: 'Roku', device_config: { roku_password: '********' } },
-      {},
     );
     expect(payload.name).toBe('Living Room Roku');
     expect(payload).not.toHaveProperty('device_config');
@@ -44,9 +47,8 @@ describe('buildUpdatePayload', () => {
 
   it('stores manifest fields in device_config instead of top-level payload keys', () => {
     const payload = buildUpdatePayload(
-      { host_id: 'host-1', device_config: { roku_password: 'secret123' } },
+      { device_config: { roku_password: 'secret123' } },
       device,
-      {},
     );
     expect(payload.device_config).toEqual({ roku_password: 'secret123' });
     expect(payload).not.toHaveProperty('roku_password');

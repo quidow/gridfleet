@@ -28,7 +28,7 @@ describe('buildDeviceDetailSubtitleNode', () => {
   it('drops the os_version segment when absent', () => {
     render(
       <MemoryRouter>
-        <p>{buildDeviceDetailSubtitleNode(baseDevice({ os_version: null }), 'host-01')}</p>
+        <p>{buildDeviceDetailSubtitleNode(baseDevice({ os_version: '' }), 'host-01')}</p>
       </MemoryRouter>,
     );
     expect(screen.getByText('Android Mobile · host-01')).toBeInTheDocument();
