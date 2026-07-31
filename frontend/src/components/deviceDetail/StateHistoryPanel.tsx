@@ -8,9 +8,10 @@ import { incidentToneFromEventType } from '../dashboard/dashboardSummary';
 import { formatDate } from './utils';
 
 function eventBadge(incident: LifecycleIncidentRead) {
-  // Label text is the backend's (LIFECYCLE_INCIDENT_LABELS), so this panel can never
-  // drift out of sync with the set of types the endpoint returns. Tone is shared with
-  // the dashboard so the same event never renders two different severities.
+  // Label text is the backend's (LIFECYCLE_INCIDENT_LABELS), so the label can't drift
+  // from the endpoint's types. Tone is shared with the dashboard so one event never
+  // shows two severities, but unlike the label, that isn't caught by the type system —
+  // the drift guard is dashboardSummary.test.ts's tone-coverage test instead.
   return <Badge tone={incidentToneFromEventType(incident.event_type)}>{incident.label}</Badge>;
 }
 

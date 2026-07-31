@@ -95,10 +95,10 @@ async def test_lifecycle_incident_pagination_newer_direction_is_contiguous(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Regression test for an off-by-one: truncating to `limit` rows must happen before
-    reversing for direction="newer", not after. Truncating after reversal keeps the
-    `limit` rows *farthest* from the cursor instead of the nearest, which skips the row
-    immediately newer than the cursor.
+    """Guards that a `newer` page returns the rows nearest the cursor, not the ones
+    farthest from it. The query orders `created_at ASC, id ASC` and applies `LIMIT n`,
+    so the database returns the n rows immediately after the cursor; the service then
+    reverses that page in memory to present it newest-first.
     """
     device = await create_device_record(
         db_session,
@@ -124,10 +124,10 @@ async def test_lifecycle_incident_pagination_newer_direction_is_contiguous(
 
     service = LifecycleIncidentService()
 
-    # Cursor sits at events[3]; four rows are newer (events[4..7]), but only limit+1=3 are
-    # ever fetched (events[4..6]). The page must be the two rows closest to the cursor,
-    # newest-first: [events[5], events[4]]. The pre-fix order (reverse-then-truncate)
-    # would instead return [events[6], events[5]], skipping events[4] entirely.
+    # Cursor sits at events[3]; four rows are newer (events[4..7]), but the query fetches
+    # exactly limit=2 rows ascending by (created_at, id) starting right after the cursor:
+    # events[4], events[5]. Reversing that page in memory presents it newest-first:
+    # [events[5], events[4]].
     newer_page = await service.list_lifecycle_incidents_paginated(
         db_session,
         limit=2,
