@@ -333,3 +333,20 @@ async def test_lifecycle_incidents_newer_page_reports_both_directions(
     assert page.prev_cursor is not None
     # events[0..3] are older than this page -> an "Older" cursor must exist.
     assert page.next_cursor is not None
+
+    # The discriminating position: a "newer" page that reaches the newest end. This is
+    # the case the asymmetric-gating bug actually gets wrong -- the old code measured
+    # has_more on the *newer* side (query direction) but gated next_cursor (the *older*
+    # button) with it, and set prev_cursor unconditionally whenever a cursor was passed.
+    newest_page = await service.list_lifecycle_incidents_paginated(
+        db_session,
+        limit=3,
+        device_id=device.id,
+        cursor=encode_cursor(events[6].created_at, events[6].id),
+        direction="newer",
+    )
+    assert [item.id for item in newest_page.items] == [events[9].id, events[8].id, events[7].id]
+    # Nothing is newer than events[9] -> no "Newer" cursor.
+    assert newest_page.prev_cursor is None
+    # events[0..6] are older than this page -> an "Older" cursor must exist.
+    assert newest_page.next_cursor is not None
