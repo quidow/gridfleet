@@ -125,8 +125,6 @@ def _violation(message: str) -> None:
 UNPROVEN_WRITE_SITES: frozenset[str] = frozenset(
     {
         "app/devices/services/data_cleanup.py",
-        "app/devices/services/remediation.py",
-        "app/packs/services/lifecycle.py",
     }
 )
 

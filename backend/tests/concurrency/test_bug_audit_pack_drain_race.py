@@ -159,16 +159,26 @@ async def test_drain_disables_pack_with_fresh_concurrent_reservation(
         if triggered:
             return counts
         triggered = True
+
         # 2) Simulate a concurrent ``create_run`` that commits a fresh
         #    reservation for a device in this pack *after* the command has
         #    already observed "no active work" but *before* it flips state to
         #    disabled. The recount will see it and bail.
-        async with db_session_maker() as side:
-            run = _pending_run(target_pack_id)
-            side.add(run)
-            await side.flush()
-            side.add(_reservation(device, run.id, target_pack_id))
-            await side.commit()
+        async def _commit_concurrent_reservation() -> None:
+            async with db_session_maker() as side:
+                run = _pending_run(target_pack_id)
+                side.add(run)
+                await side.flush()
+                side.add(_reservation(device, run.id, target_pack_id))
+                await side.commit()
+
+        # Run the write as its own Task rather than inline: inline, its commit
+        # nests inside this patch's own caller chain (this replaces
+        # ``count_active_work_for_pack``, called from ``_drain_settled``), so
+        # the innermost frame the flush sees is app/packs/services/lifecycle.py.
+        # A Task starts fresh from the event loop, off that chain entirely, so
+        # the insert is not misattributed to app/packs/services/lifecycle.py.
+        await asyncio.create_task(_commit_concurrent_reservation())
         return counts
 
     PackLifecycleService.count_active_work_for_pack = _count_then_concurrent_reserve  # type: ignore[assignment]

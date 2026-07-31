@@ -86,6 +86,10 @@ async def _seed_failing_device_and_job(
     failure_episode_id = uuid.uuid4()
     device.device_checks_healthy = False
     device.failure_episode_id = failure_episode_id
+    # Flush the fixture's device mutation before enqueue's own flush triggers
+    # autoflush, so it is not misattributed to app/devices/services/remediation.py,
+    # whose flush happened to be the trigger.
+    await db_session.flush()
     job_id = await enqueue_device_health_remediation(
         db_session,
         device_id=device.id,

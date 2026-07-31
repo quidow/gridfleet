@@ -407,7 +407,5 @@ def test_unproven_sites_only_shrink() -> None:
             # constant would make edits one-touch and silent -- exactly the
             # property this test exists to deny. Do not deduplicate.
             "app/devices/services/data_cleanup.py",
-            "app/devices/services/remediation.py",
-            "app/packs/services/lifecycle.py",
         }
     )
