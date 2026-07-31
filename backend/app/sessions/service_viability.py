@@ -53,7 +53,6 @@ if TYPE_CHECKING:
 __all__ = [
     "PROBE_TEST_NAME",
     "SCHEDULED_PASS_BUDGET_SEC",
-    "SCHEDULED_PROBE_RETRY_DELAY_SEC",
     "SESSION_VIABILITY_KEY",
     "SESSION_VIABILITY_STATE_NAMESPACE",
     "SessionViabilityProbeInProgressError",
@@ -75,17 +74,21 @@ SCHEDULED_PROBE_RETRY_DELAY_SEC = 10
 # start of the owning appium_sweep cycle — AppiumSweepLoop computes
 # ``tick start + budget`` and passes it into ``check_due_devices`` as
 # ``deadline``, so the observation sweep and the due-set query spend from the
-# same allowance the stall watchdog measures (the in-method fallback serves
-# direct callers only). The deadline is checked both before admitting a new
-# series and — threaded through as ``deadline`` — before each in-series retry
-# sleep, so the delivered bound is the budget plus one worst-case *attempt*,
-# not plus one worst-case series.
+# same allowance the stall watchdog measures. Every caller must anchor it: the
+# parameter is required, so there is no unanchored fallback to fall into. The
+# deadline is checked both before admitting a new series and — threaded through
+# as ``deadline`` — before each in-series retry sleep, so the delivered bound is
+# the budget plus one worst-case *attempt*, not plus one worst-case series.
 #
-# One attempt costs at most create + 2 x terminate: create is bounded by
-# min(general.session_viability_timeout_sec, effective_create_timeout on
+# One attempt's remote cost is at most create + 2 x terminate: create is bounded
+# by min(general.session_viability_timeout_sec, effective_create_timeout on
 # grid.claim_window_sec) — 115 s at stock settings, 240 s with both raised to
 # their maxima — and each terminate by _PROBE_TERMINATE_TIMEOUT_CAP_SEC, so the
 # worst attempt is 240 + 2 x 30 = 300 s at any supported setting combination.
+# That 300 is a remote-effect ceiling, not a whole-attempt one: the attempt's
+# four DB phases (prepare, confirm, finalize, escalate) are not counted, being
+# small in practice and bounded by the pool and statement timeouts rather than
+# by anything here.
 # The deadline check sits before the retry sleep, so the last attempt can start
 # at budget + delay: a cycle spends <= 180 + 10 + 300 = 490 s here, inside the
 # ~640 s the scheduler stall watchdog allows an appium_sweep cycle (interval 30
@@ -551,7 +554,7 @@ class SessionViabilityService:
                 await asyncio.sleep(SCHEDULED_PROBE_RETRY_DELAY_SEC)
         return last
 
-    async def check_due_devices(self, *, deadline: float | None = None) -> None:
+    async def check_due_devices(self, *, deadline: float) -> None:
         """Open one short read session, build the tuple of due device UUIDs,
         close it, then run a viability probe per UUID. No outer read transaction
         is held across the remote Appium effects (each probe owns its own
@@ -559,9 +562,9 @@ class SessionViabilityService:
 
         Each due device runs an attempt series (``run_scheduled_probe_series``);
         the pass stops starting new series once ``deadline`` elapses (the owning
-        sweep anchors it at tick start; the fallback here serves direct callers)
-        and passes the same deadline into the series so a running one also stops
-        retrying past it. A string of broken devices therefore cannot hold the
+        sweep anchors it at tick start and every caller must, so the anchoring
+        is enforced at the call site) and passes the same deadline into the
+        series so a running one also stops retrying past it. A string of broken devices therefore cannot hold the
         appium_sweep cycle past the scheduler stall watchdog. A device skipped
         before its first attempt is untouched and stays due for the next pass;
         a device truncated mid-series has recorded a failed attempt and is
@@ -584,8 +587,6 @@ class SessionViabilityService:
             )
             devices = (await db.execute(stmt)).scalars().all()
             due_ids = [device.id for device in devices if await _should_run_scheduled_probe(db, device, interval_sec)]
-        if deadline is None:
-            deadline = time.monotonic() + SCHEDULED_PASS_BUDGET_SEC
         for index, device_id in enumerate(due_ids):
             if time.monotonic() >= deadline:
                 SESSION_VIABILITY_DEFERRED_TOTAL.inc(len(due_ids) - index)

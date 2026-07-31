@@ -1,3 +1,4 @@
+import inspect
 import time
 import uuid
 from datetime import UTC, datetime
@@ -135,10 +136,14 @@ async def probe_session_direct(
 async def _check_due_devices(
     db: AsyncSession, *, settings: FakeSettingsReader | None = None, deadline: float | None = None
 ) -> None:
+    """``check_due_devices`` requires an anchored deadline; tests that are not
+    about the budget get a full one from here rather than from the service."""
     _svc._settings = settings or FakeSettingsReader({})
     await db.commit()
     engine = db.bind
     _svc._session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    if deadline is None:
+        deadline = time.monotonic() + session_viability.SCHEDULED_PASS_BUDGET_SEC
     await _svc.check_due_devices(deadline=deadline)
 
 
@@ -683,13 +688,14 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
     for device in (d1, d2, d3):
         await set_session_viability_control_plane_entry(db_session, str(device.id), dict(stale))
 
-    # Monotonic reads: deadline computation, device-1 gate (inside budget),
-    # device-2 gate (past budget -> defer). Exhaustion keeps returning the
+    # The deadline is passed in (the service no longer derives one), so the
+    # only monotonic reads are the per-device gates: device-1 (inside budget),
+    # device-2 (past budget -> defer). Exhaustion keeps returning the
     # past-budget value, so an extra monotonic call in the implementation fails
     # a deferral assertion loudly instead of raising StopIteration. The stub
     # stays module-local (session_viability.time is the stdlib module; patching
     # its attribute would be process-wide, and the event loop reads it too).
-    reads = iter([0.0, 0.0])
+    reads = iter([0.0])
     monkeypatch.setattr(
         session_viability,
         "time",
@@ -705,7 +711,7 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
     series = AsyncMock(side_effect=_stamping_series)
     monkeypatch.setattr(_svc, "run_scheduled_probe_series", series)
     deferred_before = _counter_total("gridfleet_session_viability_deferred_total")
-    await _check_due_devices(db_session)
+    await _check_due_devices(db_session, deadline=session_viability.SCHEDULED_PASS_BUDGET_SEC)
     deferred_after = _counter_total("gridfleet_session_viability_deferred_total")
 
     assert series.await_count == 1
@@ -751,6 +757,18 @@ async def test_check_due_devices_uses_the_callers_deadline_verbatim(
     await _check_due_devices(db_session, deadline=deadline)
 
     series.assert_awaited_once_with(device.id, deadline=deadline)
+
+
+def test_check_due_devices_requires_an_explicit_deadline() -> None:
+    """The budget must be anchored by the caller (the owning sweep anchors it
+    at tick start). An optional deadline let a caller silently re-derive a
+    later, unanchored one; a required keyword-only parameter makes mypy reject
+    that at the call site instead."""
+    signature = inspect.signature(SessionViabilityService.check_due_devices)
+    deadline = signature.parameters["deadline"]
+
+    assert deadline.kind is inspect.Parameter.KEYWORD_ONLY
+    assert deadline.default is inspect.Parameter.empty
 
 
 async def test_check_due_devices_continues_after_a_series_raises(

@@ -40,7 +40,7 @@ def _make_loop(
         if sync_error is not None:
             raise sync_error
 
-    async def check_due_devices(*, deadline: float | None = None) -> None:
+    async def check_due_devices(*, deadline: float) -> None:
         calls.append("viability")
 
     services = SessionServices(
