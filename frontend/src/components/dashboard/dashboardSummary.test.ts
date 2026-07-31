@@ -148,9 +148,13 @@ describe('dashboardSummary', () => {
     expect(incidentToneFromEventType('lifecycle_deferred_stop')).toBe('warning');
     expect(incidentToneFromEventType('health_check_fail')).toBe('warning');
     expect(incidentToneFromEventType('connectivity_lost')).toBe('warning');
+    expect(incidentToneFromEventType('lifecycle_run_cooldown_set')).toBe('warning');
+    expect(incidentToneFromEventType('lifecycle_run_cooldown_escalated')).toBe('warning');
+    expect(incidentToneFromEventType('maintenance_entered')).toBe('warning');
     expect(incidentToneFromEventType('lifecycle_recovered')).toBe('success');
     expect(incidentToneFromEventType('lifecycle_run_restored')).toBe('success');
     expect(incidentToneFromEventType('connectivity_restored')).toBe('success');
+    expect(incidentToneFromEventType('maintenance_exited')).toBe('success');
     expect(incidentToneFromEventType('node_restart')).toBe('info');
   });
 

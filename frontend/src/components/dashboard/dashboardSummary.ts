@@ -275,9 +275,12 @@ export function incidentToneFromEventType(eventType: DeviceEventType): BadgeTone
     case 'lifecycle_recovery_suppressed':
     case 'lifecycle_recovery_backoff':
     case 'lifecycle_run_cooldown_set':
+    case 'lifecycle_run_cooldown_escalated':
+    case 'maintenance_entered':
       return 'warning';
     case 'connectivity_restored':
     case 'lifecycle_recovered':
+    case 'maintenance_exited':
     case 'lifecycle_run_restored':
       return 'success';
     case 'node_restart':
