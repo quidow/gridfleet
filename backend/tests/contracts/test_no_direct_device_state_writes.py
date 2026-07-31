@@ -948,3 +948,23 @@ def test_read_projection_is_not_a_mutation_api() -> None:
                 not (isinstance(arg.annotation, ast.Name) and arg.annotation.id == "LockedDevice") for arg in args
             )
             assert all(arg.arg != "for_update" for arg in args)
+
+
+def test_the_runtime_guard_is_armed_for_the_whole_suite() -> None:
+    """Every proof in this file is backed at runtime only while the guard is on.
+
+    The self-tests in test_device_lock_guard.py install the guard with
+    ``activate=False`` and arm it themselves via ``guard_enabled()``, so they run
+    downstream of nothing here — they cannot notice ``tests/conftest.py``'s
+    autouse fixture going away, or ``DEVICE_LOCK_GUARD_REPORT`` turning every
+    violation into a file append instead of a raise. This module has no ``_guard``
+    fixture of its own, so it is the one place that can actually pin the
+    suite-wide arming.
+    """
+    from tests.contracts import device_lock_guard as guard
+
+    assert guard._installed, "tests/conftest.py::_device_lock_guard no longer installs the listeners"
+    assert guard._active, "the guard is installed but inert: every violation would pass silently"
+    assert guard._REPORT_PATH is None, (
+        "DEVICE_LOCK_GUARD_REPORT is set: violations are being appended to a file instead of raised"
+    )
