@@ -14,11 +14,14 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import delete, select, update
 
+from app.core.timeutil import now_utc
 from app.devices.locking import lock_device_handle
 from app.devices.models import ConnectionType, Device, DeviceIntent, DeviceType
 from app.sessions.models import Session, SessionStatus
 from tests.contracts import _lock_guard_probe as probe
+from tests.contracts import device_lock_guard as guard
 from tests.contracts.device_lock_guard import (
+    _PROBE_SITE,
     DeviceLockGuardViolation,
     _write_sites,
     guard_enabled,
@@ -217,6 +220,134 @@ async def test_a_derivable_locked_bulk_delete_passes(db_session: AsyncSession, d
     await db_session.rollback()
 
 
+async def test_a_device_less_fact_row_needs_no_lock(db_session: AsyncSession) -> None:
+    """``Session.device_id`` is nullable, and such a row is no device's fact.
+
+    The production shape is ``app/sessions/service.py``'s
+    ``_terminalize_session_without_device``: there is no device row to lock and
+    no device-scoped projection the write can race.
+    """
+    row = Session(session_id="guard-orphan", device_id=None, status=SessionStatus.running)
+    db_session.add(row)
+    await db_session.commit()  # fixture write: no app frame, guard skips it
+    probe.probe_touch(row, "status", SessionStatus.passed)  # give it an app-frame site
+    await db_session.flush()  # must not raise
+    await db_session.rollback()
+
+
+async def test_a_registered_guarded_update_passes_on_its_predicate(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The carve-out: unlocked, target underivable, but the WHERE is the guard."""
+    _device, row = await _seed_session_row(db_session, db_host)
+    monkeypatch.setitem(guard.GUARDED_UPDATE_SITES, "tests/contracts/_lock_guard_probe.py", "live_session")
+    stmt = (
+        update(Session)
+        .where(Session.id == row.id, Session.status == SessionStatus.running)
+        .values(status=SessionStatus.passed)
+    )
+    await probe.probe_execute(db_session, stmt)  # must not raise
+    await db_session.rollback()
+
+
+async def test_the_still_live_guard_counts_as_a_predicate(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``finalize_probe_session``'s shape: the guard is ``ended_at IS NULL``.
+
+    SQLAlchemy renders that with a ``Null`` right side rather than a bind
+    parameter, so it needs its own arm in ``_where_column_hits``; without it the
+    conjunct reads as absent and the statement as unguarded.
+    """
+    _device, row = await _seed_session_row(db_session, db_host)
+    monkeypatch.setitem(guard.GUARDED_UPDATE_SITES, "tests/contracts/_lock_guard_probe.py", "live_session")
+    stmt = (
+        update(Session)
+        .where(Session.id == row.id, Session.ended_at.is_(None))
+        .values(status=SessionStatus.passed, ended_at=now_utc())
+    )
+    await probe.probe_execute(db_session, stmt)  # must not raise
+    await db_session.rollback()
+
+
+async def test_a_registered_guarded_update_still_fails_without_its_predicate(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Registration is per module, but the carve-out is granted per statement.
+
+    Same registered site, same underivable target, guard predicate gone: the
+    statement must not inherit the carve-out from its siblings in the module.
+    """
+    _device, row = await _seed_session_row(db_session, db_host)
+    monkeypatch.setitem(guard.GUARDED_UPDATE_SITES, "tests/contracts/_lock_guard_probe.py", "live_session")
+    stmt = update(Session).where(Session.id == row.id).values(status=SessionStatus.passed)
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+async def test_an_unregistered_site_gets_no_carve_out(db_session: AsyncSession, db_host: Host) -> None:
+    """The predicate alone is not enough: the module has to be registered too."""
+    _device, row = await _seed_session_row(db_session, db_host)
+    assert _PROBE_SITE not in guard.GUARDED_UPDATE_SITES
+    stmt = (
+        update(Session)
+        .where(Session.id == row.id, Session.status == SessionStatus.running)
+        .values(status=SessionStatus.passed)
+    )
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+def test_guarded_update_sites_carry_their_predicate() -> None:
+    """A guarded_update site's authority is its WHERE predicate. If someone
+    drops the guard from a statement, this fails before the race does.
+
+    Per statement, not per module: ``app/grid/allocation.py`` and
+    ``app/sessions/service_probes.py`` each hold two guarded updates, and a
+    module-level "does any ``.where`` mention the column" check would stay green
+    while one of the two lost its guard entirely. The scan lives in
+    test_no_direct_device_state_writes.py beside the rest of the AST contract
+    machinery it reuses.
+    """
+    from tests.contracts.device_lock_guard import GUARD_PREDICATE_COLUMNS, GUARDED_UPDATE_SITES
+    from tests.contracts.test_no_direct_device_state_writes import guarded_update_statement_scan
+
+    assert GUARDED_UPDATE_SITES, "registry emptied: delete this test with the last entry"
+    problems: list[str] = []
+    for module, fact in sorted(GUARDED_UPDATE_SITES.items()):
+        assert fact in GUARD_PREDICATE_COLUMNS, f"{module}: {fact!r} declares no guard columns"
+        guarded, unguarded = guarded_update_statement_scan(module, fact)
+        problems.extend(unguarded)
+        if not guarded and not unguarded:
+            problems.append(f"{module}: no bulk {fact} UPDATE found at all; the guarded_update claim is hollow")
+    assert problems == [], "guarded_update statements without their guard predicate:\n  " + "\n  ".join(problems)
+
+
+def test_the_predicate_scan_rejects_a_dropped_guard() -> None:
+    """The companion above only protects anything if it can fail.
+
+    Both shapes the runtime guard refuses have to be refused here too: a WHERE
+    that names no guard column, and one that names it under ``!=`` — the logical
+    opposite of a compare-and-swap.
+    """
+    import ast
+
+    from tests.contracts.test_no_direct_device_state_writes import _conjunct_columns
+
+    def columns(source: str) -> set[str]:
+        return _conjunct_columns(ast.parse(source, mode="eval").body)
+
+    assert columns("Session.status == SessionStatus.pending") == {"status"}
+    assert columns("Session.ended_at.is_(None)") == {"ended_at"}
+    assert columns("Session.status.in_(_LIVE_STATUSES)") == {"status"}
+    assert columns("Session.status != SessionStatus.pending") == set()
+    assert columns("or_(Session.status == SessionStatus.pending, Session.id == probe_id)") == set()
+    assert columns("~Session.status.is_(None)") == set()
+    assert columns("Session.id == probe_id") == {"id"}
+
+
 def test_unproven_sites_only_shrink() -> None:
     """Every entry is conversion work. Additions are new unlocked writes: fix them instead."""
     from tests.contracts.device_lock_guard import UNPROVEN_WRITE_SITES
@@ -232,13 +363,9 @@ def test_unproven_sites_only_shrink() -> None:
             # property this test exists to deny. Do not deduplicate.
             "app/devices/services/data_cleanup.py",
             "app/devices/services/remediation.py",
-            "app/grid/allocation.py",
             "app/packs/services/lifecycle.py",
             "app/runs/models.py",
             "app/runs/service_allocator.py",
             "app/runs/service_reservation.py",
-            "app/sessions/service.py",
-            "app/sessions/service_probes.py",
-            "app/sessions/service_viability.py",
         }
     )

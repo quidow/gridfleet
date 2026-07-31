@@ -21,6 +21,7 @@ import pytest
 
 from app.devices.services import read_projection
 from tests.contracts.decision_fact_columns import DECISION_COLUMNS, DECISION_FACT_MODELS
+from tests.contracts.device_lock_guard import GUARD_PREDICATE_COLUMNS, GUARDED_UPDATE_SITES
 from tests.contracts.test_repository_transaction_boundaries import (
     BEGIN_OWNER_REGISTRY,
     PRODUCTION,
@@ -273,9 +274,9 @@ DEVICE_LOCK_ACQUIRERS = frozenset(
 class DecisionFactWriter:
     """One function that mutates decision facts, and what is checked about it.
 
-    The three ``proof_mode`` values are NOT three strengths of the same claim.
-    Two of them prove a device lock. The third does not, and saying so plainly is
-    the point of this docstring:
+    The four ``proof_mode`` values are NOT four strengths of the same claim.
+    Two of them prove a device lock, one proves a different thing entirely, and
+    one proves nothing much; saying so plainly is the point of this docstring:
 
     * ``accepts_locked`` — **proves a lock.** Declares a ``LockedDevice``
       parameter and calls ``locked.assert_active(db)`` before its first write.
@@ -284,6 +285,15 @@ class DecisionFactWriter:
     * ``acquires_locked`` — **proves a lock.** Calls a ``DEVICE_LOCK_ACQUIRERS``
       function before its first write, so the lock is taken in the same function
       that writes.
+    * ``guarded_update`` — **proves predicate authority, not a lock.** The
+      writer is an ID-based conditional UPDATE whose own WHERE is the
+      serialization point: the losing side of a race matches zero rows and says
+      so. The device row lock is not what decides the outcome here, and forcing
+      one on would be theatre. What is checked is that the module is registered
+      in ``GUARDED_UPDATE_SITES`` for this fact — the runtime guard re-derives
+      the predicate from every executing statement — and that the lexical
+      companion in ``test_device_lock_guard.py`` covers the module, so dropping
+      the guard from a statement fails at authoring time rather than in a race.
     * ``caller_locked`` — **proves transaction-locality, not a lock.** The
       function must own no ``begin()`` (absent from ``BEGIN_OWNER_REGISTRY``) and
       its module must be in ``MIGRATED_TRANSACTION_LOCAL_MODULES``. Both
@@ -405,13 +415,13 @@ DECISION_FACT_WRITERS: frozenset[DecisionFactWriter] = frozenset(
             "caller_locked",
         ),
         DecisionFactWriter(
-            "app/sessions/service_probes.py", "claim_probe_session", frozenset({"live_session"}), "caller_locked"
+            "app/sessions/service_probes.py", "claim_probe_session", frozenset({"live_session"}), "accepts_locked"
         ),
         DecisionFactWriter(
-            "app/sessions/service_probes.py", "confirm_probe_session", frozenset({"live_session"}), "caller_locked"
+            "app/sessions/service_probes.py", "confirm_probe_session", frozenset({"live_session"}), "guarded_update"
         ),
         DecisionFactWriter(
-            "app/sessions/service_probes.py", "finalize_probe_session", frozenset({"live_session"}), "caller_locked"
+            "app/sessions/service_probes.py", "finalize_probe_session", frozenset({"live_session"}), "guarded_update"
         ),
         DecisionFactWriter(
             "app/verification/services/execution.py",
@@ -486,6 +496,93 @@ def decision_fact_writes() -> dict[tuple[str, str], dict[str, int]]:
     return writes
 
 
+# --- the guarded_update lexical companion ------------------------------------
+#
+# A guarded_update site's whole authority is the WHERE predicate of each of its
+# statements, so the predicate has to be pinned somewhere a reviewer or a test
+# can see it. The runtime guard re-derives it from the executing statement, but
+# only for the statements the suite happens to run; this scan reads the source
+# instead, so a dropped guard fails at authoring time.
+#
+# It mirrors the runtime rule deliberately, and both halves of the mirror matter:
+#   * only the arguments of a ``.where(...)`` chained onto the statement count,
+#     and those are top-level AND conjuncts by construction — an ``or_()`` or
+#     ``not_()`` wrapper is a Call whose tail is not a comparison form and
+#     contributes nothing, exactly as ``_and_conjuncts`` refuses to descend it;
+#   * only ``col == literal`` / ``col.in_(...)`` / ``col.is_(...)`` count.
+#     ``col != x`` is the logical opposite of a compare-and-swap guard and is
+#     rejected here for the same reason the runtime guard rejects it.
+#
+# It is per *statement*, not per module: a module with two guarded updates must
+# have the predicate on both. A module-level "does any .where mention status"
+# check would pass while one of the two lost its guard entirely.
+_GUARD_CALL_OPS = frozenset({"in_", "is_"})
+
+
+def _conjunct_columns(argument: ast.expr) -> set[str]:
+    """Column names one top-level ``.where()`` argument constrains, or empty."""
+    if isinstance(argument, ast.Compare):
+        if len(argument.ops) == 1 and isinstance(argument.ops[0], ast.Eq) and isinstance(argument.left, ast.Attribute):
+            return {argument.left.attr}
+        return set()
+    if (
+        isinstance(argument, ast.Call)
+        and isinstance(argument.func, ast.Attribute)
+        and argument.func.attr in _GUARD_CALL_OPS
+        and isinstance(argument.func.value, ast.Attribute)
+    ):
+        return {argument.func.value.attr}
+    return set()
+
+
+def _where_arguments(tree: ast.Module) -> dict[int, list[ast.expr]]:
+    """Map each statement-call node id to the args of every ``.where()`` chained onto it."""
+    chained: dict[int, list[ast.expr]] = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "where"):
+            continue
+        base: ast.expr | None = node.func.value
+        while isinstance(base, ast.Call):
+            chained.setdefault(id(base), []).extend(node.args)
+            base = base.func.value if isinstance(base.func, ast.Attribute) else None
+    return chained
+
+
+def guarded_update_statement_scan(module: str, fact: str, *, function: str | None = None) -> tuple[int, list[str]]:
+    """``(guarded statement count, unguarded statement descriptions)`` for *module*.
+
+    A statement counts when it is a bulk ``update()`` naming *fact*'s model whose
+    ``.values()`` assigns one of that fact's decision columns — precisely the
+    statements the runtime guard's bulk half inspects. *function* narrows the
+    scan to one qualified function so a per-writer caller reports its own
+    statement rather than a sibling's.
+    """
+    guard_columns = GUARD_PREDICATE_COLUMNS[fact]
+    tree = parse_module(BACKEND_ROOT / module)
+    chained = _updated_columns(tree)
+    where_args = _where_arguments(tree)
+    guarded = 0
+    unguarded: list[str] = []
+    for node, owner in iter_owned(tree, ""):
+        if not (isinstance(node, ast.Call) and call_tail(node.func) == "update"):
+            continue
+        if function is not None and owner != function:
+            continue
+        if fact not in _model_facts(node, chained):
+            continue
+        constrained: set[str] = set()
+        for argument in where_args.get(id(node), []):
+            constrained |= _conjunct_columns(argument)
+        if constrained & guard_columns:
+            guarded += 1
+        else:
+            unguarded.append(
+                f"{module}:{node.lineno} {owner or '<module>'}: WHERE constrains {sorted(constrained)}, "
+                f"none of the {fact} guard columns {sorted(guard_columns)}"
+            )
+    return guarded, unguarded
+
+
 def _function_node(module: str, qualified_function: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     found: ast.FunctionDef | ast.AsyncFunctionDef | None = None
     for node, owner in iter_owned(parse_module(BACKEND_ROOT / module), ""):
@@ -518,7 +615,9 @@ def test_decision_fact_writer_inventory_is_registered() -> None:
 
 def test_decision_fact_proof_modes_are_known() -> None:
     modes = {writer.proof_mode for writer in DECISION_FACT_WRITERS}
-    assert modes <= {"accepts_locked", "acquires_locked", "caller_locked"}, f"unknown proof modes: {sorted(modes)}"
+    assert modes <= {"accepts_locked", "acquires_locked", "caller_locked", "guarded_update"}, (
+        f"unknown proof modes: {sorted(modes)}"
+    )
 
 
 def test_decision_fact_writers_match_their_declared_proof_mode() -> None:
@@ -526,6 +625,7 @@ def test_decision_fact_writers_match_their_declared_proof_mode() -> None:
 
     Deliberately not called "proves their device lock": only the
     ``accepts_locked`` and ``acquires_locked`` branches do that. The
+    ``guarded_update`` branch checks predicate authority instead, and the
     ``caller_locked`` branch checks transaction-locality and never looks for a
     lock, so a writer with no lock anywhere up its call chain passes it. Every
     violation message below names the mode it was checked under, so a failure can
@@ -570,6 +670,28 @@ def test_decision_fact_writers_match_their_declared_proof_mode() -> None:
             ]
             if not acquired:
                 violations.append(f"{where}: lock proof missing — no device lock acquired before line {first_write}")
+        elif writer.proof_mode == "guarded_update":
+            # No lock is checked here, by design; see the class docstring. What
+            # is checked is that the runtime guard would actually apply the
+            # carve-out to this module/fact, and that the lexical companion is
+            # looking at the same statements and finds every one of them guarded.
+            for fact in sorted(writer.facts):
+                if GUARDED_UPDATE_SITES.get(writer.module) != fact:
+                    violations.append(
+                        f"{where}: predicate authority unproven — {writer.module} is not registered in "
+                        f"GUARDED_UPDATE_SITES for {fact!r}, so the runtime guard grants it no carve-out"
+                    )
+                    continue
+                guarded, unguarded = guarded_update_statement_scan(
+                    writer.module, fact, function=writer.qualified_function
+                )
+                if unguarded:
+                    violations.append(f"{where}: predicate authority unproven — " + "; ".join(unguarded))
+                elif not guarded:
+                    violations.append(
+                        f"{where}: predicate authority unproven — the lexical companion found no bulk "
+                        f"{fact} UPDATE in this function at all, so it covers nothing"
+                    )
         else:
             # No lock is checked here, by design; see the class docstring.
             if key in begin_owners:
@@ -581,8 +703,8 @@ def test_decision_fact_writers_match_their_declared_proof_mode() -> None:
                 )
     assert violations == [], (
         "decision-fact writers that do not satisfy their declared proof_mode "
-        "(accepts_locked/acquires_locked check a device lock; caller_locked checks transaction-locality only):\n  "
-        + "\n  ".join(violations)
+        "(accepts_locked/acquires_locked check a device lock; guarded_update checks predicate authority; "
+        "caller_locked checks transaction-locality only):\n  " + "\n  ".join(violations)
     )
 
 

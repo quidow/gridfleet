@@ -325,7 +325,7 @@ class VerificationExecutionService:
                 locked = await lock_device_handle(db, device_id)
                 probe_row = await claim_probe_session(
                     db,
-                    device=locked.device,
+                    locked=locked,
                     source=ProbeSource.verification,
                     capabilities=capabilities,
                     router_target=target,

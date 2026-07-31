@@ -1,12 +1,13 @@
 """Runtime device-lock proof guard. Installed suite-wide by tests/conftest.py.
 
 Asserts every decision-fact write happens in a transaction that holds the
-device's row lock (the ledger stamped by ``app.devices.locking``), with three
+device's row lock (the ledger stamped by ``app.devices.locking``), with four
 sanctioned pass conditions: the Device row was INSERTed in the same
 transaction; the write's call-site module is a registered ``guarded_update``
-site whose statement carries the fact's guard predicate; or the write has no
-application frame at all (a test fixture seeding rows — the contract governs
-``app/`` code).
+site whose statement carries the fact's guard predicate; the fact row names no
+device at all (only ``Session.device_id`` is nullable, and every reader of the
+live-session fact is device-scoped); or the write has no application frame at
+all (a test fixture seeding rows — the contract governs ``app/`` code).
 
 Call sites are captured twice over, because neither capture alone is complete.
 ``_record_write_site`` runs synchronously in the writer's own stack on every
@@ -81,7 +82,7 @@ from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import object_session
 from sqlalchemy.sql import operators
-from sqlalchemy.sql.elements import BinaryExpression, BindParameter, BooleanClauseList
+from sqlalchemy.sql.elements import BinaryExpression, BindParameter, BooleanClauseList, Null
 
 from app.devices.locking import DEVICE_LOCK_LEDGER_KEY
 from app.devices.models import Device
@@ -125,20 +126,39 @@ UNPROVEN_WRITE_SITES: frozenset[str] = frozenset(
     {
         "app/devices/services/data_cleanup.py",
         "app/devices/services/remediation.py",
-        "app/grid/allocation.py",
         "app/packs/services/lifecycle.py",
         "app/runs/models.py",
         "app/runs/service_allocator.py",
         "app/runs/service_reservation.py",
-        "app/sessions/service.py",
-        "app/sessions/service_probes.py",
-        "app/sessions/service_viability.py",
     }
 )
 
 # module path -> fact name whose guard predicate sanctions its bulk statements.
-GUARDED_UPDATE_SITES: dict[str, str] = {}
-GUARD_PREDICATE_COLUMNS: dict[str, str] = {"live_session": "status"}
+#
+# A guarded_update site is NOT an exemption. Its statements are conditional
+# compare-and-swaps whose own WHERE is the serialization point: the losing side
+# of a race matches zero rows and reports it (rowcount 0), so the outcome is
+# decided by the database rather than by who holds a row lock. The carve-out is
+# per *statement*, not per module -- ``_do_orm_execute`` re-checks the executing
+# statement's WHERE every time, so a new bulk write in one of these modules that
+# drops the guard is still a violation. The lexical companion
+# (test_device_lock_guard.py::test_guarded_update_sites_carry_their_predicate)
+# pins the same property at authoring time, statement by statement.
+GUARDED_UPDATE_SITES: dict[str, str] = {
+    # AllocationService.promote_to_running / .fail: pending -> running|error on
+    # ``Session.id == X AND Session.status == pending``. Both also hold the
+    # device row lock; the guard cannot see it because the statement targets the
+    # session id, so the predicate is what it verifies.
+    "app/grid/allocation.py": "live_session",
+    # confirm_probe_session / finalize_probe_session: ID-based by design so no
+    # ORM Session crosses a transaction boundary (WS-16.1). confirm guards on
+    # ``status == pending``, finalize on the still-live ``ended_at IS NULL``.
+    "app/sessions/service_probes.py": "live_session",
+}
+# fact name -> the columns whose top-level conjunct makes a statement a
+# compare-and-swap on that fact. They are the fact's own decision columns: a
+# statement that constrains the very column it writes cannot apply twice.
+GUARD_PREDICATE_COLUMNS: dict[str, frozenset[str]] = {"live_session": frozenset({"status", "ended_at"})}
 
 # Devices INSERTed earlier in the current transaction. The new-device rule says
 # a device created in this transaction needs no lock for its own facts, and the
@@ -310,6 +330,15 @@ def _before_flush(session: OrmSession, flush_context: UOWTransaction, instances:
 
     def require(target: object, changed: set[str]) -> None:
         device_id, device = _device_of(target)
+        if device_id is None and device is None:
+            # A fact row bound to no device at all. ``Session.device_id`` is the
+            # one nullable one of the four (the other three models declare it
+            # NOT NULL), and every reader of the live-session fact is
+            # device-scoped (``live_session_predicate``), so such a row is no
+            # device's fact: there is no row to lock and no projection to race.
+            # Not the vanished-device case -- that row keeps its foreign key and
+            # still lands below.
+            return
         if device_id is not None and device_id in locked:
             return
         if device is not None and device in session.new:
@@ -382,6 +411,11 @@ def _where_column_hits(stmt: Any, column_key: str) -> tuple[bool, set[Any]]:  # 
     a nested subquery), and the comparison must be ``eq``/``in_op``/``is_``
     against a literal (never a bare mention under another operator, and never
     a column-to-column comparison, which carries no derivable value at all).
+
+    ``col.is_(None)`` renders its right side as a SQL ``Null`` element rather
+    than a bind parameter, so it needs its own arm; without it a ``... IS NULL``
+    conjunct reads as absent. ``is_not`` is deliberately NOT accepted: "this
+    column is set to something" pins no value and guards no transition.
     """
     values: set[Any] = set()
     for criterion in getattr(stmt, "_where_criteria", ()):
@@ -395,6 +429,8 @@ def _where_column_hits(stmt: Any, column_key: str) -> tuple[bool, set[Any]]:  # 
             right = leaf.right
             if leaf.operator in (operators.eq, operators.is_) and isinstance(right, BindParameter):
                 values.add(right.value)
+            elif leaf.operator is operators.is_ and isinstance(right, Null):
+                values.add(None)
             elif leaf.operator is operators.in_op and isinstance(right, BindParameter) and right.expanding:
                 values.update(right.value or ())
     return bool(values), values
@@ -425,11 +461,14 @@ def _do_orm_execute(state: ORMExecuteState) -> None:
     if not frames:
         return  # test-only statement
     site = frames[0]  # the writer; outer frames are diagnostics only
-    guard_column = GUARD_PREDICATE_COLUMNS.get(fact)
-    if guard_column is not None and GUARDED_UPDATE_SITES.get(site) == fact:
-        guarded, _ = _where_column_hits(state.statement, guard_column)
-        if guarded:
-            return  # registered guarded_update site with its predicate present
+    guard_columns = GUARD_PREDICATE_COLUMNS.get(fact, frozenset())
+    # Any ONE of the fact's decision columns constrained at top level makes the
+    # statement a compare-and-swap on the fact it writes; requiring all of them
+    # would reject the narrower half of a real guard pair.
+    if GUARDED_UPDATE_SITES.get(site) == fact and any(
+        _where_column_hits(state.statement, column)[0] for column in guard_columns
+    ):
+        return  # registered guarded_update site with its predicate present
     _, device_ids = _where_column_hits(state.statement, "device_id")
     if device_ids:
         locked = _effective_locked_ids(state.session)

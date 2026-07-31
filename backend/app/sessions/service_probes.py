@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.agent_comm.probe_result import ProbeResult
-    from app.devices.models import Device
+    from app.devices.locking import LockedDevice
 
 PROBE_CHECKED_BY_CAP_KEY = "gridfleet:probeCheckedBy"
 
@@ -62,18 +62,23 @@ def map_probe_result_to_status(result: ProbeResult) -> tuple[SessionStatus, str 
 async def claim_probe_session(
     db: AsyncSession,
     *,
-    device: Device,
+    locked: LockedDevice,
     source: ProbeSource,
     capabilities: dict[str, Any],
     router_target: str | None,
 ) -> Session:
     """Insert the probe's birth row — the probe's only in-flight footprint.
 
-    Caller must hold the device row lock (``lock_device``) and commit afterwards
-    to publish the claim. Raises ``SessionViabilityProbeInProgressError`` when a
-    live Session row already claims the device: client rows are normally caught
-    upstream by the busy projection, so a conflict here is another probe.
+    Takes the caller's ``LockedDevice`` proof: the conflict read and the INSERT
+    that follows it are one compare-and-insert against every other writer of
+    this device's live-session fact, and only the row lock serializes them. The
+    caller commits afterwards to publish the claim. Raises
+    ``SessionViabilityProbeInProgressError`` when a live Session row already
+    claims the device: client rows are normally caught upstream by the busy
+    projection, so a conflict here is another probe.
     """
+    locked.assert_active(db)
+    device = locked.device
     conflict = await db.execute(select(Session.id).where(live_session_predicate(device.id)).limit(1))
     if conflict.first() is not None:
         raise SessionViabilityProbeInProgressError("Session viability check already in progress for this device")
