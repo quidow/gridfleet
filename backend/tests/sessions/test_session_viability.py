@@ -658,12 +658,18 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
     devices keep their stale last_attempted_at and stay due for the next pass.
     The admitted series is handed the same deadline, so it stops retrying at the
     budget line too. The stub series stamps the device it probed, so the stale
-    stamp genuinely distinguishes the deferred device from the probed one."""
+    stamp genuinely distinguishes the deferred devices from the probed one."""
+    # Three due devices, not two: the break fires at index 1, so the pass
+    # defers two of them. A deferral count of 2 is what distinguishes the
+    # real ``len(due_ids) - index`` arithmetic from a flat ``inc(1)``.
     d1, n1 = _make_viability_device(db_host, "budget-1")
     d2, n2 = _make_viability_device(db_host, "budget-2")
     n2.port = 4798
     n2.desired_port = 4798
-    db_session.add_all([d1, n1, d2, n2])
+    d3, n3 = _make_viability_device(db_host, "budget-3")
+    n3.port = 4797
+    n3.desired_port = 4797
+    db_session.add_all([d1, n1, d2, n2, d3, n3])
     await db_session.commit()
     stale = {
         "status": "passed",
@@ -674,7 +680,7 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
         "consecutive_failures": 0,
     }
     fresh_stamp = "2021-01-01T00:00:00+00:00"
-    for device in (d1, d2):
+    for device in (d1, d2, d3):
         await set_session_viability_control_plane_entry(db_session, str(device.id), dict(stale))
 
     # Monotonic reads: deadline computation, device-1 gate (inside budget),
@@ -703,25 +709,28 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
     deferred_after = _counter_total("gridfleet_session_viability_deferred_total")
 
     assert series.await_count == 1
-    # Two devices are due and the second is deferred, so the counter moves by
-    # exactly the number of devices the break skipped: len(due_ids) - index.
-    # This is the metric F4's "does the delay matter in practice" question
-    # reads, so a wrong arithmetic (e.g. inc(1) instead of the remaining
-    # count) has to fail here.
-    assert deferred_after - deferred_before == 1.0
+    # Three devices are due and the break fires at index 1, so the counter
+    # moves by the number of devices actually skipped: len(due_ids) - index
+    # == 2. This is the metric F4's "does the delay matter in practice"
+    # question reads, so a flat inc(1) — which would also satisfy a
+    # two-device fixture — fails here.
+    assert deferred_after - deferred_before == 2.0
     assert series.await_args is not None
     assert series.await_args.kwargs["deadline"] == session_viability.SCHEDULED_PASS_BUDGET_SEC
 
     # The probed device was stamped; the deferred one was not. The stale stamp
     # survives only on the deferred device, so the next pass finds exactly it
     # still due.
-    probed_id = series.await_args.args[0]
-    probed, deferred = (d1, d2) if probed_id == d1.id else (d2, d1)
+    # The due-set query has no ORDER BY, so which device is probed is not
+    # fixed — whichever it was, the other two must be untouched and still due.
+    remaining = {device.id: device for device in (d1, d2, d3)}
+    probed = remaining.pop(series.await_args.args[0])
     probed_state = await get_session_viability(db_session, probed)
     assert probed_state is not None and probed_state["last_attempted_at"] == fresh_stamp
-    deferred_state = await get_session_viability(db_session, deferred)
-    assert deferred_state is not None and deferred_state["last_attempted_at"] == stale["last_attempted_at"]
-    assert await _should_run_scheduled_probe(db_session, deferred, 3600) is True
+    for deferred in remaining.values():
+        deferred_state = await get_session_viability(db_session, deferred)
+        assert deferred_state is not None and deferred_state["last_attempted_at"] == stale["last_attempted_at"]
+        assert await _should_run_scheduled_probe(db_session, deferred, 3600) is True
 
 
 async def test_check_due_devices_uses_the_callers_deadline_verbatim(
