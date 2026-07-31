@@ -254,7 +254,7 @@ async def test_analytics_router_non_csv_and_capacity_defaults() -> None:
 
 async def test_lifecycle_incidents_router_returns_paginated_response() -> None:
     db = object()
-    list_incidents = AsyncMock(return_value=([], "next", "prev"))
+    list_incidents = AsyncMock(return_value=CursorPage(items=[], limit=5, next_cursor="next", prev_cursor="prev"))
     lifecycle_services = SimpleNamespace(incidents=SimpleNamespace(list_lifecycle_incidents_paginated=list_incidents))
     response = await lifecycle.get_lifecycle_incidents(
         limit=5, device_id=None, cursor=None, direction="newer", db=db, lifecycle_services=lifecycle_services

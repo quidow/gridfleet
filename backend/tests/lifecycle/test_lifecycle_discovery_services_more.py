@@ -2,6 +2,9 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+
+from app.core.pagination import CursorPaginationError, encode_cursor
 from app.devices.models import DeviceEvent, DeviceEventType
 from app.devices.schemas.device import DeviceLifecyclePolicySummaryState
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
@@ -13,7 +16,6 @@ from app.packs.services.discovery import PackDiscoveryService
 from tests.helpers import create_device_record
 
 if TYPE_CHECKING:
-    import pytest
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.hosts.models import Host
@@ -65,37 +67,38 @@ async def test_lifecycle_incident_record_serialize_and_paginate(
     assert invalid_serialized.run_id is None
     assert invalid_serialized.backoff_until is None
 
-    items, next_cursor, prev_cursor = await LifecycleIncidentService().list_lifecycle_incidents_paginated(
-        db_session, limit=1
-    )
-    assert [item.id for item in items] == [event.id]
-    assert next_cursor is None
-    assert prev_cursor is None
+    page = await LifecycleIncidentService().list_lifecycle_incidents_paginated(db_session, limit=1)
+    assert [item.id for item in page.items] == [event.id]
+    assert page.next_cursor is None
+    assert page.prev_cursor is None
 
-    newer, _next, prev = await LifecycleIncidentService().list_lifecycle_incidents_paginated(
+    newer_page = await LifecycleIncidentService().list_lifecycle_incidents_paginated(
         db_session,
         limit=1,
-        cursor=(event.created_at - timedelta(seconds=1)).isoformat(),
+        cursor=encode_cursor(event.created_at, event.id),
         direction="newer",
     )
-    assert [item.id for item in newer] == [event.id]
-    assert prev is not None
+    # Nothing is strictly newer than the only event, using its own exact cursor.
+    assert newer_page.items == []
+    assert newer_page.next_cursor is None
+    assert newer_page.prev_cursor is None
 
-    invalid_cursor_items, _next, _prev = await LifecycleIncidentService().list_lifecycle_incidents_paginated(
-        db_session,
-        cursor="not-a-date",
-    )
-    assert invalid_cursor_items
+    with pytest.raises(CursorPaginationError):
+        await LifecycleIncidentService().list_lifecycle_incidents_paginated(
+            db_session,
+            limit=1,
+            cursor="not-a-date",
+        )
 
 
 async def test_lifecycle_incident_pagination_newer_direction_is_contiguous(
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
-    """Regression test for an off-by-one: truncating to `limit` rows must happen before
-    reversing for direction="newer", not after. Truncating after reversal keeps the
-    `limit` rows *farthest* from the cursor instead of the nearest, which skips the row
-    immediately newer than the cursor.
+    """Guards that a `newer` page returns the rows nearest the cursor, not the ones
+    farthest from it. The query orders `created_at ASC, id ASC` and applies `LIMIT n`,
+    so the database returns the n rows immediately after the cursor; the service then
+    reverses that page in memory to present it newest-first.
     """
     device = await create_device_record(
         db_session,
@@ -121,27 +124,27 @@ async def test_lifecycle_incident_pagination_newer_direction_is_contiguous(
 
     service = LifecycleIncidentService()
 
-    # Cursor sits at events[3]; four rows are newer (events[4..7]), but only limit+1=3 are
-    # ever fetched (events[4..6]). The page must be the two rows closest to the cursor,
-    # newest-first: [events[5], events[4]]. The pre-fix order (reverse-then-truncate)
-    # would instead return [events[6], events[5]], skipping events[4] entirely.
-    newer_items, _next, _prev = await service.list_lifecycle_incidents_paginated(
+    # Cursor sits at events[3]; four rows are newer (events[4..7]), but the query fetches
+    # exactly limit=2 rows ascending by (created_at, id) starting right after the cursor:
+    # events[4], events[5]. Reversing that page in memory presents it newest-first:
+    # [events[5], events[4]].
+    newer_page = await service.list_lifecycle_incidents_paginated(
         db_session,
         limit=2,
-        cursor=events[3].created_at.isoformat(),
+        cursor=encode_cursor(events[3].created_at, events[3].id),
         direction="newer",
     )
-    assert [item.id for item in newer_items] == [events[5].id, events[4].id]
+    assert [item.id for item in newer_page.items] == [events[5].id, events[4].id]
 
     # "older" from the same cursor is unaffected: the two rows closest to the cursor on
     # the older side (events[2], events[1]), newest-first.
-    older_items, _next2, _prev2 = await service.list_lifecycle_incidents_paginated(
+    older_page = await service.list_lifecycle_incidents_paginated(
         db_session,
         limit=2,
-        cursor=events[3].created_at.isoformat(),
+        cursor=encode_cursor(events[3].created_at, events[3].id),
         direction="older",
     )
-    assert [item.id for item in older_items] == [events[2].id, events[1].id]
+    assert [item.id for item in older_page.items] == [events[2].id, events[1].id]
 
 
 async def test_pack_discovery_candidate_refresh_and_confirm_paths(
@@ -244,3 +247,106 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
     assert confirm_result.added == ["discovery-new"]
     assert confirm_result.removed == ["discovery-removed"]
     assert confirm_result.updated == ["discovery-existing"]
+
+
+async def test_lifecycle_incidents_cursor_pages_do_not_skip_ties(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """Four events share one created_at; paging by 2 must yield all four exactly once."""
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="lifecycle-tie-1",
+        connection_target="lifecycle-tie-1",
+        name="Lifecycle Tie",
+    )
+    shared = datetime.now(UTC) - timedelta(minutes=5)
+    db_session.add_all(
+        [
+            DeviceEvent(
+                device_id=device.id,
+                event_type=DeviceEventType.lifecycle_recovered,
+                details={"summary_state": "idle"},
+                created_at=shared,
+            )
+            for _ in range(4)
+        ]
+    )
+    await db_session.commit()
+
+    service = LifecycleIncidentService()
+    seen: list[str] = []
+    cursor: str | None = None
+    for _ in range(4):  # bounded so a broken cursor loops finitely
+        page = await service.list_lifecycle_incidents_paginated(
+            db_session, limit=2, device_id=device.id, cursor=cursor, direction="older"
+        )
+        seen.extend(str(item.id) for item in page.items)
+        if page.next_cursor is None:
+            break
+        cursor = page.next_cursor
+
+    assert len(seen) == 4, f"expected 4 distinct events across pages, got {seen}"
+    assert len(set(seen)) == 4, f"an event was returned on two pages: {seen}"
+
+
+async def test_lifecycle_incidents_newer_page_reports_both_directions(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A 'newer' page in the middle of the range must offer BOTH an older and a newer cursor."""
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="lifecycle-both-1",
+        connection_target="lifecycle-both-1",
+        name="Lifecycle Both",
+    )
+    base = datetime.now(UTC) - timedelta(minutes=30)
+    events = [
+        DeviceEvent(
+            device_id=device.id,
+            event_type=DeviceEventType.lifecycle_recovered,
+            details={"summary_state": "idle"},
+            created_at=base + timedelta(minutes=index),
+        )
+        for index in range(10)
+    ]
+    db_session.add_all(events)
+    await db_session.commit()
+    for event in events:
+        await db_session.refresh(event)
+
+    service = LifecycleIncidentService()
+    page = await service.list_lifecycle_incidents_paginated(
+        db_session,
+        limit=3,
+        device_id=device.id,
+        cursor=encode_cursor(events[3].created_at, events[3].id),
+        direction="newer",
+    )
+
+    # Rows strictly newer than events[3], nearest first, presented newest-first.
+    assert [item.id for item in page.items] == [events[6].id, events[5].id, events[4].id]
+    # events[7..9] are newer than this page -> a "Newer" cursor must exist.
+    assert page.prev_cursor is not None
+    # events[0..3] are older than this page -> an "Older" cursor must exist.
+    assert page.next_cursor is not None
+
+    # The discriminating position: a "newer" page that reaches the newest end. This is
+    # the case the asymmetric-gating bug actually gets wrong -- the old code measured
+    # has_more on the *newer* side (query direction) but gated next_cursor (the *older*
+    # button) with it, and set prev_cursor unconditionally whenever a cursor was passed.
+    newest_page = await service.list_lifecycle_incidents_paginated(
+        db_session,
+        limit=3,
+        device_id=device.id,
+        cursor=encode_cursor(events[6].created_at, events[6].id),
+        direction="newer",
+    )
+    assert [item.id for item in newest_page.items] == [events[9].id, events[8].id, events[7].id]
+    # Nothing is newer than events[9] -> no "Newer" cursor.
+    assert newest_page.prev_cursor is None
+    # events[0..6] are older than this page -> an "Older" cursor must exist.
+    assert newest_page.next_cursor is not None

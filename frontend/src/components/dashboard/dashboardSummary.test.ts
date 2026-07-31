@@ -141,16 +141,26 @@ describe('dashboardSummary', () => {
   });
 
   it('maps incident event_type to badge tone', () => {
+    // The 17 assertions below are the full LIFECYCLE_INCIDENT_LABELS union from
+    // backend/app/lifecycle/services/incidents.py — every event_type
+    // /api/lifecycle/incidents can return. None may resolve to the switch's 'neutral'
+    // default: a type missing a case here ships a grey badge for a real incident.
     expect(incidentToneFromEventType('lifecycle_run_excluded')).toBe('critical');
     expect(incidentToneFromEventType('node_crash')).toBe('critical');
     expect(incidentToneFromEventType('lifecycle_recovery_failed')).toBe('critical');
     expect(incidentToneFromEventType('lifecycle_recovery_backoff')).toBe('warning');
     expect(incidentToneFromEventType('lifecycle_deferred_stop')).toBe('warning');
+    expect(incidentToneFromEventType('lifecycle_auto_stopped')).toBe('warning');
+    expect(incidentToneFromEventType('lifecycle_recovery_suppressed')).toBe('warning');
     expect(incidentToneFromEventType('health_check_fail')).toBe('warning');
     expect(incidentToneFromEventType('connectivity_lost')).toBe('warning');
+    expect(incidentToneFromEventType('lifecycle_run_cooldown_set')).toBe('warning');
+    expect(incidentToneFromEventType('lifecycle_run_cooldown_escalated')).toBe('warning');
+    expect(incidentToneFromEventType('maintenance_entered')).toBe('warning');
     expect(incidentToneFromEventType('lifecycle_recovered')).toBe('success');
     expect(incidentToneFromEventType('lifecycle_run_restored')).toBe('success');
     expect(incidentToneFromEventType('connectivity_restored')).toBe('success');
+    expect(incidentToneFromEventType('maintenance_exited')).toBe('success');
     expect(incidentToneFromEventType('node_restart')).toBe('info');
   });
 
@@ -264,6 +274,23 @@ describe('deriveAttentionRows', () => {
     expect(result.total).toBe(1);
     expect(result.rows[0]!.tone).toBe('critical');
     expect(result.rows[0]!.badgeLabel).toBe('Node Crash');
+  });
+
+  it('admits a lifecycle_run_cooldown_escalated incident as an attention row (warning tone)', () => {
+    const device = makeDevice({ id: 'device-1', name: 'Fire TV', needs_attention: true });
+    const incident = makeIncident({
+      device_id: 'device-1',
+      device_name: 'Fire TV',
+      event_type: 'lifecycle_run_cooldown_escalated',
+      label: 'Cooldown Extended',
+      created_at: '2026-06-10T12:00:00Z',
+    });
+
+    const result = deriveAttentionRows([device], [incident]);
+
+    expect(result.total).toBe(1);
+    expect(result.rows[0]!.tone).toBe('warning');
+    expect(result.rows[0]!.badgeLabel).toBe('Cooldown Extended');
   });
 
   it('sorts critical rows before warning rows, then newest first', () => {

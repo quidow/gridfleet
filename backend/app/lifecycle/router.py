@@ -1,10 +1,11 @@
 import uuid
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_401, RESPONSES_404
+from app.core.pagination import CursorPaginationError
 from app.devices.schemas.lifecycle import LifecycleIncidentListRead
 from app.lifecycle.dependencies import LifecycleServicesDep
 
@@ -18,10 +19,18 @@ async def get_lifecycle_incidents(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     device_id: Annotated[uuid.UUID | None, Query()] = None,
     cursor: Annotated[str | None, Query()] = None,
-    direction: Annotated[str, Query()] = "older",
+    direction: Annotated[Literal["older", "newer"], Query()] = "older",
     scope: Annotated[Literal["all", "policy"], Query()] = "all",
 ) -> dict[str, Any]:
-    items, next_cursor, prev_cursor = await lifecycle_services.incidents.list_lifecycle_incidents_paginated(
-        db, limit=limit, device_id=device_id, cursor=cursor, direction=direction, scope=scope
-    )
-    return {"items": items, "limit": limit, "next_cursor": next_cursor, "prev_cursor": prev_cursor}
+    try:
+        page = await lifecycle_services.incidents.list_lifecycle_incidents_paginated(
+            db, limit=limit, device_id=device_id, cursor=cursor, direction=direction, scope=scope
+        )
+    except CursorPaginationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "items": page.items,
+        "limit": page.limit,
+        "next_cursor": page.next_cursor,
+        "prev_cursor": page.prev_cursor,
+    }

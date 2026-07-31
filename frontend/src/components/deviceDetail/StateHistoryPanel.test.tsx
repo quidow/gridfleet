@@ -46,18 +46,19 @@ function incident(overrides: Partial<LifecycleIncidentRead>): LifecycleIncidentR
 }
 
 describe('StateHistoryPanel', () => {
-  it('renders badges for failure and maintenance event types', () => {
+  it('renders the API-supplied label for every event type', () => {
     items = [
-      incident({ id: 'event-1', event_type: 'maintenance_exited', created_at: '2026-07-31T10:06:00Z' }),
+      incident({ id: 'event-1', event_type: 'maintenance_exited', label: 'Maintenance Exited', created_at: '2026-07-31T10:06:00Z' }),
       incident({
         id: 'event-2',
         event_type: 'maintenance_entered',
+        label: 'Maintenance Entered',
         reason: 'run escalation',
         created_at: '2026-07-31T10:05:00Z',
       }),
-      incident({ id: 'event-3', event_type: 'node_restart', created_at: '2026-07-31T10:04:00Z' }),
-      incident({ id: 'event-4', event_type: 'connectivity_lost', created_at: '2026-07-31T10:03:00Z' }),
-      incident({ id: 'event-5', event_type: 'health_check_fail', created_at: '2026-07-31T10:02:00Z' }),
+      incident({ id: 'event-3', event_type: 'node_restart', label: 'Node Restart', created_at: '2026-07-31T10:04:00Z' }),
+      incident({ id: 'event-4', event_type: 'connectivity_lost', label: 'Disconnected', created_at: '2026-07-31T10:03:00Z' }),
+      incident({ id: 'event-5', event_type: 'health_check_fail', label: 'Health Fail', created_at: '2026-07-31T10:02:00Z' }),
     ];
 
     render(<StateHistoryPanel deviceId="device-1" />);
@@ -70,11 +71,21 @@ describe('StateHistoryPanel', () => {
     expect(screen.getByText('run escalation')).toBeInTheDocument();
   });
 
-  it('falls back to the raw event type for unmapped types', () => {
-    items = [incident({ event_type: 'hardware_health_changed' })];
+  it('renders cooldown labels that the old local badge map was missing', () => {
+    items = [
+      incident({ id: 'event-1', event_type: 'lifecycle_run_cooldown_set', label: 'Run Cooldown', created_at: '2026-07-31T10:01:00Z' }),
+      incident({
+        id: 'event-2',
+        event_type: 'lifecycle_run_cooldown_escalated',
+        label: 'Cooldown Extended',
+        created_at: '2026-07-31T10:00:00Z',
+      }),
+    ];
 
     render(<StateHistoryPanel deviceId="device-1" />);
 
-    expect(screen.getByText('hardware_health_changed')).toBeInTheDocument();
+    expect(screen.getByText('Run Cooldown')).toBeInTheDocument();
+    expect(screen.getByText('Cooldown Extended')).toBeInTheDocument();
+    expect(screen.queryByText('lifecycle_run_cooldown_set')).not.toBeInTheDocument();
   });
 });
