@@ -109,6 +109,15 @@ async def test_escalate_remediation_failure_with_prior_ladder_skips_select(
     )
     await db_session.commit()
 
+    # The lock's own SELECT ... FOR UPDATE autobegins a transaction, and
+    # capture_statements refuses to attach to a session that already has one
+    # open (it re-pins itself via after_begin, so it needs a fresh begin to
+    # observe) -- so the lock must stay inside the capture window. The
+    # assertion below targets the device_remediation_log table specifically,
+    # which is the actual property under test (load_ladder's SELECT must be
+    # skipped when `prior` is supplied), rather than counting every SELECT
+    # the window sees, so it stays exact-zero on that property regardless of
+    # the lock's own statement shape.
     async with capture_statements(db_session) as statements:
         locked = await device_locking.lock_device_handle(db_session, device.id)
         outcome = await escalate_remediation_failure(
@@ -120,8 +129,8 @@ async def test_escalate_remediation_failure_with_prior_ladder_skips_select(
             prior=EMPTY_LADDER,
         )
 
-    reads = [sql for sql in statements if sql.lstrip().upper().startswith("SELECT")]
-    # The lock acquisition's own SELECT ... FOR UPDATE is expected; the ladder
-    # SELECT that load_ladder would otherwise issue must still be skipped.
-    assert len(reads) == 1, f"Expected only the device-lock SELECT, got {reads}"
+    ladder_reads = [
+        sql for sql in statements if sql.lstrip().upper().startswith("SELECT") and "device_remediation_log" in sql
+    ]
+    assert ladder_reads == [], f"Expected no ladder SELECT (prior was supplied), got {ladder_reads}"
     assert outcome.ladder.attempts == 1

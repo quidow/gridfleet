@@ -376,6 +376,8 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     # stop_pending=True (universal session-safety downgrade). When the
     # session ends, the active_session intent is revoked and reconcile picks
     # the stop intent as the winner, taking the node to desired_state=stopped.
+    # Flush the node/session inserts before the lock's own SELECT triggers
+    # autoflush, so they are not misattributed to app/devices/locking.py.
     await db_session.flush()
     locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
