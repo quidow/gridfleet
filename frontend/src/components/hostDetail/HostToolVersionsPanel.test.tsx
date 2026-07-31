@@ -31,7 +31,7 @@ vi.mock('../../hooks/useSettings', () => ({
   useSettings: () => ({ data: [] }),
 }));
 
-const host = {
+const host: HostRead = {
   id: 'host-1',
   hostname: 'local-host',
   ip: '127.0.0.1',
@@ -40,9 +40,14 @@ const host = {
   status: 'online',
   capabilities: {},
   missing_prerequisites: [],
+  agent_version: '0.8.0',
+  required_agent_version: null,
+  recommended_agent_version: null,
+  agent_update_available: false,
+  agent_version_status: 'ok',
+  last_heartbeat: '2026-05-12T00:00:00Z',
   created_at: '2026-05-12T00:00:00Z',
-  updated_at: '2026-05-12T00:00:00Z',
-} as HostRead;
+};
 
 function renderPanel() {
   const client = new QueryClient();

@@ -8,7 +8,7 @@ function renderTestNameCell(session: SessionDetail) {
   const columns = buildSessionColumns();
   const testNameCol = columns.find((c) => c.key === 'test_name');
   expect(testNameCol).toBeDefined();
-  return render(<MemoryRouter>{testNameCol!.render(session)}</MemoryRouter>);
+  return render(<MemoryRouter>{testNameCol!.render(session, 0)}</MemoryRouter>);
 }
 
 function baseSession(overrides: Partial<SessionDetail>): SessionDetail {

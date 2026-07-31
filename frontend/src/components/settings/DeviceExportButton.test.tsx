@@ -14,15 +14,15 @@ describe("DeviceExportButton", () => {
   });
 
   it("disables the button while downloading", async () => {
-    let resolve: (() => void) | null = null;
+    const pending: { resolve: (() => void) | null } = { resolve: null };
     const spy = vi.spyOn(api, "downloadExportBundle").mockImplementation(
-      () => new Promise<void>((r) => { resolve = () => r(); }),
+      () => new Promise<void>((r) => { pending.resolve = () => r(); }),
     );
     render(<DeviceExportButton />);
     const button = screen.getByRole("button", { name: /export config/i });
     fireEvent.click(button);
     await waitFor(() => expect(button).toBeDisabled());
-    resolve?.();
+    pending.resolve?.();
     await waitFor(() => expect(button).not.toBeDisabled());
     spy.mockRestore();
   });

@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { DeviceHealthPanel } from './DeviceHealthPanel';
 import { getCheckLabels } from './utils';
-import type { DeviceHealth, PlatformDescriptor } from '../../types';
+import type { DeviceHealth, DeviceLifecyclePolicy, PlatformConnectionBehavior, PlatformDescriptor } from '../../types';
 
 const mutate = vi.fn();
 let descriptor: PlatformDescriptor | null = null;
@@ -17,12 +17,45 @@ vi.mock('../../hooks/usePlatformDescriptor', () => ({
   usePlatformDescriptor: () => descriptor,
 }));
 
+function makeConnectionBehavior(
+  overrides: Partial<PlatformConnectionBehavior> = {},
+): PlatformConnectionBehavior {
+  return {
+    allow_transport_identity_until_host_resolution: false,
+    requires_connection_target: true,
+    requires_ip_address: false,
+    ...overrides,
+  };
+}
+
+function makeLifecyclePolicy(overrides: Partial<DeviceLifecyclePolicy> = {}): DeviceLifecyclePolicy {
+  return {
+    last_failure_source: null,
+    last_failure_reason: null,
+    last_action: null,
+    last_action_at: null,
+    deferred_stop: false,
+    deferred_stop_reason: null,
+    deferred_stop_since: null,
+    excluded_from_run: false,
+    excluded_run_id: null,
+    excluded_run_name: null,
+    excluded_at: null,
+    will_auto_rejoin_run: false,
+    recovery_suppressed_reason: null,
+    backoff_until: null,
+    recovery_state: 'idle',
+    ...overrides,
+  };
+}
+
 const baseHealth: DeviceHealth = {
   healthy: true,
+  platform: 'generic_real',
   device_checks: {},
   node: { running: true, port: 4723, state: 'running' },
   session_viability: { status: null, last_attempted_at: null, last_succeeded_at: null, checked_by: null, error: null },
-  lifecycle_policy: { recovery_state: 'idle', next_attempt_at: null, attempts: 0, last_error: null },
+  lifecycle_policy: makeLifecyclePolicy(),
 };
 
 function renderPanel() {
@@ -62,7 +95,8 @@ describe('DeviceHealthPanel manifest actions', () => {
       ],
       deviceFieldsSchema: [],
       defaultCapabilities: {},
-      connectionBehavior: {},
+      connectionBehavior: makeConnectionBehavior(),
+      deviceTypeOverrides: {},
     };
     const health = {
       ...baseHealth,
@@ -110,7 +144,8 @@ describe('DeviceHealthPanel manifest actions', () => {
       healthChecks: [],
       deviceFieldsSchema: [],
       defaultCapabilities: {},
-      connectionBehavior: {},
+      connectionBehavior: makeConnectionBehavior(),
+      deviceTypeOverrides: {},
     };
 
     renderPanel();
@@ -134,7 +169,8 @@ describe('DeviceHealthPanel manifest actions', () => {
       healthChecks: [],
       deviceFieldsSchema: [],
       defaultCapabilities: {},
-      connectionBehavior: {},
+      connectionBehavior: makeConnectionBehavior(),
+      deviceTypeOverrides: {},
     };
 
     renderPanel();
@@ -157,7 +193,8 @@ describe('DeviceHealthPanel manifest actions', () => {
       healthChecks: [],
       deviceFieldsSchema: [],
       defaultCapabilities: {},
-      connectionBehavior: {},
+      connectionBehavior: makeConnectionBehavior(),
+      deviceTypeOverrides: {},
     };
 
     renderPanel();
@@ -181,7 +218,8 @@ describe('getCheckLabels', () => {
     healthChecks: [],
     deviceFieldsSchema: [],
     defaultCapabilities: {},
-    connectionBehavior: {},
+    connectionBehavior: makeConnectionBehavior(),
+    deviceTypeOverrides: {},
   };
 
   it('uses descriptor health check labels', () => {
