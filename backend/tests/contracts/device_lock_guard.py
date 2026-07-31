@@ -27,6 +27,23 @@ to a later, unrelated write on the same live instance, naming a module that had
 nothing to do with it — and, because a recorded site suppresses the flush-frame
 fallback, hiding the module that did.
 
+FLUSH MISATTRIBUTION. A fixture write on an already-persistent row records no
+call site (``_record_write_site`` only fires on a watched attribute *set*), so
+the flush-time fallback in ``_before_flush`` blames whichever ``app/`` module
+happened to trigger the flush instead — usually because that module's own read
+or write ran autoflush. Three sanctioned remedies, all used during this phase:
+(1) flush the fixture write before calling into app code, so no pending
+fixture write is left for the app call to autoflush and get blamed for (three
+examples in the tree, each with an explanatory comment:
+``tests/sessions/test_session_service.py``,
+``tests/jobs/test_device_health_remediation.py``,
+``tests/jobs/test_remediation_transaction_boundaries.py``); (2) narrow the
+guard, if the write genuinely is not a device-scoped fact; or (3), when the
+misattributed write happens *during* a monkeypatched app call rather than
+before it, hoist the simulated concurrent writer onto its own
+``asyncio.create_task`` so it runs from the event loop instead of nested in the
+app's call frame (see ``tests/concurrency/test_bug_audit_pack_drain_race.py``).
+
 CEILINGS, disclosed and none load-bearing today:
 - raw ``Table``-object statements bypass ``do_orm_execute``; the lexical scan
   in test_no_direct_device_state_writes.py is the backstop and the form
@@ -41,10 +58,20 @@ CEILINGS, disclosed and none load-bearing today:
   is invisible outright, not merely misattributed: ``_do_orm_execute`` only
   acts on ``is_update``/``is_delete``, and a Core INSERT populates none of
   ``session.new``/``dirty``/``deleted``, so ``_before_flush`` never sees it
-  either. A ``GUARDED_UPDATE_SITES``/``FLEET_RETENTION_SITES`` entry covering
-  such a writer could be deleted with the suite staying green, because the
-  statement itself was never exercised by either half of the guard; the lexical
-  companions in test_device_lock_guard.py are what cover that case.
+  either. Live today: ``app/devices/services/intent.py::register_intents``'s
+  ``insert(DeviceIntent).on_conflict_do_update(...)`` is the repository's
+  primary ``device_intent`` writer and exactly this shape. A
+  ``GUARDED_UPDATE_SITES``/``FLEET_RETENTION_SITES`` entry covering such a
+  writer could be deleted with the suite staying green, because the statement
+  itself is never exercised by either half of this guard. What actually covers
+  ``register_intents`` is a different mechanism: ``decision_fact_writes()``'s
+  ``insert(Model)`` discovery in test_no_direct_device_state_writes.py forces a
+  registration through set-equality
+  (``test_decision_fact_writer_inventory_is_registered``), and the
+  ``accepts_locked`` proof-mode check
+  (``test_decision_fact_writers_prove_their_declared_mode``) is backed at
+  runtime by the function's own ``locked.assert_active(self._db)`` as its
+  first statement.
 - a device lock, or a new-device receipt, taken *inside* a savepoint outlives
   its own row lock: ``get_transaction()`` returns the root transaction, so
   rolling the savepoint back releases the PostgreSQL row lock while the entry,
@@ -69,6 +96,13 @@ CEILINGS, disclosed and none load-bearing today:
   only bulk ``AppiumNode`` update in ``app/`` writes ``last_observed_at``, an
   unwatched observation column — but a future bulk write to a watched
   ``Device``/``AppiumNode`` column would be silently uncovered by this half.
+- "no app frame ⟹ test fixture" (the ``if not sites: return`` in
+  ``_before_flush``) holds for attribute writes, because the ``set`` listener
+  fires synchronously in the writer's own stack, but not for an ORM
+  ``session.delete()`` of a fact row issued from app code whose flush is later
+  triggered from a stack with no app frame: that write is skipped, not caught.
+  Latent today: no ``db.delete()`` on any of the four fact models exists in
+  ``app/``.
 """
 
 from __future__ import annotations
@@ -170,6 +204,13 @@ GUARD_PREDICATE_COLUMNS: dict[str, frozenset[str]] = {"live_session": DECISION_C
 # and never qualifies. The lexical companion
 # (test_device_lock_guard.py::test_fleet_retention_sites_carry_their_authority)
 # pins the same two halves at authoring time, call site by call site.
+#
+# Deliberately one occupant. This mode went through a fix round that found two
+# soundness bugs of exactly the class it exists to prevent (a bare cutoff leaf
+# proving both halves at once; a forward-dated bound proving nothing), and its
+# narrowness is what keeps it honest. If a second module ever wants this mode,
+# that is the signal to re-derive the design rather than add a fourth lookup
+# table.
 FLEET_RETENTION_SITES: dict[str, frozenset[str]] = {
     # DataCleanupService's retention passes: batched deletes of aged Session and
     # DeviceRemediationLogEntry rows, selected by age across the whole fleet.
@@ -355,13 +396,6 @@ def _effective_locked_ids(session: OrmSession) -> set[uuid.UUID]:
         entry = session.info.get(key)
         if entry is not None and entry[0] is transaction:
             ids |= set(entry[1])
-    # A Device staged with an explicit PK is identifiable before its INSERT
-    # flushes; one staged the way app/devices/services/write.py does is not,
-    # and is covered by the receipt above (after its flush) or by the
-    # object-identity check in require() (within the same flush).
-    for obj in session.new:
-        if isinstance(obj, Device) and obj.id is not None:
-            ids.add(obj.id)
     return ids
 
 
@@ -412,7 +446,9 @@ def _before_flush(session: OrmSession, flush_context: UOWTransaction, instances:
         _violation(
             f"unlocked decision-fact write: model={type(target).__name__} "
             f"fact={_facts.get(type(target), 'device_column')} columns={sorted(changed)} "
-            f"device_id={device_id} site={sorted(sites)} chain={list(flush_frames)}"
+            f"device_id={device_id} site={sorted(sites)} chain={list(flush_frames)}; "
+            "take the device row lock via app.devices.locking before this write, or see "
+            "tests/contracts/device_lock_guard.py for the sanctioned pass conditions"
         )
 
     # New rows are checked only for the four fact models. A new Device or
@@ -683,7 +719,9 @@ def _do_orm_execute(state: ORMExecuteState) -> None:
         reason = "underivable target (no device_id in WHERE)"
     _violation(
         f"unlocked bulk decision-fact write: model={model.__name__} fact={fact} columns={sorted(columns)} "
-        f"{reason} site={site} chain={list(frames)}"
+        f"{reason} site={site} chain={list(frames)}; "
+        "take the device row lock via app.devices.locking before this write, or see "
+        "tests/contracts/device_lock_guard.py for the sanctioned pass conditions"
     )
 
 
@@ -703,6 +741,8 @@ def _after_flush(session: OrmSession, flush_context: UOWTransaction) -> None:
 
 def _after_transaction_end(session: OrmSession, transaction: SessionTransaction) -> None:
     """Drop sites recorded but never flushed, so none outlives its transaction."""
+    if not _active:
+        return
     if transaction.parent is not None:
         return  # a savepoint or subtransaction, not the real COMMIT/ROLLBACK
     for obj in list(_write_sites):
