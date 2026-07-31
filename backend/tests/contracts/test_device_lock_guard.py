@@ -235,6 +235,29 @@ async def test_a_device_less_fact_row_needs_no_lock(db_session: AsyncSession) ->
     await db_session.rollback()
 
 
+async def test_a_null_key_row_with_a_device_relationship_still_needs_the_lock(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    """The branch that makes the device-less exemption safe rather than a hole.
+
+    ``Session(device=<persistent device>)`` leaves ``device_id`` NULL until the
+    flush populates it, so the exemption must not key on the foreign key alone —
+    ``_device_of`` falls back to the relationship, and the lock is still
+    required. Simplifying that fallback away would pass every other test here
+    while opening the exemption to every device-bound row built this way.
+    """
+    device = await create_device(db_session, host_id=db_host.id, name="guard-relationship")
+    await db_session.commit()
+    row = Session(session_id="guard-relationship-probe", device=device, status=SessionStatus.running)
+    db_session.add(row)
+    probe.probe_touch(row, "status", SessionStatus.running)
+    assert row.device_id is None, "precondition: the foreign key is not populated until the flush"
+    with pytest.raises(DeviceLockGuardViolation) as excinfo:
+        await db_session.flush()
+    assert str(device.id) in str(excinfo.value)
+    await db_session.rollback()
+
+
 async def test_a_registered_guarded_update_passes_on_its_predicate(
     db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -267,6 +290,23 @@ async def test_the_still_live_guard_counts_as_a_predicate(
         .values(status=SessionStatus.passed, ended_at=now_utc())
     )
     await probe.probe_execute(db_session, stmt)  # must not raise
+    await db_session.rollback()
+
+
+async def test_a_guard_column_the_statement_does_not_assign_is_no_guard(
+    db_session: AsyncSession, db_host: Host, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Constraining a column the statement never writes is a filter, not a swap.
+
+    This one is fleet-wide and unscoped, and it does not clear its own
+    predicate: two racing copies both match and both apply. Qualifying it would
+    make the carve-out strictly weaker than the device lock it stands in for.
+    """
+    _device, _row = await _seed_session_row(db_session, db_host)
+    monkeypatch.setitem(guard.GUARDED_UPDATE_SITES, "tests/contracts/_lock_guard_probe.py", "live_session")
+    stmt = update(Session).where(Session.ended_at.is_(None)).values(status=SessionStatus.error)
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
     await db_session.rollback()
 
 
@@ -328,16 +368,17 @@ def test_guarded_update_sites_carry_their_predicate() -> None:
 def test_the_predicate_scan_rejects_a_dropped_guard() -> None:
     """The companion above only protects anything if it can fail.
 
-    Both shapes the runtime guard refuses have to be refused here too: a WHERE
-    that names no guard column, and one that names it under ``!=`` — the logical
-    opposite of a compare-and-swap.
+    Every shape the runtime guard refuses has to be refused here too: a WHERE
+    that names no guard column, one that names it under ``!=`` — the logical
+    opposite of a compare-and-swap — one that buries it in an ``or_()`` or a
+    negation, and one that names a same-titled column on another model.
     """
     import ast
 
     from tests.contracts.test_no_direct_device_state_writes import _conjunct_columns
 
     def columns(source: str) -> set[str]:
-        return _conjunct_columns(ast.parse(source, mode="eval").body)
+        return _conjunct_columns(ast.parse(source, mode="eval").body, "Session")
 
     assert columns("Session.status == SessionStatus.pending") == {"status"}
     assert columns("Session.ended_at.is_(None)") == {"ended_at"}
@@ -346,6 +387,10 @@ def test_the_predicate_scan_rejects_a_dropped_guard() -> None:
     assert columns("or_(Session.status == SessionStatus.pending, Session.id == probe_id)") == set()
     assert columns("~Session.status.is_(None)") == set()
     assert columns("Session.id == probe_id") == {"id"}
+    # Not the statement's own model: the lexical stand-in for the runtime
+    # target-table check.
+    assert columns("TestRun.status == RunState.running") == set()
+    assert columns("TestRun.ended_at.is_(None)") == set()
 
 
 def test_unproven_sites_only_shrink() -> None:

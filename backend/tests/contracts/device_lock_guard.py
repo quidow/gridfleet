@@ -155,10 +155,16 @@ GUARDED_UPDATE_SITES: dict[str, str] = {
     # ``status == pending``, finalize on the still-live ``ended_at IS NULL``.
     "app/sessions/service_probes.py": "live_session",
 }
-# fact name -> the columns whose top-level conjunct makes a statement a
-# compare-and-swap on that fact. They are the fact's own decision columns: a
-# statement that constrains the very column it writes cannot apply twice.
-GUARD_PREDICATE_COLUMNS: dict[str, frozenset[str]] = {"live_session": frozenset({"status", "ended_at"})}
+# fact name -> the columns whose top-level conjunct can make a statement a
+# compare-and-swap on that fact. Sourced from DECISION_COLUMNS rather than
+# restated, so the claim below stays true when a fact gains a column.
+#
+# Candidacy is not sufficiency: the carve-out additionally requires the guarded
+# column to be one the statement ASSIGNS (see ``_do_orm_execute``). Constraining
+# a column the statement does not write is a filter, not a swap -- it leaves the
+# statement applicable to the same rows after it runs, so two racing copies both
+# apply. Only "constrains the very column it writes" cannot apply twice.
+GUARD_PREDICATE_COLUMNS: dict[str, frozenset[str]] = {"live_session": DECISION_COLUMNS["live_session"]}
 
 # Devices INSERTed earlier in the current transaction. The new-device rule says
 # a device created in this transaction needs no lock for its own facts, and the
@@ -461,10 +467,22 @@ def _do_orm_execute(state: ORMExecuteState) -> None:
     if not frames:
         return  # test-only statement
     site = frames[0]  # the writer; outer frames are diagnostics only
-    guard_columns = GUARD_PREDICATE_COLUMNS.get(fact, frozenset())
-    # Any ONE of the fact's decision columns constrained at top level makes the
-    # statement a compare-and-swap on the fact it writes; requiring all of them
-    # would reject the narrower half of a real guard pair.
+    # A guard column only counts when the statement ASSIGNS it as well as
+    # constraining it -- that intersection is what makes the statement a
+    # compare-and-swap rather than a filter. Without it,
+    # ``update(Session).where(Session.ended_at.is_(None)).values(status=...)``
+    # would qualify: fleet-wide, unscoped, and applied twice by two racing
+    # copies, because neither of them clears the predicate the other reads.
+    # Any ONE such column is enough; requiring all of them would reject the
+    # narrower half of a real guard pair (finalize guards on ``ended_at`` alone
+    # while assigning four columns).
+    #
+    # A bulk delete arrives here with ``columns == {"<delete>"}``, so the
+    # intersection is empty and no delete is ever carved out. Deliberate and
+    # fail-closed: a conditional delete is arguably a swap on every column at
+    # once, but no registered module deletes a fact row today, so the shape is
+    # unexercised and gets no unexercised permission.
+    guard_columns = GUARD_PREDICATE_COLUMNS.get(fact, frozenset()) & columns
     if GUARDED_UPDATE_SITES.get(site) == fact and any(
         _where_column_hits(state.statement, column)[0] for column in guard_columns
     ):

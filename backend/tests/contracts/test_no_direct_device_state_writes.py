@@ -504,14 +504,26 @@ def decision_fact_writes() -> dict[tuple[str, str], dict[str, int]]:
 # only for the statements the suite happens to run; this scan reads the source
 # instead, so a dropped guard fails at authoring time.
 #
-# It mirrors the runtime rule deliberately, and both halves of the mirror matter:
+# It tracks the runtime rule on three axes:
 #   * only the arguments of a ``.where(...)`` chained onto the statement count,
 #     and those are top-level AND conjuncts by construction — an ``or_()`` or
 #     ``not_()`` wrapper is a Call whose tail is not a comparison form and
 #     contributes nothing, exactly as ``_and_conjuncts`` refuses to descend it;
-#   * only ``col == literal`` / ``col.in_(...)`` / ``col.is_(...)`` count.
-#     ``col != x`` is the logical opposite of a compare-and-swap guard and is
-#     rejected here for the same reason the runtime guard rejects it.
+#   * only ``col == …`` / ``col.in_(…)`` / ``col.is_(…)`` count, and only on the
+#     statement's own model (``Session.status``, never ``Foo.status``) — the
+#     lexical stand-in for the runtime target-table check. ``col != x`` is the
+#     logical opposite of a compare-and-swap guard and is rejected here for the
+#     same reason the runtime guard rejects it;
+#   * the column must be one the statement's ``.values()`` ASSIGNS. A guard on a
+#     column the statement does not write is a filter, not a swap.
+#
+# One axis it CANNOT mirror: the runtime rule also requires the right-hand side
+# to be a literal bind, rejecting ``Session.status == other.status``. Lexically
+# that is indistinguishable from ``Session.status == SessionStatus.pending`` —
+# both are Attribute == Attribute — so a column-to-column comparison counts
+# here. That is a false *negative* for the scan (it would fail to flag a
+# statement the runtime guard still refuses to carve out), never a false pass
+# at runtime.
 #
 # It is per *statement*, not per module: a module with two guarded updates must
 # have the predicate on both. A module-level "does any .where mention status"
@@ -519,19 +531,25 @@ def decision_fact_writes() -> dict[tuple[str, str], dict[str, int]]:
 _GUARD_CALL_OPS = frozenset({"in_", "is_"})
 
 
-def _conjunct_columns(argument: ast.expr) -> set[str]:
-    """Column names one top-level ``.where()`` argument constrains, or empty."""
+def _column_of(node: ast.expr, model: str) -> str | None:
+    """``Session.status`` -> ``"status"`` for *model* ``Session``, else None."""
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == model:
+        return node.attr
+    return None
+
+
+def _conjunct_columns(argument: ast.expr, model: str) -> set[str]:
+    """Columns of *model* one top-level ``.where()`` argument constrains, or empty."""
     if isinstance(argument, ast.Compare):
-        if len(argument.ops) == 1 and isinstance(argument.ops[0], ast.Eq) and isinstance(argument.left, ast.Attribute):
-            return {argument.left.attr}
+        if len(argument.ops) == 1 and isinstance(argument.ops[0], ast.Eq):
+            column = _column_of(argument.left, model)
+            return {column} if column is not None else set()
         return set()
-    if (
-        isinstance(argument, ast.Call)
-        and isinstance(argument.func, ast.Attribute)
-        and argument.func.attr in _GUARD_CALL_OPS
-        and isinstance(argument.func.value, ast.Attribute)
-    ):
-        return {argument.func.value.attr}
+    if isinstance(argument, ast.Call) and isinstance(argument.func, ast.Attribute):
+        if argument.func.attr not in _GUARD_CALL_OPS:
+            return set()
+        column = _column_of(argument.func.value, model)
+        return {column} if column is not None else set()
     return set()
 
 
@@ -558,6 +576,7 @@ def guarded_update_statement_scan(module: str, fact: str, *, function: str | Non
     statement rather than a sibling's.
     """
     guard_columns = GUARD_PREDICATE_COLUMNS[fact]
+    model = next(name for name, discovered in DECISION_FACT_MODELS.items() if discovered == fact)
     tree = parse_module(BACKEND_ROOT / module)
     chained = _updated_columns(tree)
     where_args = _where_arguments(tree)
@@ -570,15 +589,19 @@ def guarded_update_statement_scan(module: str, fact: str, *, function: str | Non
             continue
         if fact not in _model_facts(node, chained):
             continue
+        assigned = chained.get(id(node), set())
         constrained: set[str] = set()
         for argument in where_args.get(id(node), []):
-            constrained |= _conjunct_columns(argument)
-        if constrained & guard_columns:
+            constrained |= _conjunct_columns(argument, model)
+        # The same intersection the runtime carve-out takes: a guard column the
+        # statement does not also assign is a filter, not a compare-and-swap.
+        if constrained & guard_columns & assigned:
             guarded += 1
         else:
             unguarded.append(
-                f"{module}:{node.lineno} {owner or '<module>'}: WHERE constrains {sorted(constrained)}, "
-                f"none of the {fact} guard columns {sorted(guard_columns)}"
+                f"{module}:{node.lineno} {owner or '<module>'}: WHERE constrains {sorted(constrained)} and "
+                f"VALUES assigns {sorted(assigned)}, with no {fact} guard column "
+                f"{sorted(guard_columns)} in both"
             )
     return guarded, unguarded
 
