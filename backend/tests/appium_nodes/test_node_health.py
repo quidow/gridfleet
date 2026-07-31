@@ -11,6 +11,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import node_health
 from app.appium_nodes.services.node_health import NodeHealthService, _NodeObservation
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import (
     ConnectionType,
     Device,
@@ -233,9 +234,10 @@ async def test_health_check_fail_events_fire_on_edges_only(db_session: AsyncSess
 
 async def test_fold_recovery_clears_pending_stop(db_session: AsyncSession, db_host: Host) -> None:
     device, node = await _running_node(db_session, db_host, name="Recovery Phone", identity="nh-recovery", port=4727)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="node_health",
         action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
         reason="Probe failed",

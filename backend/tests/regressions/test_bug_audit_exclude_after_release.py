@@ -26,6 +26,7 @@ import pytest
 from sqlalchemy import select
 
 import app.runs.service_reservation as _reservation
+from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState, DeviceReservation
 from app.runs.models import RunState, TestRun
 from tests.helpers import create_device, create_host
@@ -87,6 +88,10 @@ async def test_exclude_marks_released_reservation_as_excluded(
         # is captured so the caller proceeds with a stale entry.
         snapshot = await original_get(db, did)
         async with db_session_maker() as side:
+            # release_devices reaches its reservation writes through
+            # lock_run_devices, so the racing releaser holds the device row lock
+            # here too; the caller holds none at this point, so it is free.
+            await device_locking.lock_device_handle(side, device_id)
             row = await side.get(DeviceReservation, reservation_id)
             if row is not None and row.released_at is None:
                 row.released_at = datetime.now(UTC)

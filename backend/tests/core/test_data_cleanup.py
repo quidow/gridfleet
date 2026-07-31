@@ -12,6 +12,7 @@ from app.devices.services import data_cleanup
 from app.devices.services.data_cleanup import DataCleanupService
 from app.hosts.models import Host, HostResourceSample
 from app.sessions.models import Session, SessionStatus
+from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.settings.models import ConfigAuditLog
 from tests.concurrency.group_lock_helpers import capture_statements
 from tests.fakes import FakeSettingsReader
@@ -217,6 +218,87 @@ async def test_cleanup_old_device_events(db_session: AsyncSession, db_host: Host
     remaining = result.scalars().all()
     assert len(remaining) == 1
     assert remaining[0].event_type == DeviceEventType.connectivity_restored
+
+
+async def test_retention_spares_an_aged_probe_row_that_is_still_live(db_session: AsyncSession, db_host: Host) -> None:
+    """Age is not proof a probe row is closed, and a live one still claims its device.
+
+    The probe pass is fleet-wide and takes no device lock, so its whole authority
+    is that the rows it removes cannot be anybody's live-session fact. In practice
+    the reapers close these long before retention could reach them — the claim
+    window is minutes against a one-day retention floor, and both run in the same
+    scheduler process — so this is the predicate paying rent on a case that should
+    never arise, not a live-data rescue. Its value is that the guarantee is now in
+    the statement instead of in a timing argument.
+    """
+    device_id = await _create_device(db_session, db_host)
+    now = datetime.now(UTC)
+    live_probe = Session(
+        session_id="probe-old-still-live",
+        device_id=device_id,
+        test_name=PROBE_TEST_NAME,
+        started_at=now - timedelta(days=10),
+        ended_at=None,
+        status=SessionStatus.running,
+    )
+    closed_probe = Session(
+        session_id="probe-old-closed",
+        device_id=device_id,
+        test_name=PROBE_TEST_NAME,
+        started_at=now - timedelta(days=10),
+        ended_at=now - timedelta(days=10),
+        status=SessionStatus.passed,
+    )
+    db_session.add_all([live_probe, closed_probe])
+    await db_session.commit()
+
+    await DataCleanupService(publisher=event_bus, settings=FakeSettingsReader({})).cleanup_old_data(db_session)
+    await db_session.commit()
+
+    remaining = set((await db_session.execute(select(Session.session_id))).scalars().all())
+    assert "probe-old-still-live" in remaining, "a live probe row is a claim on its device; retention must not take it"
+    assert "probe-old-closed" not in remaining, "the pass must still prune closed probe rows"
+
+
+async def test_retention_spares_an_aged_log_entry_that_still_arms_a_backoff(
+    db_session: AsyncSession, db_host: Host
+) -> None:
+    """``backoff_until`` is this fact's decision column, so an armed row outlives its age.
+
+    The settings bounds already separate these (the backoff cap tops out a day
+    below the retention floor), which is exactly why the predicate is worth
+    having: without it the proof lives in two registry entries that can move
+    independently, rather than in the statement.
+    """
+    device_id = await _create_device(db_session, db_host)
+    now = datetime.now(UTC)
+    armed = DeviceRemediationLogEntry(
+        device_id=device_id,
+        kind="attempt",
+        source="node_health",
+        action="recovery_failed",
+        at=now - timedelta(days=40),
+        backoff_until=now + timedelta(hours=1),
+    )
+    expired = DeviceRemediationLogEntry(
+        device_id=device_id,
+        kind="attempt",
+        source="node_health",
+        action="recovery_failed",
+        at=now - timedelta(days=40),
+        backoff_until=now - timedelta(days=40),
+    )
+    db_session.add_all([armed, expired])
+    await db_session.commit()
+
+    await DataCleanupService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"retention.remediation_log_days": 30}),
+    ).cleanup_old_data(db_session)
+
+    remaining = {entry.id for entry in (await db_session.execute(select(DeviceRemediationLogEntry))).scalars().all()}
+    assert armed.id in remaining, "an entry still arming a backoff is live ladder state, whatever its age"
+    assert expired.id not in remaining, "the pass must still prune entries whose backoff expired before the cutoff"
 
 
 async def test_cleanup_prunes_old_remediation_log_entries(db_session: AsyncSession, db_host: Host) -> None:
@@ -483,6 +565,10 @@ async def test_delete_in_batches_batch_failure_preserves_earlier_batch_commits(
             model=Session,
             timestamp_column=Session.started_at,
             cutoff=old_time + timedelta(days=1),
+            # Every production caller passes this fact's dead-row predicate and
+            # the device-lock guard requires it of any Session delete from this
+            # module; all four rows here are ended, so it selects the same set.
+            extra_predicates=(Session.ended_at.is_not(None),),
         )
 
     async with db_session_maker() as verify_db:
@@ -552,6 +638,7 @@ async def test_delete_in_batches_zero_rows_commits_once_and_leaves_no_open_trans
             model=Session,
             timestamp_column=Session.started_at,
             cutoff=datetime.now(UTC),
+            extra_predicates=(Session.ended_at.is_not(None),),  # as every production caller does
         )
 
     delete_statements = [sql for sql in statements if sql.lstrip().upper().startswith("DELETE")]

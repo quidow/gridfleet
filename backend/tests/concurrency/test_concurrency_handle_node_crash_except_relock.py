@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.devices.locking import LockedDevice
     from app.hosts.models import Host
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("seeded_driver_packs")]
@@ -49,7 +50,7 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
     await db_session.commit()
     device_id = device.id
 
-    original_lock_device = device_locking.lock_device
+    original_lock_device = device_locking.lock_device_handle
     original_lock_node = appium_node_locking.lock_appium_node_for_device
     device_lock_count = 0
     node_lock_count = 0
@@ -59,7 +60,7 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
         target_id: uuid.UUID,
         *,
         load_sessions: bool = False,
-    ) -> Device:
+    ) -> LockedDevice:
         nonlocal device_lock_count
         if target_id == device_id:
             device_lock_count += 1
@@ -71,7 +72,7 @@ async def test_handle_node_crash_writes_stop_intent_under_locks(
             node_lock_count += 1
         return await original_lock_node(db, target_id)
 
-    monkeypatch.setattr(device_locking, "lock_device", observed_lock_device)
+    monkeypatch.setattr(device_locking, "lock_device_handle", observed_lock_device)
     monkeypatch.setattr(appium_node_locking, "lock_appium_node_for_device", observed_lock_node)
 
     # ``handle_node_crash`` is transaction-local now, so the caller owns the boundary.

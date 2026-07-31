@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from app.agent_comm.probe_result import ProbeResult
+from app.devices.locking import lock_device_handle
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
 from app.sessions.service import close_running_session
@@ -56,7 +57,7 @@ async def _claim(db: AsyncSession, host: Host, name: str) -> Session:
     device = await create_device(db, host_id=host.id, name=name, verified=True)
     row = await claim_probe_session(
         db,
-        device=device,
+        locked=await lock_device_handle(db, device.id),
         source=ProbeSource.scheduled,
         capabilities={"platformName": "Android"},
         router_target="http://probe-target:4723",
@@ -98,17 +99,12 @@ async def test_claim_confirm_finalize_lifecycle(db_session: AsyncSession, db_hos
 
 
 async def test_claim_conflicts_with_live_probe_row(db_session: AsyncSession, db_host: Host) -> None:
-    from sqlalchemy import select
-
-    from app.devices.models import Device
-
     row = await _claim(db_session, db_host, "probe-row-conflict")
     assert row.device_id is not None
-    device = (await db_session.execute(select(Device).where(Device.id == row.device_id))).scalar_one()
     with pytest.raises(SessionViabilityProbeInProgressError):
         await claim_probe_session(
             db_session,
-            device=device,
+            locked=await lock_device_handle(db_session, row.device_id),
             source=ProbeSource.manual,
             capabilities={},
             router_target=None,
@@ -287,7 +283,7 @@ async def test_confirm_and_finalize_lock_device_before_session_child(
     await db_session.commit()
     row = await claim_probe_session(
         db_session,
-        device=device,
+        locked=await lock_device_handle(db_session, device.id),
         source=ProbeSource.manual,
         capabilities={"platformName": "Android"},
         router_target="http://probe-target:4724",

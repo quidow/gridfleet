@@ -154,6 +154,10 @@ async def test_cleanup_deletes_large_table_in_two_set_based_batches(db_session: 
             model=Session,
             timestamp_column=Session.started_at,
             cutoff=old_time + timedelta(days=1),
+            # As every production caller does, and as the device-lock guard
+            # requires of any Session delete from this module; every row seeded
+            # above is ended, so the batch sizes are unchanged.
+            extra_predicates=(Session.ended_at.is_not(None),),
         )
 
     assert deleted_total == row_count

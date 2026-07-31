@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.core.protocols import SettingsReader
+    from app.devices.locking import LockedDevice
 
 KIND_ATTEMPT = "attempt"
 KIND_FAILURE = "failure"
@@ -208,7 +209,7 @@ def build_policy_view(ladder: LadderState, raw: dict[str, Any] | None) -> dict[s
 
 async def append_entry(
     db: AsyncSession,
-    device_id: uuid.UUID,
+    locked: LockedDevice,
     *,
     kind: str,
     source: str,
@@ -216,8 +217,9 @@ async def append_entry(
     reason: str | None = None,
     backoff_until: datetime | None = None,
 ) -> DeviceRemediationLogEntry:
+    locked.assert_active(db)
     entry = DeviceRemediationLogEntry(
-        device_id=device_id,
+        device_id=locked.device.id,
         kind=kind,
         source=source,
         action=action,
@@ -232,7 +234,7 @@ async def append_entry(
 
 async def append_attempt(
     db: AsyncSession,
-    device_id: uuid.UUID,
+    locked: LockedDevice,
     *,
     source: str,
     reason: str,
@@ -240,14 +242,14 @@ async def append_attempt(
     prior: LadderState | None = None,
 ) -> tuple[DeviceRemediationLogEntry, LadderState]:
     if prior is None:
-        prior = await load_ladder(db, device_id)
+        prior = await load_ladder(db, locked.device.id)
     attempts = prior.attempts + 1
     base = settings.get_int("general.lifecycle_recovery_backoff_base_sec")
     cap = max(base, settings.get_int("general.lifecycle_recovery_backoff_max_sec"))
     seconds = min(cap, base * (2 ** (attempts - 1)))
     entry = await append_entry(
         db,
-        device_id,
+        locked,
         kind=KIND_ATTEMPT,
         source=source,
         action="recovery_failed",
@@ -260,11 +262,11 @@ async def append_attempt(
 
 
 async def append_failure(
-    db: AsyncSession, device_id: uuid.UUID, *, source: str, reason: str
+    db: AsyncSession, locked: LockedDevice, *, source: str, reason: str
 ) -> DeviceRemediationLogEntry:
     return await append_entry(
         db,
-        device_id,
+        locked,
         kind=KIND_FAILURE,
         source=source,
         action="failure_observed",
@@ -274,24 +276,24 @@ async def append_failure(
 
 async def append_reset(
     db: AsyncSession,
-    device_id: uuid.UUID,
+    locked: LockedDevice,
     *,
     source: str,
     action: str,
     reason: str | None = None,
 ) -> DeviceRemediationLogEntry:
-    return await append_entry(db, device_id, kind=KIND_RESET, source=source, action=action, reason=reason)
+    return await append_entry(db, locked, kind=KIND_RESET, source=source, action=action, reason=reason)
 
 
 async def append_action(
     db: AsyncSession,
-    device_id: uuid.UUID,
+    locked: LockedDevice,
     *,
     source: str,
     action: str,
     reason: str | None = None,
 ) -> DeviceRemediationLogEntry:
-    return await append_entry(db, device_id, kind=KIND_ACTION, source=source, action=action, reason=reason)
+    return await append_entry(db, locked, kind=KIND_ACTION, source=source, action=action, reason=reason)
 
 
 async def load_ladder(db: AsyncSession, device_id: uuid.UUID) -> LadderState:

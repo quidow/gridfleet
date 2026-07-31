@@ -245,10 +245,11 @@ def _superseded_by_a_running_node(
 
 
 async def _repin_desired_port(
-    db: AsyncSession, row: DesiredRow, *, conflict_port: int, settings: SettingsReader
+    db: AsyncSession, locked: LockedDevice, row: DesiredRow, *, conflict_port: int, settings: SettingsReader
 ) -> None:
     """Re-pin ``desired_port`` inside the caller's Device-locked transaction."""
-    node = await lock_appium_node_for_device(db, row.device_id)
+    locked.assert_active(db)
+    node = await lock_appium_node_for_device(db, locked.device.id)
     if node is None:
         return
     try:
@@ -390,7 +391,7 @@ async def _record_start_failure(
             # landed on a second occupied port stayed uncorrected until the
             # window expired — so a host leaking two ports could still keep the
             # device wedged behind repeated failed starts.
-            await _repin_desired_port(db, row, conflict_port=conflict_port, settings=settings)
+            await _repin_desired_port(db, locked, row, conflict_port=conflict_port, settings=settings)
         if snapshot.ladder.backoff_active(now=now) is not None:
             # One escalation per failure episode. The agent keeps retrying (and
             # keeps reporting) on its own cadence while the backend's recovery
@@ -404,7 +405,7 @@ async def _record_start_failure(
             return
         await escalate_device_remediation_failure(
             db,
-            locked.device,
+            locked,
             settings=settings,
             source="appium_reconciler",
             reason=reason,
@@ -423,7 +424,7 @@ async def _reset_start_failure(
         if locked is None:
             return
         snapshot = await load_device_decision_snapshot(db, locked, now=now_utc())
-        await reset_reconciler_start_failure_if_needed(db, locked.device, ladder=snapshot.ladder)
+        await reset_reconciler_start_failure_if_needed(db, locked, ladder=snapshot.ladder)
 
 
 class ReconcilerService:

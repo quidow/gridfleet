@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
 from app.sessions.models import Session, SessionStatus
 from tests.helpers import create_device_record, create_host, derive_and_apply_operational_state
@@ -43,6 +44,7 @@ async def test_pending_session_derives_busy(client: AsyncClient, db_session: Asy
     )
     await db_session.flush()
 
-    await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
 
     assert device.operational_state_last_emitted is DeviceOperationalState.busy

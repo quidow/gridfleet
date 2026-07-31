@@ -72,9 +72,14 @@ async def test_viability_probe_runs_on_maintenance_held_device(
 
     async def _reserve_then_lock(db: object, did: uuid.UUID, **kwargs: object) -> Device:
         # Race: a concurrent allocation commits an active reservation after the
-        # unlocked pre-flight gate but before the FOR UPDATE acquired here.
+        # unlocked pre-flight gate but before the FOR UPDATE acquired here. The
+        # side session takes the device row lock first, exactly as the run
+        # allocator does — without it the reservation INSERT is an unlocked
+        # decision-fact write, and it fires inside this patched lock helper (so
+        # on a call stack whose nearest app frame is the viability service).
         if did == device_id:
             async with db_session_maker() as side:
+                await original_lock(side, did)  # the real helper: this one is patched
                 await create_reservation(side, device_id=did)
                 await side.commit()
         locked: Device = await original_lock(db, did, **kwargs)  # type: ignore[arg-type]

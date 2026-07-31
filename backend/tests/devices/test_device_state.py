@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services import state as device_state
 from tests.helpers import create_device_record, derive_and_apply_operational_state
@@ -47,7 +48,8 @@ async def test_operational_state_transition_queues_event(
 
     monkeypatch.setattr("app.events.event_bus.EventBus.queue_for_session", fake_queue)
 
-    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    changed = await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
     assert changed is True
     assert device.operational_state_last_emitted is DeviceOperationalState.available
     assert any(name == "device.operational_state_changed" for name, _, _ in captured)
@@ -61,9 +63,10 @@ async def test_operational_state_transition_queues_event(
 @pytest.mark.asyncio
 async def test_operational_state_transition_noop_when_unchanged(db_session: AsyncSession, default_host_id: str) -> None:
     device = await _persisted_device(db_session, default_host_id)
-    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    changed = await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
     assert changed is True
-    changed = await derive_and_apply_operational_state(db_session, device, now=datetime.now(UTC), publisher=event_bus)
+    changed = await derive_and_apply_operational_state(db_session, locked, now=datetime.now(UTC), publisher=event_bus)
     assert changed is False
 
 

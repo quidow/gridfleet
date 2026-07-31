@@ -39,7 +39,7 @@ from app.hosts.models.host import Host
 
 if TYPE_CHECKING:
     import uuid
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import SessionTransaction
@@ -47,6 +47,27 @@ if TYPE_CHECKING:
 
 
 _LOCKED_DEVICE_TOKEN = object()
+
+DEVICE_LOCK_LEDGER_KEY = "device_lock_ledger"
+
+
+def record_locked_devices(db: AsyncSession, device_ids: Iterable[uuid.UUID]) -> None:
+    """Stamp device ids the current transaction holds row locks for.
+
+    Read only by the test-suite lock-proof guard
+    (``tests/contracts/device_lock_guard.py``). Keyed by the root
+    ``SessionTransaction`` so entries die with their transaction; a mismatched
+    key resets the set. Two dict operations — no behavioral effect.
+    """
+    sync = db.sync_session
+    transaction = sync.get_transaction()
+    if transaction is None:
+        return
+    ledger = sync.info.get(DEVICE_LOCK_LEDGER_KEY)
+    if ledger is None or ledger[0] is not transaction:
+        sync.info[DEVICE_LOCK_LEDGER_KEY] = (transaction, set(device_ids))
+    else:
+        ledger[1].update(device_ids)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -105,7 +126,9 @@ async def lock_device(
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    return (await db.execute(stmt)).scalar_one()
+    device = (await db.execute(stmt)).scalar_one()
+    record_locked_devices(db, (device.id,))
+    return device
 
 
 async def lock_device_handle(
@@ -161,6 +184,7 @@ async def lock_device_handle(
     device = (await db.execute(stmt)).scalar_one_or_none()
     if device is None:
         raise NoResultFound
+    record_locked_devices(db, (device.id,))
     return LockedDevice._from_lock(db, device)
 
 
@@ -176,7 +200,9 @@ async def lock_devices(db: AsyncSession, device_ids: list[uuid.UUID]) -> list[De
         .with_for_update()
         .execution_options(populate_existing=True)
     )
-    return list((await db.execute(stmt)).scalars().all())
+    devices = list((await db.execute(stmt)).scalars().all())
+    record_locked_devices(db, (device.id for device in devices))
+    return devices
 
 
 async def lock_device_handles(
@@ -201,4 +227,6 @@ async def lock_device_handles(
             .execution_options(populate_existing=True)
         )
     ).scalars()
-    return [LockedDevice._from_lock(db, device) for device in rows]
+    devices = list(rows)
+    record_locked_devices(db, (device.id for device in devices))
+    return [LockedDevice._from_lock(db, device) for device in devices]

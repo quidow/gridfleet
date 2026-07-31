@@ -141,7 +141,13 @@ class DataCleanupService:
                 model=Session,
                 timestamp_column=Session.started_at,
                 cutoff=cutoff,
-                extra_predicates=(Session.test_name == PROBE_TEST_NAME,),
+                extra_predicates=(
+                    Session.test_name == PROBE_TEST_NAME,
+                    # Same dead-row guard as the pass above, and for the same
+                    # reason: age alone does not prove a probe row is closed, and
+                    # a live one is a claim on its device.
+                    Session.ended_at.is_not(None),
+                ),
             )
 
         # Terminal grid_session_queue tickets (reuses retention.sessions_days).
@@ -203,6 +209,17 @@ class DataCleanupService:
                 model=DeviceRemediationLogEntry,
                 timestamp_column=DeviceRemediationLogEntry.at,
                 cutoff=cutoff,
+                extra_predicates=(
+                    # ``backoff_until`` is the decision column of this fact, so an
+                    # entry still arming a backoff must survive its own age. The
+                    # backoff cap makes that window far shorter than the retention
+                    # floor, but relying on that leaves the proof in two settings
+                    # instead of in the statement.
+                    or_(
+                        DeviceRemediationLogEntry.backoff_until.is_(None),
+                        DeviceRemediationLogEntry.backoff_until < cutoff,
+                    ),
+                ),
             )
 
         # HostResourceSample

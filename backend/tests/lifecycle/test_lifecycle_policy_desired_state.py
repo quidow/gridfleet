@@ -111,9 +111,12 @@ async def test_auto_recovery_intent_falls_back_to_live_node_port(
     )
     db_session.add(node)
     await db_session.flush()
+    from app.devices import locking as device_locking
+
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="recovery",
         action=remediation_log.ACTION_RECOVERY_STARTED,
     )

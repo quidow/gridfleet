@@ -379,7 +379,7 @@ class SessionViabilityService:
                 raise SessionViabilityProbeNotPermittedError("Appium node has no routable target")
             row = await claim_probe_session(
                 db,
-                device=locked.device,
+                locked=locked,
                 source=ProbeSource(checked_by),
                 capabilities=capabilities,
                 router_target=target,
@@ -427,7 +427,7 @@ class SessionViabilityService:
             # background auto-recovery on an `offline` device (no lease present).
             if checked_by == SessionViabilityCheckedBy.recovery:
                 await IntentService(db).revoke_intents(
-                    device_id=locked.device.id,
+                    locked=locked,
                     sources=[verification_intent_source(locked.device.id)],
                 )
             # Derive the post-probe state inline: the probe row is terminal and a

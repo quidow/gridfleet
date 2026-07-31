@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 
 from app.devices import locking as device_locking
@@ -217,6 +218,78 @@ async def test_release_devices_serializes_with_concurrent_writer(
         f"Expected offline but got {derived.value} — "
         "release_devices stomped the concurrent offline write (missing row lock)"
     )
+
+
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_release_devices_skips_a_reservation_whose_device_vanished(
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """The ``locked is None`` fallback in ``release_devices``, driven for real.
+
+    ``lock_run_devices`` returns a proof per Device row it actually locked, so a
+    reservation gets no proof only when its Device row is gone by lock time.
+    ``device_reservations.device_id`` is ``ON DELETE CASCADE``, so the same
+    delete took the reservation row with it: the branch can only ever be reached
+    for a reservation that no longer exists, and writing release fields to it
+    would be an unlocked write onto a phantom row that no UPDATE can match.
+    Skipping is the only outcome that commits.
+    """
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="vanished-target",
+        operational_state=DeviceOperationalState.available,
+        verified=True,
+    )
+    run = TestRun(
+        name="vanished",
+        state=RunState.active,
+        requirements=[],
+        ttl_minutes=10,
+        heartbeat_timeout_sec=300,
+        last_heartbeat=datetime.now(UTC),
+    )
+    db_session.add(run)
+    await db_session.flush()
+    db_session.add(
+        DeviceReservation(
+            run=run,
+            device_id=device.id,
+            identity_value=device.identity_value,
+            connection_target=device.connection_target,
+            pack_id=device.pack_id,
+            platform_id=device.platform_id,
+            os_version=device.os_version,
+        )
+    )
+    await db_session.commit()
+    device_id = device.id
+    run_id = run.id
+
+    async with db_session_maker() as releaser:
+        run_obj = await run_service.get_run(releaser, run_id)
+        assert run_obj is not None
+        assert [entry.device_id for entry in run_obj.device_reservations] == [device_id]
+        run_obj.state = RunState.cancelled
+        run_obj.completed_at = datetime.now(UTC)
+
+        # A concurrent delete lands between the reservation load and the lock
+        # pass; the FK cascade removes the reservation row in the same commit.
+        async with db_session_maker() as deleter:
+            await deleter.execute(sa_delete(Device).where(Device.id == device_id))
+            await deleter.commit()
+
+        locked_by_id = await _release_svc.lock_run_devices(releaser, run_obj)
+        assert locked_by_id == {}, "the vanished Device must yield no proof"
+        assert await _release_svc.release_devices(releaser, run_obj, locked_by_id=locked_by_id) == []
+        await releaser.commit()
+
+    async with db_session_maker() as verify:
+        assert (
+            await verify.execute(select(DeviceReservation).where(DeviceReservation.device_id == device_id))
+        ).scalar_one_or_none() is None
 
 
 @pytest.mark.usefixtures("seeded_driver_packs")

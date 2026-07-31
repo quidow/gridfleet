@@ -36,6 +36,8 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.devices.locking import LockedDevice
+
 pytestmark = pytest.mark.usefixtures("seeded_driver_packs")
 
 _OBSERVED_AT = datetime(2026, 7, 17, 12, tzinfo=UTC)
@@ -345,7 +347,7 @@ async def test_unhealthy_fold_rolls_back_every_artifact_when_lifecycle_fails(
     async def fail_after_mutations(
         self: LifecyclePolicyActionsService,
         db: AsyncSession,
-        target: Device,
+        target: LockedDevice,
         *,
         run: TestRun | None,
         reason: str,
@@ -585,7 +587,7 @@ async def test_unhealthy_fold_failure_keeps_prior_device_and_retries_remaining_d
     async def fail_middle(
         self: LifecyclePolicyActionsService,
         db: AsyncSession,
-        target: Device,
+        target: LockedDevice,
         *,
         run: TestRun | None,
         reason: str,
@@ -593,7 +595,7 @@ async def test_unhealthy_fold_failure_keeps_prior_device_and_retries_remaining_d
         detail: str,
     ) -> None:
         await original(self, db, target, run=run, reason=reason, source=source, detail=detail)
-        if target.id == middle_id:
+        if target.device.id == middle_id:
             raise RuntimeError("sentinel middle-device failure")
 
     monkeypatch.setattr(LifecyclePolicyActionsService, "record_auto_stopped_incident", fail_middle)

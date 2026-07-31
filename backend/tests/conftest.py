@@ -185,6 +185,19 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(pytest.mark.db)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _device_lock_guard() -> None:
+    """Arm the runtime device-lock proof for every test in the worker.
+
+    Registering the ORM event listeners from a fixture rather than at conftest
+    import time keeps them off collection-only runs. ``install_device_lock_guard``
+    is run-once, so the guard's own self-tests re-calling it is a no-op.
+    """
+    from tests.contracts.device_lock_guard import install_device_lock_guard
+
+    install_device_lock_guard()
+
+
 @pytest_asyncio.fixture(scope="session")
 async def ensure_test_database() -> None:
     await _ensure_test_database_exists()

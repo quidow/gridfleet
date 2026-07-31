@@ -360,9 +360,12 @@ async def test_operator_start_supersedes_blocking_stop_directive(
     await db_session.flush()
     device.appium_node = node
 
+    from app.devices import locking as device_locking
+
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="stale stop",

@@ -48,6 +48,7 @@ async def test_bulk_restart_persists_watermark_when_recovery_directive_present(
     db_session.add(node)
     await db_session.flush()
     device.appium_node = node
+    await device_locking.lock_device_handle(db_session, device.id)
     await write_desired_state(
         db_session,
         node=node,
@@ -56,9 +57,10 @@ async def test_bulk_restart_persists_watermark_when_recovery_directive_present(
     )
     # Simulate a recovery start on the same axis as the operator restart, but
     # without a watermark.
+    entry_locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        entry_locked,
         source="recovery",
         action=remediation_log.ACTION_RECOVERY_STARTED,
     )

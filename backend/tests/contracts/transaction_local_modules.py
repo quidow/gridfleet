@@ -4,11 +4,16 @@ Data only. The commit/rollback property this file once asserted per listed
 module is now asserted for the whole of ``app/`` with no allowlist by
 ``tests/contracts/test_repository_transaction_boundaries.py``; duplicating it
 here would give one fact two homes that can disagree. The tuple survives
-because two other contracts read it as the transaction-locality registry:
-``test_no_direct_device_state_writes.py``'s ``caller_locked`` proof mode and
-``test_phase9_domain_command_boundaries.py``'s gate. It is named without a
-``test_`` prefix because it collects no tests -- under one it read as a test module
-that had silently stopped asserting anything.
+because ``test_phase9_domain_command_boundaries.py``'s gate reads it as the
+transaction-locality registry. It is named without a ``test_`` prefix because it
+collects no tests -- under one it read as a test module that had silently
+stopped asserting anything.
+
+It had a second reader until the device-lock-proof phase: the retired
+transaction-locality proof mode in ``test_no_direct_device_state_writes.py``,
+which used membership here as a stand-in for a lock proof. Membership is not one
+-- it says a module owns no commit, not that anything holds a device row -- and
+that mode is gone. Do not wire a new proof to this tuple.
 """
 
 MIGRATED_TRANSACTION_LOCAL_MODULES = (
@@ -80,9 +85,9 @@ MIGRATED_TRANSACTION_LOCAL_MODULES = (
     "app/core/janitor.py",
     "app/core/observability.py",
     "app/main.py",
-    # Phase 10 task 8: the remediation-ladder appender. Already clean; listed so
-    # DECISION_FACT_WRITERS can rely on it being pinned transaction-local, which
-    # is what makes its ``caller_locked`` proof mode enforceable rather than
-    # asserted (see tests/contracts/test_no_direct_device_state_writes.py).
+    # Phase 10 task 8: the remediation-ladder appender. Already clean; listed
+    # for the commit/rollback property alone. Its DECISION_FACT_WRITERS entry no
+    # longer leans on this tuple -- ``append_entry`` took a real ``LockedDevice``
+    # in the device-lock-proof phase and proves ``accepts_locked``.
     "app/lifecycle/services/remediation_log.py",
 )

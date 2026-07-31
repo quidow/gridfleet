@@ -70,8 +70,9 @@ async def _make_available_device(db_session: AsyncSession, db_host: Host, *, ide
 async def _register_operator_deny(db_session: AsyncSession, device: Device) -> None:
     # A real operator stop registers both the node-process stop and the recovery
     # deny; operator_stop_active (the N13 stickiness gate) keys on the node stop.
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await IntentService(db_session).register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=f"operator:stop:node:{device.id}",
@@ -94,10 +95,11 @@ async def _seed_escalation_residue(db_session: AsyncSession, device: Device) -> 
             "general.lifecycle_recovery_backoff_max_sec": 900,
         }
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     for _ in range(2):
         await remediation_log.append_attempt(
             db_session,
-            device.id,
+            locked,
             source="session_viability",
             reason="Recovery viability probe failed",
             settings=settings,

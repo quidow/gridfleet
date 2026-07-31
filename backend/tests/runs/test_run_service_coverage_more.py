@@ -297,6 +297,9 @@ async def test_restore_and_exclude_device_reservation_branches(
     run = await create_reserved_run(db_session, name="reservation-branch-run", devices=[device])
     entry = run.device_reservations[0]
     svc = RunReservationService()
+    # Mirror the app callers (complete_auto_stop / restore_run_after_self_heal):
+    # the device row lock is held for the whole exclude/restore sequence below.
+    await device_locking.lock_device_handle(db_session, device.id)
 
     assert await svc.exclude_device_from_run(db_session, uuid.uuid4(), reason="missing") is None
     assert await run_service.get_device_reservation(db_session, device.id) == run
@@ -719,7 +722,10 @@ async def test_release_devices_handles_missing_maintenance_and_already_restored_
     pending = await _release_svc.release_devices(db, run, locked_by_id=locked_by_id)
 
     assert pending == [maintenance_id, not_reserved_id]
-    assert all(reservation.released_at is not None for reservation in reservations)
+    # The proofless reservation is left untouched: its Device row is gone, and the
+    # FK cascade took its own row with it (see
+    # test_concurrency_release_devices.py::test_release_devices_skips_a_reservation_whose_device_vanished).
+    assert [reservation.released_at is not None for reservation in reservations] == [False, True, True]
 
 
 async def test_report_preparation_failure_missing_and_terminal_run(

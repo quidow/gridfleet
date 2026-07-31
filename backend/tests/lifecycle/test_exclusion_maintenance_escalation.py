@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.appium_nodes.models import AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.lifecycle.services.actions import LifecyclePolicyActionsService
 from app.lifecycle.services.incidents import LifecycleIncidentService
@@ -23,6 +24,18 @@ _actions = LifecyclePolicyActionsService(
     reservation=RunReservationService(),
     incidents=LifecycleIncidentService(),
 )
+
+
+async def _lock_like_production(db: AsyncSession, device: Device) -> None:
+    """Take the device row lock the way both app callers do before these helpers.
+
+    ``exclude_run_if_needed`` is reached only through ``complete_auto_stop``, and
+    ``restore_run_if_needed`` only through ``restore_run_after_self_heal`` — each
+    locks the device row as its first statement. Calling the helpers bare would
+    exercise a transaction shape production never has, and the reservation write
+    they perform would be unlocked.
+    """
+    await device_locking.lock_device_handle(db, device.id, load_sessions=True)
 
 
 def _make_device(
@@ -109,6 +122,7 @@ async def test_exclude_run_if_needed_excludes_without_maintenance(
     and cooldown-threshold escalation are allowed to flip the hold."""
     device, _run = device_with_active_run
 
+    await _lock_like_production(db_session, device)
     returned_run, entry = await _actions.exclude_run_if_needed(
         db_session, device, reason="Undetectable issue", source="test"
     )
@@ -144,6 +158,7 @@ async def test_exclude_run_if_needed_idempotent_does_not_flip_to_maintenance(
 ) -> None:
     device, _run = device_with_active_run
 
+    await _lock_like_production(db_session, device)
     await _actions.exclude_run_if_needed(db_session, device, reason="First issue", source="test")
     assert device.operational_state_last_emitted != DeviceOperationalState.maintenance
 
@@ -157,6 +172,7 @@ async def test_exclude_run_if_needed_clears_desired_grid_run_id(
 ) -> None:
     device, _run = device_with_active_run
 
+    await _lock_like_production(db_session, device)
     await _actions.exclude_run_if_needed(db_session, device, reason="Node health failed", source="test")
     await db_session.commit()
 
@@ -170,6 +186,7 @@ async def test_restore_run_if_needed_restores_desired_grid_run_id(
     device_with_active_run: tuple[Device, TestRun],
 ) -> None:
     device, run = device_with_active_run
+    await _lock_like_production(db_session, device)
     returned_run, entry = await _actions.exclude_run_if_needed(
         db_session, device, reason="Node health failed", source="test"
     )
@@ -180,6 +197,7 @@ async def test_restore_run_if_needed_restores_desired_grid_run_id(
     device.appium_node.desired_grid_run_id = None
     await db_session.commit()
 
+    await _lock_like_production(db_session, device)
     restored_run, restored_entry = await _actions.restore_run_if_needed(
         db_session,
         device,

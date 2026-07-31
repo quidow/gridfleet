@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.fleet_capacity import _count_devices
 from app.devices.services.intent import IntentService
@@ -152,8 +153,9 @@ async def test_operational_state_evaluator_and_sql_agree(
     await db_session.flush()
 
     leased = await add_device("verification-live", DeviceOperationalState.verifying)
+    leased_locked = await device_locking.lock_device_handle(db_session, leased.id)
     await IntentService(db_session).register_intents(
-        device_id=leased.id,
+        locked=leased_locked,
         intents=[
             IntentRegistration(
                 source=verification_intent_source(leased.id),
@@ -166,8 +168,9 @@ async def test_operational_state_evaluator_and_sql_agree(
     await db_session.flush()
 
     expired = await add_device("verification-expired", DeviceOperationalState.available)
+    expired_locked = await device_locking.lock_device_handle(db_session, expired.id)
     await IntentService(db_session).register_intents(
-        device_id=expired.id,
+        locked=expired_locked,
         intents=[
             IntentRegistration(
                 source=verification_intent_source(expired.id),
@@ -298,9 +301,10 @@ async def test_operational_state_edge_detector_is_exact_under_jitter(
     )
     publisher = _RecordingPub()
     now = datetime.now(UTC)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
 
-    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is True
-    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is False
+    assert await derive_and_apply_operational_state(db_session, locked, now=now, publisher=publisher) is True
+    assert await derive_and_apply_operational_state(db_session, locked, now=now, publisher=publisher) is False
     assert len(publisher.events) == 1
     assert publisher.events[0]["old_operational_state"] == DeviceOperationalState.offline.value
     assert publisher.events[0]["new_operational_state"] == DeviceOperationalState.available.value
@@ -308,8 +312,8 @@ async def test_operational_state_edge_detector_is_exact_under_jitter(
 
     device.lifecycle_policy_state = {"maintenance_reason": "operator"}
     await db_session.flush()
-    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is True
-    assert await derive_and_apply_operational_state(db_session, device, now=now, publisher=publisher) is False
+    assert await derive_and_apply_operational_state(db_session, locked, now=now, publisher=publisher) is True
+    assert await derive_and_apply_operational_state(db_session, locked, now=now, publisher=publisher) is False
     assert len(publisher.events) == 2
     assert publisher.events[-1]["old_operational_state"] == DeviceOperationalState.available.value
     assert publisher.events[-1]["new_operational_state"] == DeviceOperationalState.maintenance.value

@@ -100,7 +100,7 @@ class MaintenanceService:
             await record_event(db, device.id, DeviceEventType.maintenance_entered, {"reason": maintenance_reason})
             await remediation_log.append_reset(
                 db,
-                device.id,
+                locked,
                 source="maintenance",
                 action="maintenance_entered",
                 reason=maintenance_reason,

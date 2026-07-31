@@ -60,7 +60,8 @@ class LifecyclePolicyActionsService:
         source: str,
         detail: str,
     ) -> tuple[TestRun | None, DeviceReservation | None]:
-        device = await _lock_for_state_write(db, device)
+        locked = await _lock_for_state_write(db, device)
+        device = locked.device
         run, entry = await self.exclude_run_if_needed(db, device, reason=reason, source=source)
         await self.handle_node_crash(
             db,
@@ -70,7 +71,7 @@ class LifecyclePolicyActionsService:
         )
         await self.record_auto_stopped_incident(
             db,
-            device,
+            locked,
             run=run,
             reason=reason,
             source=source,
@@ -150,7 +151,7 @@ class LifecyclePolicyActionsService:
         if node is not None:
             action_entry = await remediation_log.append_action(
                 db,
-                device.id,
+                locked,
                 source=source,
                 action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
                 reason=reason,
@@ -176,7 +177,7 @@ class LifecyclePolicyActionsService:
         )
         await self.record_auto_stopped_incident(
             db,
-            device,
+            locked,
             run=run_ns,
             source=source,
             reason=reason,
@@ -200,7 +201,8 @@ class LifecyclePolicyActionsService:
         not already offline — a device that is already offline cannot crash again.
         The ``failure_event_type`` event always fires for observability.
         """
-        device = await _lock_for_state_write(db, device)
+        locked = await _lock_for_state_write(db, device)
+        device = locked.device
         node = await appium_node_locking.lock_appium_node_for_device(db, device.id)
         await record_event(
             db,
@@ -241,7 +243,7 @@ class LifecyclePolicyActionsService:
         if node is not None:
             await remediation_log.append_action(
                 db,
-                device.id,
+                locked,
                 source=source,
                 action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
                 reason=reason,
@@ -404,15 +406,16 @@ class LifecyclePolicyActionsService:
     async def record_auto_stopped_incident(
         self,
         db: AsyncSession,
-        device: Device,
+        locked: LockedDevice,
         *,
         run: TestRun | None,
         reason: str,
         source: str,
         detail: str,
     ) -> None:
+        device = locked.device
         await remediation_log.append_action(
-            db, device.id, source=source, action=remediation_log.ACTION_AUTO_STOPPED, reason=reason
+            db, locked, source=source, action=remediation_log.ACTION_AUTO_STOPPED, reason=reason
         )
         await self._incidents.record_lifecycle_incident(
             db,
@@ -433,7 +436,7 @@ class LifecyclePolicyActionsService:
         )
 
     async def record_run_escalation_failure(
-        self, db: AsyncSession, device: Device, *, reason: str, source: str, action: str
+        self, db: AsyncSession, locked: LockedDevice, *, reason: str, source: str, action: str
     ) -> None:
         """Persist run-escalation failure context onto ``lifecycle_policy_state``.
 
@@ -442,8 +445,8 @@ class LifecyclePolicyActionsService:
         the escalation enters maintenance; the maintenance hold itself drives the
         projected "Recovery Paused" badge, so no stored suppression is written.
         """
-        await remediation_log.append_reset(db, device.id, source=source, action=action)
-        await remediation_log.append_failure(db, device.id, source=source, reason=reason)
+        await remediation_log.append_reset(db, locked, source=source, action=action)
+        await remediation_log.append_failure(db, locked, source=source, reason=reason)
 
     async def has_running_client_session(self, db: AsyncSession, device_id: uuid.UUID) -> bool:
         # Include ``pending``: a device in the grid allocate->confirm window is
@@ -457,8 +460,8 @@ class LifecyclePolicyActionsService:
         return bool(result.scalar_one())
 
 
-async def _lock_for_state_write(db: AsyncSession, device: Device) -> Device:
-    return await device_locking.lock_device(db, device.id, load_sessions=True)
+async def _lock_for_state_write(db: AsyncSession, device: Device) -> LockedDevice:
+    return await device_locking.lock_device_handle(db, device.id, load_sessions=True)
 
 
 def failure_event_type(source: str) -> DeviceEventType:
@@ -467,7 +470,7 @@ def failure_event_type(source: str) -> DeviceEventType:
 
 async def escalate_device_remediation_failure(
     db: AsyncSession,
-    device: Device,
+    locked: LockedDevice,
     *,
     settings: SettingsReader,
     source: str,
@@ -477,7 +480,7 @@ async def escalate_device_remediation_failure(
     """Shared-ladder escalation for callers outside the lifecycle write_state allowlist."""
     return await escalate_remediation_failure(
         db,
-        device,
+        locked,
         settings=settings,
         source=source,
         reason=reason,
@@ -486,7 +489,7 @@ async def escalate_device_remediation_failure(
 
 
 async def reset_reconciler_start_failure_if_needed(
-    db: AsyncSession, device: Device, *, ladder: LadderState | None = None
+    db: AsyncSession, locked: LockedDevice, *, ladder: LadderState | None = None
 ) -> bool:
     """A successful node start supersedes only reconciler-sourced episodes.
 
@@ -495,8 +498,8 @@ async def reset_reconciler_start_failure_if_needed(
     shape on ``escalate_device_remediation_failure``.
     """
     if ladder is None:
-        ladder = await remediation_log.load_ladder(db, device.id)
+        ladder = await remediation_log.load_ladder(db, locked.device.id)
     if not (ladder.armed or ladder.last_failure_reason) or ladder.last_failure_source != "appium_reconciler":
         return False
-    await remediation_log.append_reset(db, device.id, source="appium_reconciler", action="start_succeeded")
+    await remediation_log.append_reset(db, locked, source="appium_reconciler", action="start_succeeded")
     return True

@@ -22,9 +22,9 @@ from app.devices import locking as device_locking
 from app.devices.models import DeviceIntent, DeviceOperationalState, DeviceRemediationLogEntry, DeviceReservation
 from app.lifecycle.services import remediation_log
 from app.lifecycle.services.incidents import LifecycleIncidentService
-from app.runs.models import RunState, TestRun
+from app.runs.models import RunState
 from tests.fakes import FakeSettingsReader
-from tests.helpers import create_device
+from tests.helpers import create_device, create_reserved_run
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -143,31 +143,13 @@ async def test_cooldown_intent_payload_shape(
         operational_state=DeviceOperationalState.available,
         verified=True,
     )
-    run = TestRun(
+    run = await create_reserved_run(
+        db_session,
         name="Cooldown Shape Run",
+        devices=[device],
         state=RunState.active,
         requirements=[{"pack_id": "appium-uiautomator2", "platform_id": "android_mobile", "count": 1}],
-        ttl_minutes=60,
-        heartbeat_timeout_sec=120,
-        reserved_devices=[
-            {
-                "device_id": str(device.id),
-                "identity_value": device.identity_value,
-                "connection_target": device.connection_target,
-                "pack_id": "appium-uiautomator2",
-                "platform_id": "android_mobile",
-                "os_version": device.os_version,
-                "host_ip": None,
-                "excluded": False,
-                "exclusion_reason": None,
-                "excluded_at": None,
-            }
-        ],
     )
-    db_session.add(run)
-    # The TestRun.reserved_devices setter already creates a DeviceReservation row
-    # via the ORM relationship cascade — no separate INSERT needed.
-    await db_session.commit()
 
     _test_settings = FakeSettingsReader({})
     _test_cb = AgentCircuitBreaker(publisher=event_bus)

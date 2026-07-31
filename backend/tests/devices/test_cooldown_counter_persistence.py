@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from app.agent_comm.circuit_breaker import AgentCircuitBreaker
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import DeviceReservation, ExclusionKind
 from app.devices.services.intent_reconciler import ReconcileCandidate, reconcile_device_command
 from app.devices.services.maintenance import MaintenanceService
@@ -174,6 +175,9 @@ async def test_restore_device_to_run_resets_cooldown_counter(db_session: AsyncSe
     reservation.cooldown_count = 3
     await db_session.commit()
 
+    # Mirror the app caller (restore_run_after_self_heal): the device row lock
+    # is held before the reservation write.
+    await device_locking.lock_device_handle(db_session, device.id)
     await RunReservationService().restore_device_to_run(db_session, device.id)
     await db_session.flush()
     await db_session.refresh(reservation)

@@ -313,10 +313,11 @@ async def test_exit_maintenance_preserves_active_backoff(
         operational_state=DeviceOperationalState.maintenance,
         lifecycle_policy_state={"maintenance_reason": "Operator entered maintenance"},
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     for _ in range(3):
         await remediation_log.append_entry(
             db_session,
-            device.id,
+            locked,
             kind=remediation_log.KIND_ATTEMPT,
             source="node_health",
             action="recovery_failed",

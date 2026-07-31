@@ -152,8 +152,9 @@ async def test_failure_finalization_statements_permute(db_session: AsyncSession,
         await register_verification_node_intent(
             db_session, device, settings=FakeSettingsReader({}), publisher=event_bus
         )
+        intent_lock = await device_locking.lock_device_handle(db_session, device.id)
         await IntentService(db_session).register_intents(
-            device_id=device.id,
+            locked=intent_lock,
             intents=[
                 IntentRegistration(
                     source=operator_start_source(device.id),
@@ -238,9 +239,10 @@ async def test_finalize_success_single_edge_no_flap(
     node = await _seed_node(db_session, device.id, running=True)
     device.verified_at = None
     device.session_viability_status = "failed"
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="device_checks",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="episode in flight",
@@ -287,8 +289,9 @@ async def test_finalize_failure_single_edge_no_flap(
     await register_verification_node_intent(
         db_session, device, settings=FakeSettingsReader({}), publisher=event_bus, operation_id=operation_id
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await IntentService(db_session).register_intents(
-        device_id=device.id,
+        locked=locked,
         intents=[
             IntentRegistration(
                 source=operator_start_source(device.id),

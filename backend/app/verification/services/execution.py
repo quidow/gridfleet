@@ -325,7 +325,7 @@ class VerificationExecutionService:
                 locked = await lock_device_handle(db, device_id)
                 probe_row = await claim_probe_session(
                     db,
-                    device=locked.device,
+                    locked=locked,
                     source=ProbeSource.verification,
                     capabilities=capabilities,
                     router_target=target,
@@ -396,7 +396,7 @@ class VerificationExecutionService:
             device.verified_at = now_utc()
             ladder = await remediation_log.load_ladder(db, device.id)
             if ladder.episode_active:
-                await remediation_log.append_reset(db, device.id, source="verification", action="verification_passed")
+                await remediation_log.append_reset(db, locked, source="verification", action="verification_passed")
             await self._viability.record_session_viability_result(
                 db,
                 device,
@@ -429,7 +429,7 @@ class VerificationExecutionService:
             node = await db.get(AppiumNode, node_id) if node_id is not None else None
 
             if effect.mode == "create":
-                cleanup_error = await _stop_verification_node_if_running(job, db, device, node)
+                cleanup_error = await _stop_verification_node_if_running(job, db, locked, node)
                 # Device deletion cascades to DeviceIntent rows, so the lease dies with it.
                 await self._failure_finalizers.crud.delete_device_txn(db, effect.device_id)
                 if cleanup_error is not None:
@@ -445,7 +445,7 @@ class VerificationExecutionService:
                 checked_by=SessionViabilityCheckedBy.verification,
             )
             await _stamp_verification_outcome(db, device, outcome=VERIFICATION_OUTCOME_FAILED)
-            await _stop_verification_node_if_running(job, db, device, node)
+            await _stop_verification_node_if_running(job, db, locked, node)
             await IntentService(db).revoke_intents_and_reconcile(
                 device_id=device.id,
                 sources=[
@@ -541,7 +541,7 @@ async def _stamp_verification_outcome(db: AsyncSession, device: Device, *, outco
 async def _stop_verification_node_if_running(
     job: dict[str, Any],
     db: AsyncSession,
-    device: Device,
+    locked: LockedDevice,
     node: AppiumNode | None,
 ) -> str | None:
     """Stop the verification node via the commit-free desired-state writer and
@@ -552,9 +552,8 @@ async def _stop_verification_node_if_running(
     path; it writes ``stopped`` desired state directly under the device row lock
     the finalizer already holds. No operator:stop intents are registered, so the
     failure-path revoke of ``operator_stop_sources`` is a harmless no-op.
-
-    PRECONDITION: the caller MUST already hold the device row lock.
     """
+    locked.assert_active(db)
     if node is None:
         return None
     try:

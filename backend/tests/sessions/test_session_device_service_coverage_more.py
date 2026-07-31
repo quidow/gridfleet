@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from app.core.pagination import encode_cursor
+from app.devices import locking as device_locking
 from app.devices.models import (
     DeviceOperationalState,
     DeviceReservation,
@@ -230,8 +231,9 @@ async def test_device_service_filters_pagination_update_and_delete_branches(
         connection_target="device-filter-verifying",
         name="Verifying Device",
     )
+    verifying_locked = await device_locking.lock_device_handle(db_session, verifying.id)
     await IntentService(db_session).register_intents(
-        device_id=verifying.id,
+        locked=verifying_locked,
         intents=[
             IntentRegistration(
                 source=verification_intent_source(verifying.id),

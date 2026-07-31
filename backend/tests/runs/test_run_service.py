@@ -8,6 +8,7 @@ from uuid import uuid4
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import ConnectionType, Device, DeviceOperationalState, DeviceReservation, DeviceType
 from app.devices.services.intent_reconciler import reconcile_device
 from app.lifecycle.services import remediation_log
@@ -415,9 +416,10 @@ async def test_deferred_stop_pass_publishes_the_held_intent_convergence(
     db_session.add(session)
     await db_session.commit()
 
+    locked = await device_locking.lock_device_handle(db_session, device_id)
     await remediation_log.append_action(
         db_session,
-        device_id,
+        locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="session held",

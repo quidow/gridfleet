@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session as OrmSession
     from sqlalchemy.sql.expression import ColumnElement
 
+    from app.devices.locking import LockedDevice
     from app.events.catalog import EventSeverity
     from app.events.protocols import EventPublisher
     from app.packs.services.catalog_view import PackView
@@ -365,11 +366,14 @@ async def derive_operational_states(
 
 
 def apply_operational_state_transition(
-    device: Device,
+    locked: LockedDevice,
+    db: AsyncSession,
     derived_op: DeviceOperationalState,
     *,
     publisher: EventPublisher,
 ) -> bool:
+    locked.assert_active(db)
+    device = locked.device
     old = device.operational_state_last_emitted
     if derived_op is old:
         return False

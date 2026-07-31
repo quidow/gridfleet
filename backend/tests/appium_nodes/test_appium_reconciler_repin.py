@@ -11,6 +11,7 @@ from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services.reconciler import _record_start_failure, _repin_desired_port
 from app.appium_nodes.services.reconciler_convergence import DesiredRow
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import DeviceOperationalState
 from app.devices.services.intent_reconciler import reconcile_device
 from app.lifecycle.services import remediation_log
@@ -68,8 +69,9 @@ async def _seed(db_session: AsyncSession, host_id: object, name: str) -> tuple[o
 async def test_repin_moves_node_port_with_desired_port(db_session: AsyncSession, db_host: Host) -> None:
     device, node = await _seed(db_session, db_host.id, "repin-owner")
 
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await _repin_desired_port(
-        db_session, _row(device, db_host.id, node), conflict_port=CONFLICT_PORT, settings=SETTINGS
+        db_session, locked, _row(device, db_host.id, node), conflict_port=CONFLICT_PORT, settings=SETTINGS
     )
     await db_session.commit()
     await db_session.refresh(node)
@@ -85,8 +87,9 @@ async def test_repin_survives_the_next_intent_reconciler_tick(db_session: AsyncS
     With ownership moved, that recompute lands on the re-pinned port."""
     device, node = await _seed(db_session, db_host.id, "repin-survives")
 
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await _repin_desired_port(
-        db_session, _row(device, db_host.id, node), conflict_port=CONFLICT_PORT, settings=SETTINGS
+        db_session, locked, _row(device, db_host.id, node), conflict_port=CONFLICT_PORT, settings=SETTINGS
     )
     await db_session.commit()
     await db_session.refresh(node)
@@ -112,8 +115,9 @@ async def test_repin_survives_a_backoff_window_opened_by_another_source(
     window expired.
     """
     device, node = await _seed(db_session, db_host.id, "repin-backoff")
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_attempt(
-        db_session, device.id, source="node_health", reason="unreachable", settings=SETTINGS
+        db_session, locked, source="node_health", reason="unreachable", settings=SETTINGS
     )
     await db_session.commit()
     before = await remediation_log.load_ladder(db_session, device.id)

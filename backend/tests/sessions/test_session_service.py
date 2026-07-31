@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+from app.devices import locking as device_locking
 from app.devices.models import (
     ConnectionType,
     Device,
@@ -80,6 +81,61 @@ async def test_update_session_status_restores_busy_device_when_last_session_fini
 
     await db_session.refresh(device)
     assert device.operational_state_last_emitted == DeviceOperationalState.available
+
+
+async def test_update_session_status_to_running_writes_nothing_today(
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """CHARACTERIZATION PIN OF A DEFECT — do not read this as the contract.
+
+    ``update_session_status``'s ``running`` branch assigns ``session.status`` and
+    then immediately calls ``db.refresh(session)`` with no flush in between.
+    ``refresh`` expires the instance, which discards the pending assignment, so
+    the branch writes nothing: not to the database, not even in memory. Its two
+    sibling branches (:481 and :523) both flush before refreshing; this one is
+    the odd man out, which is what makes it an oversight rather than a design.
+    ``PATCH /api/sessions/{id}/status`` with ``running`` therefore returns 200
+    with the row unchanged, and the response body echoes the OLD status.
+
+    Pinned rather than fixed, deliberately, and the reason is not timidity:
+    making the write real would create a second, unguarded pending -> running
+    promotion beside ``AllocationService.promote_to_running`` — which is a
+    conditional compare-and-swap precisely because a ``pending`` row escaping to
+    ``running`` escapes the allocation reaper's crash-orphan sweep and lands in
+    the liveness sweep instead, carrying a placeholder Appium session id. That
+    is its own change with its own analysis, not a drive-by in a lock-proof
+    phase.
+
+    Why this test exists at all: the branch is the last unlocked assignment to a
+    decision column in this module, and the only reason it is not a contract
+    violation is that it never reaches a flush. That is a fragile reason. Adding
+    the missing ``await db.flush()`` turns it into a real live-session-fact write
+    and this test fails — at which point the device row lock must be taken
+    FIRST, above the assignment, the way :485-490 does it, so the lock query's
+    autoflush cannot emit the session UPDATE before the device lock is held.
+    """
+    device = await create_device_record(
+        db_session,
+        host_id=default_host_id,
+        identity_value="android-running-stamp",
+        connection_target="android-running-stamp",
+        name="Android running-stamp",
+        os_version="14",
+        operational_state="busy",
+    )
+    session = Session(session_id="android-running-1", device_id=device.id, status=SessionStatus.pending)
+    db_session.add(session)
+    await db_session.commit()
+
+    crud = SessionCrudService(publisher=Mock(), lifecycle=AsyncMock())
+    updated = await crud.update_session_status(db_session, "android-running-1", SessionStatus.running)
+
+    assert updated is not None
+    assert updated.status == SessionStatus.pending, "the refresh discarded the assignment (see the docstring)"
+    await db_session.commit()
+    persisted = (await db_session.execute(select(Session.status).where(Session.id == session.id))).scalar_one()
+    assert persisted == SessionStatus.pending, "nothing reached the database either"
 
 
 async def test_update_session_status_preserves_busy_when_another_session_is_running(
@@ -375,9 +431,13 @@ async def test_update_session_status_emits_single_offline_when_stop_in_flight(
     # stop_pending=True (universal session-safety downgrade). When the
     # session ends, the active_session intent is revoked and reconcile picks
     # the stop intent as the winner, taking the node to desired_state=stopped.
+    # Flush the node/session inserts before the lock's own SELECT triggers
+    # autoflush, so they are not misattributed to app/devices/locking.py.
+    await db_session.flush()
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="session ended",

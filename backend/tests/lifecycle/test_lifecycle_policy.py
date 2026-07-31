@@ -90,9 +90,10 @@ def _allow_recovery() -> AsyncMock:
 async def _append_deferred_stop(
     db: AsyncSession, device: Device, *, reason: str = "ADB not responsive", source: str = "node_health"
 ) -> None:
+    locked = await device_locking.lock_device_handle(db, device.id)
     await remediation_log.append_action(
         db,
-        device.id,
+        locked,
         source=source,
         action=remediation_log.ACTION_AUTO_STOP_DEFERRED,
         reason=reason,
@@ -551,9 +552,10 @@ async def test_recovery_is_suppressed_during_backoff(db_session: AsyncSession, d
     )
     db_session.add(device)
     await db_session.commit()
+    entry_locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_entry(
         db_session,
-        device.id,
+        entry_locked,
         kind=remediation_log.KIND_ATTEMPT,
         source="node_health",
         action="recovery_failed",
@@ -682,9 +684,10 @@ async def test_auto_recovery_supersedes_stale_stop_directive(
     db_session.add(device)
     await db_session.flush()
     db_session.add(AppiumNode(device_id=device.id, port=4723))
+    entry_locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        entry_locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="stale stop",
@@ -815,9 +818,10 @@ async def test_auto_recovery_clears_blocking_node_stop_when_observed_running_is_
     await db_session.commit()
 
     # The stop directive the crash handler leaves behind.
+    entry_locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        entry_locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="offline",
@@ -1209,9 +1213,10 @@ async def test_lifecycle_summary_reports_deferred_and_excluded_states(
     assert summary["state"] == "deferred_stop"
     assert summary["label"] == "Stopping Soon"
 
+    entry_locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        entry_locked,
         source="node_health",
         action=remediation_log.ACTION_AUTO_STOP_CLEARED,
         reason="recovered",
@@ -1600,9 +1605,10 @@ async def test_handle_session_finished_applies_held_graceful_stop_intent(
     db_session.add(session)
     await db_session.commit()
 
+    entry_locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        entry_locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="session held",
@@ -1735,9 +1741,10 @@ async def test_handle_session_finished_clears_intent_on_healthy_projection(
         active_connection_target="",
     )
     db_session.add(node)
+    entry_locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_failure(
         db_session,
-        device.id,
+        entry_locked,
         source="node_health",
         reason="ADB hung",
     )
@@ -1950,7 +1957,7 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
     assert await svc.handle_health_failure(db, device, source="checks", reason="bad") == "suppressed"
     incident.assert_not_awaited()
     # The failure trail is still written for observability.
-    append_failure.assert_awaited_once_with(db, device.id, source="checks", reason="bad")
+    append_failure.assert_awaited_once_with(db, locked, source="checks", reason="bad")
 
 
 async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(

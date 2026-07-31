@@ -62,6 +62,21 @@ Use node restart when:
 - the Appium node is stuck or unhealthy
 - logs show the node stopped reporting progress
 
+If the sessions list shows a `running` session with no `ended_at` that is far
+older than any run or probe is expected to live, it is a wedged live-session
+row — one that both the allocation reaper and the session-viability pass
+missed. Retention no longer clears this for you: data-cleanup's retention
+deletes are bounded to rows an age cutoff has aged out **and** that are already
+closed (`ended_at IS NOT NULL`), so a row that never closed stays in the table
+indefinitely and keeps projecting the device as `busy`, however old it gets.
+This is a deliberate change — a wedged live row silently vanishing weeks later
+was the bug, not a feature — but it means the device will not self-heal here.
+Kill the session explicitly to close it out:
+
+```bash
+curl -X POST -u "$GRIDFLEET_TESTKIT_USERNAME:$GRIDFLEET_TESTKIT_PASSWORD" http://localhost:8000/api/sessions/SESSION_ID/kill | python -m json.tool
+```
+
 ## 4. If the Appium node stays `Starting`, inspect the desired-state transition
 
 `Starting` means the backend has written desired state and is waiting for the scheduler's reconciler to observe the agent-side Appium process. Inspect the node fields before repeatedly clicking restart:

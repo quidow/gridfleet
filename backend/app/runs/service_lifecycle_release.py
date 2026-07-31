@@ -104,6 +104,14 @@ class RunReleaseService:
         run's live session rows and releases the reservation children under those
         held proofs.
 
+        ``locked_by_id`` MUST be the full, unfiltered result of
+        ``lock_run_devices`` — that is the only sanctioned source. The loop below
+        treats a missing proof as "the Device row is gone" and skips the
+        reservation with a WARNING. Narrow the mapping in any way (a
+        ``skip_locked`` acquire, a filtered id set, a partial retry) and that
+        branch stops meaning what it says: it will leave a live device reserved
+        forever, logging a warning instead of raising.
+
         ``close_session_ids`` selects which live rows to terminalize. ``None``
         (the ordinary complete path) closes every live session. A set (the
         durable cancel/expire/force finalize path, whose Appium teardown already
@@ -130,11 +138,14 @@ class RunReleaseService:
         for reservation in active_reservations:
             locked = locked_by_id.get(reservation.device_id)
             if locked is None:
-                reservation.released_at = released_at
-                reservation.excluded = False
-                reservation.exclusion_kind = None
-                reservation.excluded_at = None
-                reservation.excluded_until = None
+                # ``lock_run_devices`` returns a proof per Device row it actually
+                # locked, so a missing proof means the Device row is gone — and
+                # ``device_reservations.device_id`` is ON DELETE CASCADE, so the
+                # same delete took this reservation row with it. Writing release
+                # fields here would be an unlocked decision-fact write onto a
+                # phantom row, and its UPDATE would match zero rows and raise
+                # StaleDataError, failing the whole run finalization over a
+                # reservation that no longer exists. Skip it.
                 logger.warning(
                     "Reservation %s references missing device %s; skipping availability restore",
                     reservation.id,

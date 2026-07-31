@@ -132,9 +132,10 @@ async def test_register_verification_node_intent_suppresses_stop_directive(
         name="Verify Revoke HealthFail",
         operational_state=DeviceOperationalState.offline,
     )
+    locked = await device_locking.lock_device_handle(db_session, device.id)
     await remediation_log.append_action(
         db_session,
-        device.id,
+        locked,
         source="health_check_fail",
         action=remediation_log.ACTION_AUTO_STOP_COMMISSIONED,
         reason="stale stop",
@@ -380,7 +381,8 @@ async def test_stop_verification_node_cleanup_error_path(
         "app.verification.services.execution.write_desired_state",
         AsyncMock(side_effect=RuntimeError("boom")),
     )
-    cleanup_error = await execution._stop_verification_node_if_running(_job(), db_session, device, node)
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    cleanup_error = await execution._stop_verification_node_if_running(_job(), db_session, locked, node)
     assert cleanup_error == "Failed to stop verification node: boom"
     assert node.pid is None
 
@@ -417,7 +419,8 @@ async def test_verification_execution_remaining_error_branches(
         "app.verification.services.execution.write_desired_state",
         AsyncMock(side_effect=NodeManagerError("already stopped")),
     )
-    assert await execution._stop_verification_node_if_running(_job(), db_session, device, node) is None
+    locked = await device_locking.lock_device_handle(db_session, device.id)
+    assert await execution._stop_verification_node_if_running(_job(), db_session, locked, node) is None
 
     target = Device(
         pack_id="appium-uiautomator2",

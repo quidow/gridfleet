@@ -178,8 +178,11 @@ class RunReservationService:
         *,
         reason: str,
     ) -> TestRun | None:
-        """Transaction-local exclude keyed by device (no Device lock held). The
-        caller owns the surrounding transaction boundary."""
+        """Transaction-local exclude keyed by device. The caller owns the
+        surrounding transaction boundary and holds the device row lock: the only
+        app caller is ``exclude_run_if_needed``, reached from
+        ``complete_auto_stop``, which locks the row as its first statement. This
+        function takes only the reservation-child lock (Device before child)."""
         run, entry = await get_device_reservation_with_entry(db, device_id)
         if run is None or entry is None:
             return None
@@ -201,7 +204,10 @@ class RunReservationService:
         device_id: uuid.UUID,
     ) -> TestRun | None:
         """Transaction-local restore keyed by device. The caller owns the
-        surrounding transaction boundary."""
+        surrounding transaction boundary and holds the device row lock: the only
+        app caller is ``restore_run_if_needed``, reached from
+        ``restore_run_after_self_heal``, which locks the row as its first
+        statement. This function takes only the reservation-child lock."""
         run, entry = await get_device_reservation_with_entry(db, device_id)
         if run is None or entry is None:
             return None
