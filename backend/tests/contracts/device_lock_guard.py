@@ -59,23 +59,25 @@ import weakref
 from contextlib import contextmanager
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import greenlet
 from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.orm import object_session
+from sqlalchemy.sql import operators, visitors
+from sqlalchemy.sql.elements import BinaryExpression, BindParameter
 
 from app.devices.locking import DEVICE_LOCK_LEDGER_KEY
 from app.devices.models import Device
-from tests.contracts.decision_fact_columns import fact_for_model, watched_orm_columns
+from tests.contracts.decision_fact_columns import DECISION_COLUMNS, fact_for_model, watched_orm_columns
 
 if TYPE_CHECKING:
     import uuid
     from collections.abc import Iterator
     from types import FrameType
 
-    from sqlalchemy.orm import SessionTransaction, UOWTransaction
+    from sqlalchemy.orm import ORMExecuteState, SessionTransaction, UOWTransaction
 
 
 class DeviceLockGuardViolation(AssertionError):  # noqa: N818 - the phase's spec names it
@@ -122,6 +124,7 @@ def install_device_lock_guard(*, activate: bool = True) -> None:
         _watched.update(watched_orm_columns())
         _facts.update(fact_for_model())
         event.listen(OrmSession, "before_flush", _before_flush)
+        event.listen(OrmSession, "do_orm_execute", _do_orm_execute)
         event.listen(OrmSession, "after_flush", _after_flush)
         event.listen(OrmSession, "after_transaction_end", _after_transaction_end)
         for model, columns in _watched.items():
@@ -295,6 +298,71 @@ def _before_flush(session: OrmSession, flush_context: UOWTransaction, instances:
         changed = {name for name in columns if state.attrs[name].history.has_changes()}
         if changed:
             require(obj, changed)
+
+
+def _statement_columns(stmt: Any) -> set[str]:  # noqa: ANN401 - Update, read via private attrs
+    """Column keys a bulk UPDATE assigns, off the private ``_values`` map."""
+    raw = getattr(stmt, "_values", None) or {}
+    return {getattr(column, "key", str(column)) for column in raw}
+
+
+def _where_column_hits(stmt: Any, column_key: str) -> tuple[bool, set[Any]]:  # noqa: ANN401 - Update or Delete
+    """(present, equality/IN values) for *column_key* across the WHERE tree."""
+    present = False
+    values: set[Any] = set()
+    for criterion in getattr(stmt, "_where_criteria", ()):
+        for node in visitors.iterate(criterion):
+            if not isinstance(node, BinaryExpression):
+                continue
+            if getattr(node.left, "key", None) != column_key:
+                continue
+            present = True
+            right = node.right
+            if node.operator is operators.eq and isinstance(right, BindParameter):
+                values.add(right.value)
+            elif node.operator is operators.in_op and isinstance(right, BindParameter) and right.expanding:
+                values.update(right.value or ())
+    return present, values
+
+
+def _do_orm_execute(state: ORMExecuteState) -> None:
+    """Catch bulk ``update()``/``delete()`` statements, which never populate
+    ``session.new``/``dirty``/``deleted`` and so are invisible to ``_before_flush``.
+    """
+    if not _active or not (state.is_update or state.is_delete):
+        return
+    mappers = state.all_mappers
+    if not mappers:
+        return
+    model = mappers[0].class_
+    fact = _facts.get(model)
+    if fact is None:
+        return
+    if state.is_update and not (_statement_columns(state.statement) & DECISION_COLUMNS[fact]):
+        return
+    frames = _app_frames()  # ordered innermost-first
+    if not frames:
+        return  # test-only statement
+    site = frames[0]  # the writer; outer frames are diagnostics only
+    guard_column = GUARD_PREDICATE_COLUMNS.get(fact)
+    if guard_column is not None and GUARDED_UPDATE_SITES.get(site) == fact:
+        guarded, _ = _where_column_hits(state.statement, guard_column)
+        if guarded:
+            return  # registered guarded_update site with its predicate present
+    _, device_ids = _where_column_hits(state.statement, "device_id")
+    if device_ids:
+        locked = _effective_locked_ids(state.session)
+        if set(device_ids) <= locked:
+            return
+        reason = f"device_ids={sorted(map(str, device_ids))} not in ledger"
+    else:
+        reason = "underivable target (no device_id in WHERE)"
+    if site in UNPROVEN_WRITE_SITES:
+        return
+    raise DeviceLockGuardViolation(
+        f"unlocked bulk decision-fact write: model={model.__name__} fact={fact} {reason} "
+        f"site={site} chain={list(frames)}"
+    )
 
 
 def _after_flush(session: OrmSession, flush_context: UOWTransaction) -> None:

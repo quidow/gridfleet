@@ -12,7 +12,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.devices.locking import lock_device_handle
 from app.devices.models import ConnectionType, Device, DeviceType
@@ -155,4 +155,28 @@ async def test_a_recorded_site_does_not_survive_its_transaction(db_session: Asyn
 
     row.status = SessionStatus.failed  # fixture-shaped write: no app frame anywhere
     await db_session.flush()  # must not raise: no stale site left to charge it to
+    await db_session.rollback()
+
+
+async def test_a_derivable_unlocked_bulk_update_fails(db_session: AsyncSession, db_host: Host) -> None:
+    device, _row = await _seed_session_row(db_session, db_host)
+    stmt = update(Session).where(Session.device_id == device.id).values(status=SessionStatus.passed)
+    with pytest.raises(DeviceLockGuardViolation):
+        await probe.probe_execute(db_session, stmt)
+    await db_session.rollback()
+
+
+async def test_a_derivable_locked_bulk_update_passes(db_session: AsyncSession, db_host: Host) -> None:
+    device, _row = await _seed_session_row(db_session, db_host)
+    await lock_device_handle(db_session, device.id)
+    stmt = update(Session).where(Session.device_id == device.id).values(status=SessionStatus.passed)
+    await probe.probe_execute(db_session, stmt)  # must not raise
+    await db_session.rollback()
+
+
+async def test_an_underivable_bulk_update_fails(db_session: AsyncSession, db_host: Host) -> None:
+    _device, _row = await _seed_session_row(db_session, db_host)
+    stmt = update(Session).where(Session.session_id == "guard-probe").values(status=SessionStatus.passed)
+    with pytest.raises(DeviceLockGuardViolation, match="underivable"):
+        await probe.probe_execute(db_session, stmt)
     await db_session.rollback()
