@@ -5,6 +5,7 @@ import time
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
+from app.sessions import appium_sweep
 from app.sessions.appium_sweep import AppiumSweepLoop
 from app.sessions.service_viability import SCHEDULED_PASS_BUDGET_SEC
 from app.sessions.services_container import SessionServices
@@ -39,7 +40,7 @@ def _make_loop(
         if sync_error is not None:
             raise sync_error
 
-    async def check_due_devices(*, deadline: float | None = None) -> None:
+    async def check_due_devices(*, deadline: float) -> None:
         calls.append("viability")
 
     services = SessionServices(
@@ -111,3 +112,45 @@ async def test_cycle_anchors_the_viability_deadline_at_tick_start() -> None:
     deadline = check_mock.await_args.kwargs["deadline"]
     assert before + SCHEDULED_PASS_BUDGET_SEC <= deadline <= after + SCHEDULED_PASS_BUDGET_SEC
     assert deadline <= sync_observed_at[0] + SCHEDULED_PASS_BUDGET_SEC
+
+
+async def test_a_slow_sweep_starves_the_viability_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sync slower than the whole pass budget hands the viability pass a
+    deadline that is already in the past — while the throttle stamp still
+    records that a pass "ran". What that past deadline then does inside the
+    pass (admit no series at all) is pinned separately, by
+    ``test_check_due_devices_defers_series_past_the_pass_budget``; this test
+    stops at the loop boundary, where ``check_due_devices`` is a stub.
+
+    This is the load-bearing consequence of anchoring the budget at tick start
+    (the ``SCHEDULED_PASS_BUDGET_SEC`` comment block documents it), and it was
+    derived analytically during review rather than exercised. The failure it
+    guards against is silent: nothing errors, nothing logs, the throttle keeps
+    reporting a pass per minute, and no device is ever probed.
+
+    NOTE: patch ``appium_sweep.SCHEDULED_PASS_BUDGET_SEC``, not the
+    ``service_viability`` original. ``appium_sweep.py`` does ``from ... import
+    SCHEDULED_PASS_BUDGET_SEC``, which binds by value at import time; patching
+    the source module leaves the loop reading the real 180 s budget, and this
+    test would pass while pinning nothing.
+    """
+    calls: list[str] = []
+    sync_observed_at: list[float] = []
+    monkeypatch.setattr(appium_sweep, "SCHEDULED_PASS_BUDGET_SEC", 0.05)
+    loop = _make_loop(calls, sync_delay_sec=0.1, sync_observed_at=sync_observed_at)
+
+    await loop._run_cycle(Mock())
+    after = time.monotonic()
+
+    # The pass was entered and the throttle stamped — the starvation is not a
+    # skipped pass, it is a pass with no allowance left.
+    assert calls == ["sync", "viability"]
+    assert loop._last_viability_pass is not None
+
+    check_mock = loop._services.viability.check_due_devices
+    deadline = check_mock.await_args.kwargs["deadline"]
+    # ``sync`` slept 0.1 s against a 0.05 s budget, so the line was already
+    # crossed before sync even returned. Deterministic: asyncio.sleep(0.1)
+    # guarantees at least 0.1 s elapsed, and the anchor is 0.05 s after start.
+    assert deadline < sync_observed_at[0]
+    assert deadline < after

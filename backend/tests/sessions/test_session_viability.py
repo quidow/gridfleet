@@ -1,3 +1,4 @@
+import inspect
 import time
 import uuid
 from datetime import UTC, datetime
@@ -6,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import pytest
+from prometheus_client import REGISTRY
 from sqlalchemy import select, text
 from sqlalchemy.exc import NoResultFound, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -86,6 +88,13 @@ def _isolate_module_svc() -> Iterator[None]:
     _svc.__dict__.update(baseline)
 
 
+def _counter_total(name: str) -> float:
+    """Current value of an unlabelled counter. These are process-global and
+    other tests in the same xdist worker increment them, so every assertion
+    below is a delta across one call, never an absolute."""
+    return REGISTRY.get_sample_value(name) or 0.0
+
+
 async def run_session_viability_probe(
     db: AsyncSession,
     device: Device,
@@ -127,10 +136,14 @@ async def probe_session_direct(
 async def _check_due_devices(
     db: AsyncSession, *, settings: FakeSettingsReader | None = None, deadline: float | None = None
 ) -> None:
+    """``check_due_devices`` requires an anchored deadline; tests that are not
+    about the budget get a full one from here rather than from the service."""
     _svc._settings = settings or FakeSettingsReader({})
     await db.commit()
     engine = db.bind
     _svc._session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    if deadline is None:
+        deadline = time.monotonic() + session_viability.SCHEDULED_PASS_BUDGET_SEC
     await _svc.check_due_devices(deadline=deadline)
 
 
@@ -650,12 +663,18 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
     devices keep their stale last_attempted_at and stay due for the next pass.
     The admitted series is handed the same deadline, so it stops retrying at the
     budget line too. The stub series stamps the device it probed, so the stale
-    stamp genuinely distinguishes the deferred device from the probed one."""
+    stamp genuinely distinguishes the deferred devices from the probed one."""
+    # Three due devices, not two: the break fires at index 1, so the pass
+    # defers two of them. A deferral count of 2 is what distinguishes the
+    # real ``len(due_ids) - index`` arithmetic from a flat ``inc(1)``.
     d1, n1 = _make_viability_device(db_host, "budget-1")
     d2, n2 = _make_viability_device(db_host, "budget-2")
     n2.port = 4798
     n2.desired_port = 4798
-    db_session.add_all([d1, n1, d2, n2])
+    d3, n3 = _make_viability_device(db_host, "budget-3")
+    n3.port = 4797
+    n3.desired_port = 4797
+    db_session.add_all([d1, n1, d2, n2, d3, n3])
     await db_session.commit()
     stale = {
         "status": "passed",
@@ -666,16 +685,17 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
         "consecutive_failures": 0,
     }
     fresh_stamp = "2021-01-01T00:00:00+00:00"
-    for device in (d1, d2):
+    for device in (d1, d2, d3):
         await set_session_viability_control_plane_entry(db_session, str(device.id), dict(stale))
 
-    # Monotonic reads: deadline computation, device-1 gate (inside budget),
-    # device-2 gate (past budget -> defer). Exhaustion keeps returning the
+    # The deadline is passed in (the service no longer derives one), so the
+    # only monotonic reads are the per-device gates: device-1 (inside budget),
+    # device-2 (past budget -> defer). Exhaustion keeps returning the
     # past-budget value, so an extra monotonic call in the implementation fails
     # a deferral assertion loudly instead of raising StopIteration. The stub
     # stays module-local (session_viability.time is the stdlib module; patching
     # its attribute would be process-wide, and the event loop reads it too).
-    reads = iter([0.0, 0.0])
+    reads = iter([0.0])
     monkeypatch.setattr(
         session_viability,
         "time",
@@ -690,22 +710,30 @@ async def test_check_due_devices_defers_series_past_the_pass_budget(
 
     series = AsyncMock(side_effect=_stamping_series)
     monkeypatch.setattr(_svc, "run_scheduled_probe_series", series)
-    await _check_due_devices(db_session)
+    deferred_before = _counter_total("gridfleet_session_viability_deferred_total")
+    await _check_due_devices(db_session, deadline=session_viability.SCHEDULED_PASS_BUDGET_SEC)
+    deferred_after = _counter_total("gridfleet_session_viability_deferred_total")
 
     assert series.await_count == 1
+    # Three devices are due and the break fires at index 1, so the counter
+    # moves by the number of devices actually skipped: len(due_ids) - index
+    # == 2. This is the metric F4's "does the delay matter in practice"
+    # question reads, so a flat inc(1) — which would also satisfy a
+    # two-device fixture — fails here.
+    assert deferred_after - deferred_before == 2.0
     assert series.await_args is not None
     assert series.await_args.kwargs["deadline"] == session_viability.SCHEDULED_PASS_BUDGET_SEC
 
-    # The probed device was stamped; the deferred one was not. The stale stamp
-    # survives only on the deferred device, so the next pass finds exactly it
-    # still due.
-    probed_id = series.await_args.args[0]
-    probed, deferred = (d1, d2) if probed_id == d1.id else (d2, d1)
+    # The due-set query has no ORDER BY, so which device is probed is not
+    # fixed — whichever it was, the other two must be untouched and still due.
+    remaining = {device.id: device for device in (d1, d2, d3)}
+    probed = remaining.pop(series.await_args.args[0])
     probed_state = await get_session_viability(db_session, probed)
     assert probed_state is not None and probed_state["last_attempted_at"] == fresh_stamp
-    deferred_state = await get_session_viability(db_session, deferred)
-    assert deferred_state is not None and deferred_state["last_attempted_at"] == stale["last_attempted_at"]
-    assert await _should_run_scheduled_probe(db_session, deferred, 3600) is True
+    for deferred in remaining.values():
+        deferred_state = await get_session_viability(db_session, deferred)
+        assert deferred_state is not None and deferred_state["last_attempted_at"] == stale["last_attempted_at"]
+        assert await _should_run_scheduled_probe(db_session, deferred, 3600) is True
 
 
 async def test_check_due_devices_uses_the_callers_deadline_verbatim(
@@ -726,6 +754,18 @@ async def test_check_due_devices_uses_the_callers_deadline_verbatim(
     await _check_due_devices(db_session, deadline=deadline)
 
     series.assert_awaited_once_with(device.id, deadline=deadline)
+
+
+def test_check_due_devices_requires_an_explicit_deadline() -> None:
+    """The budget must be anchored by the caller (the owning sweep anchors it
+    at tick start). An optional deadline let a caller silently re-derive a
+    later, unanchored one; a required keyword-only parameter makes mypy reject
+    that at the call site instead."""
+    signature = inspect.signature(SessionViabilityService.check_due_devices)
+    deadline = signature.parameters["deadline"]
+
+    assert deadline.kind is inspect.Parameter.KEYWORD_ONLY
+    assert deadline.default is inspect.Parameter.empty
 
 
 async def test_check_due_devices_continues_after_a_series_raises(
@@ -2467,17 +2507,21 @@ async def test_scheduled_series_stops_at_the_pass_deadline(
     monkeypatch.setattr(_svc, "probe_session_direct", probe)
     monkeypatch.setattr(DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={}))
 
+    truncated_before = _counter_total("gridfleet_session_viability_truncated_total")
     state = await _run_scheduled_probe_series(
         db_session,
         device,
         settings=FakeSettingsReader(dict(_SERIES_SETTINGS)),
         deadline=time.monotonic() - 1.0,
     )
+    truncated_after = _counter_total("gridfleet_session_viability_truncated_total")
 
     assert state is not None and state["status"] == "failed"
     assert state["consecutive_failures"] == 1
     assert probe.await_count == 1
     sleeper.assert_not_awaited()
+    # One series, cut short once: the counter counts series, not attempts.
+    assert truncated_after - truncated_before == 1.0
 
 
 def _series_service_with_real_health(db: AsyncSession) -> SessionViabilityService:
