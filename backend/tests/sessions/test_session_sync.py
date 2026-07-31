@@ -125,8 +125,8 @@ def _stub_appium_direct(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def fake_session_alive(target: str, session_id: str, **_: object) -> bool | None:
         return state["alive"].get(session_id, True)
 
-    async def fake_list_sessions(target: str, **_: object) -> list[str] | None:
-        return state["list"].get(target)
+    async def fake_list_sessions(target: str, **_: object) -> tuple[list[str] | None, bool]:
+        return state["list"].get(target), False
 
     async def fake_terminate(target: str, session_id: str, **_: object) -> bool:
         state["terminated"].append((target, session_id))
@@ -337,7 +337,7 @@ async def test_all_running_sessions_probed_concurrently(
         return True
 
     monkeypatch.setattr(service_sync.appium_direct, "session_alive", recording_alive)
-    monkeypatch.setattr(service_sync.appium_direct, "list_sessions", AsyncMock(return_value=None))
+    monkeypatch.setattr(service_sync.appium_direct, "list_sessions", AsyncMock(return_value=(None, False)))
     monkeypatch.setattr(service_sync.appium_direct, "terminate_session", AsyncMock(return_value=True))
 
     expected: set[str] = set()
@@ -940,11 +940,11 @@ async def test_list_sessions_none_skips_node(
 
     target = f"http://{db_host.ip}:4723"
     _stub_appium_direct["list"][target] = None  # default already None, but explicit
-    before = service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL._value.get()
+    before = service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="refused")._value.get()
     await _make_sync_service().sync(db_session)
 
     assert _stub_appium_direct["terminated"] == []
-    assert service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL._value.get() == before + 1
+    assert service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="refused")._value.get() == before + 1
 
 
 async def test_stopped_node_not_enumerated(

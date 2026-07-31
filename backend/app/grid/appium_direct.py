@@ -74,20 +74,27 @@ async def session_alive(target: str, session_id: str, *, timeout: float = 10.0) 
     return False if resp.status_code == HTTPStatus.NOT_FOUND else None
 
 
-async def list_sessions(target: str, *, timeout: float = 10.0) -> list[str] | None:
+async def list_sessions(target: str, *, timeout: float = 10.0) -> tuple[list[str] | None, bool]:
     """Enumerate active sessions via GET /appium/sessions (Appium 3.x; requires the
-    'session_discovery' insecure feature on the node). None = unsupported/unreachable.
+    'session_discovery' insecure feature on the node).
+
+    Returns ``(ids, transport_error)``. ``ids`` is ``None`` whenever the node could
+    not be enumerated. ``transport_error`` is True only when the request never
+    reached an HTTP response (``httpx.HTTPError`` — connect/read failure), mirroring
+    ``create_session``: a node that answers but refuses, or returns a body without a
+    ``value`` list, is alive and reports False. Only the transport case is evidence
+    about the node itself, which is why the two are no longer collapsed (P1).
     """
     try:
         resp = await _get_client().get(f"{target}/appium/sessions", timeout=timeout)
     except httpx.HTTPError:
-        return None
+        return None, True
     if not resp.is_success:
-        return None
+        return None, False
     value = resp.json().get("value")
     if not isinstance(value, list):
-        return None
-    return [s["id"] for s in value if isinstance(s, dict) and isinstance(s.get("id"), str)]
+        return None, False
+    return [s["id"] for s in value if isinstance(s, dict) and isinstance(s.get("id"), str)], False
 
 
 async def create_session(

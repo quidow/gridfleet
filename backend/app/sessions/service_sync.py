@@ -74,8 +74,14 @@ GRID_NEVER_COMMANDED_SESSIONS_REAPED_TOTAL = Counter(
 
 GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL = Counter(
     "gridfleet_grid_orphan_enum_unavailable",
-    "Orphan-sweep session enumeration (list_sessions) returned unavailable/unreachable for a node.",
+    "Orphan-sweep session enumeration (list_sessions) could not enumerate a node, by outcome: "
+    "'transport' (the node never answered) or 'refused' (it answered but could not enumerate).",
+    labelnames=("outcome",),
 )
+# Pre-register both outcomes: an absent series is indistinguishable from a
+# never-exercised path; an explicit 0 is not. Mirrors SESSION_SYNC_WAKE_SOURCE_TOTAL.
+for _enum_outcome in ("transport", "refused"):
+    GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome=_enum_outcome)
 
 GRID_NODE_STOPPED_SESSIONS_CLOSED_TOTAL = Counter(
     "gridfleet_grid_node_stopped_sessions_closed",
@@ -335,8 +341,8 @@ class SessionSyncService:
             idle_timeout=liveness_load.idle_timeout,
         )
 
-        live_id_lists = await self._enumerate_orphan_targets(orphan_targets)
-        await self._terminate_orphans(orphan_targets, live_id_lists)
+        enumerations = await self._enumerate_orphan_targets(orphan_targets)
+        await self._terminate_orphans(orphan_targets, enumerations)
 
     async def _load_liveness_targets(self, db: AsyncSession) -> _LivenessLoad:
         """Read every running DB-truth session and compute its immutable
@@ -638,25 +644,32 @@ class SessionSyncService:
             devices_with_pending=devices_with_pending,
         )
 
-    async def _enumerate_orphan_targets(self, targets: _OrphanTargets) -> list[list[str] | None]:
+    async def _enumerate_orphan_targets(self, targets: _OrphanTargets) -> list[tuple[list[str] | None, bool]]:
         """Enumerate every candidate node's live sessions concurrently, bounded per
         host, so a hung node cannot stall the sweep wall time (#10). No DB access
-        happens here — only the ``list_sessions`` Appium call."""
+        happens here — only the ``list_sessions`` Appium call. Each element is
+        ``(ids, transport_error)``; see ``appium_direct.list_sessions``."""
         host_semaphores: defaultdict[uuid.UUID, asyncio.Semaphore] = per_key_semaphores(_PROBE_CONCURRENCY_PER_HOST)
 
-        async def _enumerate(candidate: _OrphanCandidate) -> list[str] | None:
+        async def _enumerate(candidate: _OrphanCandidate) -> tuple[list[str] | None, bool]:
             async with host_semaphores[candidate.host_id]:
                 return await appium_direct.list_sessions(candidate.target)
 
         return list(await asyncio.gather(*[_enumerate(c) for c in targets.candidates]))
 
-    async def _terminate_orphans(self, targets: _OrphanTargets, live_id_lists: list[list[str] | None]) -> None:
+    async def _terminate_orphans(
+        self, targets: _OrphanTargets, enumerations: list[tuple[list[str] | None, bool]]
+    ) -> None:
         """Terminate Appium sessions with no tracking DB row, serially on the session."""
-        for candidate, live_ids in zip(targets.candidates, live_id_lists, strict=True):
+        for candidate, (live_ids, transport_error) in zip(targets.candidates, enumerations, strict=True):
             if live_ids is None:
-                GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.inc()
+                outcome = "transport" if transport_error else "refused"
+                GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome=outcome).inc()
                 logger.warning(
-                    "grid_orphan_enum_unavailable device=%s target=%s", candidate.device_id, candidate.target
+                    "grid_orphan_enum_unavailable device=%s target=%s outcome=%s",
+                    candidate.device_id,
+                    candidate.target,
+                    outcome,
                 )
                 continue
             if not live_ids:
