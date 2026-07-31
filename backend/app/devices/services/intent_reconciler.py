@@ -357,7 +357,6 @@ async def _apply_rollout_stamp(
     db: AsyncSession,
     *,
     locked: LockedDevice,
-    device_id: uuid.UUID,
     observed_pack_release: str | None,
     stored: tuple[IntentSnapshot, ...],
     facts: DecisionFacts,
@@ -371,6 +370,7 @@ async def _apply_rollout_stamp(
     decision ladder below does not see it.
     """
     locked.assert_active(db)
+    device_id = locked.device.id
     rollout_source = release_rollout_intent_source(device_id)
     rollout_row = next((row for row in stored if row.source == rollout_source), None)
     target_release = rollout_row.payload.get("target_release") if rollout_row is not None else None
@@ -457,7 +457,6 @@ async def _reconcile_locked_device(
     stored = await _apply_rollout_stamp(
         db,
         locked=locked,
-        device_id=device.id,
         observed_pack_release=snapshot.node_observed_pack_release,
         stored=snapshot.intents,
         facts=snapshot.decision_facts,

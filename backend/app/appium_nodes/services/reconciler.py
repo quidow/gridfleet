@@ -249,7 +249,7 @@ async def _repin_desired_port(
 ) -> None:
     """Re-pin ``desired_port`` inside the caller's Device-locked transaction."""
     locked.assert_active(db)
-    node = await lock_appium_node_for_device(db, row.device_id)
+    node = await lock_appium_node_for_device(db, locked.device.id)
     if node is None:
         return
     try:
