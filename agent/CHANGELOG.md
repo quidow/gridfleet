@@ -2,6 +2,15 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.40.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.40.0...gridfleet-agent-v0.40.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **agent:** avoid coercing a non-str probe target into a shared cache key ([17dd213](https://github.com/quidow/gridfleet/commit/17dd2130d32969281390921a9d3f23376956aecf))
+* **agent:** stop reporting no live session while a teardown is still settling ([cf5f60d](https://github.com/quidow/gridfleet/commit/cf5f60db08ebc0fd6d07a830f034a2444950bfe5))
+* resolve state-testing product findings P1-P4 ([3e519cb](https://github.com/quidow/gridfleet/commit/3e519cb90108158e459012a873569780cca2665c))
+
 ## [0.40.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.39.0...gridfleet-agent-v0.40.0) (2026-07-30)
 
 
