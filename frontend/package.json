@@ -31,7 +31,8 @@
     "openapi:dump": "cd ../backend && uv run python -m app.scripts.dump_openapi --out ../frontend/openapi.json",
     "openapi:generate": "openapi-typescript ./openapi.json --output ./src/api/openapi.ts",
     "types:generate": "npm run openapi:dump && npm run openapi:generate",
-    "types:check": "npm run types:generate && git diff --exit-code -- src/api/openapi.ts"
+    "types:check": "npm run types:generate && git diff --exit-code -- src/api/openapi.ts",
+    "types:check:tests": "tsc -b tsconfig.test.json"
   },
   "dependencies": {
     "@fontsource-variable/ibm-plex-sans": "^5.3.0",
