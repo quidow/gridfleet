@@ -947,6 +947,38 @@ async def test_list_sessions_none_skips_node(
     assert service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="refused")._value.get() == before + 1
 
 
+async def test_list_sessions_transport_error_increments_transport_not_refused(
+    db_session: AsyncSession,
+    db_host: Host,
+    _stub_appium_direct: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A node that never answers (transport failure) must land on the 'transport'
+    outcome, not 'refused' — proving the flag survives _enumerate_orphan_targets ->
+    _terminate_orphans plumbing onto the counter (#17). ``_stub_appium_direct``'s
+    default fake always reports ``transport_error=False``, so this overrides
+    ``list_sessions`` directly to force the transport branch."""
+    await _seed_device_with_node(
+        db_session, db_host, identity_value="orph-transport", operational_state=DeviceOperationalState.busy
+    )
+    await db_session.commit()
+
+    async def fake_list_sessions_transport_error(_target: str, **_: object) -> tuple[list[str] | None, bool]:
+        return None, True
+
+    monkeypatch.setattr(service_sync.appium_direct, "list_sessions", fake_list_sessions_transport_error)
+
+    before_transport = service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="transport")._value.get()
+    before_refused = service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="refused")._value.get()
+    await _make_sync_service().sync(db_session)
+
+    assert _stub_appium_direct["terminated"] == []
+    assert (
+        service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="transport")._value.get() == before_transport + 1
+    )
+    assert service_sync.GRID_ORPHAN_ENUM_UNAVAILABLE_TOTAL.labels(outcome="refused")._value.get() == before_refused
+
+
 async def test_stopped_node_not_enumerated(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:
