@@ -4764,7 +4764,7 @@ export interface components {
          * SessionViabilityCheckedBy
          * @enum {string}
          */
-        SessionViabilityCheckedBy: "scheduled" | "manual" | "recovery" | "verification";
+        SessionViabilityCheckedBy: "scheduled" | "manual" | "recovery" | "verification" | "observation";
         /** SessionViabilityRead */
         SessionViabilityRead: {
             checked_by?: components["schemas"]["SessionViabilityCheckedBy"] | null;

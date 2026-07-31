@@ -34,6 +34,7 @@ from app.sessions.service_probes import (
     finalize_probe_session,
 )
 from app.sessions.viability_types import (
+    NodeReachability,
     SessionViabilityCheckedBy,
     SessionViabilityProbeInProgressError,
     SessionViabilityProbeNotPermittedError,
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
     from app.sessions.protocols import DeviceCapabilityReader, DeviceSessionViabilityWriter, HealthFailureHandler
 
 __all__ = [
+    "NODE_UNREACHABLE_STATE_NAMESPACE",
     "PROBE_TEST_NAME",
     "SCHEDULED_PASS_BUDGET_SEC",
     "SESSION_VIABILITY_KEY",
@@ -65,6 +67,11 @@ __all__ = [
 
 SESSION_VIABILITY_KEY = "session_viability"
 SESSION_VIABILITY_STATE_NAMESPACE = "session_viability.state"
+
+# P1: per-device "unreachable since" stamp for the orphan-enumeration debounce.
+NODE_UNREACHABLE_STATE_NAMESPACE = "session_viability.node_unreachable_since"
+
+_NODE_UNREACHABLE_ERROR = "Appium unreachable: session enumeration failed"
 
 # Plumbing constant: pause between attempts of one scheduled probe series,
 # mirroring the recovery job's RECOVERY_PROBE_RETRY_DELAY_SEC.
@@ -233,6 +240,66 @@ class SessionViabilityService:
         if config_changed:
             await db.flush()
         return state
+
+    async def fold_node_reachability(self, reachability: NodeReachability) -> None:
+        """Fold one observation sweep's enumeration verdicts into the viability axis.
+
+        A node that never answers is direct evidence the device cannot take a
+        session — the fact the orphan sweep used to discard, which let a device
+        advertise itself as available through a total Appium outage (P1). One miss
+        is not evidence: an Appium restart looks identical for a few seconds. The
+        failure must therefore outlive ``general.node_fail_window_sec`` — the same
+        window, on the same 30 s cadence, that node health uses before marking a
+        node offline — before it is recorded. Any answer at all clears the window,
+        including a refusal from a node that is alive but cannot enumerate.
+
+        Recording parks the device offline via ``merged_liveness``; re-entry is the
+        existing recovery path (``connectivity._maybe_auto_recover`` →
+        ``prepare_auto_recovery_locked``), not this fold.
+        """
+        if not reachability.observed:
+            return
+        window_sec = float(self._settings.get_int("general.node_fail_window_sec"))
+        now = now_utc()
+        elapsed: list[uuid.UUID] = []
+        async with self._session_factory.begin() as db:
+            stamps = await control_plane_state_store.get_values(
+                db, NODE_UNREACHABLE_STATE_NAMESPACE, [str(device_id) for device_id in reachability.observed]
+            )
+            for device_id in reachability.observed:
+                key = str(device_id)
+                if device_id not in reachability.unreachable:
+                    if key in stamps:
+                        await control_plane_state_store.delete_value(db, NODE_UNREACHABLE_STATE_NAMESPACE, key)
+                    continue
+                since = _parse_timestamp(stamps.get(key))
+                if since is None:
+                    await control_plane_state_store.set_value(
+                        db, NODE_UNREACHABLE_STATE_NAMESPACE, key, now.isoformat()
+                    )
+                elif (now - since).total_seconds() >= window_sec:
+                    elapsed.append(device_id)
+        for device_id in elapsed:
+            await self._record_node_unreachable(device_id)
+
+    async def _record_node_unreachable(self, device_id: uuid.UUID) -> None:
+        """Record the terminal verdict in its own transaction, one device at a time.
+
+        Already-failed devices are skipped: re-recording each tick would churn
+        ``session_viability_checked_at`` and re-emit a health-changed event for a
+        device whose state has not moved.
+        """
+        async with self._session_factory.begin() as db:
+            device = await db.get(Device, device_id)
+            if device is None or device.session_viability_status == "failed":
+                return
+            await self.record_session_viability_result(
+                db,
+                device,
+                status="failed",
+                error=_NODE_UNREACHABLE_ERROR,
+                checked_by=SessionViabilityCheckedBy.observation,
+            )
 
     async def probe_session_direct(
         self,

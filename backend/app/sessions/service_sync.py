@@ -25,6 +25,7 @@ from app.sessions import service as session_service
 from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 from app.sessions.probe_constants import PROBE_TEST_NAME
+from app.sessions.viability_types import NodeReachability
 
 if TYPE_CHECKING:
     import uuid
@@ -303,7 +304,7 @@ class SessionSyncService:
         doorbell.clear()
         return woke
 
-    async def sync(self, db: AsyncSession) -> None:
+    async def sync(self, db: AsyncSession) -> NodeReachability:
         """Observation sweep: reconcile DB-truth sessions against live Appium nodes.
 
         This loop polls each device's Appium server directly
@@ -326,6 +327,11 @@ class SessionSyncService:
         Appium effects then run with no DB session open at all, and each
         changed Session is finalized in its own fresh transaction. No
         transaction is ever held open across a remote call.
+
+        Returns this tick's per-device enumeration verdict. The sweep does not
+        act on it: an unreachable node is a fact about the device, and the
+        session-viability service owns that column and the debounce window that
+        guards it (P1).
         """
         session_factory = _session_factory_from_db(db)
         async with session_factory() as read_db:
@@ -343,6 +349,14 @@ class SessionSyncService:
 
         enumerations = await self._enumerate_orphan_targets(orphan_targets)
         await self._terminate_orphans(orphan_targets, enumerations)
+        return NodeReachability(
+            observed=tuple(candidate.device_id for candidate in orphan_targets.candidates),
+            unreachable=frozenset(
+                candidate.device_id
+                for candidate, (live_ids, transport_error) in zip(orphan_targets.candidates, enumerations, strict=True)
+                if live_ids is None and transport_error
+            ),
+        )
 
     async def _load_liveness_targets(self, db: AsyncSession) -> _LivenessLoad:
         """Read every running DB-truth session and compute its immutable

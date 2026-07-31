@@ -183,6 +183,16 @@ BEGIN_OWNER_REGISTRY: frozenset[BoundaryOwner] = frozenset(
         ),
         BoundaryOwner("app/sessions/service_viability.py", "SessionViabilityService._finalize_probe", "command"),
         BoundaryOwner("app/sessions/service_viability.py", "SessionViabilityService._prepare_probe", "command"),
+        BoundaryOwner(
+            "app/sessions/service_viability.py",
+            "SessionViabilityService._record_node_unreachable",
+            "command",
+        ),
+        BoundaryOwner(
+            "app/sessions/service_viability.py",
+            "SessionViabilityService.fold_node_reachability",
+            "command",
+        ),
         BoundaryOwner("app/settings/service.py", "SettingsService._run_mutation", "command"),
         BoundaryOwner(
             "app/portability/services/import_bundle.py", "PortabilityImportService._commit_group_definitions", "command"
