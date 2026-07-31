@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
@@ -9,6 +10,7 @@ from app.sessions import appium_sweep
 from app.sessions.appium_sweep import AppiumSweepLoop
 from app.sessions.service_viability import SCHEDULED_PASS_BUDGET_SEC
 from app.sessions.services_container import SessionServices
+from app.sessions.viability_types import NodeReachability
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
@@ -30,8 +32,11 @@ def _make_loop(
     sync_error: Exception | None = None,
     sync_delay_sec: float = 0.0,
     sync_observed_at: list[float] | None = None,
+    sync_result: NodeReachability | None = None,
 ) -> AppiumSweepLoop:
-    async def sync(_db: object) -> None:
+    reachability = sync_result if sync_result is not None else NodeReachability(observed=(), unreachable=frozenset())
+
+    async def sync(_db: object) -> NodeReachability:
         if sync_delay_sec:
             await asyncio.sleep(sync_delay_sec)
         if sync_observed_at is not None:
@@ -39,6 +44,7 @@ def _make_loop(
         calls.append("sync")
         if sync_error is not None:
             raise sync_error
+        return reachability
 
     async def check_due_devices(*, deadline: float) -> None:
         calls.append("viability")
@@ -47,7 +53,10 @@ def _make_loop(
         crud=Mock(),
         kill=Mock(),
         sync=Mock(sync=AsyncMock(side_effect=sync), wait_for_wake=AsyncMock()),
-        viability=Mock(check_due_devices=AsyncMock(side_effect=check_due_devices)),
+        viability=Mock(
+            check_due_devices=AsyncMock(side_effect=check_due_devices),
+            fold_node_reachability=AsyncMock(),
+        ),
         settings=FakeSettingsReader({}),
         session_factory=_Session,
         publisher=event_bus,
@@ -85,6 +94,28 @@ async def test_sync_failure_does_not_skip_viability() -> None:
     await loop._run_cycle(Mock())
 
     assert calls == ["sync", "viability"]
+    # A failed sweep produced no verdict: the reachability fold must not run at
+    # all (not even with a stand-in value) — there is nothing for it to fold.
+    loop._services.viability.fold_node_reachability.assert_not_awaited()
+
+
+async def test_reachability_fold_receives_the_syncd_verdict() -> None:
+    """Step 6 wiring: the fold must run with the exact object ``sync`` returned.
+
+    None of the other tests in this file inspect ``fold_node_reachability``'s
+    call args, so a dropped call, an inverted condition, or a fold fed a fresh
+    stand-in instead of the real verdict would pass every other test here.
+    """
+    calls: list[str] = []
+    reachability = NodeReachability(observed=(uuid.uuid4(),), unreachable=frozenset())
+    loop = _make_loop(calls, sync_result=reachability)
+
+    await loop._run_cycle(Mock())
+
+    fold_mock = loop._services.viability.fold_node_reachability
+    fold_mock.assert_awaited_once()
+    assert fold_mock.await_args is not None
+    assert fold_mock.await_args.args[0] is reachability
 
 
 async def test_cycle_anchors_the_viability_deadline_at_tick_start() -> None:
