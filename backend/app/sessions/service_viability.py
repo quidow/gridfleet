@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from prometheus_client import Counter
 from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
 from app.agent_comm.probe_result import ProbeResult
@@ -285,21 +287,35 @@ class SessionViabilityService:
     async def _record_node_unreachable(self, device_id: uuid.UUID) -> None:
         """Record the terminal verdict in its own transaction, one device at a time.
 
+        The device row lock is taken first, before the state-store write inside
+        ``record_session_viability_result`` — device row -> state-store row —
+        matching every other caller (``_prepare_probe``, ``_finalize_probe``).
+        The reverse order would be an ABBA pair against those callers on the
+        same device id: a concurrent recovery/manual probe finalizing on the
+        device this fold is parking could deadlock. The already-failed skip is
+        likewise read under the lock, not before it, so it cannot be stale
+        relative to the write that follows.
+
         Already-failed devices are skipped: re-recording each tick would churn
         ``session_viability_checked_at`` and re-emit a health-changed event for a
         device whose state has not moved.
+
+        A device row deleted between the fold's read and this write is a benign
+        no-op, the same race ``check_due_devices`` tolerates: ``lock_device_handle``
+        raises ``NoResultFound`` for a missing row, and only that is suppressed here.
         """
         async with self._session_factory.begin() as db:
-            device = await db.get(Device, device_id)
-            if device is None or device.session_viability_status == "failed":
-                return
-            await self.record_session_viability_result(
-                db,
-                device,
-                status="failed",
-                error=_NODE_UNREACHABLE_ERROR,
-                checked_by=SessionViabilityCheckedBy.observation,
-            )
+            with contextlib.suppress(NoResultFound):
+                locked = await device_locking.lock_device_handle(db, device_id)
+                if locked.device.session_viability_status == "failed":
+                    return
+                await self.record_session_viability_result(
+                    db,
+                    locked.device,
+                    status="failed",
+                    error=_NODE_UNREACHABLE_ERROR,
+                    checked_by=SessionViabilityCheckedBy.observation,
+                )
 
     async def probe_session_direct(
         self,

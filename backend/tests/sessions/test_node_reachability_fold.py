@@ -13,6 +13,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -22,7 +23,11 @@ from app.devices.models import ConnectionType, Device, DeviceOperationalState, D
 from app.devices.services.capability import DeviceCapabilityService
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.state import derive_operational_state
-from app.sessions.service_viability import NODE_UNREACHABLE_STATE_NAMESPACE, SessionViabilityService
+from app.sessions.service_viability import (
+    NODE_UNREACHABLE_STATE_NAMESPACE,
+    SESSION_VIABILITY_STATE_NAMESPACE,
+    SessionViabilityService,
+)
 from app.sessions.viability_types import NodeReachability, SessionViabilityCheckedBy
 from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
@@ -105,6 +110,30 @@ async def test_an_already_failed_device_is_not_rewritten(
     await db_session.refresh(device)
 
     assert device.session_viability_checked_at == first_checked_at
+
+
+async def test_deleted_device_is_a_benign_no_op(
+    db_session: AsyncSession, db_host: Host, viability_service: SessionViabilityService
+) -> None:
+    """A device row deleted between the fold's read and ``_record_node_unreachable``'s
+    write must not raise — ``lock_device_handle`` raises ``NoResultFound`` for a
+    missing row, and the fold suppresses exactly that, the same race
+    ``check_due_devices`` tolerates."""
+    device = await _seed_available_device(db_session, db_host, identity_value="reach-deleted")
+    stale = (now_utc() - timedelta(seconds=600)).isoformat()
+    await control_plane_state_store.set_value(db_session, NODE_UNREACHABLE_STATE_NAMESPACE, str(device.id), stale)
+    device_id = device.id
+    await db_session.execute(delete(AppiumNode).where(AppiumNode.device_id == device_id))
+    await db_session.execute(delete(Device).where(Device.id == device_id))
+    await db_session.commit()
+
+    await viability_service.fold_node_reachability(
+        NodeReachability(observed=(device_id,), unreachable=frozenset({device_id}))
+    )
+
+    assert (
+        await control_plane_state_store.get_value(db_session, SESSION_VIABILITY_STATE_NAMESPACE, str(device_id)) is None
+    )
 
 
 async def test_the_recorded_failure_names_its_source(

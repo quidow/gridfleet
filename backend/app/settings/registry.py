@@ -52,7 +52,10 @@ _DEFINITIONS: list[SettingDefinition] = [
         description=(
             "How long node health checks must keep failing (wall-clock, across the agent's "
             "30s node probe cycles) before the node is marked offline and restart escalation "
-            "runs; 0 = first failure."
+            "runs; 0 = first failure. Also gates the session-viability fold's unreachable-node "
+            "park: raising it to tolerate slow node starts also delays that park, and for this "
+            "consumer 0 does not mean 'first failure' — the first tick only stamps the window, "
+            "so the park lands on the second."
         ),
         min_value=0,
         max_value=600,

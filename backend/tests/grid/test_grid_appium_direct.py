@@ -86,6 +86,17 @@ async def test_list_sessions_parses_value_array_and_none_on_404(monkeypatch: pyt
     assert await appium_direct.list_sessions(TARGET) == (None, True)
 
 
+async def test_list_sessions_non_json_body_is_refused_not_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 2xx response with an unparseable body must not raise ``ValueError`` out of
+    ``list_sessions`` — the node answered, so this is a refusal (enumeration could
+    not be parsed), not a transport error. Mirrors ``create_session``."""
+    _patch_transport(
+        monkeypatch,
+        lambda req: httpx.Response(200, text="not json", headers={"content-type": "text/plain"}),
+    )
+    assert await appium_direct.list_sessions(TARGET) == (None, False)
+
+
 async def test_create_session_returns_session_id_or_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_transport(monkeypatch, lambda req: httpx.Response(200, json={"value": {"sessionId": "sid-1"}}))
     assert await appium_direct.create_session(TARGET, {}, timeout=5.0) == ("sid-1", None, False)
