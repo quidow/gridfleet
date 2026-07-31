@@ -74,7 +74,7 @@ it('returns descriptor for known platform (legacy 1-arg)', async () => {
         makePlatform({
           display_metadata: { icon_kind: 'mobile' },
           default_capabilities: {},
-          connection_behavior: makeConnectionBehavior(),
+          connection_behavior: makeConnectionBehavior({ requires_ip_address: true }),
         }),
       ],
     }),
@@ -88,7 +88,7 @@ it('returns descriptor for known platform (legacy 1-arg)', async () => {
   expect(result.current?.iconKind).toBe('mobile');
   expect(result.current?.appiumPlatformName).toBe('Android');
   expect(result.current?.deviceTypes).toEqual(['real_device']);
-  expect(result.current?.connectionBehavior).toEqual(makeConnectionBehavior());
+  expect(result.current?.connectionBehavior).toEqual(makeConnectionBehavior({ requires_ip_address: true }));
 });
 
 it('returns the descriptor for the requested pack and platform', () => {
