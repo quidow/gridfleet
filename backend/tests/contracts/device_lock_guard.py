@@ -127,9 +127,6 @@ UNPROVEN_WRITE_SITES: frozenset[str] = frozenset(
         "app/devices/services/data_cleanup.py",
         "app/devices/services/remediation.py",
         "app/packs/services/lifecycle.py",
-        "app/runs/models.py",
-        "app/runs/service_allocator.py",
-        "app/runs/service_reservation.py",
     }
 )
 

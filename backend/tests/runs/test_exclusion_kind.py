@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import Device, DeviceReservation, ExclusionKind
 from app.devices.services.intent_reconciler import ReconcileCandidate, gather_decision_facts, reconcile_device_command
 from app.runs.service_reservation import RunReservationService
@@ -79,6 +80,9 @@ async def test_indefinite_exclusion_drops_run_routing(
     run = await _create_run(client)
 
     svc = RunReservationService()
+    # Mirror the app caller (complete_auto_stop): the device row lock is held
+    # before the reservation write.
+    await device_locking.lock_device_handle(db_session, device.id)
     await svc.exclude_device_from_run(db_session, device.id, reason="health failure")
 
     entry = await _reservation_entry(db_session, run["id"], device.id)
@@ -170,6 +174,7 @@ async def test_expiry_clears_kind_and_skips_indefinite_exclusions(
     excluded_device = await _create_available_device(db_session, default_host_id, "exkind-006")
     run2 = await _create_run(client)
     svc = RunReservationService()
+    await device_locking.lock_device_handle(db_session, excluded_device.id)
     await svc.exclude_device_from_run(db_session, excluded_device.id, reason="health failure")
 
     await reconcile_device_command(

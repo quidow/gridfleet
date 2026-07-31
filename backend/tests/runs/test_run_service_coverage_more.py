@@ -297,6 +297,9 @@ async def test_restore_and_exclude_device_reservation_branches(
     run = await create_reserved_run(db_session, name="reservation-branch-run", devices=[device])
     entry = run.device_reservations[0]
     svc = RunReservationService()
+    # Mirror the app callers (complete_auto_stop / restore_run_after_self_heal):
+    # the device row lock is held for the whole exclude/restore sequence below.
+    await device_locking.lock_device_handle(db_session, device.id)
 
     assert await svc.exclude_device_from_run(db_session, uuid.uuid4(), reason="missing") is None
     assert await run_service.get_device_reservation(db_session, device.id) == run

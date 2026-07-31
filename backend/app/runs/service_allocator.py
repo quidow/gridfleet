@@ -20,6 +20,7 @@ from app.core.errors import (
     PlatformRemovedError,
 )
 from app.core.timeutil import now_utc
+from app.devices.locking import record_locked_devices
 from app.devices.models import Device, DeviceOperationalState, DeviceReservation
 from app.devices.services import health as device_health
 from app.devices.services.claims import active_reservation_exists, reservation_active
@@ -547,6 +548,12 @@ async def _batch_select_devices(  # noqa: PLR0912, PLR0915
         .execution_options(populate_existing=True)
     )
     locked_rows = {row.id: row for row in (await db.execute(locked_stmt)).scalars().all()}
+    # The statement above IS this transaction's device row lock: ``FOR UPDATE OF
+    # devices SKIP LOCKED`` returns only the rows it actually locked, and holds
+    # them until the run INSERT commits. Stamp exactly those ids -- the returned
+    # winners, never the requested ``all_selected_ids`` -- so the reservation
+    # rows written downstream in ``_attempt_create_run`` carry proof of the lock.
+    record_locked_devices(db, locked_rows.keys())
     # Reload the static-group-key map for the locked-id set and rebuild a fresh
     # membership index under the lock: the Device-row lock does not serialize
     # concurrent DeviceGroupMembership edits, so the step-6 index is a pre-lock

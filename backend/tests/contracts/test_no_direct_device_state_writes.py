@@ -266,6 +266,10 @@ DEVICE_LOCK_ACQUIRERS = frozenset(
         # app/appium_nodes/services/reconciler.py: lock_device_handle plus a
         # "row deleted mid-flight" None branch.
         "_lock_device_for_reconciler",
+        # app/runs/service_allocator.py: the step-7b locked recheck
+        # ``SELECT ... FOR UPDATE OF devices SKIP LOCKED`` is the lock, and the
+        # rows it returns are stamped via record_locked_devices.
+        "_batch_select_devices",
     }
 )
 
@@ -412,7 +416,7 @@ DECISION_FACT_WRITERS: frozenset[DecisionFactWriter] = frozenset(
             "app/runs/service_allocator.py",
             "RunAllocatorService._attempt_create_run",
             frozenset({"device_reservation"}),
-            "caller_locked",
+            "acquires_locked",
         ),
         DecisionFactWriter(
             "app/sessions/service_probes.py", "claim_probe_session", frozenset({"live_session"}), "accepts_locked"
