@@ -1,8 +1,9 @@
 """Standing self-tests for the runtime device-lock guard.
 
-The guard is the phase's proof mechanism, so it needs its own proof: one write
-it must reject, one it must accept, and the new-device exemption. Without these
-a silently inert guard would report a clean suite.
+The guard is the phase's proof mechanism, so it needs its own proof: writes it
+must reject, writes it must accept, the new-device exemption in the shape
+``app/`` actually produces, and the bounds on how long a recorded call site
+lives. Without these a silently inert guard would report a clean suite.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import select
 
 from app.devices.locking import lock_device_handle
 from app.devices.models import ConnectionType, Device, DeviceType
@@ -18,6 +20,7 @@ from app.sessions.models import Session, SessionStatus
 from tests.contracts import _lock_guard_probe as probe
 from tests.contracts.device_lock_guard import (
     DeviceLockGuardViolation,
+    _write_sites,
     guard_enabled,
     install_device_lock_guard,
 )
@@ -38,6 +41,29 @@ def _guard() -> Iterator[None]:
     install_device_lock_guard(activate=False)  # listeners on, checks off
     with guard_enabled():
         yield
+
+
+def _stage_device(db_session: AsyncSession, db_host: Host, name: str) -> Device:
+    """Stage a Device the way ``app/devices/services/write.py`` stages one.
+
+    Deliberately no primary key: production assigns it by flushing (see
+    ``stage_device_record`` / ``create_device_record``), so a test that
+    hand-assigned one would prove an exemption app code can never reach.
+    """
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value=f"guard-{uuid.uuid4().hex[:12]}",
+        name=name,
+        os_version="14",
+        host_id=db_host.id,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    return device
 
 
 async def _seed_session_row(db_session: AsyncSession, db_host: Host) -> tuple[Device, Session]:
@@ -68,28 +94,65 @@ async def test_a_locked_decision_write_passes(db_session: AsyncSession, db_host:
     await db_session.rollback()
 
 
+async def test_an_unlocked_decision_delete_fails_at_flush(db_session: AsyncSession, db_host: Host) -> None:
+    """A delete fires no attribute event, so this rides entirely on the flush-time walk.
+
+    That walk only reaches the caller because ``_app_frames`` hops greenlets:
+    the flush runs inside SQLAlchemy's spawned greenlet and the probe's frame
+    is on the parent's stack. A non-empty ``chain=`` in the message is the
+    evidence — it is empty for every write when the hop is missing.
+    """
+    device, row = await _seed_session_row(db_session, db_host)
+    probe.probe_delete(db_session.sync_session, row)
+    with pytest.raises(DeviceLockGuardViolation) as excinfo:
+        await probe.probe_execute(db_session, select(Session.id))  # autoflush runs the guard
+    message = str(excinfo.value)
+    assert "<delete>" in message
+    assert str(device.id) in message
+    assert "_lock_guard_probe" in message
+    assert "chain=[]" not in message, "the flush-time walk saw no caller: greenlet hop is broken"
+    await db_session.rollback()
+
+
 async def test_a_new_device_needs_no_lock_for_its_own_facts(db_session: AsyncSession, db_host: Host) -> None:
-    # ``create_device`` commits, which would put the Device INSERT in a
-    # different transaction from the fact write; the new-device rule is about
-    # the two sharing one. Stage the row directly instead. The primary key is
-    # assigned here rather than left to the column default because that default
-    # only fires during the INSERT, and the exemption is evaluated before it.
-    device = Device(
-        id=uuid.uuid4(),
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value=f"guard-new-{uuid.uuid4().hex[:12]}",
-        name="guard-new",
-        os_version="14",
-        host_id=db_host.id,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
-    db_session.add(device)
+    """The production shape: stage the device, flush to get its PK, then write its fact."""
+    device = _stage_device(db_session, db_host, "guard-new")
+    await db_session.flush()  # assigns the PK, exactly as create_device_record does
     row = Session(session_id="guard-new-probe", device_id=device.id, status=SessionStatus.running)
     db_session.add(row)
     probe.probe_touch(row, "status", SessionStatus.running)  # give it an app-frame site
-    await db_session.flush()  # Device row is new in this transaction: exempt
+    await db_session.flush()  # same transaction as the Device INSERT: exempt
+    await db_session.rollback()
+
+
+async def test_a_fact_row_linked_to_an_unflushed_device_needs_no_lock(db_session: AsyncSession, db_host: Host) -> None:
+    """The same-flush shape: neither row has a PK yet, so the exemption must go by identity."""
+    device = _stage_device(db_session, db_host, "guard-same-flush")
+    row = Session(session_id="guard-same-flush-probe", device=device, status=SessionStatus.running)
+    db_session.add(row)
+    probe.probe_touch(row, "status", SessionStatus.running)
+    assert row.device_id is None, "precondition: the foreign key is not populated until the flush"
+    await db_session.flush()  # both rows INSERTed together: exempt
+    await db_session.rollback()
+
+
+async def test_a_recorded_site_does_not_survive_its_transaction(db_session: AsyncSession, db_host: Host) -> None:
+    """A recorded site must not be charged to some later write on the same live instance.
+
+    Two ways a site stops being current, and both have to hold: the flush that
+    consumed it succeeded, or its transaction ended without one.
+    """
+    device, row = await _seed_session_row(db_session, db_host)
+
+    await lock_device_handle(db_session, device.id)
+    probe.probe_touch(row, "status", SessionStatus.passed)
+    await db_session.flush()  # passes under the lock
+    assert row not in _write_sites, "a site consumed by a successful flush must be dropped"
+
+    probe.probe_touch(row, "status", SessionStatus.error)
+    await db_session.rollback()  # transaction ends without ever flushing it
+    assert row not in _write_sites, "a site that never flushed must die with its transaction"
+
+    row.status = SessionStatus.failed  # fixture-shaped write: no app frame anywhere
+    await db_session.flush()  # must not raise: no stale site left to charge it to
     await db_session.rollback()
