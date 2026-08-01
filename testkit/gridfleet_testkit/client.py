@@ -186,16 +186,36 @@ class GridFleetClient:
         *,
         suppress_errors: bool = False,
     ) -> JsonObject | None:
-        try:
-            resp = self._send(
-                "POST",
-                f"/runs/{run_id}/devices/{device_id}/preparation-failed",
-                json={"message": message, "source": source},
-            )
-        except (httpx.HTTPError, TypeError, ValueError) as exc:
-            _raise_or_warn("report preparation failure", suppress_errors, exc)
-            return None
-        return cast("JsonObject", resp.json())
+        # At most two identical attempts: the backend bounds its own lock wait and returns a
+        # classified 503 (Retry-After) well inside the 30s ASGI watchdog, so a retry here is safe
+        # by construction rather than a gamble. 35s covers that watchdog. Only transport failures
+        # and 503/504 are retried; every other failure is non-retryable.
+        final_exc: httpx.HTTPError | None = None
+        for _ in range(2):
+            try:
+                resp = self._send(
+                    "POST",
+                    f"/runs/{run_id}/devices/{device_id}/preparation-failed",
+                    json={"message": message, "source": source},
+                    timeout=35,
+                )
+            except httpx.TransportError as exc:
+                final_exc = exc
+                continue
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code not in (503, 504):
+                    _raise_or_warn("report preparation failure", suppress_errors, exc)
+                    return None
+                final_exc = exc
+                continue
+            except (httpx.HTTPError, TypeError, ValueError) as exc:
+                _raise_or_warn("report preparation failure", suppress_errors, exc)
+                return None
+            else:
+                return cast("JsonObject", resp.json())
+        assert final_exc is not None  # loop only falls through after setting it twice
+        _raise_or_warn("report preparation failure", suppress_errors, final_exc)
+        return None
 
     def update_session_status(
         self,
