@@ -140,6 +140,117 @@ def test_lock_sampler_default_output_dir_is_local_only(sampler: ModuleType) -> N
     assert default.is_absolute()
 
 
+def test_sample_sql_reads_pg_stat_activity_and_pg_locks(sampler: ModuleType) -> None:
+    """The blocked/blocking pair comes from activity; the lock detail comes from pg_locks.
+
+    Nullable lock-identity columns (``database``, ``relation``, ``page``, ``tuple``, ...) must be
+    matched with ``IS NOT DISTINCT FROM``, not ``=`` -- ``=`` silently drops any row where that
+    column is NULL for both sides. ``pg_class`` must be a LEFT JOIN so a relation-less lock (e.g. a
+    transactionid wait) still produces a row instead of being filtered out.
+    """
+    sql = sampler.SAMPLE_SQL
+    assert "pg_stat_activity" in sql
+    assert "pg_locks" in sql
+    assert "IS NOT DISTINCT FROM" in sql
+    assert "LEFT JOIN pg_class" in sql
+
+
+def test_csv_header_appends_lock_mode_and_relation_columns(sampler: ModuleType) -> None:
+    """Exactly three columns appended, in order, after the existing eight -- nothing reordered."""
+    assert sampler.CSV_HEADER == [
+        "ts",
+        "blocked_pid",
+        "wait_event",
+        "blocked_kind",
+        "blocking_kind",
+        "blocking_state",
+        "blocked_query",
+        "blocking_query",
+        "blocked_mode",
+        "blocking_mode",
+        "relation",
+    ]
+
+
+def test_lock_sampler_renders_a_representative_row_with_lock_detail(sampler: ModuleType) -> None:
+    """A synthetic row shaped like the pg_locks-joined ``SAMPLE_SQL`` result.
+
+    ``relation`` ("device_reservations") is deliberately narrower than what the text classifier
+    finds in the blocked statement ("devices+device_reservations", a join) -- that gap is exactly
+    the precision pg_locks buys over the table-name regex: the classifier can only guess every
+    table a query mentions, pg_locks names the one relation actually locked.
+    """
+    row = {
+        "pid": 555,
+        "wait_event": "tuple",
+        "blocked_query": (
+            "UPDATE devices d SET operational_state = 'busy' "
+            "FROM device_reservations r WHERE r.device_id = d.id AND r.id = 9"
+        ),
+        "blocking_pid": 777,
+        "blocking_query": "SELECT id FROM device_reservations WHERE id = 9 FOR UPDATE",
+        "blocking_state": "idle in transaction",
+        "blocked_mode": "RowExclusiveLock",
+        "blocking_mode": "ShareLock",
+        "relation": "device_reservations",
+    }
+    blocked_kind = sampler.classify(row["blocked_query"])
+    blocking_kind = sampler.classify(row["blocking_query"])
+    assert blocked_kind == "devices+device_reservations"
+    assert blocking_kind == "device_reservations"
+
+    csv_row = sampler.build_csv_row("2026-08-01T00:00:00.000+00:00", row, blocked_kind, blocking_kind)
+    assert csv_row == [
+        "2026-08-01T00:00:00.000+00:00",
+        555,
+        "tuple",
+        "devices+device_reservations",
+        "device_reservations",
+        "idle in transaction",
+        row["blocked_query"],
+        row["blocking_query"],
+        "RowExclusiveLock",
+        "ShareLock",
+        "device_reservations",
+    ]
+
+    line = sampler.format_console_line("2026-08-01T00:00:00.000+00:00", row, blocked_kind, blocking_kind)
+    assert line == (
+        "[2026-08-01T00:00:00.000+00:00] LOCK-WAIT pid=555 blocked_by=777 tuple "
+        "blocked[devices+device_reservations] mode=RowExclusiveLock <- "
+        "blocking[device_reservations] mode=ShareLock rel=device_reservations"
+    )
+
+
+def test_lock_sampler_renders_empty_relation_for_a_transaction_id_lock(sampler: ModuleType) -> None:
+    """A transactionid wait has no relation OID, so pg_class cannot be joined.
+
+    The row must still retain both statements and both modes -- only ``relation`` goes empty, never
+    a placeholder string and never a guess back-derived from the query text.
+    """
+    row = {
+        "pid": 901,
+        "wait_event": "transactionid",
+        "blocked_query": "UPDATE devices SET operational_state = 'busy' WHERE id = 3",
+        "blocking_pid": 902,
+        "blocking_query": "UPDATE devices SET operational_state = 'available' WHERE id = 3",
+        "blocking_state": "active",
+        "blocked_mode": "ShareLock",
+        "blocking_mode": "ExclusiveLock",
+        "relation": "",
+    }
+    blocked_kind = sampler.classify(row["blocked_query"])
+    blocking_kind = sampler.classify(row["blocking_query"])
+
+    csv_row = sampler.build_csv_row("2026-08-01T00:00:01.000+00:00", row, blocked_kind, blocking_kind)
+    assert csv_row[-1] == ""  # relation: empty, not a placeholder
+    assert csv_row[-3:-1] == ["ShareLock", "ExclusiveLock"]  # both modes retained
+    assert csv_row[6:8] == [row["blocked_query"], row["blocking_query"]]  # both statements retained
+
+    line = sampler.format_console_line("2026-08-01T00:00:01.000+00:00", row, blocked_kind, blocking_kind)
+    assert line.endswith("rel=")  # empty, not guessed from the blocked query's own table
+
+
 @dataclass(frozen=True)
 class _StubDevice:
     """The attribute shape of ``gridfleet_testkit.device.Device``.
