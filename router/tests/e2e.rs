@@ -503,20 +503,30 @@ fn new_session_disconnect_cancels_ticket_and_stops_polling() {
         stream.write_all(request.as_bytes()).unwrap();
         stream.flush().unwrap();
 
-        // Wait until the backend has recorded the first (queued) create call
-        // before dropping — otherwise an early close could race the request
-        // being read at all.
+        // Wait until the backend has recorded the SECOND (resumed, ticketed)
+        // create call before dropping. Waiting only for the first call is not
+        // enough: the router's turnaround from "call 1 answered" to "call 2
+        // issued" is sub-millisecond, so a drop timed off call 1 alone can
+        // race ahead of the router ever entering the ticketed iteration —
+        // the disconnect would then be (correctly) caught before a second
+        // call is ever made, and `create_calls` would stay at 1 forever.
+        // Gating on call 2 guarantees the router already holds the ticket
+        // (mandatory now that only ticketed iterations race the client at
+        // all) and has already issued the resumed call by the time we drop,
+        // so the later `create_calls == 2` assertion is not a race either.
         let deadline = Instant::now() + Duration::from_secs(5);
-        while counts.create_calls.load(Ordering::SeqCst) == 0 {
+        while counts.create_calls.load(Ordering::SeqCst) < 2 {
             assert!(
                 Instant::now() < deadline,
-                "backend never saw the first queued create-session call"
+                "backend never saw the resumed (second) create-session call"
             );
             thread::sleep(Duration::from_millis(10));
         }
         // Drop the raw socket: a plain close is enough here (unlike the
         // response-write race, nothing has been written to this client yet;
-        // the router only needs to observe EOF on its read side).
+        // the router only needs to observe EOF on its read side). The stub
+        // holds this second call for 300ms, a comfortable margin over the
+        // 10ms poll grid above.
     }
 
     // The router must cancel the queued ticket exactly once.
