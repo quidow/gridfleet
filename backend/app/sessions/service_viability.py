@@ -40,6 +40,7 @@ from app.sessions.viability_types import (
     SessionViabilityCheckedBy,
     SessionViabilityProbeInProgressError,
     SessionViabilityProbeNotPermittedError,
+    SessionViabilityReadinessLapsedError,
 )
 
 if TYPE_CHECKING:
@@ -61,6 +62,7 @@ __all__ = [
     "SESSION_VIABILITY_STATE_NAMESPACE",
     "SessionViabilityProbeInProgressError",
     "SessionViabilityProbeNotPermittedError",
+    "SessionViabilityReadinessLapsedError",
     "SessionViabilityService",
     "build_probe_capabilities",
     "grid_probe_response_to_result",
@@ -448,7 +450,7 @@ class SessionViabilityService:
                     "Session viability checks only run for available devices (state changed concurrently)"
                 )
             if not await is_ready_for_use_async(db, locked.device):
-                raise ValueError(
+                raise SessionViabilityReadinessLapsedError(
                     await readiness_error_detail_async(db, locked.device, action="run a session viability check")
                 )
             node = locked.device.appium_node
