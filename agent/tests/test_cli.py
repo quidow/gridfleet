@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -14,7 +15,25 @@ from agent_app.installer.update import DrainResult, UpdateResult
 from agent_app.installer.uv_runtime import UvRuntime
 
 if TYPE_CHECKING:
-    import pytest
+    from collections.abc import Iterator
+
+
+@pytest.fixture(autouse=True)
+def _never_touch_the_operator_log(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """``serve`` installs the operator log handler, so no CLI test may run against the
+    real ``MACOS_LOG_FILE`` — on a macOS host that is the running service's log, and a
+    single emitted record can size-rotate it out from under an operator's ``tail -f``.
+    Default every test to no file and restore root logging afterwards."""
+    monkeypatch.setattr(cli, "MACOS_LOG_FILE", None)
+    root = logging.getLogger()
+    original_handlers = list(root.handlers)
+    original_factory = logging.getLogRecordFactory()
+    yield
+    for handler in root.handlers:
+        if handler not in original_handlers:
+            handler.close()
+    root.handlers[:] = original_handlers
+    logging.setLogRecordFactory(original_factory)
 
 
 def test_serve_runs_uvicorn_with_default_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -55,6 +74,39 @@ def test_serve_sets_keepalive_above_backend_pool_idle(monkeypatch: pytest.Monkey
     monkeypatch.setattr(cli.uvicorn, "run", fake_run)
     assert cli.main(["serve", "--host", "127.0.0.1", "--port", "5100"]) == 0
     assert captured["timeout_keep_alive"] == 630
+
+
+def test_serve_installs_operator_log_handler_before_uvicorn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Only the serving process opens the operator log, and it must do so before
+    ``uvicorn.run``. ``log_config=None`` goes with it: uvicorn's default dictConfig
+    runs inside ``uvicorn.Config.__init__`` — after this call — and would re-point the
+    ``uvicorn``/``uvicorn.access`` loggers at stdout/stderr with ``propagate=False``,
+    dropping request logs out of the bounded file into the unbounded launchd fallback."""
+    log_file = tmp_path / "agent.log"
+    monkeypatch.setattr(cli, "MACOS_LOG_FILE", log_file)
+    order: list[str] = []
+    configured: dict[str, object] = {}
+    captured: dict[str, object] = {}
+
+    def fake_configure_logging(**kwargs: object) -> None:
+        order.append("configure_logging")
+        configured.update(kwargs)
+
+    def fake_run(app: str, **kwargs: object) -> None:
+        order.append("uvicorn.run")
+        captured.update(kwargs)
+
+    monkeypatch.setattr(cli, "configure_logging", fake_configure_logging)
+    monkeypatch.setattr(cli.uvicorn, "run", fake_run)
+
+    assert cli.main(["serve", "--host", "127.0.0.1", "--port", "5100"]) == 0
+
+    assert order == ["configure_logging", "uvicorn.run"]
+    assert configured == {"log_file": log_file}
+    assert captured["log_config"] is None
 
 
 def test_version_prints_public_package_version(capsys: pytest.CaptureFixture[str]) -> None:

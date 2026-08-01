@@ -34,11 +34,16 @@ from agent_app.installer.update import (
     update_agent,
 )
 from agent_app.installer.uv_runtime import discover_uv
+from agent_app.observability import configure_logging
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from agent_app.installer.identity import OperatorIdentity
+
+MACOS_LOG_FILE = (
+    Path.home() / "Library" / "Logs" / "gridfleet-agent" / "agent.log" if platform.system() == "Darwin" else None
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -101,11 +106,24 @@ def _resolve_operator() -> OperatorIdentity | None:
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:
+    # Only the serving process opens the operator log file. ``uvicorn.run`` imports
+    # ``agent_app.main`` in-process, so the app still logs through this handler; every
+    # other importer (the test suite, tooling) gets ``main``'s stderr-only default and
+    # never appends to — or size-rotates — the running service's log.
+    #
+    # ``log_config=None`` because uvicorn's default dictConfig runs inside
+    # ``uvicorn.Config.__init__``, i.e. after this call: it would re-point the
+    # ``uvicorn`` and ``uvicorn.access`` loggers at stdout/stderr with
+    # ``propagate=False``, dropping request logs out of the bounded file and into the
+    # unbounded launchd fallback. Suppressing it leaves ``configure_logging``'s own
+    # propagate-to-root wiring intact, which is what ran before the handler moved.
+    configure_logging(log_file=MACOS_LOG_FILE)
     uvicorn.run(
         "agent_app.main:app",
         host=args.host,
         port=args.port,
         timeout_keep_alive=agent_settings.core.http_keepalive_timeout_sec,
+        log_config=None,
     )
     return 0
 

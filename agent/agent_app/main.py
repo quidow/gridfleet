@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import logging
-import platform
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -22,11 +20,13 @@ from agent_app.observability import REQUEST_ID_HEADER, RequestContextMiddleware,
 from agent_app.pack.router import router as pack_router
 from agent_app.tools.router import router as tools_router
 
-_MACOS_LOG_FILE = (
-    Path.home() / "Library" / "Logs" / "gridfleet-agent" / "agent.log" if platform.system() == "Darwin" else None
-)
-
-configure_logging(log_file=_MACOS_LOG_FILE)
+# Stderr only at import. The bounded rotating file handler for the macOS operator
+# log is installed by ``cli._cmd_serve`` just before ``uvicorn.run`` — which imports
+# this module in-process, so the running service still gets it. Opening the file here
+# would make merely importing ``agent_app.main`` (the test suite does, at module
+# scope) create and append to the live service's log, and a size-triggered rotation
+# would rename it out from under an operator's ``tail -f``.
+configure_logging()
 
 logger = logging.getLogger(__name__)
 

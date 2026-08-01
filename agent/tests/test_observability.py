@@ -1,4 +1,6 @@
 import logging
+import subprocess
+import sys
 from logging.handlers import RotatingFileHandler
 from typing import TYPE_CHECKING
 
@@ -105,6 +107,33 @@ def test_agent_configure_logging_closes_previous_file_handler_on_reconfigure(tmp
         for leftover_handler in root_logger.handlers:
             leftover_handler.close()
         root_logger.handlers[:] = original_handlers
+
+
+def test_importing_agent_main_does_not_open_the_operator_log(tmp_path: Path) -> None:
+    """Importing ``agent_app.main`` must not create or open the macOS operator log.
+
+    This module imports ``agent_app.main`` at module scope, and the agent service runs
+    on the same Mac as the test suite. ``RotatingFileHandler`` defaults to
+    ``delay=False``, so an import-time ``configure_logging(log_file=...)`` would open
+    the live service's log for append — and rotation is size-triggered at emit time, so
+    one test record against an already-near-10-MiB file renames it out from under the
+    operator's ``tail -f``. Only ``cli._cmd_serve`` may open it.
+
+    Runs in a subprocess with ``HOME`` redirected because the import is already cached
+    in this process; the redirect also makes the assertion meaningful off macOS, where
+    the path is simply never built."""
+    home = tmp_path / "home"
+    home.mkdir()
+    completed = subprocess.run(
+        [sys.executable, "-c", "import agent_app.main"],
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert not (home / "Library" / "Logs" / "gridfleet-agent").exists()
 
 
 def test_agent_configure_logging_installs_record_factory_when_handlers_preexist() -> None:
