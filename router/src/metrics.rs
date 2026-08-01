@@ -14,7 +14,9 @@ pub struct Metrics {
     pub commands_command: IntCounter,
     pub commands_delete: IntCounter,
     pub commands_local: IntCounter,
-    /// Allocate-loop outcomes (allocated|queued|invalid|timeout|error).
+    /// Allocate-loop outcomes, one per new-session request. Label values, all
+    /// emitted from `proxy::alloc_outcome`:
+    /// `created|queued|invalid|create_failed|create_error|timeout|fatal|error|client_gone`.
     pub allocate_outcomes: IntCounterVec,
     /// Current number of live session routes.
     pub active_routes: IntGauge,

@@ -190,7 +190,9 @@ impl ProxyHttp for GridRouter {
     }
 }
 
-/// Increment the allocate-outcome counter (allocated|queued|invalid|timeout|error).
+/// Increment the allocate-outcome counter. This function is the only writer, so
+/// the call sites below are the complete label set:
+/// `created|queued|invalid|create_failed|create_error|timeout|fatal|error|client_gone`.
 fn alloc_outcome(outcome: &str) {
     crate::metrics::metrics()
         .allocate_outcomes
