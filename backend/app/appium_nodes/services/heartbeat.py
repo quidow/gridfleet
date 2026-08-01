@@ -21,7 +21,7 @@ from app.core.coerce import coerce_int as _coerce_int
 from app.core.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
 from app.core.leader import state_store as control_plane_state_store
 from app.core.leader.advisory import control_plane_leader
-from app.core.metrics_recorders import record_heartbeat_ping
+from app.core.metrics_recorders import APPIUM_RESTART_EVENTS_SUPPRESSED_TOTAL, record_heartbeat_ping
 from app.core.observability import get_logger
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
@@ -197,20 +197,55 @@ def _restart_event_observation_changed(locked: AppiumNode, observed: _RestartNod
     )
 
 
-def _collect_restart_candidate_events(raw_events: list[Any], *, last_sequence: int) -> list[dict[str, Any]]:
+@dataclass(frozen=True, slots=True)
+class _RestartEventCursor:
+    """Immutable ``(host, agent boot)``-scoped restart-event dedup cursor."""
+
+    boot_id: str | None
+    sequence: int
+
+
+def _restart_event_cursor(value: object, *, current_boot_id: str | None) -> _RestartEventCursor:
+    """Interpret the stored control-plane value as a boot-scoped cursor.
+
+    A dict cursor is trusted only when its ``boot_id`` matches the current boot
+    and its ``sequence`` coerces to an integer. A dict from another boot, a
+    legacy bare integer (written before the cursor was boot-scoped), malformed
+    JSON, or a missing value is treated as an unknown earlier boot: sequence
+    resets to zero so it cannot suppress this boot's events, while the returned
+    cursor still carries the current boot id so the next persisted value is
+    upgraded to the boot-aware shape.
+    """
+    if isinstance(value, dict) and value.get("boot_id") == current_boot_id:
+        sequence = _coerce_int(value.get("sequence"))
+        if sequence is not None:
+            return _RestartEventCursor(boot_id=current_boot_id, sequence=sequence)
+    return _RestartEventCursor(boot_id=current_boot_id, sequence=0)
+
+
+def _collect_restart_candidate_events(raw_events: list[Any], *, last_sequence: int) -> tuple[list[dict[str, Any]], int]:
+    """Split raw events into valid new candidates and a same-boot-replay suppression count.
+
+    Kind/port/sequence shape is validated before the sequence comparison, so a
+    malformed or unknown-kind event is never counted as a suppressed replay.
+    """
     candidate_events: list[dict[str, Any]] = []
+    suppressed = 0
     for raw_event in raw_events:
         if not isinstance(raw_event, dict):
             continue
         sequence = _coerce_int(raw_event.get("sequence"))
         port = _coerce_int(raw_event.get("port"))
         kind = raw_event.get("kind")
-        if sequence is None or sequence <= last_sequence or port is None:
+        if sequence is None or port is None:
             continue
         if not isinstance(kind, str) or kind not in APPIUM_RESTART_EVENT_KINDS:
             continue
+        if sequence <= last_sequence:
+            suppressed += 1
+            continue
         candidate_events.append(raw_event)
-    return candidate_events
+    return candidate_events, suppressed
 
 
 @dataclass(frozen=True, slots=True)
@@ -439,11 +474,13 @@ async def _ingest_appium_restart_events(
         return
 
     host_key = str(host.id)
-    last_sequence = (
-        _coerce_int(await control_plane_state_store.get_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key)) or 0
-    )
+    current_boot_id = str(host.current_boot_id) if host.current_boot_id is not None else None
+    stored_cursor = await control_plane_state_store.get_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key)
+    cursor = _restart_event_cursor(stored_cursor, current_boot_id=current_boot_id)
+    last_sequence = cursor.sequence
 
-    candidate_events = _collect_restart_candidate_events(raw_events, last_sequence=last_sequence)
+    candidate_events, suppressed = _collect_restart_candidate_events(raw_events, last_sequence=last_sequence)
+    APPIUM_RESTART_EVENTS_SUPPRESSED_TOTAL.inc(suppressed)
 
     if not candidate_events:
         return
@@ -528,7 +565,12 @@ async def _ingest_appium_restart_events(
             publisher=publisher,
         )
 
-    await control_plane_state_store.set_value(db, APPIUM_RESTART_SEQUENCE_NAMESPACE, host_key, highest_sequence)
+    await control_plane_state_store.set_value(
+        db,
+        APPIUM_RESTART_SEQUENCE_NAMESPACE,
+        host_key,
+        {"boot_id": current_boot_id, "sequence": highest_sequence},
+    )
 
 
 @dataclass(frozen=True, slots=True)

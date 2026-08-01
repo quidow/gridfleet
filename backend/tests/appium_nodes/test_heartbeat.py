@@ -340,7 +340,208 @@ async def test_alive_evaluation_ingests_restart_events_from_snapshot_once(db_ses
         .all()
     )
     assert len(crash_events) == 1
-    assert await control_plane_state_store.get_value(db_session, APPIUM_RESTART_SEQUENCE_NAMESPACE, str(host.id)) == 1
+    assert await control_plane_state_store.get_value(db_session, APPIUM_RESTART_SEQUENCE_NAMESPACE, str(host.id)) == {
+        "boot_id": None,
+        "sequence": 1,
+    }
+
+
+async def test_restart_event_cursor_is_scoped_to_agent_boot(db_session: AsyncSession) -> None:
+    """F1: a stale sequence cursor left over from a previous agent boot must not
+    suppress the new boot's low sequence numbers. Seed a cursor for boot A at
+    sequence 41, move the host to boot B, then ingest boot B's sequence 1."""
+    boot_a = uuid.uuid4()
+    boot_b = uuid.uuid4()
+    host = Host(
+        hostname="boot-scope-host",
+        ip="10.0.0.20",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+        current_boot_id=boot_a,
+    )
+    db_session.add(host)
+    await db_session.flush()
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-boot-scope",
+        connection_target="dev-boot-scope",
+        name="Boot Scope Phone",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1111,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    # Boot A's high-water mark, left behind by the previous agent boot.
+    await control_plane_state_store.set_value(
+        db_session,
+        APPIUM_RESTART_SEQUENCE_NAMESPACE,
+        str(host.id),
+        {"boot_id": str(boot_a), "sequence": 41},
+    )
+    await db_session.commit()
+
+    # The agent restarts: the host row is re-registered under a new boot.
+    host.current_boot_id = boot_b
+    await db_session.commit()
+
+    restart_event = {
+        "sequence": 1,
+        "kind": "crash_detected",
+        "port": 4723,
+        "pid": 1111,
+        "attempt": 1,
+        "will_retry": True,
+    }
+    await _seed_snapshot(db_session, host, {"recent_restart_events": [restart_event]})
+
+    svc = _hb_svc(db_session)
+    await _ingest_seeded_snapshot(db_session, svc, host)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.health_running is False
+    assert node.health_state == "restarting"
+
+    crash_events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id, DeviceEvent.event_type == DeviceEventType.node_crash
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(crash_events) == 1
+
+    cursor = await control_plane_state_store.get_value(db_session, APPIUM_RESTART_SEQUENCE_NAMESPACE, str(host.id))
+    assert cursor == {"boot_id": str(boot_b), "sequence": 1}
+
+    # Replaying sequence 1 during boot B must not add another event.
+    await _seed_snapshot(db_session, host, {"recent_restart_events": [restart_event]})
+    await _ingest_seeded_snapshot(db_session, svc, host)
+    await db_session.commit()
+
+    crash_events_after_replay = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id, DeviceEvent.event_type == DeviceEventType.node_crash
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(crash_events_after_replay) == 1
+
+
+async def test_restart_event_cursor_upgrades_legacy_integer_on_next_valid_event(db_session: AsyncSession) -> None:
+    """No-migration compatibility: a legacy bare-integer cursor (written before
+    the cursor was boot-scoped) is treated as an unknown earlier boot, so it
+    does not suppress the current boot's events, and is upgraded to the
+    boot-aware dictionary shape on the next valid event."""
+    boot_id = uuid.uuid4()
+    host = Host(
+        hostname="legacy-cursor-host",
+        ip="10.0.0.21",
+        os_type=OSType.linux,
+        agent_port=5100,
+        status=HostStatus.online,
+        current_boot_id=boot_id,
+    )
+    db_session.add(host)
+    await db_session.flush()
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="dev-legacy-cursor",
+        connection_target="dev-legacy-cursor",
+        name="Legacy Cursor Phone",
+        os_version="14",
+        host_id=host.id,
+        operational_state=DeviceOperationalState.available,
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.flush()
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        pid=1111,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        active_connection_target="",
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    # Legacy pre-boot-aware cursor: a bare integer, no boot_id at all.
+    await control_plane_state_store.set_value(db_session, APPIUM_RESTART_SEQUENCE_NAMESPACE, str(host.id), 41)
+    await db_session.commit()
+
+    await _seed_snapshot(
+        db_session,
+        host,
+        {
+            "recent_restart_events": [
+                {
+                    "sequence": 1,
+                    "kind": "crash_detected",
+                    "port": 4723,
+                    "pid": 1111,
+                    "attempt": 1,
+                    "will_retry": True,
+                }
+            ]
+        },
+    )
+
+    svc = _hb_svc(db_session)
+    await _ingest_seeded_snapshot(db_session, svc, host)
+    await db_session.commit()
+
+    await db_session.refresh(node)
+    assert node.health_running is False
+    assert node.health_state == "restarting"
+
+    crash_events = (
+        (
+            await db_session.execute(
+                select(DeviceEvent).where(
+                    DeviceEvent.device_id == device.id, DeviceEvent.event_type == DeviceEventType.node_crash
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(crash_events) == 1
+
+    cursor = await control_plane_state_store.get_value(db_session, APPIUM_RESTART_SEQUENCE_NAMESPACE, str(host.id))
+    assert cursor == {"boot_id": str(boot_id), "sequence": 1}
 
 
 async def test_partition_probe_records_metric_and_log_without_state_change(db_session: AsyncSession) -> None:
@@ -530,7 +731,10 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
     await db_session.refresh(node)
     assert node.pid == 2222
     assert node.observed_running
-    assert await control_plane_state_store.get_value(db_session, APPIUM_RESTART_SEQUENCE_NAMESPACE, str(host.id)) == 2
+    assert await control_plane_state_store.get_value(db_session, APPIUM_RESTART_SEQUENCE_NAMESPACE, str(host.id)) == {
+        "boot_id": None,
+        "sequence": 2,
+    }
     assert str(node.id) not in await get_node_health_control_plane_state(db_session)
 
     events = (

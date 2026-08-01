@@ -46,6 +46,8 @@ async def test_ping_agent_remaining_error_and_helper_paths(monkeypatch: pytest.M
 async def test_restart_event_ingest_filters_and_stale_nodes(monkeypatch: pytest.MonkeyPatch) -> None:
     host = Host(hostname="h1", ip="10.0.0.1", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
     host.id = uuid.uuid4()
+    boot_id = uuid.uuid4()
+    host.current_boot_id = boot_id
     db = MagicMock()
     db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
     monkeypatch.setattr(heartbeat.control_plane_state_store, "get_value", AsyncMock(return_value="bad"))
@@ -69,13 +71,19 @@ async def test_restart_event_ingest_filters_and_stale_nodes(monkeypatch: pytest.
         publisher=event_bus,
     )
     set_value.assert_awaited_once()
-    assert set_value.await_args.args[3] == 3
+    assert set_value.await_args.args[3] == {"boot_id": str(boot_id), "sequence": 3}
 
 
 async def test_restart_event_ingest_no_candidates_and_loop_error(monkeypatch: pytest.MonkeyPatch) -> None:
     host = Host(hostname="h2", ip="10.0.0.2", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
     host.id = uuid.uuid4()
-    monkeypatch.setattr(heartbeat.control_plane_state_store, "get_value", AsyncMock(return_value=5))
+    boot_id = uuid.uuid4()
+    host.current_boot_id = boot_id
+    monkeypatch.setattr(
+        heartbeat.control_plane_state_store,
+        "get_value",
+        AsyncMock(return_value={"boot_id": str(boot_id), "sequence": 5}),
+    )
     set_value = AsyncMock()
     monkeypatch.setattr(heartbeat.control_plane_state_store, "set_value", set_value)
 

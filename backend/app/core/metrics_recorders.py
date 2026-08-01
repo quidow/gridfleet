@@ -245,6 +245,12 @@ def record_pack_artifacts_reaped(count: int) -> None:
     PACK_ARTIFACTS_REAPED_TOTAL.inc(count)
 
 
+APPIUM_RESTART_EVENTS_SUPPRESSED_TOTAL = Counter(
+    "gridfleet_appium_restart_events_suppressed_total",
+    "Valid same-boot Appium restart events suppressed by the restart sequence cursor.",
+)
+
+
 HEARTBEAT_PING_DURATION_SECONDS = Histogram(
     "gridfleet_agent_heartbeat_duration_seconds",
     "Backend->agent heartbeat ping duration in seconds.",
