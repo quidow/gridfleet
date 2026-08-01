@@ -567,6 +567,216 @@ fn new_session_disconnect_cancels_ticket_and_stops_polling() {
     );
 }
 
+/// Appium stub for the post-create response-write-failure rollback flow: the
+/// router "no longer touches Appium during creation", so the only request
+/// this stub ever sees is the best-effort rollback DELETE. Records every
+/// DELETE and answers 200 to anything.
+fn spawn_appium_delete_recorder() -> (String, Arc<AtomicUsize>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let deletes = Arc::new(AtomicUsize::new(0));
+    let d = deletes.clone();
+    thread::spawn(move || {
+        for req in server.incoming_requests() {
+            if *req.method() == tiny_http::Method::Delete {
+                d.fetch_add(1, Ordering::SeqCst);
+            }
+            let _ = req.respond(tiny_http::Response::from_string("{}"));
+        }
+    });
+    (addr, deletes)
+}
+
+/// Counts for the post-create response-write-failure rollback flow: the
+/// single create-session call, and `/internal/grid/sessions/ended` hits.
+#[derive(Clone)]
+struct WriteFailureCounts {
+    create_calls: Arc<AtomicUsize>,
+    ended_calls: Arc<AtomicUsize>,
+}
+
+/// Backend stub for the post-create response-write-failure flow. Answers
+/// `created` immediately on the first call, embedding a large `padding` field
+/// in `appium_body` so the router's relay write to a client that never reads
+/// cannot complete in one shot: once the client's receive window and the
+/// router's send buffer fill, the write blocks on real TCP flow control (not
+/// a timing race) until the client is closed, at which point it errors —
+/// deterministically reproducing "creation completed, then the response
+/// write failed" without needing to land a disconnect inside a microseconds-
+/// wide gap. Records `/internal/grid/sessions/ended` hits (asserting the
+/// session id) and serves `/internal/grid/routes` empty.
+fn spawn_backend_created_with_padding(
+    appium_addr: String,
+    padding_len: usize,
+) -> (String, WriteFailureCounts) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let counts = WriteFailureCounts {
+        create_calls: Arc::new(AtomicUsize::new(0)),
+        ended_calls: Arc::new(AtomicUsize::new(0)),
+    };
+    let c = counts.clone();
+    let created_body = serde_json::json!({
+        "status": "created",
+        "session_id": "session-2",
+        "target": appium_addr,
+        "device_id": null,
+        "appium_status": 200,
+        "appium_body": {
+            "value": {
+                "sessionId": "session-2",
+                "capabilities": {},
+                "padding": "x".repeat(padding_len),
+            }
+        },
+    })
+    .to_string();
+    thread::spawn(move || {
+        let json_header = || {
+            tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap()
+        };
+        for mut req in server.incoming_requests() {
+            let url = req.url().to_string();
+            if *req.method() == tiny_http::Method::Post && url == "/internal/grid/create-session" {
+                c.create_calls.fetch_add(1, Ordering::SeqCst);
+                let _ = req.respond(
+                    tiny_http::Response::from_string(created_body.clone())
+                        .with_header(json_header()),
+                );
+            } else if url == "/internal/grid/sessions/ended" {
+                let mut body = String::new();
+                req.as_reader().read_to_string(&mut body).unwrap();
+                let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+                assert_eq!(v["session_id"], "session-2", "session_ended payload");
+                c.ended_calls.fetch_add(1, Ordering::SeqCst);
+                let _ = req.respond(tiny_http::Response::from_string("{}"));
+            } else if url == "/internal/grid/routes" {
+                let _ = req.respond(
+                    tiny_http::Response::from_string(r#"{"routes":[]}"#).with_header(json_header()),
+                );
+            } else {
+                let _ = req.respond(tiny_http::Response::from_string("{}"));
+            }
+        }
+    });
+    (addr, counts)
+}
+
+#[test]
+fn new_session_response_write_failure_rolls_back_created_session() {
+    // The other ownership-loss window: creation completes successfully, but
+    // writing the W3C response to the client fails because it vanished right
+    // at the end. This is the pre-existing backstop (`respond` error branch +
+    // `teardown_lost_session`) that Task 3 leaves untouched — this test
+    // exercises it for the first time since the allocate/confirm-era e2e
+    // coverage for it was removed in 73f46674f (2026-07-12) when the router
+    // moved to the single backend-owned `create_session` call.
+    use socket2::{Domain, SockAddr, Socket, Type};
+
+    let (appium_addr, appium_deletes) = spawn_appium_delete_recorder();
+    // 32 MiB: comfortably larger than any realistic default TCP receive
+    // window / socket buffer for a connection whose peer never reads. This
+    // makes the router's relay write block on genuine flow control once
+    // buffers fill, rather than requiring the test to land a disconnect
+    // inside the vanishingly small gap between "backend resolved Created"
+    // and "the write completes" that this architecture leaves open.
+    let (backend_addr, counts) = spawn_backend_created_with_padding(appium_addr, 32 * 1024 * 1024);
+    let router = spawn_router(&backend_addr);
+
+    let body = r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
+    let request = format!(
+        "POST /session HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        router.port,
+        body.len(),
+        body
+    );
+
+    // SO_LINGER=0: close() sends an immediate RST instead of a graceful FIN,
+    // so the router's in-flight write hits a hard error instead of quietly
+    // buffering into a half-closed socket (std's set_linger is still
+    // unstable, hence socket2).
+    let sock = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    let peer: std::net::SocketAddr = format!("127.0.0.1:{}", router.port).parse().unwrap();
+    sock.connect(&SockAddr::from(peer)).unwrap();
+    sock.set_linger(Some(Duration::from_secs(0))).unwrap();
+    let mut stream: TcpStream = sock.into();
+    stream.write_all(request.as_bytes()).unwrap();
+    stream.flush().unwrap();
+
+    // Wait until the backend has answered the (single) create call...
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while counts.create_calls.load(Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "backend never saw the create-session call"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    // ...then wait a further fixed, generous margin: enough for the 32 MiB
+    // response to cross the loopback backend->router leg (the router reads it
+    // eagerly to parse JSON) and for the router to resolve `Created` and
+    // start relaying to our client. This margin is not a race to win: however
+    // long the router actually takes to get here, its write to our
+    // never-reading client cannot finish once the padding exceeds the
+    // socket's buffers, so waiting longer only makes the outcome more
+    // certain, never less.
+    thread::sleep(Duration::from_secs(2));
+
+    // Never having read a byte, RST the connection: the router's relay write
+    // is (by construction) still in flight, so this turns it into a hard
+    // write error -- the same failure a genuinely abandoned client produces.
+    drop(stream);
+
+    // The router must roll the created session back: best-effort Appium
+    // DELETE, then session_ended to the backend.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while counts.ended_calls.load(Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "router never notified session_ended after the response write failed"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert_eq!(
+        appium_deletes.load(Ordering::SeqCst),
+        1,
+        "router must DELETE the Appium session it cannot hand to a departed client"
+    );
+    assert_eq!(
+        counts.create_calls.load(Ordering::SeqCst),
+        1,
+        "must not retry create-session after a successful create"
+    );
+
+    // The route was pruned: a follow-up command on a fresh connection 404s
+    // locally as an invalid session id.
+    let mut resp = get_any_status(&format!(
+        "http://127.0.0.1:{}/session/session-2/url",
+        router.port
+    ));
+    assert_eq!(resp.status(), 404, "expected 404");
+    let resp_body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp_body).unwrap();
+    assert_eq!(
+        v["value"]["error"], "invalid session id",
+        "got: {resp_body}"
+    );
+
+    // The rollback metric moved, and no route survives it.
+    let mut metrics_resp = ureq::get(&format!("http://127.0.0.1:{}/metrics", router.port))
+        .call()
+        .unwrap();
+    let metrics_body = metrics_resp.body_mut().read_to_string().unwrap();
+    assert!(
+        metrics_body.contains("gridfleet_router_new_session_client_gone_total 1"),
+        "got: {metrics_body}"
+    );
+    assert!(
+        metrics_body.contains("gridfleet_router_active_routes 0"),
+        "got: {metrics_body}"
+    );
+}
+
 #[test]
 fn new_session_create_failed_relays_appium_envelope() {
     let appium_addr = spawn_appium();
