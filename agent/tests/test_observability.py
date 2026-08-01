@@ -76,12 +76,35 @@ def test_agent_configure_logging_bounds_log_file_with_rotating_handler(tmp_path:
         contents = log_file.read_text()
     finally:
         logging.setLogRecordFactory(original_factory)
+        handler.close()
         root_logger.handlers[:] = original_handlers
 
     assert "request_id=agent-log-file-1" in contents
     assert "method=GET" in contents
     assert "path=/agent/health" in contents
     assert "agent bounded file test" in contents
+
+
+def test_agent_configure_logging_closes_previous_file_handler_on_reconfigure(tmp_path: Path) -> None:
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_factory = logging.getLogRecordFactory()
+
+    try:
+        configure_logging(force=True, log_file=tmp_path / "agent-1.log")
+        first_handler = root_logger.handlers[0]
+        first_stream = first_handler.stream
+
+        configure_logging(force=True, log_file=tmp_path / "agent-2.log")
+
+        assert first_stream.closed
+        assert first_handler not in root_logger.handlers
+        assert len(root_logger.handlers) == 1
+    finally:
+        logging.setLogRecordFactory(original_factory)
+        for leftover_handler in root_logger.handlers:
+            leftover_handler.close()
+        root_logger.handlers[:] = original_handlers
 
 
 def test_agent_configure_logging_installs_record_factory_when_handlers_preexist() -> None:

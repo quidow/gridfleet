@@ -76,6 +76,10 @@ def configure_logging(*, force: bool = False, log_file: Path | None = None) -> N
     handler.setFormatter(formatter)
     setattr(handler, _GRIDFLEET_AGENT_HANDLER_ATTR, True)
 
+    for existing_handler in root_logger.handlers:
+        if getattr(existing_handler, _GRIDFLEET_AGENT_HANDLER_ATTR, False):
+            existing_handler.close()
+
     root_logger.handlers.clear()
     root_logger.addHandler(handler)
 
