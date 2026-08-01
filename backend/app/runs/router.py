@@ -3,10 +3,17 @@ from datetime import UTC, date, datetime, time
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from sqlalchemy.exc import DBAPIError
 
 from app.core.dependencies import DbDep
 from app.core.error_responses import RESPONSES_422, STANDARD_ERROR_RESPONSES
-from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
+from app.core.errors import (
+    PackDisabledError,
+    PackDrainingError,
+    PackUnavailableError,
+    PlatformRemovedError,
+    pg_sqlstate,
+)
 from app.core.http_errors import found_or_404
 from app.core.pagination import CursorPaginationError
 from app.devices.services.service import UnknownGroupKeysError
@@ -28,6 +35,9 @@ from app.runs.schemas import (
 )
 
 RUN_ERROR_RESPONSES = {**STANDARD_ERROR_RESPONSES, **RESPONSES_422}
+
+# Postgres lock_not_available: a statement gave up at the transaction's lock_timeout.
+_PG_LOCK_NOT_AVAILABLE_SQLSTATE = "55P03"
 
 router = APIRouter(prefix="/api/runs", tags=["runs"], responses=RUN_ERROR_RESPONSES)
 
@@ -173,6 +183,18 @@ async def report_preparation_failed(
             message=payload.message,
             source=payload.source,
         )
+    except DBAPIError as e:
+        # The report's own lock_timeout fired, so nothing committed and the identical
+        # request is safe to send again — say so instead of leaking a 500. Every other
+        # database error re-raises to the standard handler, which owns the 500 envelope
+        # and the pgcode-labelled unhandled-exception metric.
+        if pg_sqlstate(e) != _PG_LOCK_NOT_AVAILABLE_SQLSTATE:
+            raise
+        raise HTTPException(
+            status_code=503,
+            detail="Preparation failure report timed out waiting on a database lock; retry the request",
+            headers={"Retry-After": "1"},
+        ) from e
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
     return await _build_run_read(run_services, result.run_id)
