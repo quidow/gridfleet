@@ -24,6 +24,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gridfleet_testkit")
 
+# Per-attempt HTTP timeout for the preparation-failure report. Must stay above the
+# backend's ``request_timeout_sec`` (timeout-lattice table, docs/reference/architecture.md):
+# below it, the client abandons the request before the ASGI watchdog can return its
+# classified response, and the retry becomes a blind re-send against an in-flight
+# transaction. Enforced by backend/tests/contracts/test_timeout_lattice_parity.py.
+PREPARATION_FAILURE_TIMEOUT_SEC = 35
+
 
 def _raise_plain(resp: httpx.Response) -> None:
     resp.raise_for_status()
@@ -188,8 +195,9 @@ class GridFleetClient:
     ) -> JsonObject | None:
         # At most two identical attempts: the backend bounds its own lock wait and returns a
         # classified 503 (Retry-After) well inside the 30s ASGI watchdog, so a retry here is safe
-        # by construction rather than a gamble. 35s covers that watchdog. Only transport failures
-        # and 503/504 are retried; every other failure is non-retryable.
+        # by construction rather than a gamble. ``PREPARATION_FAILURE_TIMEOUT_SEC`` covers that
+        # watchdog. Only transport failures and 503/504 are retried; every other failure is
+        # non-retryable.
         final_exc: httpx.HTTPError | None = None
         for _ in range(2):
             try:
@@ -197,7 +205,7 @@ class GridFleetClient:
                     "POST",
                     f"/runs/{run_id}/devices/{device_id}/preparation-failed",
                     json={"message": message, "source": source},
-                    timeout=35,
+                    timeout=PREPARATION_FAILURE_TIMEOUT_SEC,
                 )
             except httpx.TransportError as exc:
                 final_exc = exc
