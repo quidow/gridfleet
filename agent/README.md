@@ -138,7 +138,7 @@ Install paths (defaults; override with `--agent-dir`, `--config-dir`):
 | OS | `agent_dir` | `config_dir` | Service file | Logs |
 |---|---|---|---|---|
 | Linux | `${XDG_DATA_HOME:-~/.local/share}/gridfleet-agent` | `${XDG_CONFIG_HOME:-~/.config}/gridfleet-agent` | `${XDG_CONFIG_HOME:-~/.config}/systemd/user/gridfleet-agent.service` | journald (user instance) |
-| macOS | `~/Library/Application Support/gridfleet-agent` | `~/Library/Application Support/gridfleet-agent/config` | `~/Library/LaunchAgents/com.gridfleet.agent.plist` | `~/Library/Logs/gridfleet-agent/{stdout,stderr}.log` |
+| macOS | `~/Library/Application Support/gridfleet-agent` | `~/Library/Application Support/gridfleet-agent/config` | `~/Library/LaunchAgents/com.gridfleet.agent.plist` | `~/Library/Logs/gridfleet-agent/agent.log` (bounded, rotating); `{stdout,stderr}.log` is the launchd fallback |
 
 `install` also creates a `~/.local/bin/gridfleet-agent` symlink pointing at the dedicated venv so `gridfleet-agent status / update / uninstall` work without typing the full venv path. Add `~/.local/bin` to your `PATH` if it is not there already (`export PATH="$HOME/.local/bin:$PATH"`). If a non-symlink file already exists at that path the installer leaves it untouched and prints a warning. `uninstall` removes the symlink only when it still points into the agent's `agent_dir`.
 
@@ -153,11 +153,12 @@ systemctl --user restart gridfleet-agent
 
 ### macOS
 ```bash
-tail -f ~/Library/Logs/gridfleet-agent/stdout.log
-tail -f ~/Library/Logs/gridfleet-agent/stderr.log
+tail -f ~/Library/Logs/gridfleet-agent/agent.log
 launchctl print "gui/$(id -u)/com.gridfleet.agent"
 launchctl kickstart -k "gui/$(id -u)/com.gridfleet.agent"
 ```
+
+Normal service logging (Python/Uvicorn) is bounded and rotating (10 MiB x 5 backups) under `agent.log`. `stdout.log` / `stderr.log` remain launchd's small fallback for direct writes and interpreter crashes — check them if `agent.log` is silent.
 
 ## Troubleshooting
 

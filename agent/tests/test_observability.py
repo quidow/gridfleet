@@ -1,4 +1,5 @@
 import logging
+from logging.handlers import RotatingFileHandler
 from typing import TYPE_CHECKING
 
 import pytest
@@ -14,6 +15,7 @@ from agent_app.observability import (
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
+    from pathlib import Path
 
 
 @pytest.fixture
@@ -50,6 +52,36 @@ def test_agent_logs_include_request_context(capsys: pytest.CaptureFixture[str]) 
     assert "method=GET" in captured
     assert "path=/agent/health" in captured
     assert "agent structured test" in captured
+
+
+def test_agent_configure_logging_bounds_log_file_with_rotating_handler(tmp_path: Path) -> None:
+    root_logger = logging.getLogger()
+    original_handlers = list(root_logger.handlers)
+    original_factory = logging.getLogRecordFactory()
+    log_file = tmp_path / "agent.log"
+
+    try:
+        configure_logging(force=True, log_file=log_file)
+        handler = root_logger.handlers[0]
+
+        assert isinstance(handler, RotatingFileHandler)
+        assert handler.maxBytes == 10 * 1024 * 1024
+        assert handler.backupCount == 5
+
+        logger = logging.getLogger("agent.tests.observability.file")
+        bind_request_context(request_id="agent-log-file-1", method="GET", path="/agent/health")
+        logger.info("agent bounded file test")
+        clear_request_context()
+
+        contents = log_file.read_text()
+    finally:
+        logging.setLogRecordFactory(original_factory)
+        root_logger.handlers[:] = original_handlers
+
+    assert "request_id=agent-log-file-1" in contents
+    assert "method=GET" in contents
+    assert "path=/agent/health" in contents
+    assert "agent bounded file test" in contents
 
 
 def test_agent_configure_logging_installs_record_factory_when_handlers_preexist() -> None:

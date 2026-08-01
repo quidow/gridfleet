@@ -66,9 +66,10 @@ macOS:
 
 ```bash
 launchctl print "gui/$(id -u)/com.gridfleet.agent"
-tail -n 200 ~/Library/Logs/gridfleet-agent/stdout.log
-tail -n 200 ~/Library/Logs/gridfleet-agent/stderr.log
+tail -n 200 ~/Library/Logs/gridfleet-agent/agent.log
 ```
+
+Normal Python/Uvicorn logging goes to the bounded, rotating `agent.log`. `stdout.log` / `stderr.log` are only launchd's fallback for direct writes and interpreter crashes — check them if `agent.log` is silent.
 
 ## 6. Verify the agent process configuration
 

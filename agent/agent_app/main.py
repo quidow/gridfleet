@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import platform
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -20,7 +22,11 @@ from agent_app.observability import REQUEST_ID_HEADER, RequestContextMiddleware,
 from agent_app.pack.router import router as pack_router
 from agent_app.tools.router import router as tools_router
 
-configure_logging()
+_MACOS_LOG_FILE = (
+    Path.home() / "Library" / "Logs" / "gridfleet-agent" / "agent.log" if platform.system() == "Darwin" else None
+)
+
+configure_logging(log_file=_MACOS_LOG_FILE)
 
 logger = logging.getLogger(__name__)
 

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import logging
 from contextvars import ContextVar
+from logging.handlers import RotatingFileHandler
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from starlette.datastructures import Headers, MutableHeaders
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -55,7 +58,7 @@ def _has_gridfleet_logging_handler(logger: logging.Logger) -> bool:
     return any(bool(getattr(handler, _GRIDFLEET_AGENT_HANDLER_ATTR, False)) for handler in logger.handlers)
 
 
-def configure_logging(*, force: bool = False) -> None:
+def configure_logging(*, force: bool = False, log_file: Path | None = None) -> None:
     root_logger = logging.getLogger()
     if logging.getLogRecordFactory() is _record_factory and _has_gridfleet_logging_handler(root_logger) and not force:
         return
@@ -64,7 +67,12 @@ def configure_logging(*, force: bool = False) -> None:
         "%(asctime)s %(levelname)s [%(name)s] request_id=%(request_id)s "
         "method=%(http_method)s path=%(http_path)s %(message)s"
     )
-    handler = logging.StreamHandler()
+    handler: logging.Handler
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(log_file, maxBytes=10 * 1024 * 1024, backupCount=5)
+    else:
+        handler = logging.StreamHandler()
     handler.setFormatter(formatter)
     setattr(handler, _GRIDFLEET_AGENT_HANDLER_ATTR, True)
 
