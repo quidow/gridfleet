@@ -316,16 +316,35 @@ impl GridRouter {
         let deadline = Instant::now() + self.new_session_timeout;
         let mut ticket: Option<String> = None;
         let created = loop {
-            match self
-                .backend
-                .create_session(
+            // Race each backend wait against Pingora's downstream-idle read so
+            // an abandoned client is noticed instead of outlived: the client
+            // may give up long before the backend's own long-poll deadline,
+            // and if the device frees up after that the router would
+            // otherwise create a real Appium session nobody owns. The
+            // `read_body_or_idle` future is built fresh inside the loop (never
+            // hoisted into a variable) so its mutable borrow of `session` is
+            // dropped as soon as this `select!` resolves — the backend-branch
+            // response arms below still need `session` for `respond(...)`.
+            let backend_result = tokio::select! {
+                biased;
+                downstream = session.read_body_or_idle(true) => {
+                    alloc_outcome("client_gone");
+                    crate::metrics::metrics().new_session_client_gone_total.inc();
+                    log::warn!("client gone during new-session queue wait; cancelling");
+                    if let Some(t) = &ticket {
+                        let _ = self.backend.cancel_ticket(t).await;
+                    }
+                    let err = downstream.err().unwrap_or_else(|| Error::new_down(ConnectionClosed));
+                    return Err(err);
+                }
+                backend = self.backend.create_session(
                     &raw,
                     ticket.as_deref(),
                     run_id.as_deref(),
                     deadline.saturating_duration_since(Instant::now()),
-                )
-                .await
-            {
+                ) => backend,
+            };
+            match backend_result {
                 Ok(CreateOutcome::Created {
                     session_id,
                     target,

@@ -420,6 +420,153 @@ fn new_session_queue_then_created() {
     assert_eq!(counts.calls.load(Ordering::SeqCst), 2);
 }
 
+/// Counts for the raw-client-disconnect flow: create-session POSTs (queued,
+/// then the held resumed call) and `DELETE /internal/grid/tickets/ticket-1`.
+#[derive(Clone)]
+struct DisconnectCounts {
+    create_calls: Arc<AtomicUsize>,
+    ticket_deletes: Arc<AtomicUsize>,
+}
+
+/// Backend stub for the raw-client-disconnect flow. The first create-session
+/// call answers `queued(ticket-1)` immediately; every call after that (the
+/// resumed long-poll) is held for `hold` before answering `queued` again —
+/// long enough that the raw client has already dropped its socket and the
+/// router's disconnect race has already fired, so nothing is left listening
+/// for that response. Counts `DELETE /internal/grid/tickets/ticket-1` and
+/// serves `/internal/grid/routes` empty throughout (no route may ever exist).
+fn spawn_backend_disconnect(hold: Duration) -> (String, DisconnectCounts) {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let addr = format!("http://{}", server.server_addr());
+    let counts = DisconnectCounts {
+        create_calls: Arc::new(AtomicUsize::new(0)),
+        ticket_deletes: Arc::new(AtomicUsize::new(0)),
+    };
+    let c = counts.clone();
+    thread::spawn(move || {
+        let json_header = || {
+            tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap()
+        };
+        for mut req in server.incoming_requests() {
+            let url = req.url().to_string();
+            if *req.method() == tiny_http::Method::Post && url == "/internal/grid/create-session" {
+                let mut body = String::new();
+                req.as_reader().read_to_string(&mut body).unwrap();
+                let call = c.create_calls.fetch_add(1, Ordering::SeqCst);
+                if call > 0 {
+                    // The resumed long-poll: hold it well past the client's drop.
+                    thread::sleep(hold);
+                }
+                let _ = req.respond(
+                    tiny_http::Response::from_string(r#"{"status":"queued","ticket":"ticket-1"}"#)
+                        .with_header(json_header()),
+                );
+            } else if *req.method() == tiny_http::Method::Delete
+                && url == "/internal/grid/tickets/ticket-1"
+            {
+                c.ticket_deletes.fetch_add(1, Ordering::SeqCst);
+                let _ = req
+                    .respond(tiny_http::Response::from_string(String::new()).with_status_code(204));
+            } else if url == "/internal/grid/routes" {
+                let _ = req.respond(
+                    tiny_http::Response::from_string(r#"{"routes":[]}"#).with_header(json_header()),
+                );
+            } else {
+                let _ = req.respond(tiny_http::Response::from_string("{}"));
+            }
+        }
+    });
+    (addr, counts)
+}
+
+#[test]
+fn new_session_disconnect_cancels_ticket_and_stops_polling() {
+    // Models the live bug: the client abandons the new-session request while
+    // the router is long-polling a queued ticket. Before this fix the router
+    // has no way to notice — it keeps calling create-session on its own
+    // (much longer) new-session deadline, and when the device eventually
+    // frees up it would create a real Appium session nobody owns.
+    let (backend_addr, counts) = spawn_backend_disconnect(Duration::from_millis(300));
+    let router = spawn_router(&backend_addr);
+
+    // Raw HTTP/1.1 request: a complete POST /session with Content-Length, no
+    // TLS/h2c involved (the listener is add_tcp, so HTTP/1.1 only).
+    let body = r#"{"capabilities":{"alwaysMatch":{"platformName":"Android"}}}"#;
+    let request = format!(
+        "POST /session HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        router.port,
+        body.len(),
+        body
+    );
+    {
+        let mut stream = TcpStream::connect(("127.0.0.1", router.port)).unwrap();
+        stream.write_all(request.as_bytes()).unwrap();
+        stream.flush().unwrap();
+
+        // Wait until the backend has recorded the first (queued) create call
+        // before dropping — otherwise an early close could race the request
+        // being read at all.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while counts.create_calls.load(Ordering::SeqCst) == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "backend never saw the first queued create-session call"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        // Drop the raw socket: a plain close is enough here (unlike the
+        // response-write race, nothing has been written to this client yet;
+        // the router only needs to observe EOF on its read side).
+    }
+
+    // The router must cancel the queued ticket exactly once.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while counts.ticket_deletes.load(Ordering::SeqCst) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "router never cancelled the ticket after the client disconnected"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert_eq!(
+        counts.ticket_deletes.load(Ordering::SeqCst),
+        1,
+        "ticket must be cancelled exactly once"
+    );
+
+    // The create loop must not continue after cancellation: exactly the
+    // initial queued call plus the one held resumed call, never a third.
+    assert_eq!(
+        counts.create_calls.load(Ordering::SeqCst),
+        2,
+        "router must not keep polling create-session after the client is gone"
+    );
+
+    // No route was ever inserted: a follow-up command on a fresh connection
+    // 404s locally as an invalid session id.
+    let mut resp = get_any_status(&format!(
+        "http://127.0.0.1:{}/session/session-1/url",
+        router.port
+    ));
+    assert_eq!(resp.status(), 404, "expected 404");
+    let resp_body = resp.body_mut().read_to_string().unwrap();
+    let v: serde_json::Value = serde_json::from_str(&resp_body).unwrap();
+    assert_eq!(
+        v["value"]["error"], "invalid session id",
+        "got: {resp_body}"
+    );
+
+    // The active-route metric never moved off zero.
+    let mut metrics_resp = ureq::get(&format!("http://127.0.0.1:{}/metrics", router.port))
+        .call()
+        .unwrap();
+    let metrics_body = metrics_resp.body_mut().read_to_string().unwrap();
+    assert!(
+        metrics_body.contains("gridfleet_router_active_routes 0"),
+        "got: {metrics_body}"
+    );
+}
+
 #[test]
 fn new_session_create_failed_relays_appium_envelope() {
     let appium_addr = spawn_appium();
