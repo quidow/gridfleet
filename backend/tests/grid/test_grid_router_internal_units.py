@@ -19,7 +19,7 @@ from app.grid.allocation import AllocationResult, AllocationService
 from app.grid.models import GridQueueStatus, GridSessionQueueTicket
 from app.grid.schemas_internal import ActivityRequest, CreateSessionRequest, EndedRequest
 from app.grid.services_container import GridServices
-from app.sessions.models import Session
+from app.sessions.models import Session, SessionStatus
 from tests.conftest import settings_service
 from tests.helpers import seed_host_and_running_node
 from tests.helpers import test_event_bus as event_bus
@@ -367,3 +367,81 @@ async def test_resume_interrupted_terminates_appium_with_no_open_transaction(
     # allocates the now-free device. Termination ran with no open transaction.
     assert terminated == ["interrupted-ssn"]
     assert resp.status == "created"
+
+
+@pytest.mark.db
+async def test_cancel_ticket_finalizes_pending_claim_won_race(
+    services: GridServices,
+    seeded_available_device: Device,
+    db_session: AsyncSession,
+) -> None:
+    """A cancel that arrives after the ticket was claimed into a pending
+    Session (the allocation won the race) must fail the pending row through
+    the existing interrupted-create cleanup, not no-op."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    ticket_id = ticket.id
+    result = await services.allocation.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    await db_session.commit()
+
+    pending = await db_session.get(Session, result.allocation_id)
+    assert pending is not None
+    assert pending.status == SessionStatus.pending
+
+    assert (await router_internal.cancel_ticket(ticket_id, services)).status_code == 204
+
+    await db_session.refresh(pending)
+    assert pending.status == SessionStatus.error
+    assert pending.ended_at is not None
+
+    routes = await router_internal.routes(db_session)
+    assert not any(entry.session_id == pending.session_id for entry in routes.routes)
+
+    # Idempotent repeat: the row is already terminal.
+    assert (await router_internal.cancel_ticket(ticket_id, services)).status_code == 204
+
+
+@pytest.mark.db
+async def test_cancel_ticket_terminates_running_claim_won_race(
+    services: GridServices,
+    seeded_available_device: Device,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel that arrives after the ticket was claimed and promoted to
+    running must still terminate the remote Appium session and end the row,
+    via the same interrupted-create cleanup."""
+    ticket = GridSessionQueueTicket(requested_body=_body(platformName="Android"))
+    db_session.add(ticket)
+    await db_session.flush()
+    ticket_id = ticket.id
+    result = await services.allocation.try_allocate(db_session, ticket=ticket)
+    assert result is not None
+    await services.allocation.promote_to_running(
+        db_session, allocation_id=result.allocation_id, appium_session_id="cancel-race-ssn"
+    )
+    await db_session.commit()
+
+    terminated: list[str] = []
+
+    async def fake_terminate(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        terminated.append(session_id)
+        return True
+
+    monkeypatch.setattr(router_internal.appium_direct, "terminate_session", fake_terminate)
+
+    assert (await router_internal.cancel_ticket(ticket_id, services)).status_code == 204
+    assert terminated == ["cancel-race-ssn"]
+
+    ended = await db_session.scalar(select(Session).where(Session.session_id == "cancel-race-ssn"))
+    assert ended is not None
+    assert ended.ended_at is not None
+
+    routes = await router_internal.routes(db_session)
+    assert not any(entry.session_id == "cancel-race-ssn" for entry in routes.routes)
+
+    # Idempotent repeat: the row is already ended, no second terminate call.
+    assert (await router_internal.cancel_ticket(ticket_id, services)).status_code == 204
+    assert terminated == ["cancel-race-ssn"]
