@@ -247,7 +247,13 @@ class RecoveryJobService:
                     device_id,
                     checked_by=SessionViabilityCheckedBy.recovery,
                 )
-            except SessionViabilityProbeInProgressError, SessionViabilityProbeNotPermittedError:
+            except SessionViabilityProbeInProgressError, SessionViabilityProbeNotPermittedError, ValueError:
+                # A collision, a gate rejection, or a readiness recheck lapse are all
+                # preconditions that lapsed — not a device verdict — so none of them
+                # should commission recovery failure/backoff work. The two named
+                # types already narrow this; adding the base ``ValueError`` catches
+                # the readiness recheck's own raise (``_prepare_probe``) without
+                # widening the catch to unrelated exceptions.
                 return {"status": "skipped"}
             except Exception as exc:  # noqa: BLE001 - failed effect is finalized durably
                 last = {"status": "failed", "error": str(exc)}
