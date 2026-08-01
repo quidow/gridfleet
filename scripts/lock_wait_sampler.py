@@ -76,7 +76,7 @@ SELECT a.pid,
        left(coalesce(b.query, ''), 200)  AS blocking_query,
        b.state                            AS blocking_state,
        bl.mode                            AS blocked_mode,
-       kl.mode                            AS blocking_mode,
+       string_agg(DISTINCT kl.mode, '+' ORDER BY kl.mode) AS blocking_mode,
        coalesce(c.relname, '')            AS relation
 FROM pg_stat_activity a
 JOIN LATERAL unnest(pg_blocking_pids(a.pid)) bp(pid) ON true
@@ -84,9 +84,14 @@ JOIN pg_stat_activity b ON b.pid = bp.pid
 -- The specific lock a is waiting on (there is exactly one -- a backend blocks on one lock
 -- at a time).
 JOIN pg_locks bl ON bl.pid = a.pid AND NOT bl.granted
--- The specific lock b already holds that conflicts with it: same identity tuple, matched with
--- IS NOT DISTINCT FROM because these columns are NULL for lock types that do not use them (a
--- transactionid lock has no relation/page/tuple; = would silently drop that row).
+-- Every granted lock b holds that matches bl's identity tuple, distinct-safe matched below because
+-- these columns are NULL for lock types that do not use them (a transactionid lock has no
+-- relation/page/tuple; a plain `=` would silently drop that row). Deliberately NOT matched on
+-- kl.mode: one backend can hold more than one granted mode on the same target at once (an
+-- ordinary read-then-write in one transaction holds both AccessShareLock and RowExclusiveLock
+-- until commit), so every matching mode is aggregated below into one row per (a.pid, b.pid)
+-- instead of joining once per mode and duplicating the row -- and, with it, the CSV row, the
+-- console line, and the pair/streak/episode accounting.
 JOIN pg_locks kl
     ON kl.pid = b.pid
    AND kl.granted
@@ -104,6 +109,8 @@ JOIN pg_locks kl
 -- still produce a row -- just with an empty relation, not a dropped one.
 LEFT JOIN pg_class c ON c.oid = bl.relation
 WHERE a.wait_event_type = 'Lock'
+GROUP BY a.pid, a.wait_event_type, a.wait_event, blocked_query, blocking_pid, blocking_query,
+         blocking_state, blocked_mode, c.relname
 """
 
 CSV_HEADER = [
@@ -143,7 +150,9 @@ def build_csv_row(now: str, row: Any, blocked_kind: str, blocking_kind: str) -> 
     ``row`` is a single ``SAMPLE_SQL`` result (an ``asyncpg.Record``, or -- in tests -- a plain
     dict with the same keys). ``relation`` passes through whatever ``SAMPLE_SQL`` already
     resolved: an empty string, never a placeholder, when the lock has no relation (e.g. a
-    transactionid wait).
+    transactionid wait). ``blocking_mode`` is one mode name, or several ``+``-joined (same
+    convention as ``classify()``'s table list) when the blocker holds more than one granted mode
+    on the same target at once.
     """
     return [
         now,
