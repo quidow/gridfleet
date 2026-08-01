@@ -479,12 +479,6 @@ class HostStatusPushService:
                 HOST_PUSH_OBSERVATION_FAILURES.labels(stage=f"fold:{entry.section}").inc()
             self._log_stage(f"fold:{entry.section}", host_id, started)
 
-    async def process_observations(self, *, target: StatusPushTarget, payload: dict[str, Any]) -> None:
-        """Run restart ingest, convergence, and folds without raising to the endpoint."""
-        converged = await self.process_prepublication(target=target, payload=payload)
-        if converged:
-            await self.process_observation_folds(host_id=target.host_id, payload=payload)
-
     @staticmethod
     def _log_stage(stage: str, host_id: uuid.UUID, started: float) -> None:
         """Per-stage timing for the consolidated push ingest (diagnostic: which

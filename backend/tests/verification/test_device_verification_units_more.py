@@ -72,7 +72,6 @@ def _exec(
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         viability=viability if viability is not None else AsyncMock(),
         capability=capability if capability is not None else DeviceCapabilityService(),
-        reconciler=reconciler if reconciler is not None else AsyncMock(),
         node_manager=node_manager if node_manager is not None else AsyncMock(),
         session_factory=session_factory,  # type: ignore[arg-type]
     )

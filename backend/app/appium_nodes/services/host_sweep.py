@@ -3,8 +3,9 @@ cadence-gated partition-probe diagnostic.
 
 Everything observational moved to the push ingest path (WS-11.1): restart
 ingest, appium-node convergence, and the fact folds run at push time in
-HostStatusPushService.process_observations. This sweep notices only what a
-push cannot deliver — the host that stopped pushing.
+HostStatusPushService.process_prepublication and .process_observation_folds.
+This sweep notices only what a push cannot deliver — the host that stopped
+pushing.
 """
 
 from __future__ import annotations

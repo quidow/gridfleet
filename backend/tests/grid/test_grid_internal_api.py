@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from httpx2 import AsyncClient, Response
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.core.type_defs import SessionFactory
     from app.devices.models import Device
     from app.grid.allocation import AllocationResult, AllocationService
 
@@ -90,7 +91,7 @@ async def test_create_session_claims_then_creates(
     calls: list[dict[str, Any]] = []
 
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,
@@ -145,7 +146,7 @@ async def test_create_session_preserves_router_wire_status_contract(
     expected_message: str | None,
 ) -> None:
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,
@@ -191,7 +192,7 @@ async def test_retry_excludes_dead_target_then_creates(
     original_mark_target_node_down = router_internal.session_create.mark_target_node_down
 
     async def recording_mark_target_node_down(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         health: DeviceHealthService,
         *,
         device_id: uuid.UUID,
@@ -200,7 +201,7 @@ async def test_retry_excludes_dead_target_then_creates(
         await original_mark_target_node_down(db_factory, health, device_id=device_id)
 
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,
@@ -259,7 +260,7 @@ async def test_retry_stops_after_three_failed_targets(
     attempted_device_ids: list[uuid.UUID] = []
 
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,
@@ -305,7 +306,7 @@ async def test_budget_exhaustion_fails_before_unfinishable_attempt(
     create_budgets: list[float | None] = []
 
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,
@@ -374,7 +375,7 @@ async def test_delayed_replacement_does_not_start_below_retry_budget(
         clock.now += 0.1
 
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,
@@ -425,7 +426,7 @@ async def test_w3c_rejected_does_not_retry(
     create_call_count = 0
 
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,
@@ -626,7 +627,7 @@ async def test_create_session_resume_fails_interrupted_pending(
     await db_session.commit()
 
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,
@@ -654,7 +655,7 @@ async def test_routes_activity_and_ended_remain_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     async def fake_create(
-        db_factory: session_create.DbFactory,
+        db_factory: SessionFactory,
         allocation_service: AllocationService,
         *,
         allocation: AllocationResult,

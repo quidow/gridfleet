@@ -25,10 +25,6 @@ CREATE_TIMEOUT_CAP_SEC = 240
 CREATE_TIMEOUT_MARGIN_SEC = 5
 _PROTOCOL_ERROR_MESSAGE_LIMIT = 512
 
-# Backwards-compatible alias for the injected factory; the runtime factory is the
-# ``async_sessionmaker`` and supports ``.begin()`` (Phase 4).
-type DbFactory = SessionFactory
-
 CreateOutcomeKind = Literal[
     "created",
     "w3c_rejected",

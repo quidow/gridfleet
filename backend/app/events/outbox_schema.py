@@ -20,5 +20,3 @@ AFTER INSERT ON system_events
 FOR EACH ROW
 EXECUTE FUNCTION notify_system_event_insert();
 """
-DROP_SYSTEM_EVENTS_NOTIFY_TRIGGER_SQL: Final = "DROP TRIGGER IF EXISTS system_events_notify_insert ON system_events"
-DROP_SYSTEM_EVENTS_NOTIFY_FUNCTION_SQL: Final = "DROP FUNCTION IF EXISTS notify_system_event_insert()"

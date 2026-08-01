@@ -276,7 +276,7 @@ def _settle_push_payload(devices: list[SeededDevice]) -> dict[str, Any]:
 def _observation_failure_total() -> float:
     """Sum every child counter of HOST_PUSH_OBSERVATION_FAILURES.
 
-    ``process_observations`` swallows per-stage exceptions and bumps this. A
+    ``process_prepublication`` + ``process_observation_folds`` swallows per-stage exceptions and bumps this. A
     wiring gap would silently skip a stage and undercount the budget, so the
     measurement is only trustworthy while this total does not move.
     """
@@ -356,7 +356,7 @@ async def test_status_push_statement_and_commit_budget(
         for signature, count in tap.counter.most_common():
             print(f"    {count:5d}  {signature}")
 
-    # A wiring gap would make process_observations skip a stage silently, and a
+    # A wiring gap would make the observation stages skip a stage silently, and a
     # skipped stage measures a budget nobody runs.
     assert _observation_failure_total() == failures_before, "a push stage failed (check the wiring)"
     assert counts[1] > 0, "the tap counted no statements at all"
@@ -439,7 +439,7 @@ async def test_status_push_settle_path_statement_and_commit_budget(
         for signature, count in tap.counter.most_common():
             print(f"    {count:5d}  {signature}")
 
-    # A wiring gap would make process_observations skip a stage silently, and a
+    # A wiring gap would make the observation stages skip a stage silently, and a
     # skipped stage measures a budget nobody runs.
     assert _observation_failure_total() == failures_before, "a push stage failed (check the wiring)"
     assert counts[1] > 0, "the tap counted no statements at all"

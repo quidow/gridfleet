@@ -140,52 +140,12 @@ async def test_restore_device_to_run_noops_for_temporary_or_active_entries(monke
     assert await svc.restore_device_to_run(AsyncMock(), uuid.uuid4()) is run
 
 
-async def test_exclude_locked_sets_fields_and_returns_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
-    run_id = uuid.uuid4()
-    entry = SimpleNamespace(
-        run_id=run_id, excluded=False, exclusion_kind=None, exclusion_reason=None, excluded_at=None, excluded_until=None
-    )
-    monkeypatch.setattr(run_reservation_service, "lock_active_reservation", AsyncMock(return_value=entry))
-    db = AsyncMock()
-    svc = RunReservationService()
-
-    assert await svc.exclude_locked(db, _fake_locked(), reason="bad") == run_id
-    assert entry.excluded is True
-    assert entry.exclusion_kind is ExclusionKind.exclusion
-    assert entry.exclusion_reason == "bad"
-    assert entry.excluded_until is None
-    db.flush.assert_awaited()
-
-
-async def test_locked_helpers_return_none_when_reservation_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_release_locked_returns_none_when_reservation_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(run_reservation_service, "lock_active_reservation", AsyncMock(return_value=None))
     db = AsyncMock()
     svc = RunReservationService()
 
-    assert await svc.exclude_locked(db, _fake_locked(), reason="bad") is None
-    assert await svc.restore_locked(db, _fake_locked()) is None
     assert await svc.release_locked(db, _fake_locked(), reason="gone", publisher=event_bus) is None
-
-
-async def test_restore_locked_clears_fields(monkeypatch: pytest.MonkeyPatch) -> None:
-    run_id = uuid.uuid4()
-    entry = SimpleNamespace(
-        run_id=run_id,
-        excluded=True,
-        exclusion_kind=ExclusionKind.exclusion,
-        exclusion_reason="bad",
-        excluded_at=datetime.now(UTC),
-        excluded_until=None,
-        cooldown_count=3,
-    )
-    monkeypatch.setattr(run_reservation_service, "lock_active_reservation", AsyncMock(return_value=entry))
-    db = AsyncMock()
-    svc = RunReservationService()
-
-    assert await svc.restore_locked(db, _fake_locked()) == run_id
-    assert entry.excluded is False
-    assert entry.exclusion_kind is None
-    assert entry.cooldown_count == 0
 
 
 async def test_release_locked_marks_released_and_reconciles(monkeypatch: pytest.MonkeyPatch) -> None:

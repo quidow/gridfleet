@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from app.core.type_defs import SessionFactory
     from app.devices.locking import LockedDevice
     from app.events.protocols import EventPublisher
+    from app.hosts.service_status_push import HostStatusPushService, StatusPushTarget
     from app.packs.services.catalog_view import PackView
     from app.runs.schemas import DeviceRequirement
 
@@ -624,3 +625,16 @@ async def select_devices_for_requirement(
         restart_window_sec=restart_window_sec,
     )
     return selection.devices_by_requirement[0]
+
+
+async def run_status_push_observations(
+    service: HostStatusPushService, *, target: StatusPushTarget, payload: dict[str, Any]
+) -> None:
+    """Run the push observation stages back to back for tests.
+
+    ``router_agent`` drives these two halves with ``finalize_status_push``
+    committing in between; tests that assert stage containment and ordering
+    only need the stages themselves, so they run without the commit.
+    """
+    if await service.process_prepublication(target=target, payload=payload):
+        await service.process_observation_folds(host_id=target.host_id, payload=payload)

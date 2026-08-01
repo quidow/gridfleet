@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
 from app.hosts.service_status_push import HostStatusPushService, ObservationFold, StatusPushTarget
+from tests.helpers import run_status_push_observations
 
 if TYPE_CHECKING:
     import uuid
@@ -31,7 +32,7 @@ def _service(
     )
 
 
-async def test_process_observations_dispatches_sections_to_matching_folds(
+async def test_push_observations_dispatches_sections_to_matching_folds(
     db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
 ) -> None:
     seen: list[tuple[str, str]] = []
@@ -49,7 +50,8 @@ async def test_process_observations_dispatches_sections_to_matching_folds(
             ObservationFold("device_health", fold_b),
         ),
     )
-    await service.process_observations(
+    await run_status_push_observations(
+        service,
         target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"node_health": {"reported_at": "t1"}, "device_health": None},
     )
@@ -57,7 +59,7 @@ async def test_process_observations_dispatches_sections_to_matching_folds(
     assert seen == [("a", "t1")]
 
 
-async def test_process_observations_isolates_a_raising_fold(
+async def test_push_observations_isolates_a_raising_fold(
     db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
 ) -> None:
     ran: list[bool] = []
@@ -75,7 +77,8 @@ async def test_process_observations_isolates_a_raising_fold(
             ObservationFold("device_health", good),
         ),
     )
-    await service.process_observations(
+    await run_status_push_observations(
+        service,
         target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"node_health": {"reported_at": "t"}, "device_health": {"reported_at": "t"}},
     )
@@ -83,7 +86,7 @@ async def test_process_observations_isolates_a_raising_fold(
     assert ran == [True]
 
 
-async def test_process_observations_runs_restart_then_convergence_then_folds(
+async def test_push_observations_runs_restart_then_convergence_then_folds(
     db_session: AsyncSession, db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
 ) -> None:
     order: list[str] = []
@@ -104,7 +107,8 @@ async def test_process_observations_runs_restart_then_convergence_then_folds(
         converge_host=converge,
         observation_folds=(ObservationFold("node_health", fold),),
     )
-    await service.process_observations(
+    await run_status_push_observations(
+        service,
         target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"appium_processes": {"running_nodes": []}, "node_health": {"reported_at": "t"}},
     )
@@ -112,7 +116,7 @@ async def test_process_observations_runs_restart_then_convergence_then_folds(
     assert order == ["restart", "converge", "fold"]
 
 
-async def test_process_observations_holds_folds_when_convergence_fails(
+async def test_push_observations_holds_folds_when_convergence_fails(
     db_session_maker: async_sessionmaker[AsyncSession], db_host: Host
 ) -> None:
     ran: list[bool] = []
@@ -128,7 +132,8 @@ async def test_process_observations_holds_folds_when_convergence_fails(
         converge_host=converge,
         observation_folds=(ObservationFold("node_health", fold),),
     )
-    await service.process_observations(
+    await run_status_push_observations(
+        service,
         target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"appium_processes": {}, "node_health": {"reported_at": "t"}},
     )
@@ -136,9 +141,10 @@ async def test_process_observations_holds_folds_when_convergence_fails(
     assert ran == []
 
 
-async def test_process_observations_without_wiring_is_a_noop(db_host: Host) -> None:
+async def test_push_observations_without_wiring_is_a_noop(db_host: Host) -> None:
     service = HostStatusPushService(publisher=AsyncMock())
-    await service.process_observations(
+    await run_status_push_observations(
+        service,
         target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"node_health": {"reported_at": "t"}},
     )
@@ -154,7 +160,8 @@ async def test_convergence_stage_receives_values_not_a_session(
         assert not {"db", "session"} & kwargs.keys()
 
     service = _service(db_session_maker, converge_host=fake_converge_host)
-    await service.process_observations(
+    await run_status_push_observations(
+        service,
         target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"appium_processes": {"running_nodes": []}},
     )

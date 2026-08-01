@@ -226,49 +226,6 @@ class RunReservationService:
         locked_entry.cooldown_count = 0
         return run
 
-    async def exclude_locked(
-        self,
-        db: AsyncSession,
-        locked: LockedDevice,
-        *,
-        reason: str,
-    ) -> uuid.UUID | None:
-        """Exclude the active reservation for an already-locked device (Device
-        before child). Flushes only; returns the reservation's ``run_id`` (or
-        ``None`` when the device carries no active reservation)."""
-        locked.assert_active(db)
-        entry = await lock_active_reservation(db, locked)
-        if entry is None:
-            return None
-        entry.excluded = True
-        entry.exclusion_kind = ExclusionKind.exclusion
-        entry.exclusion_reason = reason
-        entry.excluded_at = now_utc()
-        entry.excluded_until = None
-        await db.flush()
-        return entry.run_id
-
-    async def restore_locked(
-        self,
-        db: AsyncSession,
-        locked: LockedDevice,
-    ) -> uuid.UUID | None:
-        """Clear every exclusion field (and the cooldown count) for an
-        already-locked device. Flushes only; returns the reservation's
-        ``run_id`` (or ``None`` when absent)."""
-        locked.assert_active(db)
-        entry = await lock_active_reservation(db, locked)
-        if entry is None:
-            return None
-        entry.excluded = False
-        entry.exclusion_kind = None
-        entry.exclusion_reason = None
-        entry.excluded_at = None
-        entry.excluded_until = None
-        entry.cooldown_count = 0
-        await db.flush()
-        return entry.run_id
-
     async def release_locked(
         self,
         db: AsyncSession,

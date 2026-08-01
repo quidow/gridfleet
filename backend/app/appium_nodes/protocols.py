@@ -35,16 +35,6 @@ class ReconcilerProtocol(Protocol):
 
 
 class DeviceRecoveryControl(Protocol):
-    async def record_control_action(
-        self,
-        db: AsyncSession,
-        device: Device,
-        *,
-        action: str,
-        failure_source: str | None = None,
-        failure_reason: str | None = None,
-    ) -> None: ...
-
     async def clear_pending_auto_stop_on_recovery(
         self,
         db: AsyncSession,

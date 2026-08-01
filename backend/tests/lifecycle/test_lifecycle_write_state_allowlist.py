@@ -3,9 +3,9 @@
 
 Bug history: lifecycle JSON ownership was fragmented when call sites outside
 ``app.lifecycle.services.policy`` / ``app.lifecycle.services.actions`` performed
-their own ``write_state(...)`` calls. Engineers reading older docs assumed
-``record_control_action`` was the only writer and patched a new direct write
-elsewhere, defeating ownership boundaries. This guard makes the rule
+their own ``write_state(...)`` calls. Engineers reading older docs assumed one
+of the remediation-log helpers was the only writer and patched a new direct
+write elsewhere, defeating ownership boundaries. This guard makes the rule
 mechanical so additions outside the allowlist fail in CI.
 """
 

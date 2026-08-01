@@ -58,7 +58,6 @@ if TYPE_CHECKING:
     from app.devices.protocols import (
         DeviceCapabilityProtocol,
         DeviceCrudProtocol,
-        NodeConvergence,
         RemoteNodeManager,
         SessionViabilityProbe,
     )
@@ -133,7 +132,6 @@ class VerificationExecutionService:
         crud: DeviceCrudProtocol,
         viability: SessionViabilityProbe,
         capability: DeviceCapabilityProtocol,
-        reconciler: NodeConvergence,
         node_manager: RemoteNodeManager,
         session_factory: SessionFactory = async_session,
     ) -> None:
@@ -142,7 +140,6 @@ class VerificationExecutionService:
         self._crud = crud
         self._viability = viability
         self._capability = capability
-        self._reconciler = reconciler
         self._node_manager = node_manager
         self._session_factory = session_factory
         self._failure_finalizers = FailureFinalizers(
