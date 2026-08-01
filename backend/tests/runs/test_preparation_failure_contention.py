@@ -118,6 +118,11 @@ async def test_preparation_failure_bounds_lock_wait_then_resolves_retry_from_sta
         await blocker.rollback()
         await blocker.close()
 
+    # Restore the production 5 s bound. The two uncontended calls below have no
+    # blocker to wait on, so a 250 ms per-statement ceiling buys them nothing and
+    # costs a flake surface on a loaded CI box.
+    monkeypatch.undo()
+
     committed = await client.post(url, json=payload)
 
     assert committed.status_code == 200

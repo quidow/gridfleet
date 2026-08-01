@@ -257,11 +257,13 @@ Note the deliberate status split for an unknown group key: REST endpoints (`POST
 
 Current shipped behavior for `POST /api/runs/{run_id}/devices/{device_id}/preparation-failed`:
 
-- the device must still be actively reserved by that run
 - the device is excluded from the run rather than releasing the whole run
 - the device transitions to `offline` and unhealthy
 - healthy reserved siblings remain attached to the run
-- invalid run/device state currently returns `409`
+- `200` when the report commits against an active reservation for that run
+- `200` when an identical retry finds that reservation already released carrying the same normalized reason — the released row is the durable proof the operation already committed, so the retry is idempotent and emits no second lifecycle incident
+- `409` when no active reservation exists and no released row matches this exact report (released by run completion, force-release, or a different preparation failure)
+- `503` with `Retry-After: 1` when the report loses a lock race and PostgreSQL aborts it with SQLSTATE `55P03`; the per-statement `lock_timeout` fires well inside the 30 s request watchdog, so the retry is safe by construction rather than a gamble
 
 ## Sessions
 

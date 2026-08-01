@@ -109,6 +109,12 @@ class RunFailureService:
             # a concurrent writer aborts this transaction with SQLSTATE 55P03 rather than
             # outliving the request. Transaction-local: it reverts with the COMMIT/ROLLBACK
             # and never follows the connection back into the pool.
+            #
+            # PostgreSQL applies ``lock_timeout`` **per statement**, not per transaction.
+            # This report locks the run row, the device row, and the reservation row, so
+            # the worst-case wait is a multiple of the constant — still comfortably under
+            # the 30 s request watchdog. Size the constant against that multiple, not
+            # against one lock.
             await db.execute(text(f"SET LOCAL lock_timeout = '{PREPARATION_FAILURE_LOCK_TIMEOUT_MS}ms'"))
 
             run = await self._lock_run(db, run_id)
@@ -291,7 +297,16 @@ class RunFailureService:
         pair counts, and only when it is released *and* carries this report's normalized
         reason — a row released by anything else (run completion, force-release, a
         different preparation failure) is not proof of this report and keeps the existing
-        conflict."""
+        conflict.
+
+        Two narrow assumptions, both documented rather than defended in code. The newest-row
+        lookup has no tiebreak on equal ``created_at``, so exactly-simultaneous reservation
+        rows for the same pair order arbitrarily; and if the same run re-reserved the device
+        between the client's two attempts, the caller never reaches this check at all — it
+        finds the fresh active reservation and releases *that* instead of recognising the
+        earlier report as already committed. Both need a re-reservation inside the client's
+        retry window, which the quarantining failure this endpoint records makes
+        implausible."""
         newest = (
             await db.execute(
                 select(DeviceReservation)
