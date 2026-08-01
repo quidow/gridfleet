@@ -14,6 +14,7 @@ from app.core.observability import (
     bind_request_context,
     clear_request_context,
     generate_request_id,
+    get_logger,
 )
 from app.core.shutdown import shutdown_coordinator
 
@@ -21,6 +22,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+logger = get_logger(__name__)
 
 __all__ = ["RequestContextMiddleware"]
 
@@ -123,6 +126,15 @@ class RequestContextMiddleware:
             else:
                 await asyncio.wait_for(self.app(scope, receive, send_wrapper), timeout=self._request_timeout_sec)
         except TimeoutError:
+            logger.warning(
+                "request_timeout",
+                request_id=request_id,
+                method=method,
+                path=self._route_path(scope, path),
+                timeout_sec=self._request_timeout_sec,
+                elapsed_ms=(perf_counter() - started) * 1000,
+                response_started=response_started,
+            )
             if not response_started:
                 response = envelope_response(
                     status_code=504,

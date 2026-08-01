@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import structlog.testing
 from httpx2 import ASGITransport, AsyncClient
 from starlette.responses import JSONResponse
 
@@ -127,12 +128,23 @@ async def test_request_timeout_middleware_returns_structured_error() -> None:
     middleware = RequestContextMiddleware(slow_app)
     middleware._request_timeout_sec = 0.001
 
-    async with AsyncClient(transport=ASGITransport(app=middleware), base_url="http://test") as client:
-        response = await client.get("/api/slow")
+    with structlog.testing.capture_logs() as captured_logs:
+        async with AsyncClient(transport=ASGITransport(app=middleware), base_url="http://test") as client:
+            response = await client.get("/api/slow")
 
     assert response.status_code == 504
     assert response.json()["error"]["code"] == "REQUEST_TIMEOUT"
     assert response.json()["error"]["message"] == "The request exceeded the maximum execution time"
+
+    timeout_records = [entry for entry in captured_logs if entry.get("event") == "request_timeout"]
+    assert len(timeout_records) == 1
+    record = timeout_records[0]
+    assert record["request_id"] == response.json()["error"]["request_id"]
+    assert record["method"] == "GET"
+    assert record["path"] == "/api/slow"
+    assert record["timeout_sec"] == 0.001
+    assert record["elapsed_ms"] >= 0
+    assert record["response_started"] is False
 
 
 async def test_request_timeout_exempts_grid_allocate_long_poll() -> None:
