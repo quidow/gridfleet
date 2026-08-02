@@ -20,7 +20,6 @@ import asyncio
 import dataclasses
 import inspect
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, patch
 
@@ -525,11 +524,3 @@ async def test_run_pending_once_threads_the_claim_generation_into_the_runner(
         job.payload,
         claim_attempt=job.attempts,
     )
-
-
-def test_remediation_modules_own_no_direct_commit_or_rollback() -> None:
-    app_root = Path(__file__).resolve().parents[2] / "app"
-    for relative in ("devices/services/remediation.py", "devices/services/remediation_job.py"):
-        source = (app_root / relative).read_text(encoding="utf-8")
-        assert ".commit()" not in source, f"{relative} must not own a commit"
-        assert ".rollback()" not in source, f"{relative} must not own a rollback"

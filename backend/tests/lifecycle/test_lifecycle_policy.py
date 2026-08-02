@@ -1978,32 +1978,6 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
     append_failure.assert_awaited_once_with(db, locked, source="checks", reason="bad")
 
 
-async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Migrated: the node-start-failure backoff path now lives in
-    # prepare_auto_recovery_locked (candidate_ports failure → escalate →
-    # backoff incident pair → clear generation → return False), covered by
-    # Task 4's prepare_auto_recovery_locked tests.
-    pass
-
-
-async def test_attempt_auto_recovery_start_and_probe_outcomes(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Migrated: the wait-before-probe ordering is now structurally enforced by
-    # the worker's phase ordering (_wait_for_node_running then _run_probe), and
-    # the success/failure finalize branches are covered by
-    # test_successful_recovery_rejoins_run and test_failed_recovery_sets_backoff_and_keeps_exclusion.
-    pass
-
-
-async def test_node_start_failure_promotes_to_review_at_threshold(db_session: AsyncSession, db_host: Host) -> None:
-    # Migrated: node-start-failure review promotion now lives in
-    # prepare_auto_recovery_locked's candidate_ports failure path, which calls
-    # escalate_remediation_failure (the same shared ladder that promotes to
-    # review at threshold). Covered by Task 4's prepare tests.
-    pass
-
-
 # ---------------------------------------------------------------------------
 # restore_run_after_self_heal — close the restore-gap where a recovered device
 # returns to ``available`` without auto-recovery firing, leaving the no-TTL

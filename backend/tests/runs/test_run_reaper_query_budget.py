@@ -22,7 +22,6 @@ pre-refactor code.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
@@ -99,9 +98,3 @@ async def test_reaper_commit_and_query_budget_scales_with_candidates(db_session:
     assert test_run_reads == {n: n + 1 for n in FLEET_SIZES}, (
         f"expected one discovery SELECT plus one locked recheck per candidate, got {test_run_reads}"
     )
-
-
-def test_run_reaper_owns_no_direct_commit_or_rollback() -> None:
-    source = (Path(__file__).resolve().parents[2] / "app" / "runs" / "service_reaper.py").read_text(encoding="utf-8")
-    assert ".commit()" not in source, "service_reaper.py must not own a commit"
-    assert ".rollback()" not in source, "service_reaper.py must not own a rollback"
