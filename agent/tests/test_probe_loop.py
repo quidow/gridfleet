@@ -130,6 +130,54 @@ async def test_latest_results_shape() -> None:
     assert results["device_properties"]["devices"]["serial-1"]["detected_properties"]["os_version"] == "14"
 
 
+class _CoalescedManager(_Manager):
+    """Retained node from a withheld first-attempt restart: the process
+    snapshot marks it ``observation_coalesced`` while the live Appium status
+    is unreachable (the old process already crashed)."""
+
+    async def process_snapshot(self) -> dict[str, Any]:
+        return {
+            "running_nodes": [
+                {
+                    "port": 4723,
+                    "pid": 123,
+                    "connection_target": "emulator-5554",
+                    "observation_coalesced": True,
+                }
+            ]
+        }
+
+    async def status(self, port: int) -> dict[str, Any]:
+        return {"port": port, "running": False}
+
+
+@pytest.mark.asyncio
+async def test_probe_nodes_reports_running_for_coalesced_node() -> None:
+    """Node health must not contradict the retained process snapshot: a
+    coalesced node reports ``running=True`` even though the live status()
+    probe (which would hit the already-crashed old process) says otherwise.
+    This is the second channel that leaked the withheld restart (S04c)."""
+    loop = ProbeLoop(
+        roster_client=_Roster(),
+        manager=_CoalescedManager(),
+        host_identity=_identity(),
+        health_probe=_health_probe,
+        properties_probe=_properties_probe,
+    )
+
+    section = await loop._probe_nodes()
+
+    assert section["nodes"] == [
+        {
+            "port": 4723,
+            "pid": 123,
+            "connection_target": "emulator-5554",
+            "running": True,
+            "observed_at": section["nodes"][0]["observed_at"],
+        }
+    ]
+
+
 @pytest.mark.asyncio
 async def test_device_health_section_emits_typed_items_including_failures() -> None:
     roster = _Roster()

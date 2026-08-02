@@ -148,7 +148,12 @@ class ProbeLoop:
         snapshot = await self.manager.process_snapshot()
         nodes: list[dict[str, Any]] = []
         for node in snapshot.get("running_nodes", []):
-            status = await self.manager.status(node["port"])
+            # A coalesced entry is a retained dead process from a withheld,
+            # in-progress first restart attempt (agent_app.appium.process);
+            # its own status() would hit the already-crashed process and
+            # contradict the process snapshot it is agreeing to withhold.
+            coalesced = node.get("observation_coalesced") is True
+            status = {"running": True} if coalesced else await self.manager.status(node["port"])
             nodes.append(
                 {
                     "port": node["port"],

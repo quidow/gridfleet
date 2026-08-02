@@ -350,6 +350,13 @@ class AppiumProcessManager:
             maxlen=MAX_RESTART_EVENTS
         )
         self._restart_sequence = 0
+        # Coalescing: the first, in-progress, retryable restart attempt for a
+        # port is withheld from the status push (both the recorded crash event
+        # and the down running-node observation) until it resolves, so a crash
+        # the agent recovers from within the first backoff never makes a device
+        # visibly leave `available`. Never populated for attempt 2+.
+        self._first_restart_observation_ports: set[int] = set()
+        self._withheld_restart_sequence_by_port: dict[int, int] = {}
         self._start_failures: collections.deque[AppiumStartFailure] = collections.deque(maxlen=MAX_RESTART_EVENTS)
         self._intentional_stop_ports: set[int] = set()
         self._runtime_registry: RuntimeRegistry | None = None
@@ -531,11 +538,12 @@ class AppiumProcessManager:
         delay_sec: int | None,
         exit_code: int | None,
         will_retry: bool,
-    ) -> None:
+    ) -> int:
         self._restart_sequence += 1
+        sequence = self._restart_sequence
         self._recent_restart_events.append(
             AppiumRestartEvent(
-                sequence=self._restart_sequence,
+                sequence=sequence,
                 process=process,
                 kind=kind,
                 port=port,
@@ -547,6 +555,11 @@ class AppiumProcessManager:
                 will_retry=will_retry,
             )
         )
+        return sequence
+
+    def _release_first_restart_observation(self, port: int) -> None:
+        self._first_restart_observation_ports.discard(port)
+        self._withheld_restart_sequence_by_port.pop(port, None)
 
     def record_start_failure(self, *, port: int, connection_target: str, kind: str, detail: str) -> None:
         """Record a failed `start()` attempt for the next `/agent/health` payload.
@@ -609,7 +622,7 @@ class AppiumProcessManager:
             can_retry = next_attempt <= AUTO_RESTART_MAX_ATTEMPTS
             delay_sec = self._next_restart_delay(self._appium_restart_backoff_steps, port) if can_retry else None
             info = self._info.get(port)
-            self._record_restart_event(
+            sequence = self._record_restart_event(
                 process="appium",
                 kind="crash_detected",
                 port=port,
@@ -619,119 +632,132 @@ class AppiumProcessManager:
                 exit_code=last_exit_code,
                 will_retry=can_retry,
             )
-            if not can_retry:
-                logger.error(
-                    "Appium auto-restart exhausted for connection_target=%s port=%d after %d attempts in %ds",
-                    info.connection_target if info is not None else "unknown",
-                    port,
-                    AUTO_RESTART_MAX_ATTEMPTS,
-                    AUTO_RESTART_WINDOW_SEC,
-                )
-                self._record_restart_event(
-                    process="appium",
-                    kind="restart_exhausted",
-                    port=port,
-                    pid=info.pid if info is not None else None,
-                    attempt=next_attempt,
-                    delay_sec=None,
-                    exit_code=last_exit_code,
-                    will_retry=False,
-                )
-                return
-
-            logger.info(
-                "Scheduling Appium auto-restart for connection_target=%s port=%d attempt=%d delay_sec=%d",
-                info.connection_target if info is not None else "unknown",
-                port,
-                next_attempt,
-                delay_sec,
-            )
-            assert delay_sec is not None
-            await asyncio.sleep(delay_sec)
-            if port in self._intentional_stop_ports:
-                return
-            if port in self._stop_pending_ports:
-                # Operator queued a stop_pending lifecycle during the
-                # backoff window; honor it instead of resurrecting the
-                # process. The actual stop is owned by the backend's appium
-                # reconciler via AppiumNode.desired_state.
-                return
-            if port not in self._launch_specs:
-                return
-
-            history = self._trim_restart_attempts(self._appium_restart_attempts, port)
-            attempt_number = len(history) + 1
-            history.append(asyncio.get_running_loop().time())
+            # Coalesce only the first, in-progress, retryable attempt: later
+            # attempts (and every terminal/ambiguous failure) stay immediately
+            # observable. Released below on every exit from this attempt --
+            # non-success return, continuing to attempt two, after recording
+            # restart_succeeded, or cancellation -- via the finally block.
+            is_first_attempt = next_attempt == 1 and can_retry
+            if is_first_attempt:
+                self._first_restart_observation_ports.add(port)
+                self._withheld_restart_sequence_by_port[port] = sequence
             try:
-                restarted = await self._restart_from_launch_spec(port)
-            except PortOccupiedError:
+                if not can_retry:
+                    logger.error(
+                        "Appium auto-restart exhausted for connection_target=%s port=%d after %d attempts in %ds",
+                        info.connection_target if info is not None else "unknown",
+                        port,
+                        AUTO_RESTART_MAX_ATTEMPTS,
+                        AUTO_RESTART_WINDOW_SEC,
+                    )
+                    self._record_restart_event(
+                        process="appium",
+                        kind="restart_exhausted",
+                        port=port,
+                        pid=info.pid if info is not None else None,
+                        attempt=next_attempt,
+                        delay_sec=None,
+                        exit_code=last_exit_code,
+                        will_retry=False,
+                    )
+                    return
+
+                logger.info(
+                    "Scheduling Appium auto-restart for connection_target=%s port=%d attempt=%d delay_sec=%d",
+                    info.connection_target if info is not None else "unknown",
+                    port,
+                    next_attempt,
+                    delay_sec,
+                )
+                assert delay_sec is not None
+                await asyncio.sleep(delay_sec)
+                if port in self._intentional_stop_ports:
+                    return
+                if port in self._stop_pending_ports:
+                    # Operator queued a stop_pending lifecycle during the
+                    # backoff window; honor it instead of resurrecting the
+                    # process. The actual stop is owned by the backend's appium
+                    # reconciler via AppiumNode.desired_state.
+                    return
+                if port not in self._launch_specs:
+                    return
+
+                history = self._trim_restart_attempts(self._appium_restart_attempts, port)
+                attempt_number = len(history) + 1
+                history.append(asyncio.get_running_loop().time())
+                try:
+                    restarted = await self._restart_from_launch_spec(port)
+                except PortOccupiedError:
+                    self._record_restart_event(
+                        process="appium",
+                        kind="port_conflict",
+                        port=port,
+                        pid=info.pid if info is not None else None,
+                        attempt=attempt_number,
+                        delay_sec=None,
+                        exit_code=last_exit_code,
+                        will_retry=False,
+                    )
+                    logger.error(
+                        "Appium auto-restart stopped for connection_target=%s port=%d because the port is occupied",
+                        info.connection_target if info is not None else "unknown",
+                        port,
+                    )
+                    await self._drop_failed_managed_port(port)
+                    return
+                except AlreadyRunningError:
+                    # Another node already serves this target on a different port
+                    # (e.g. the backend restarted it elsewhere during the crash
+                    # window). Resurrecting this port would only re-raise forever and
+                    # risk a duplicate node, so abort and release the port; the
+                    # backend reconciler reaps whichever node is the true orphan.
+                    logger.info(
+                        "Appium auto-restart aborted for port %d: target %s already served by another node",
+                        port,
+                        info.connection_target if info is not None else "unknown",
+                    )
+                    await self._drop_failed_managed_port(port)
+                    return
+                except StartDeferredError as exc:
+                    # Start could not proceed yet (adapter/runtime still loading, or
+                    # release changed mid-start). This is transient, not a restart
+                    # failure: do not advance the auto-restart backoff or drop the
+                    # port. The node-state convergence loop retries start() next tick
+                    # and defers again until the transient condition clears.
+                    logger.info(
+                        "Appium auto-restart deferred for port %d: %s; convergence loop will retry",
+                        port,
+                        exc,
+                    )
+                    return
+                except Exception:
+                    self._advance_restart_backoff(self._appium_restart_backoff_steps, port)
+                    logger.exception("Appium auto-restart failed for port %d on attempt %d", port, attempt_number)
+                    last_exit_code = None
+                    continue
+
+                self._appium_restart_backoff_steps.pop(port, None)
                 self._record_restart_event(
                     process="appium",
-                    kind="port_conflict",
+                    kind="restart_succeeded",
                     port=port,
-                    pid=info.pid if info is not None else None,
+                    pid=restarted.pid,
                     attempt=attempt_number,
-                    delay_sec=None,
+                    delay_sec=delay_sec,
                     exit_code=last_exit_code,
                     will_retry=False,
                 )
-                logger.error(
-                    "Appium auto-restart stopped for connection_target=%s port=%d because the port is occupied",
-                    info.connection_target if info is not None else "unknown",
-                    port,
-                )
-                await self._drop_failed_managed_port(port)
-                return
-            except AlreadyRunningError:
-                # Another node already serves this target on a different port
-                # (e.g. the backend restarted it elsewhere during the crash
-                # window). Resurrecting this port would only re-raise forever and
-                # risk a duplicate node, so abort and release the port; the
-                # backend reconciler reaps whichever node is the true orphan.
                 logger.info(
-                    "Appium auto-restart aborted for port %d: target %s already served by another node",
-                    port,
-                    info.connection_target if info is not None else "unknown",
-                )
-                await self._drop_failed_managed_port(port)
-                return
-            except StartDeferredError as exc:
-                # Start could not proceed yet (adapter/runtime still loading, or
-                # release changed mid-start). This is transient, not a restart
-                # failure: do not advance the auto-restart backoff or drop the
-                # port. The node-state convergence loop retries start() next tick
-                # and defers again until the transient condition clears.
-                logger.info(
-                    "Appium auto-restart deferred for port %d: %s; convergence loop will retry",
-                    port,
-                    exc,
+                    "Appium auto-restart succeeded for connection_target=%s port=%d attempt=%d pid=%d",
+                    restarted.connection_target,
+                    restarted.port,
+                    attempt_number,
+                    restarted.pid,
                 )
                 return
-            except Exception:
-                self._advance_restart_backoff(self._appium_restart_backoff_steps, port)
-                logger.exception("Appium auto-restart failed for port %d on attempt %d", port, attempt_number)
-                last_exit_code = None
-                continue
-
-            self._appium_restart_backoff_steps.pop(port, None)
-            self._record_restart_event(
-                process="appium",
-                kind="restart_succeeded",
-                port=port,
-                pid=restarted.pid,
-                attempt=attempt_number,
-                delay_sec=delay_sec,
-                exit_code=last_exit_code,
-                will_retry=False,
-            )
-            logger.info(
-                "Appium auto-restart succeeded for connection_target=%s port=%d attempt=%d pid=%d",
-                restarted.connection_target,
-                restarted.port,
-                attempt_number,
-                restarted.pid,
-            )
-            return
+            finally:
+                if is_first_attempt:
+                    self._release_first_restart_observation(port)
 
     async def _restart_from_launch_spec(self, port: int) -> AppiumProcessInfo:
         spec = self._launch_specs.get(port)
@@ -1169,9 +1195,25 @@ class AppiumProcessManager:
         return running
 
     async def process_snapshot(self) -> dict[str, Any]:
+        running_nodes = [await self._running_node_snapshot(info) for info in self.list_running()]
+        running_ports = {node["port"] for node in running_nodes}
+        # Retain a dead node for a port whose first restart attempt is still
+        # withheld, so the coalesced observation shows the crashed process
+        # instead of the port silently disappearing from the snapshot.
+        coalesced_ports = set(self._first_restart_observation_ports) - running_ports
+        for port in coalesced_ports:
+            info = self._info.get(port)
+            if info is None:
+                continue
+            coalesced_node = await self._running_node_snapshot(info)
+            coalesced_node["observation_coalesced"] = True
+            running_nodes.append(coalesced_node)
+        withheld_sequences = set(self._withheld_restart_sequence_by_port.values())
         return {
-            "running_nodes": [await self._running_node_snapshot(info) for info in self.list_running()],
-            "recent_restart_events": [event.to_payload() for event in self._recent_restart_events],
+            "running_nodes": running_nodes,
+            "recent_restart_events": [
+                event.to_payload() for event in self._recent_restart_events if event.sequence not in withheld_sequences
+            ],
             "start_failures": [failure.to_payload() for failure in self._start_failures],
         }
 

@@ -26,6 +26,7 @@ from app.hosts.models import Host, HostStatus, OSType
 from app.hosts.service_status_push import HOST_STATUS_NAMESPACE
 from tests.fakes import FakeSettingsReader
 from tests.helpers import dispatch_committed_events, test_event_bus
+from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -651,6 +652,7 @@ async def test_host_offline_cascade_publishes_canonical_availability_event(
 async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_plane_state(
     db_session: AsyncSession,
 ) -> None:
+    await seed_test_packs(db_session)
     host = Host(hostname="agent-host", ip="10.0.0.1", os_type=OSType.linux, agent_port=5100, status=HostStatus.online)
     db_session.add(host)
     await db_session.flush()
@@ -762,6 +764,21 @@ async def test_heartbeat_ingests_agent_restart_events_once_and_updates_control_p
         await db_session.execute(select(Device).where(Device.id == device.id).options(selectinload(Device.appium_node)))
     ).scalar_one()
     assert device_health.build_public_summary(device_reloaded)["node"]["status"] == "ok"
+    # A coalesced payload (both restart events arriving together, already
+    # resolved) must still fold to a healthy final fact.
+    assert device_reloaded.operational_state_last_emitted == DeviceOperationalState.available
+    assert (
+        await derive_operational_state(
+            db_session,
+            device_reloaded,
+            now=now_utc(),
+        )
+        is DeviceOperationalState.available
+    )
+    assert [event.event_type for event in events] == [
+        DeviceEventType.node_crash,
+        DeviceEventType.node_restart,
+    ]
 
 
 async def test_restart_succeeded_eager_fills_active_connection_target(db_session: AsyncSession) -> None:

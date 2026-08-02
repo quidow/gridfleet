@@ -537,13 +537,16 @@ async def test_reconfigure_unknown_port_raises_device_not_found() -> None:
 
 
 async def test_reconfigure_stop_pending_blocks_auto_restart() -> None:
-    """A ``stop_pending=True`` reconfigure must track the port in
-    ``_stop_pending_ports`` so the auto-restart loop refuses to resurrect a
-    crashed Appium under a pending stop. Stop decisions are owned by the
-    backend's appium reconciler via ``AppiumNode.desired_state``.
+    """A ``stop_pending=True`` reconfigure queued during the crash backoff
+    window must track the port in ``_stop_pending_ports`` so the auto-restart
+    loop refuses to resurrect a crashed Appium under a pending stop. Stop
+    decisions are owned by the backend's appium reconciler via
+    ``AppiumNode.desired_state``. Releasing the withheld first-attempt
+    observation must make the crash visible even though the restart itself
+    is refused.
     """
     manager = AppiumProcessManager()
-    appium_proc = FakeProcess(pid=5002)
+    appium_proc = FakeProcess(pid=5002, returncode=1)
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
     manager._info[4723] = AppiumProcessInfo(
         port=4723,
@@ -552,13 +555,24 @@ async def test_reconfigure_stop_pending_blocks_auto_restart() -> None:
         platform_id="android_mobile",
     )
 
-    await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(_delay: float) -> None:
+        # Operator queues a stop_pending reconfigure while the auto-restart
+        # loop is mid-backoff on the crashed port.
+        await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
+        await real_sleep(0)
+
+    with patch("agent_app.appium.process.asyncio.sleep", side_effect=fake_sleep):
+        await manager._auto_restart_appium(4723, exit_code=9)
 
     assert 4723 in manager._stop_pending_ports
 
-    # Auto-restart must refuse to resurrect because a stop is pending.
-    await manager._auto_restart_appium(4723, exit_code=9)
-    assert (await manager.process_snapshot())["recent_restart_events"] == []
+    snapshot = await manager.process_snapshot()
+    assert snapshot["recent_restart_events"][0]["kind"] == "crash_detected"
+    assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
+    assert manager._withheld_restart_sequence_by_port == {}
+    assert manager._first_restart_observation_ports == set()
 
 
 async def test_start_can_disable_session_override() -> None:
@@ -883,6 +897,66 @@ async def test_unexpected_exit_triggers_auto_restart() -> None:
     await manager.shutdown()
 
 
+async def test_first_restart_attempt_is_coalesced_while_in_progress() -> None:
+    """The first, retryable crash-and-restart cycle must be withheld from the
+    status push while it is still in flight (S04c: a device the agent recovers
+    within the first ~1s backoff must never visibly leave `available`). The
+    retained node keeps reporting the crashed pid until the attempt resolves.
+    """
+    manager = AppiumProcessManager()
+    crashed_proc = FakeProcess(pid=1111)
+    restarted_proc = FakeProcess(pid=2222)
+    block_backoff = asyncio.Event()
+    real_sleep = asyncio.sleep
+
+    async def fake_sleep(_delay: float) -> None:
+        await block_backoff.wait()
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.os.path.isfile", return_value=False),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, side_effect=[True, True]),
+        patch(
+            "agent_app.appium.process.asyncio.create_subprocess_exec",
+            side_effect=[crashed_proc, restarted_proc],
+        ),
+        patch("agent_app.appium.process.asyncio.sleep", side_effect=fake_sleep),
+    ):
+        await manager.start(
+            connection_target="device-100",
+            port=4723,
+            **PACK_START_KWARGS,
+        )
+        crashed_pid = crashed_proc.pid
+        crashed_proc.set_exit(1)
+        # Wait until the watcher has observed the exit, recorded the crash, and
+        # is now blocked on the real one-second backoff (stood in for by the Event).
+        for _ in range(200):
+            if 4723 in manager._first_restart_observation_ports:
+                break
+            await real_sleep(0)
+
+        snapshot = await manager.process_snapshot()
+        assert snapshot["recent_restart_events"] == []
+        assert snapshot["running_nodes"][0]["observation_coalesced"] is True
+        assert snapshot["running_nodes"][0]["pid"] == crashed_pid
+
+        block_backoff.set()
+        for _ in range(200):
+            if [info.pid for info in manager.list_running()] == [2222]:
+                break
+            await real_sleep(0)
+
+    final = await manager.process_snapshot()
+    assert [event["kind"] for event in final["recent_restart_events"]] == [
+        "crash_detected",
+        "restart_succeeded",
+    ]
+    assert "observation_coalesced" not in final["running_nodes"][0]
+    await manager.shutdown()
+
+
 async def test_auto_restart_cap_stops_retrying_after_threshold() -> None:
     manager = AppiumProcessManager()
     current_time = asyncio.get_running_loop().time()
@@ -913,6 +987,10 @@ async def test_auto_restart_cap_stops_retrying_after_threshold() -> None:
     ]
     assert [event["process"] for event in snapshot["recent_restart_events"]] == ["appium", "appium"]
     assert snapshot["recent_restart_events"][0]["will_retry"] is False
+    # An exhausted-retry crash (attempt 6, not attempt 1) is never coalesced.
+    assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
+    assert manager._withheld_restart_sequence_by_port == {}
+    assert manager._first_restart_observation_ports == set()
 
 
 async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_listener() -> None:
@@ -1012,6 +1090,10 @@ async def test_auto_restart_defers_when_driver_pack_not_loaded_yet() -> None:
     ]
     # Auto-restart backoff is not advanced for a transient deferral.
     assert 4723 not in manager._appium_restart_backoff_steps
+    assert snapshot["recent_restart_events"][0]["kind"] == "crash_detected"
+    assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
+    assert manager._withheld_restart_sequence_by_port == {}
+    assert manager._first_restart_observation_ports == set()
 
 
 async def test_auto_restart_aborts_when_target_already_served_by_another_node() -> None:
@@ -2299,9 +2381,14 @@ async def test_auto_restart_records_port_conflict_and_drops() -> None:
     ):
         await manager._auto_restart_appium(4723, exit_code=1)
 
-    events = [e["kind"] for e in (await manager.process_snapshot())["recent_restart_events"]]
+    snapshot = await manager.process_snapshot()
+    events = [e["kind"] for e in snapshot["recent_restart_events"]]
     assert events == ["crash_detected", "port_conflict"]
     assert 4723 not in manager._info
+    assert snapshot["recent_restart_events"][0]["kind"] == "crash_detected"
+    assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
+    assert manager._withheld_restart_sequence_by_port == {}
+    assert manager._first_restart_observation_ports == set()
 
 
 async def test_auto_restart_advances_backoff_on_generic_failure() -> None:
@@ -2346,6 +2433,13 @@ async def test_auto_restart_advances_backoff_on_generic_failure() -> None:
 
     # Backoff step should have advanced once
     assert manager._appium_restart_backoff_steps.get(4723, 0) >= 1
+    # The withheld first attempt must be released before the loop continued to
+    # attempt two, regardless of the later cancellation.
+    snapshot = await manager.process_snapshot()
+    assert snapshot["recent_restart_events"][0]["kind"] == "crash_detected"
+    assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
+    assert manager._withheld_restart_sequence_by_port == {}
+    assert manager._first_restart_observation_ports == set()
 
 
 async def test_restart_from_launch_spec_raises_when_spec_missing() -> None:
