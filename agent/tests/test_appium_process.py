@@ -340,6 +340,21 @@ async def test_process_snapshot_reports_has_active_session_true() -> None:
     }
 
 
+async def test_process_snapshot_reports_device_id() -> None:
+    manager = AppiumProcessManager()
+    manager._appium_procs[4723] = cast("asyncio.subprocess.Process", FakeProcess(pid=5003))
+    manager._info[4723] = AppiumProcessInfo(
+        port=4723,
+        pid=5003,
+        connection_target="emulator-5554",
+        platform_id="android_mobile",
+        device_id="device-uuid",
+    )
+    with patch.object(manager, "_node_has_active_session", new_callable=AsyncMock, return_value=True):
+        snapshot = await manager.process_snapshot()
+    assert snapshot["running_nodes"][0]["device_id"] == "device-uuid"
+
+
 async def test_running_node_snapshot_reports_pack_release() -> None:
     """The backend needs the release a node was started from for rollouts."""
     manager = AppiumProcessManager()

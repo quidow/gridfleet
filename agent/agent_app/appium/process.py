@@ -258,6 +258,7 @@ class AppiumProcessInfo:
     connection_target: str
     platform_id: str
     started_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    device_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -270,6 +271,7 @@ class AppiumLaunchSpec:
     ip_address: str | None
     pack_id: str
     platform_id: str
+    device_id: str | None = None
     pack_release: str | None = None
     accepting_new_sessions: bool = True
     stop_pending: bool = False
@@ -853,6 +855,7 @@ class AppiumProcessManager:
         port: int,
         *,
         pack_id: str,
+        device_id: str | None = None,
         extra_caps: dict[str, Any] | None = None,
         pack_release: str | None = None,
         accepting_new_sessions: bool = True,
@@ -925,6 +928,7 @@ class AppiumProcessManager:
             ip_address=ip_address,
             pack_id=pack_id,
             platform_id=platform_id,
+            device_id=device_id,
             # Pin the release this start resolved (covers legacy unversioned
             # payloads too) so an auto-restart replays against the same release
             # and defers on a mismatch instead of rebinding old launch data.
@@ -993,6 +997,7 @@ class AppiumProcessManager:
                     connection_target=resolved_connection_target,
                     platform_id=platform_id,
                     started_at=started_at,
+                    device_id=device_id,
                 )
                 self._info[port] = info
             else:
@@ -1000,6 +1005,7 @@ class AppiumProcessManager:
                 info.connection_target = resolved_connection_target
                 info.platform_id = platform_id
                 info.started_at = started_at
+                info.device_id = device_id
             if spec.stop_pending:
                 # Carry the stop-pending flag so ``_auto_restart_appium``
                 # refuses to resurrect this Appium process if it exits. The
@@ -1177,6 +1183,8 @@ class AppiumProcessManager:
             "platform_id": info.platform_id,
             "started_at": info.started_at.isoformat(),
         }
+        if info.device_id is not None:
+            payload["device_id"] = info.device_id
         spec = self._launch_specs.get(info.port)
         if spec is not None and spec.pack_release is not None:
             # The release this node was started from drives backend pack rollouts.

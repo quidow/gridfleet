@@ -150,7 +150,10 @@ class NodeStateLoop:
 
         if local is None:
             try:
-                started = await self.manager.start(**self._launch_kwargs(launch))
+                started = await self.manager.start(
+                    device_id=str(spec.device_id),
+                    **self._launch_kwargs(launch),
+                )
             except StartDeferredError as exc:
                 # Start could not proceed yet (adapter/runtime still loading, or
                 # release changed mid-start). Retry next tick without recording a

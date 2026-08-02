@@ -220,6 +220,37 @@ async def test_device_health_section_limits_probe_concurrency() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
+async def test_live_session_joins_by_device_id_after_host_resolution() -> None:
+    roster = _Roster()
+    roster.devices = [{**roster.devices[0], "device_id": "d1", "connection_target": "stable-avd-name"}]
+    seen: list[bool] = []
+
+    class Manager(_Manager):
+        async def process_snapshot(self) -> dict[str, Any]:
+            return {
+                "running_nodes": [
+                    {
+                        "device_id": "d1",
+                        "port": 4723,
+                        "pid": 123,
+                        "connection_target": "emulator-5554",
+                        "has_active_session": True,
+                    }
+                ]
+            }
+
+    async def health(**kwargs: object) -> dict[str, Any]:
+        seen.append(bool(kwargs["has_live_session"]))
+        return {"healthy": True, "detail": None, "checks": [], "recommended_action": None}
+
+    loop = ProbeLoop(roster, Manager(), _identity(), health, _properties_probe)
+    await loop._refresh_roster()
+    await loop._probe_device_health_section()
+    assert seen == [True]
+
+
+@pytest.mark.asyncio
 async def test_roster_fetch_failure_keeps_device_results_and_refreshes_node_health() -> None:
     roster = _Roster()
     loop = _loop(roster)
@@ -325,33 +356,91 @@ def test_unknown_enumeration_is_a_blocker_not_a_no_session_verdict() -> None:
     loop = _loop_with(_Manager())
 
     # No ``has_active_session`` key at all: the enumeration failed.
-    flags = loop._live_session_flags({"running_nodes": [{"connection_target": "t1"}]}, now=100.0)
+    flags, _ = loop._live_session_flags({"running_nodes": [{"connection_target": "t1"}]}, now=100.0)
 
-    assert flags["t1"] is True
+    assert flags[("connection_target", "t1")] is True
 
 
 def test_live_session_stays_sticky_through_the_settle_grace() -> None:
     loop = _loop_with(_Manager())
     snapshot_live = {"running_nodes": [{"connection_target": "t1", "has_active_session": True}]}
     snapshot_idle = {"running_nodes": [{"connection_target": "t1", "has_active_session": False}]}
+    key = ("connection_target", "t1")
 
-    assert loop._live_session_flags(snapshot_live, now=100.0)["t1"] is True
+    assert loop._live_session_flags(snapshot_live, now=100.0)[0][key] is True
     # Teardown just happened: the driver-forwarded port outlives the session.
-    assert loop._live_session_flags(snapshot_idle, now=130.0)["t1"] is True
-    assert loop._live_session_flags(snapshot_idle, now=100.0 + SESSION_SETTLE_GRACE_SEC)["t1"] is False
+    assert loop._live_session_flags(snapshot_idle, now=130.0)[0][key] is True
+    assert loop._live_session_flags(snapshot_idle, now=100.0 + SESSION_SETTLE_GRACE_SEC)[0][key] is False
 
 
 def test_first_sighting_starts_the_grace_rather_than_declaring_an_orphan() -> None:
     """A cold cache (agent restart) is not evidence that a bound port is orphaned."""
     loop = _loop_with(_Manager())
     snapshot_idle = {"running_nodes": [{"connection_target": "t1", "has_active_session": False}]}
+    key = ("connection_target", "t1")
 
-    assert loop._live_session_flags(snapshot_idle, now=100.0)["t1"] is True
-    assert loop._live_session_flags(snapshot_idle, now=100.0 + SESSION_SETTLE_GRACE_SEC)["t1"] is False
+    assert loop._live_session_flags(snapshot_idle, now=100.0)[0][key] is True
+    assert loop._live_session_flags(snapshot_idle, now=100.0 + SESSION_SETTLE_GRACE_SEC)[0][key] is False
 
 
 def test_a_target_with_no_running_node_still_gets_the_grace() -> None:
     loop = _loop_with(_Manager())
+    key = ("connection_target", "t-absent")
 
-    assert loop._resolve_live("t-absent", False, now=100.0) is True
-    assert loop._resolve_live("t-absent", False, now=100.0 + SESSION_SETTLE_GRACE_SEC) is False
+    assert loop._resolve_live(key, False, now=100.0) is True
+    assert loop._resolve_live(key, False, now=100.0 + SESSION_SETTLE_GRACE_SEC) is False
+
+
+def test_join_refuses_target_fallback_when_ids_mismatch() -> None:
+    """A roster device with ID A must not match a process node with ID B even
+    when their connection targets happen to be equal -- falling back on target
+    alone would silently borrow a different device's live session."""
+    loop = _loop_with(_Manager())
+    snapshot = {
+        "running_nodes": [{"device_id": "node-owner", "connection_target": "shared-target", "has_active_session": True}]
+    }
+    mismatched_entry = {"device_id": "roster-device", "connection_target": "shared-target"}
+
+    live, id_owned_targets = loop._live_session_flags(snapshot, now=100.0)
+    # The owning node's own verdict is unaffected...
+    assert live[("device_id", "node-owner")] is True
+    # ...a differently-identified roster entry does not inherit it via target: its
+    # own ID key is a brand-new cache entry, so (like any never-seen key) its
+    # first look gets the same cold-start leniency as a genuinely live device...
+    assert loop._resolve_entry_live(live, id_owned_targets, mismatched_entry, now=100.0) is True
+
+    # ...but once that leniency's grace window elapses without ever observing
+    # its own ID as live, it reports not-live: it never borrowed the owning
+    # node's session via the shared target string.
+    later = 100.0 + SESSION_SETTLE_GRACE_SEC
+    live_later, id_owned_targets_later = loop._live_session_flags(snapshot, now=later)
+    assert loop._resolve_entry_live(live_later, id_owned_targets_later, mismatched_entry, now=later) is False
+
+
+def test_join_falls_back_to_target_when_process_side_has_no_id() -> None:
+    """An old/direct caller's process node that never threaded a device_id is
+    still joinable by connection target -- the fallback this fix must not
+    remove."""
+    loop = _loop_with(_Manager())
+    snapshot = {"running_nodes": [{"connection_target": "legacy-target", "has_active_session": True}]}
+    live, id_owned_targets = loop._live_session_flags(snapshot, now=100.0)
+    entry = {"device_id": "d1", "connection_target": "legacy-target"}
+
+    assert loop._resolve_entry_live(live, id_owned_targets, entry, now=100.0) is True
+
+
+def test_join_by_id_survives_stale_target_past_the_settle_grace() -> None:
+    """Proves the join is genuinely by device_id and not merely riding the
+    first-sighting/settle-grace leniency for an unmatched stale target: the
+    match still holds long after the grace window for the stale target key
+    would have expired."""
+    loop = _loop_with(_Manager())
+    entry = {"device_id": "d1", "connection_target": "stable-avd-name"}
+    live_snapshot = {
+        "running_nodes": [{"device_id": "d1", "connection_target": "emulator-5554", "has_active_session": True}]
+    }
+
+    later = 100.0 + SESSION_SETTLE_GRACE_SEC + 1
+    live, id_owned_targets = loop._live_session_flags(live_snapshot, now=later)
+
+    assert loop._resolve_entry_live(live, id_owned_targets, entry, now=later) is True

@@ -188,6 +188,14 @@ async def test_starts_desired_running_node_that_is_not_local() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_passes_stable_device_id_to_process_manager() -> None:
+    desired = _node()
+    manager = _Manager()
+    await NodeStateLoop(client=_Client([desired]), manager=manager).run_once()
+    assert manager.started[0]["device_id"] == desired["device_id"]
+
+
+@pytest.mark.asyncio
 async def test_stops_desired_stopped_node() -> None:
     manager = _Manager([_Info(port=4723, connection_target="device-1")])
     loop = NodeStateLoop(client=_Client([_node(desired_state="stopped", launch=None)]), manager=manager)
