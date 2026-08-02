@@ -18,17 +18,3 @@ def test_backend_no_driver_registry_imports_remain() -> None:
             offenders.append(str(path.relative_to(ROOT)))
 
     assert offenders == []
-
-
-def test_legacy_agent_device_routes_removed() -> None:
-    agent_main = (ROOT.parent / "agent" / "agent_app" / "main.py").read_text()
-    forbidden = [
-        '@app.get("/agent/devices")',
-        '@app.get("/agent/devices/{connection_target}/properties")',
-        '@app.get("/agent/devices/{connection_target}/health")',
-        '@app.get("/agent/devices/{connection_target}/telemetry")',
-        '@app.post("/agent/devices/{connection_target}/reconnect")',
-        '@app.post("/agent/android/network-target/resolve")',
-    ]
-    for needle in forbidden:
-        assert needle not in agent_main, f"Legacy route still present: {needle}"

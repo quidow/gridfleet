@@ -35,7 +35,6 @@ ALLOWLIST = {
     "backend/tests/packs/test_pack_discovery_service.py",
     "backend/tests/packs/test_stale_contract_guard.py",
     "backend/tests/packs/test_no_legacy_platform_enums.py",
-    "backend/tests/packs/test_driver_registry_removed.py",
     "backend/tests/devices/test_device_groups_api.py",
     "backend/tests/devices/test_devices_api.py",
     "backend/tests/sessions/test_sessions_api.py",

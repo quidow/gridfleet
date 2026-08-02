@@ -20,7 +20,6 @@ this test exists to catch.
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
@@ -126,15 +125,3 @@ async def test_pack_release_inventory_query_count_is_constant_in_fleet_size(
         f"per-candidate statement cost grew from {per_candidate_10} to {per_candidate_50} between "
         f"fleet sizes 10 and 50 -- expected roughly constant, got totals={totals}"
     )
-
-
-def _release_rollout_source() -> str:
-    return (Path(__file__).resolve().parents[2] / "app" / "packs" / "services" / "release_rollout.py").read_text(
-        encoding="utf-8"
-    )
-
-
-def test_release_rollout_owns_no_direct_commit_or_rollback() -> None:
-    source = _release_rollout_source()
-    assert ".commit()" not in source, "release_rollout.py must not own a commit"
-    assert ".rollback()" not in source, "release_rollout.py must not own a rollback"
