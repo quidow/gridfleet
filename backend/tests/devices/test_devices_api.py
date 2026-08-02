@@ -338,9 +338,27 @@ async def test_batch_serialization_matches_per_device(db_session: AsyncSession, 
     assert payloads[d_no_pack.id]["blocked_reason"] == "pack_unavailable"
 
 
+_LIST_DEVICES_FILTER_CASES: list[tuple[str, str, str, str]] = [
+    # query_param, query_value, expected_platform_id, expected_pack_id
+    ("platform_id", "ios", "ios", "appium-xcuitest"),
+    ("pack_id", "appium-uiautomator2", "android_mobile", "appium-uiautomator2"),
+]
+
+
 @pytest.mark.asyncio
-async def test_list_devices_filter_platform(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+@pytest.mark.parametrize(
+    ("query_param", "query_value", "expected_platform_id", "expected_pack_id"),
+    _LIST_DEVICES_FILTER_CASES,
+    ids=["by_platform_id", "by_pack_id"],
+)
+async def test_list_devices_filter_by_query_param(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    query_param: str,
+    query_value: str,
+    expected_platform_id: str,
+    expected_pack_id: str,
 ) -> None:
     await _create_device(db_session, default_host_id)
     await _create_device(
@@ -356,38 +374,12 @@ async def test_list_devices_filter_platform(
         os_version="17.4",
     )
 
-    resp = await client.get("/api/devices", params={"platform_id": "ios"})
+    resp = await client.get("/api/devices", params={query_param: query_value})
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 1
-    assert data[0]["platform_id"] == "ios"
-    assert data[0]["pack_id"] == "appium-xcuitest"
-
-
-@pytest.mark.asyncio
-async def test_list_devices_filters_by_pack_id(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    await _create_device(db_session, default_host_id)
-    await _create_device(
-        db_session,
-        default_host_id,
-        identity_value="ios-pack-001",
-        connection_target="ios-pack-001",
-        name="iPhone Pack",
-        pack_id="appium-xcuitest",
-        platform_id="ios",
-        identity_scheme="apple_udid",
-        identity_scope="global",
-        os_version="17.4",
-    )
-
-    resp = await client.get("/api/devices", params={"pack_id": "appium-uiautomator2"})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data) == 1
-    assert data[0]["pack_id"] == "appium-uiautomator2"
-    assert data[0]["platform_id"] == "android_mobile"
+    assert data[0]["platform_id"] == expected_platform_id
+    assert data[0]["pack_id"] == expected_pack_id
 
 
 @pytest.mark.asyncio
@@ -1545,7 +1537,10 @@ async def test_device_health_passes_pack_context_for_virtual_devices(client: Asy
 
 
 @pytest.mark.asyncio
-async def test_device_health_fails_fast_for_hostless_control_plane_state(client: AsyncClient) -> None:
+@pytest.mark.parametrize("endpoint", ["health", "logs"], ids=["health", "logs"])
+async def test_device_control_endpoint_fails_fast_for_hostless_control_plane_state(
+    client: AsyncClient, endpoint: str
+) -> None:
     fake_device = SimpleNamespace(
         id="00000000-0000-0000-0000-000000000124",
         host_id=None,
@@ -1557,26 +1552,7 @@ async def test_device_health_fails_fast_for_hostless_control_plane_state(client:
         new_callable=AsyncMock,
         return_value=fake_device,
     ):
-        resp = await client.get("/api/devices/00000000-0000-0000-0000-000000000124/health")
-
-    assert resp.status_code == 400
-    assert "has no host assigned" in resp.json()["error"]["message"]
-
-
-@pytest.mark.asyncio
-async def test_device_logs_fail_fast_for_hostless_control_plane_state(client: AsyncClient) -> None:
-    fake_device = SimpleNamespace(
-        id="00000000-0000-0000-0000-000000000125",
-        host_id=None,
-        host=None,
-    )
-
-    with patch(
-        "app.devices.routers.control.get_device_or_404",
-        new_callable=AsyncMock,
-        return_value=fake_device,
-    ):
-        resp = await client.get("/api/devices/00000000-0000-0000-0000-000000000125/logs")
+        resp = await client.get(f"/api/devices/00000000-0000-0000-0000-000000000124/{endpoint}")
 
     assert resp.status_code == 400
     assert "has no host assigned" in resp.json()["error"]["message"]
@@ -1650,33 +1626,25 @@ async def test_deleted_emulator_and_simulator_lifecycle_routes_return_404(
     assert (await client.post(f"/api/devices/{device.id}/simulator/shutdown")).status_code == 404
 
 
-@pytest.mark.asyncio
-async def test_list_devices_paginated(client: AsyncClient, db_session: AsyncSession, default_host_id: str) -> None:
-    for i in range(5):
-        await _create_device(
-            db_session,
-            default_host_id,
-            identity_value=f"dev-{i}",
-            connection_target=f"dev-{i}",
-            name=f"Device {i}",
-        )
-
-    resp = await client.get("/api/devices", params={"limit": 2, "offset": 0})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "items" in data
-    assert "total" in data
-    assert data["total"] == 5
-    assert len(data["items"]) == 2
-    assert data["limit"] == 2
-    assert data["offset"] == 0
+_LIST_DEVICES_PAGE_CASES: list[tuple[int, int]] = [
+    # offset, expected_items_len
+    (0, 2),
+    (4, 1),
+]
 
 
 @pytest.mark.asyncio
-async def test_list_devices_paginated_second_page(
+@pytest.mark.parametrize(
+    ("offset", "expected_items_len"),
+    _LIST_DEVICES_PAGE_CASES,
+    ids=["first_page", "second_page"],
+)
+async def test_list_devices_paginated(
     client: AsyncClient,
     db_session: AsyncSession,
     default_host_id: str,
+    offset: int,
+    expected_items_len: int,
 ) -> None:
     for i in range(5):
         await _create_device(
@@ -1687,11 +1655,15 @@ async def test_list_devices_paginated_second_page(
             name=f"Device {i}",
         )
 
-    resp = await client.get("/api/devices", params={"limit": 2, "offset": 4})
+    resp = await client.get("/api/devices", params={"limit": 2, "offset": offset})
     assert resp.status_code == 200
     data = resp.json()
-    assert len(data["items"]) == 1
+    assert "items" in data
+    assert "total" in data
     assert data["total"] == 5
+    assert len(data["items"]) == expected_items_len
+    assert data["limit"] == 2
+    assert data["offset"] == offset
 
 
 @pytest.mark.asyncio
@@ -1914,23 +1886,19 @@ async def test_device_detail_uses_catalog_readiness_for_local_pack(
             },
         )
     )
-    device = Device(
+    device = await create_device_record(
+        db_session,
+        host_id=db_host.id,
+        identity_value="device-1",
+        name="Local Test Device",
         pack_id=pack.id,
         platform_id="test_network",
         identity_scheme="test_id",
         identity_scope="host",
-        identity_value="device-1",
-        connection_target="device-1",
-        name="Local Test Device",
         os_version="1.0",
-        host_id=db_host.id,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.network,
+        connection_type="network",
         ip_address="10.0.0.10",
-        device_config={},
     )
-    db_session.add(device)
-    await db_session.commit()
 
     response = await client.get(f"/api/devices/{device.id}")
 
