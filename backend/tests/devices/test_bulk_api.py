@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import pytest_asyncio
 
@@ -22,23 +22,17 @@ async def default_host_id(client: AsyncClient) -> str:
     return str(host["id"])
 
 
-async def _create_device(db_session: AsyncSession, identity_value: str, name: str, host_id: str) -> dict[str, Any]:
-    device = await create_device_record(
-        db_session,
-        host_id=host_id,
-        identity_value=identity_value,
-        connection_target=identity_value,
-        name=name,
-        os_version="14",
-    )
-    return {"id": str(device.id)}
-
-
 async def _create_devices(db_session: AsyncSession, host_id: str, count: int = 3) -> list[str]:
     ids = []
     for i in range(count):
-        device = await _create_device(db_session, f"bulk-{i}", f"Bulk Device {i}", host_id)
-        ids.append(device["id"])
+        device = await create_device_record(
+            db_session,
+            host_id=host_id,
+            identity_value=f"bulk-{i}",
+            connection_target=f"bulk-{i}",
+            name=f"Bulk Device {i}",
+        )
+        ids.append(str(device.id))
     return ids
 
 
