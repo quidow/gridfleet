@@ -226,121 +226,84 @@ async def test_remove_members(client: AsyncClient, db_session: AsyncSession, def
     assert resp.json()["removed"] == 1
 
 
-async def test_add_members_to_dynamic_group_fails(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+@pytest.mark.parametrize("method", ["POST", "DELETE"], ids=["add", "remove"])
+async def test_dynamic_group_membership_mutation_rejected(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str, method: str
 ) -> None:
-    group = await _create_group(client, name="Dynamic", group_type="dynamic", filters={"platform_id": "android_mobile"})
-    d1 = await create_device_record(db_session, host_id=default_host_id, identity_value="grp-dyn-001", name="D-dyn")
+    group = await _create_group(
+        client, name=f"Dynamic {method}", group_type="dynamic", filters={"platform_id": "android_mobile"}
+    )
+    d1 = await create_device_record(
+        db_session, host_id=default_host_id, identity_value=f"grp-dyn-{method.lower()}", name="D-dyn"
+    )
 
-    resp = await client.post(
+    resp = await client.request(
+        method,
         f"/api/device-groups/{group['key']}/members",
         json={"device_ids": [str(d1.id)]},
     )
     assert resp.status_code == 400
 
 
-async def test_remove_members_from_dynamic_group_fails(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    group = await _create_group(
-        client, name="Dynamic Remove", group_type="dynamic", filters={"platform_id": "android_mobile"}
-    )
-    d1 = await create_device_record(db_session, host_id=default_host_id, identity_value="grp-dyn-002", name="D-dyn-rm")
-
-    resp = await client.request(
-        "DELETE",
-        f"/api/device-groups/{group['key']}/members",
-        json={"device_ids": [str(d1.id)]},
-    )
-    assert resp.status_code == 400
-
-
-async def test_add_members_to_unknown_group_is_404(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+@pytest.mark.parametrize("method", ["POST", "DELETE"], ids=["add", "remove"])
+async def test_group_members_mutation_on_unknown_group_is_404(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str, method: str
 ) -> None:
     d1 = await create_device_record(
-        db_session, host_id=default_host_id, identity_value="grp-missing-001", name="D-missing"
+        db_session, host_id=default_host_id, identity_value=f"grp-missing-{method.lower()}", name="D-missing"
     )
 
-    resp = await client.post(
+    resp = await client.request(
+        method,
         "/api/device-groups/no-such-group/members",
         json={"device_ids": [str(d1.id)]},
     )
     assert resp.status_code == 404
 
 
-async def test_remove_members_from_unknown_group_is_404(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+# filter_field, filter_value, group_name — each names one independent predicate
+# in app/devices/services/group_membership.py's dynamic-membership matcher.
+# group_name avoids underscores: group keys reject them (see
+# test_create_group_rejects_malformed_key).
+_DYNAMIC_GROUP_SINGLE_FIELD_FILTERS: list[tuple[str, str, str]] = [
+    ("platform_id", "android_mobile", "All Android"),
+    ("pack_id", "appium-uiautomator2", "Android Pack Devices"),
+]
+
+
+@pytest.mark.parametrize(
+    ("filter_field", "filter_value", "group_name"), _DYNAMIC_GROUP_SINGLE_FIELD_FILTERS, ids=["platform_id", "pack_id"]
+)
+async def test_dynamic_group_filters_by_single_field(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+    filter_field: str,
+    filter_value: str,
+    group_name: str,
 ) -> None:
-    d1 = await create_device_record(
-        db_session, host_id=default_host_id, identity_value="grp-missing-002", name="D-missing-rm"
+    await create_device_record(
+        db_session, host_id=default_host_id, identity_value=f"dyn-{filter_field}-android", name="Android"
     )
-
-    resp = await client.request(
-        "DELETE",
-        "/api/device-groups/no-such-group/members",
-        json={"device_ids": [str(d1.id)]},
-    )
-    assert resp.status_code == 404
-
-
-async def test_dynamic_group_resolves_members(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    await create_device_record(db_session, host_id=default_host_id, identity_value="dyn-001", name="Android1")
     await create_device_record(
         db_session,
         host_id=default_host_id,
-        identity_value="dyn-002",
-        name="iOS1",
+        identity_value=f"dyn-{filter_field}-ios",
+        name="iOS",
         pack_id="appium-xcuitest",
         platform_id="ios",
         identity_scheme="apple_udid",
         identity_scope="global",
     )
 
-    group = await _create_group(
-        client, name="All Android", group_type="dynamic", filters={"platform_id": "android_mobile"}
-    )
+    group = await _create_group(client, name=group_name, group_type="dynamic", filters={filter_field: filter_value})
 
     detail = await client.get(f"/api/device-groups/{group['key']}")
     assert detail.status_code == 200
     data = detail.json()
     assert data["device_count"] == 1
-    assert data["devices"][0]["platform_id"] == "android_mobile"
-    assert data["filters"] == {"platform_id": "android_mobile"}
-
-
-async def test_dynamic_group_filters_by_pack_id(
-    client: AsyncClient, db_session: AsyncSession, default_host_id: str
-) -> None:
-    await create_device_record(
-        db_session, host_id=default_host_id, identity_value="dyn-pack-android", name="Android Pack"
-    )
-    await create_device_record(
-        db_session,
-        host_id=default_host_id,
-        identity_value="dyn-pack-ios",
-        name="iOS Pack",
-        pack_id="appium-xcuitest",
-        platform_id="ios",
-        identity_scheme="apple_udid",
-        identity_scope="global",
-    )
-
-    group = await _create_group(
-        client,
-        name="Android Pack Devices",
-        group_type="dynamic",
-        filters={"pack_id": "appium-uiautomator2"},
-    )
-
-    detail = await client.get(f"/api/device-groups/{group['key']}")
-    assert detail.status_code == 200
-    data = detail.json()
-    assert data["device_count"] == 1
-    assert {item["pack_id"] for item in data["devices"]} == {"appium-uiautomator2"}
-    assert data["filters"] == {"pack_id": "appium-uiautomator2"}
+    assert {item[filter_field] for item in data["devices"]} == {filter_value}
+    assert data["filters"] == {filter_field: filter_value}
 
 
 async def test_create_group_rejects_legacy_filter_rules_field(client: AsyncClient) -> None:
