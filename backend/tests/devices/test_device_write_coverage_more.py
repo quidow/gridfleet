@@ -8,124 +8,173 @@ from app.devices.models import ConnectionType, Device, DeviceType
 from app.devices.schemas.device import DevicePatch, DeviceVerificationCreate, DeviceVerificationUpdate
 from app.devices.services import write as device_write
 
+_PLATFORM_DEFAULT_CASES = [
+    # connection_behavior, device_type, connection_type, want
+    ({"default_device_type": "emulator"}, None, None, (DeviceType.emulator, ConnectionType.virtual)),
+    (
+        {"_allowed_device_types": ["emulator"]},
+        DeviceType.real_device,
+        ConnectionType.usb,
+        (DeviceType.emulator, ConnectionType.usb),
+    ),
+    (
+        {"default_connection_type": "network"},
+        DeviceType.real_device,
+        None,
+        (DeviceType.real_device, ConnectionType.network),
+    ),
+    (
+        {"default_device_type": "emulator", "_allowed_device_types": ["emulator"]},
+        DeviceType.real_device,
+        ConnectionType.usb,
+        (DeviceType.emulator, ConnectionType.usb),
+    ),
+    (
+        {"_allowed_connection_types": ["usb"]},
+        DeviceType.real_device,
+        ConnectionType.network,
+        (DeviceType.real_device, ConnectionType.usb),
+    ),
+]
 
-def test_platform_defaults_and_shape_validation_branches() -> None:
-    assert device_write._platform_defaults(
+
+@pytest.mark.parametrize(
+    ("behavior", "device_type", "connection_type", "want"),
+    _PLATFORM_DEFAULT_CASES,
+    ids=[
+        "default-device-type-emulator",
+        "single-allowed-device-type-overrides-request",
+        "default-connection-type-network",
+        "default-and-allowed-device-type-combine",
+        "single-allowed-connection-type-overrides-request",
+    ],
+)
+def test_platform_defaults_resolves_type_and_connection(
+    behavior: dict[str, object],
+    device_type: DeviceType | None,
+    connection_type: ConnectionType | None,
+    want: tuple[DeviceType, ConnectionType],
+) -> None:
+    got = device_write._platform_defaults(
         platform_id="p",
-        device_type=None,
-        connection_type=None,
-        connection_behavior={"default_device_type": "emulator"},
-    ) == (DeviceType.emulator, ConnectionType.virtual)
-    assert device_write._platform_defaults(
-        platform_id="p",
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        connection_behavior={"_allowed_device_types": ["emulator"]},
-    ) == (DeviceType.emulator, ConnectionType.usb)
-    assert device_write._platform_defaults(
-        platform_id="p",
-        device_type=DeviceType.real_device,
-        connection_type=None,
-        connection_behavior={"default_connection_type": "network"},
-    ) == (DeviceType.real_device, ConnectionType.network)
-    assert device_write._platform_defaults(
-        platform_id="p",
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-        connection_behavior={"default_device_type": "emulator", "_allowed_device_types": ["emulator"]},
-    ) == (DeviceType.emulator, ConnectionType.usb)
-    assert device_write._platform_defaults(
-        platform_id="p",
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.network,
-        connection_behavior={"_allowed_connection_types": ["usb"]},
-    ) == (DeviceType.real_device, ConnectionType.usb)
-    with pytest.raises(ValueError, match="Device type"):
+        device_type=device_type,
+        connection_type=connection_type,
+        connection_behavior=behavior,
+    )
+    assert got == want
+
+
+_PLATFORM_DEFAULT_REJECTIONS = [
+    ({"_allowed_device_types": ["emulator", "simulator"]}, DeviceType.real_device, ConnectionType.usb, "Device type"),
+    ({"_allowed_connection_types": ["usb"]}, DeviceType.real_device, ConnectionType.virtual, "Virtual connection"),
+    (
+        {"_allowed_connection_types": ["usb", "virtual"]},
+        DeviceType.real_device,
+        ConnectionType.network,
+        "Connection type",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("behavior", "device_type", "connection_type", "message"),
+    _PLATFORM_DEFAULT_REJECTIONS,
+    ids=[
+        "device-type-not-allowed",
+        "virtual-connection-not-allowed-for-real-device",
+        "connection-type-not-allowed",
+    ],
+)
+def test_platform_defaults_rejects_disallowed_combinations(
+    behavior: dict[str, object],
+    device_type: DeviceType,
+    connection_type: ConnectionType,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
         device_write._platform_defaults(
             platform_id="p",
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            connection_behavior={"_allowed_device_types": ["emulator", "simulator"]},
-        )
-    with pytest.raises(ValueError, match="Virtual connection"):
-        device_write._platform_defaults(
-            platform_id="p",
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.virtual,
-            connection_behavior={"_allowed_connection_types": ["usb"]},
-        )
-    with pytest.raises(ValueError, match="Connection type"):
-        device_write._platform_defaults(
-            platform_id="p",
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.network,
-            connection_behavior={"_allowed_connection_types": ["usb", "virtual"]},
+            device_type=device_type,
+            connection_type=connection_type,
+            connection_behavior=behavior,
         )
 
-    with pytest.raises(ValueError, match="Assigned host"):
+
+_VALIDATE_SHAPE_REJECTIONS = [
+    # device_type, connection_type, identity_value, connection_target, ip_address, host_id, connection_behavior, message
+    (DeviceType.real_device, ConnectionType.usb, "serial", "serial", None, None, None, "Assigned host"),
+    (DeviceType.real_device, ConnectionType.network, "stable", "10.0.0.1:5555", None, uuid.uuid4(), None, "IP address"),
+    (
+        DeviceType.real_device,
+        ConnectionType.usb,
+        "stable",
+        "stable",
+        None,
+        uuid.uuid4(),
+        {"requires_ip_address": True},
+        "IP address",
+    ),
+    (DeviceType.real_device, ConnectionType.usb, "serial", None, None, uuid.uuid4(), None, "Connection target"),
+    (DeviceType.emulator, ConnectionType.usb, "avd", "avd", None, uuid.uuid4(), None, "Emulators"),
+    (DeviceType.real_device, ConnectionType.usb, None, "serial", None, uuid.uuid4(), None, "Identity value"),
+    (
+        DeviceType.real_device,
+        ConnectionType.network,
+        "10.0.0.1:5555",
+        "10.0.0.1:5555",
+        "10.0.0.1",
+        uuid.uuid4(),
+        None,
+        "stable identity",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    (
+        "device_type",
+        "connection_type",
+        "identity_value",
+        "connection_target",
+        "ip_address",
+        "host_id",
+        "connection_behavior",
+        "message",
+    ),
+    _VALIDATE_SHAPE_REJECTIONS,
+    ids=[
+        "missing-host-id",
+        "network-requires-ip-address",
+        "behavior-requires-ip-address-regardless-of-connection-type",
+        "missing-connection-target",
+        "emulator-requires-virtual-connection",
+        "missing-identity-value",
+        "identity-value-must-be-stable-not-transport",
+    ],
+)
+def test_validate_device_shape_rejects_invalid_combinations(
+    device_type: DeviceType,
+    connection_type: ConnectionType,
+    identity_value: str | None,
+    connection_target: str | None,
+    ip_address: str | None,
+    host_id: uuid.UUID | None,
+    connection_behavior: dict[str, object] | None,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
         device_write._validate_device_shape(
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            identity_value="serial",
-            connection_target="serial",
-            ip_address=None,
-            host_id=None,
+            device_type=device_type,
+            connection_type=connection_type,
+            identity_value=identity_value,
+            connection_target=connection_target,
+            ip_address=ip_address,
+            host_id=host_id,
+            connection_behavior=connection_behavior,
         )
-    with pytest.raises(ValueError, match="IP address"):
-        device_write._validate_device_shape(
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.network,
-            identity_value="stable",
-            connection_target="10.0.0.1:5555",
-            ip_address=None,
-            host_id=uuid.uuid4(),
-        )
-    with pytest.raises(ValueError, match="IP address"):
-        device_write._validate_device_shape(
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            identity_value="stable",
-            connection_target="stable",
-            ip_address=None,
-            host_id=uuid.uuid4(),
-            connection_behavior={"requires_ip_address": True},
-        )
-    with pytest.raises(ValueError, match="Connection target"):
-        device_write._validate_device_shape(
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            identity_value="serial",
-            connection_target=None,
-            ip_address=None,
-            host_id=uuid.uuid4(),
-        )
-    with pytest.raises(ValueError, match="Emulators"):
-        device_write._validate_device_shape(
-            device_type=DeviceType.emulator,
-            connection_type=ConnectionType.usb,
-            identity_value="avd",
-            connection_target="avd",
-            ip_address=None,
-            host_id=uuid.uuid4(),
-        )
-    with pytest.raises(ValueError, match="Identity value"):
-        device_write._validate_device_shape(
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.usb,
-            identity_value=None,
-            connection_target="serial",
-            ip_address=None,
-            host_id=uuid.uuid4(),
-        )
-    with pytest.raises(ValueError, match="stable identity"):
-        device_write._validate_device_shape(
-            device_type=DeviceType.real_device,
-            connection_type=ConnectionType.network,
-            identity_value="10.0.0.1:5555",
-            connection_target="10.0.0.1:5555",
-            ip_address="10.0.0.1",
-            host_id=uuid.uuid4(),
-        )
+
+
+def test_validate_device_shape_allows_relaxed_target_and_ip_requirements() -> None:
     device_write._validate_device_shape(
         device_type=DeviceType.real_device,
         connection_type=ConnectionType.network,
@@ -137,7 +186,7 @@ def test_platform_defaults_and_shape_validation_branches() -> None:
     )
 
 
-def test_device_config_identity_and_create_payload_branches() -> None:
+def test_device_config_helpers_and_create_payload_field_resolution() -> None:
     assert device_write._is_transport_identity(None, None, None) is True
     assert device_write._is_transport_identity("10.0.0.1", None, None) is True
     assert device_write._is_transport_identity("10.0.0.1:5555", "10.0.0.1:5555", None) is True
@@ -179,42 +228,6 @@ def test_device_config_identity_and_create_payload_branches() -> None:
     assert generated[1].startswith("android:")
     assert generated[2] == ""  # connection_target when all inputs are None
     assert generated[3] is None  # ip_address
-
-    with pytest.raises(ValueError, match="platform_id"):
-        device_write._resolve_create_payload_fields(
-            DeviceVerificationCreate(
-                pack_id="pack",
-                platform_id="",
-                identity_scope="host",
-                identity_value="serial",
-                connection_target="serial",
-                name="name",
-                host_id=uuid.uuid4(),
-            )
-        )
-    with pytest.raises(ValueError, match="pack_id"):
-        device_write._resolve_create_payload_fields(
-            DeviceVerificationCreate(
-                pack_id="",
-                platform_id="android",
-                identity_scope="host",
-                identity_value="serial",
-                connection_target="serial",
-                name="name",
-                host_id=uuid.uuid4(),
-            )
-        )
-    with pytest.raises(ValueError, match="identity_scope"):
-        device_write._resolve_create_payload_fields(
-            DeviceVerificationCreate(
-                pack_id="pack",
-                platform_id="android",
-                identity_value="serial",
-                connection_target="serial",
-                name="name",
-                host_id=uuid.uuid4(),
-            )
-        )
 
     prepared = device_write.prepare_device_create_payload(
         DeviceVerificationCreate(
@@ -263,7 +276,40 @@ def test_device_config_identity_and_create_payload_branches() -> None:
     assert scoped_payload["identity_value"] == "serial"  # identity_scope propagation doesn't clobber identity fields
 
 
-def test_patch_contract_and_update_payload_branches() -> None:
+_RESOLVE_CREATE_PAYLOAD_FIELD_REJECTIONS = [
+    # pack_id, platform_id, identity_scope, message
+    ("pack", "", "host", "platform_id"),
+    ("", "android", "host", "pack_id"),
+    ("pack", "android", None, "identity_scope"),
+]
+
+
+@pytest.mark.parametrize(
+    ("pack_id", "platform_id", "identity_scope", "message"),
+    _RESOLVE_CREATE_PAYLOAD_FIELD_REJECTIONS,
+    ids=["missing-platform-id", "missing-pack-id", "missing-identity-scope"],
+)
+def test_resolve_create_payload_fields_rejects_missing_required_fields(
+    pack_id: str,
+    platform_id: str,
+    identity_scope: str | None,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        device_write._resolve_create_payload_fields(
+            DeviceVerificationCreate(
+                pack_id=pack_id,
+                platform_id=platform_id,
+                identity_scope=identity_scope,
+                identity_value="serial",
+                connection_target="serial",
+                name="name",
+                host_id=uuid.uuid4(),
+            )
+        )
+
+
+def test_patch_contract_and_update_payload_normalization() -> None:
     device = Device(
         id=uuid.uuid4(),
         pack_id="pack",
