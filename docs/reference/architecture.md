@@ -154,6 +154,11 @@ The agent recovers on that code alone: `StatusPushLoop` (`agent/agent_app/status
 
 The router (`router/`) is a standalone Rust binary that listens on `:4444` and replaces the Selenium Grid hub. For each incoming W3C `POST /session` it calls the backend's internal grid API (`/internal/grid/create-session`), which claims a matching device, creates the Appium session backend-side, records it as running, and returns the response for relay. The router then proxies that session's WebDriver commands directly to the allocated device's Appium server. Subsequent commands on an established session are routed by session id to the same Appium upstream. The backend owns allocation, queueing, capability matching, and session creation; the router owns request forwarding. It is configured purely via `GRIDFLEET_ROUTER_*` env vars (see `docs/reference/environment.md`).
 
+The router rebuilds its in-memory route map from `GET /internal/grid/routes` every second.
+This bounds routes left behind by backend-owned idle reaping or other out-of-band session
+termination; direct client `DELETE /session/{id}` still removes its route immediately.
+Generation-guarded replacement preserves a route inserted after a snapshot fetch began.
+
 ### Timeout lattice — cross-component ordered budgets
 
 Same-component budget rules live next to their constants as derived expressions or asserts. Rules that span two components cannot be derived in code; this table is their single home. The **owner** is the side you retune first — the other side then updates its mirror (and this table).
