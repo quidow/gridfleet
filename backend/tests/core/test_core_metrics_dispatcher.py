@@ -7,6 +7,7 @@ state from one test does not leak into the next.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from unittest.mock import Mock
 
 import pytest
 
@@ -28,7 +29,15 @@ def _reset_refreshers() -> Iterator[None]:
 
 
 async def test_refresh_system_gauges_is_noop_when_no_refreshers_registered() -> None:
-    await core_metrics.refresh_system_gauges(db=None)  # type: ignore[arg-type]
+    db = Mock()
+
+    await core_metrics.refresh_system_gauges(db=db)
+
+    # An empty registry must not reach the session. Passing ``None`` instead would
+    # only prove that nothing *called* it, and would pass for a dispatcher that
+    # read an attribute off the session before deciding it had no work.
+    assert db.mock_calls == []
+    assert core_metrics._refreshers == []
 
 
 async def test_register_gauge_refresher_invokes_callback_on_refresh() -> None:

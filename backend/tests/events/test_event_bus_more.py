@@ -274,27 +274,45 @@ async def test_listen_once_returns_when_driver_connection_missing() -> None:
     bus = EventBus()
 
     class FakeConnection:
+        def __init__(self) -> None:
+            self.exited = False
+
         async def __aenter__(self) -> FakeConnection:
             return self
 
         async def __aexit__(self, _exc_type: object, _exc: object, _tb: object) -> bool:
+            self.exited = True
             return False
 
         async def get_raw_connection(self) -> SimpleNamespace:
             return SimpleNamespace(driver_connection=None)
 
+    connection = FakeConnection()
+
     class FakeEngine:
         def connect(self) -> FakeConnection:
-            return FakeConnection()
+            return connection
 
     bus._engine = cast("object", FakeEngine())
     # ``_listen_once`` directly: the reconnect wrapper would retry this forever.
     await bus._listen_once()
 
+    # Returning is not enough. Announcing readiness first would tell the reconnect
+    # wrapper a listener is live when none was registered, and skipping the context
+    # exit would leak one connection per retry for as long as the driver is missing.
+    assert bus._listener_ready.is_set() is False
+    assert connection.exited is True
+
 
 async def test_listen_for_notifications_returns_when_engine_missing() -> None:
     bus = EventBus()
-    await bus._listen_for_notifications()
+
+    # The unconfigured-bus return has to sit outside the retry loop: inside it, a
+    # bus with no engine spins through the reconnect sleep forever.
+    with patch.object(bus, "_listen_once", new=AsyncMock(side_effect=AssertionError("entered the retry loop"))):
+        await bus._listen_for_notifications()
+
+    assert bus._listener_ready.is_set() is False
 
 
 async def test_poll_for_missed_events_logs_exceptions_and_sleeps() -> None:

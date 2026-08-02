@@ -14,14 +14,16 @@ import uuid
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import select
 
+from app.devices.models import Device, DeviceIntent
 from app.devices.services.intent_reconciler import (
     ReconcileCandidate,
     ReconcileCommandResult,
     reconcile_device,
     reconcile_device_command,
 )
-from tests.helpers import create_device
+from tests.helpers import create_device, recent_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
@@ -34,7 +36,17 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.db]
 
 async def test_reconcile_device_no_ops_when_device_missing(db_session: AsyncSession) -> None:
     """A device id with no row must reconcile to a clean no-op, not raise."""
-    await reconcile_device(db_session, uuid.uuid4(), publisher=event_bus)
+    missing_id = uuid.uuid4()
+    before = len(recent_events(event_bus, limit=10_000))
+
+    await reconcile_device(db_session, missing_id, publisher=event_bus)
+    await db_session.commit()
+
+    # "Did not raise" also holds for a reconciler that decided and emitted for a
+    # device that does not exist, so pin that it produced no work at all.
+    assert len(recent_events(event_bus, limit=10_000)) == before
+    intents = await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == missing_id))
+    assert intents.scalars().all() == []
 
 
 async def test_reconcile_command_no_ops_when_device_missing(
@@ -59,5 +71,13 @@ async def test_reconcile_device_tolerates_concurrent_delete(
     device_id = device.id
     await db_session.delete(device)
     await db_session.commit()
+    before = len(recent_events(event_bus, limit=10_000))
 
     await reconcile_device(db_session, device_id, publisher=event_bus)
+    await db_session.commit()
+
+    # The deleted row must stay deleted and the cycle must emit nothing for it.
+    assert len(recent_events(event_bus, limit=10_000)) == before
+    assert await db_session.get(Device, device_id) is None
+    intents = await db_session.execute(select(DeviceIntent).where(DeviceIntent.device_id == device_id))
+    assert intents.scalars().all() == []

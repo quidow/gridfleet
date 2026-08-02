@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.devices.models import DeviceReservation
@@ -132,3 +132,20 @@ async def test_excluded_windows_can_overlap_for_different_devices(
     )
 
     await db_session.flush()
+
+    # Flushing without an IntegrityError is only half the claim: an exclusion
+    # constraint scoped too widely would reject these, but so would a flush that
+    # persisted nothing pass this check. Read the overlapping windows back.
+    rows = (
+        (
+            await db_session.execute(
+                select(DeviceReservation)
+                .where(DeviceReservation.run_id == run.id)
+                .order_by(DeviceReservation.excluded_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [row.device_id for row in rows] == [first_device.id, second_device.id]
+    assert all(row.excluded is True for row in rows)

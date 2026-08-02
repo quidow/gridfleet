@@ -74,8 +74,43 @@ def test_request_context_helpers_round_trip() -> None:
 
 
 def test_configure_logging_uses_dev_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GRIDFLEET_ENV", "development")
-    observability.configure_logging(force=True)
+    import logging
+
+    import structlog
+
+    def installed_renderers() -> list[object]:
+        handlers = [
+            handler
+            for handler in logging.getLogger().handlers
+            if getattr(handler, observability._GRIDFLEET_BACKEND_HANDLER_ATTR, False)
+        ]
+        assert handlers, "configure_logging installed no gridfleet handler"
+        return [
+            processor
+            for handler in handlers
+            for processor in getattr(handler.formatter, "processors", ())  # type: ignore[union-attr]
+        ]
+
+    try:
+        monkeypatch.setenv("GRIDFLEET_ENV", "development")
+        observability.configure_logging(force=True)
+        dev = installed_renderers()
+
+        monkeypatch.setenv("GRIDFLEET_ENV", "production")
+        observability.configure_logging(force=True)
+        prod = installed_renderers()
+    finally:
+        # configure_logging mutates the root logger, which monkeypatch does not
+        # restore; leave the process on the suite's own environment.
+        monkeypatch.undo()
+        observability.configure_logging(force=True)
+
+    # Naming the renderer per environment is the whole behavior: a call that
+    # installed a handler but always chose one renderer passes any "did not raise"
+    # check, and ships coloured console output to the prod log pipeline.
+    assert any(isinstance(p, structlog.dev.ConsoleRenderer) for p in dev)
+    assert any(isinstance(p, structlog.processors.JSONRenderer) for p in prod)
+    assert not any(isinstance(p, structlog.processors.JSONRenderer) for p in dev)
 
 
 def test_configure_logging_installs_structlog_when_handlers_preexist(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -346,10 +346,19 @@ async def test_confirm_running_acquires_lock_when_failure_residue_present(
 
 
 async def test_touch_last_observed_noop() -> None:
-    @asynccontextmanager
-    async def _mock_session_factory() -> AsyncMock:
-        yield AsyncMock()
+    began: list[AsyncMock] = []
 
-    await appium_reconciler._touch_last_observed(
-        [], settings=FakeSettingsReader({}), session_factory=_mock_session_factory
-    )
+    @asynccontextmanager
+    async def _begin() -> AsyncMock:
+        session = AsyncMock()
+        began.append(session)
+        yield session
+
+    session_factory = Mock()
+    session_factory.begin = _begin
+
+    await appium_reconciler._touch_last_observed([], settings=FakeSettingsReader({}), session_factory=session_factory)
+
+    # Returning without raising is not the contract: an empty batch must not open
+    # the write transaction at all, or every idle host costs a round trip per tick.
+    assert began == []

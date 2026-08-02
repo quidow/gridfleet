@@ -52,7 +52,14 @@ async def test_try_acquire_closes_connection_when_lock_not_acquired() -> None:
 
 async def test_release_noops_without_connection() -> None:
     leader = ControlPlaneLeader()
+
     await leader.release()
+    await leader.release()
+
+    # Idempotent and non-resurrecting. A release that opened a connection to run
+    # the unlock, or left a handle behind, would make the next try_acquire believe
+    # this process still holds the launch guard.
+    assert leader._connection is None
 
 
 async def test_release_swallows_unlock_failure_and_closes_connection() -> None:

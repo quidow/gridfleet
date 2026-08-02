@@ -142,12 +142,20 @@ async def test_push_observations_holds_folds_when_convergence_fails(
 
 
 async def test_push_observations_without_wiring_is_a_noop(db_host: Host) -> None:
-    service = HostStatusPushService(publisher=AsyncMock())
+    publisher = AsyncMock()
+    service = HostStatusPushService(publisher=publisher)
+
     await run_status_push_observations(
         service,
         target=StatusPushTarget(db_host.id, db_host.ip, db_host.agent_port),
         payload={"node_health": {"reported_at": "t"}},
     )
+
+    # An unwired service is the API-process construction: it must not publish or
+    # fold, because there is no session factory behind it to contain the write.
+    assert publisher.mock_calls == []
+    assert service._observation_folds == ()
+    assert service._session_factory is None
 
 
 async def test_convergence_stage_receives_values_not_a_session(

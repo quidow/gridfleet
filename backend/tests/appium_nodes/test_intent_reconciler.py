@@ -73,6 +73,13 @@ async def test_reconcile_uses_one_locked_snapshot(
 
     monkeypatch.setattr(intent_reconciler, "gather_decision_facts", forbidden)
     await reconcile_device(db_session, device.id, publisher=event_bus)
+    await db_session.commit()
+
+    # Without this the forbidden-reader check alone passes for a reconciler that
+    # returned before deciding anything: _seed_node starts at ``stopped``, so an
+    # early return leaves it there.
+    node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
+    assert node.desired_state == AppiumDesiredState.running
 
 
 async def test_locked_reconcile_uses_supplied_snapshot_without_loading(
@@ -100,6 +107,11 @@ async def test_locked_reconcile_uses_supplied_snapshot_without_loading(
             publisher=event_bus,
             snapshot=snapshot,
         )
+
+    # The supplied snapshot has to reach the decision, not merely avoid a reload:
+    # _seed_node starts the node at ``stopped``.
+    node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
+    assert node.desired_state == AppiumDesiredState.running
 
 
 async def test_reconcile_uses_facts_directly_for_maintenance(db_session: AsyncSession, db_host: Host) -> None:
