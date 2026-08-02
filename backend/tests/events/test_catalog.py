@@ -8,6 +8,7 @@ from app.events.catalog import (
     PUBLIC_EVENT_NAMES,
     allowed_severities_for,
     default_severity_for,
+    normalize_public_event_names,
 )
 
 
@@ -80,6 +81,13 @@ def test_helpers_raise_for_unknown_event() -> None:
 def test_default_severity_spec(event_name: str, expected_default: str) -> None:
     assert event_name in PUBLIC_EVENT_NAMES
     assert default_severity_for(event_name) == expected_default
+
+
+def test_normalize_public_event_names_drops_unknown_and_non_string_entries() -> None:
+    assert normalize_public_event_names("bad") == []
+    assert normalize_public_event_names(
+        ["bad", 1, "device.operational_state_changed", "device.operational_state_changed"]
+    ) == ["device.operational_state_changed"]
 
 
 def test_system_event_orm_exposes_severity() -> None:

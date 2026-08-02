@@ -31,6 +31,13 @@ def test_reservation_entry_lookup_and_exclusion_helpers() -> None:
         run_reservation_service.get_reservation_entry_for_device(SimpleNamespace(device_reservations=[]), device_id)
         is None
     )
+    # A released-only match (no active entry alongside it) must be filtered out, not returned.
+    assert (
+        run_reservation_service.get_reservation_entry_for_device(
+            SimpleNamespace(device_reservations=[released]), device_id
+        )
+        is None
+    )
     assert run_reservation_service.reservation_entry_is_excluded(None) is False
     assert (
         run_reservation_service.reservation_entry_is_excluded(SimpleNamespace(excluded=False, excluded_until=None))

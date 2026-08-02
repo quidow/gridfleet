@@ -12,7 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.events import Event, EventBus
-from app.events.catalog import normalize_public_event_names
 from app.events.event_bus import _LogBackoff
 from app.events.models import SystemEvent
 from tests.helpers import drain_handlers, recent_events
@@ -789,13 +788,6 @@ def test_log_backoff_suppresses_inside_the_window_and_reports_the_count() -> Non
     assert backoff.report(now=2.0) == 1, "one suppressed failure carried into the next report"
 
 
-def test_normalize_public_event_names_drops_unknown_and_non_string_entries() -> None:
-    assert normalize_public_event_names("bad") == []
-    assert normalize_public_event_names(
-        ["bad", 1, "device.operational_state_changed", "device.operational_state_changed"]
-    ) == ["device.operational_state_changed"]
-
-
 async def test_dispatch_pending_fallback_logs_and_swallows_a_handler_error(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(event_bus, "_remember_and_dispatch", Mock(side_effect=RuntimeError("dispatch failed")))
     monkeypatch.setattr(event_bus_mod.logger, "exception", Mock())
@@ -809,9 +801,11 @@ async def test_dispatch_pending_fallback_logs_and_swallows_a_handler_error(monke
 
 async def test_queue_for_session_registers_the_after_commit_listener_once(monkeypatch: pytest.MonkeyPatch) -> None:
     """A second ``queue_for_session`` call on the same sync session must not re-register the listener."""
+    calls: list[str] = []
     listeners: dict[str, object] = {}
 
     def capture_listener(_target: object, identifier: str, fn: object, **_kwargs: object) -> None:
+        calls.append(identifier)
         listeners[identifier] = fn
 
     monkeypatch.setattr(event_bus_mod.sa_event, "listen", capture_listener)
@@ -821,6 +815,7 @@ async def test_queue_for_session_registers_the_after_commit_listener_once(monkey
     event_bus.queue_for_session(sync_session, "device.operational_state_changed", {"device_id": "d"})
     event_bus.queue_for_session(sync_session, "device.operational_state_changed", {"device_id": "d"})
 
+    assert calls.count("after_commit") == 1
     assert sync_session.info[event_bus_mod._PENDING_EVENTS_LISTENER_KEY] is True
 
     # An after_commit fire with no pending events left must spawn no dispatch task.

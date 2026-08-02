@@ -72,10 +72,12 @@ async def test_cleanup_old_data_runs_every_stage_and_publishes_the_summary(
     """A mocked-db smoke test that every retention key is wired through to a delete call."""
     cleanup_db = AsyncMock()
     cleanup_db.in_transaction = Mock(return_value=False)  # sync on the real AsyncSession, unlike its other methods
-    monkeypatch.setattr(data_cleanup, "_delete_in_batches", AsyncMock(return_value=0))
+    delete_mock = AsyncMock(return_value=0)
+    monkeypatch.setattr(data_cleanup, "_delete_in_batches", delete_mock)
+    publisher = AsyncMock()
 
     await data_cleanup.DataCleanupService(
-        publisher=AsyncMock(),
+        publisher=publisher,
         settings=FakeSettingsReader(
             {
                 "retention.audit_log_days": 0,
@@ -88,3 +90,7 @@ async def test_cleanup_old_data_runs_every_stage_and_publishes_the_summary(
             }
         ),
     ).cleanup_old_data(cleanup_db)
+
+    assert delete_mock.await_count > 0
+    publisher.publish.assert_awaited_once()
+    assert publisher.publish.await_args.args[0] == "system.cleanup_completed"
