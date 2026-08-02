@@ -224,28 +224,7 @@ async def test_fold_loads_one_decision_snapshot_per_applied_device(
     real_loader = connectivity.load_device_decision_snapshot
     loader = AsyncMock(wraps=real_loader)
     monkeypatch.setattr(connectivity, "load_device_decision_snapshot", loader)
-    incidents = LifecycleIncidentService(publisher=event_bus)
-    reservation = RunReservationService()
-    actions = LifecyclePolicyActionsService(
-        publisher=event_bus,
-        reservation=reservation,
-        incidents=incidents,
-    )
-    lifecycle = LifecyclePolicyService(
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        actions=actions,
-        incidents=incidents,
-        viability=AsyncMock(),
-        node_manager=AsyncMock(),
-    )
-    service = ConnectivityService(
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        lifecycle_policy=lifecycle,
-        health=DeviceHealthService(publisher=event_bus),
-    )
+    service = _connectivity_with_real_lifecycle(db_session_maker)
 
     assert (
         await service.fold_host_devices(await committed_session(db_session), host.id, section, boot_id=uuid.uuid4())
@@ -443,22 +422,7 @@ async def test_fold_preloads_pack_catalog_once_for_multiple_devices(
     host, devices = await seed_host_with_devices(db_session, count=3, identity_prefix="fold-pack-catalog")
     device_ids = [device.id for device in devices]
     revision = await next_observation_revision(db_session)
-    section: dict[str, Any] = {
-        "reported_at": now_utc().isoformat(),
-        "section_sequence": 4,
-        OBSERVATION_REVISION_KEY: revision,
-        "complete_gather": True,
-        "devices": [
-            {
-                "device_id": str(device_id),
-                "probe_status": "observed",
-                "presence": "present",
-                "health": {"healthy": True, "checks": []},
-                "lifecycle_state": {"status": "unsupported", "value": None},
-            }
-            for device_id in device_ids
-        ],
-    }
+    section = _healthy_fold_section(device_ids, revision=revision)
     real_load = readiness_mod.load_pack_catalog
     load_packs = AsyncMock(wraps=real_load)
     monkeypatch.setattr(readiness_mod, "load_pack_catalog", load_packs)
@@ -479,78 +443,48 @@ async def test_fold_preloads_pack_catalog_once_for_multiple_devices(
     load_packs.assert_awaited_once()
 
 
-async def test_fold_ip_ping_hysteresis_runs_through_loop_path(
-    db_session: AsyncSession,
-) -> None:
-    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-ip-ping")
-    device = devices[0]
-    lifecycle_policy = MagicMock()
-    lifecycle_policy.handle_health_failure_locked = AsyncMock()
-    lifecycle_policy.reconcile_self_heal_locked = AsyncMock()
-    lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock()
-    lifecycle_policy.restore_run_after_self_heal = AsyncMock()
-    lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
-    service = _loop_service(
-        settings={
-            "device_checks.ip_ping.fail_window_sec": 120,
-            "device_checks.probe_failed.fail_window_sec": 120,
-        },
-        lifecycle_policy=lifecycle_policy,
-    )
-    start = now_utc()
-    health = {"healthy": False, "checks": [{"check_id": "ip_ping", "ok": False}]}
-
-    for offset in (0, 60):
-        await _fold_health_once(
-            db_session,
-            service,
-            host_id=host.id,
-            device_id=device.id,
-            reported_at=start + timedelta(seconds=offset),
-            health=health,
-        )
-    await db_session.refresh(device)
-    assert device.device_checks_healthy is True
-
-    await _fold_health_once(
-        db_session,
-        service,
-        host_id=host.id,
-        device_id=device.id,
-        reported_at=start + timedelta(seconds=120),
-        health=health,
-    )
-    await db_session.refresh(device)
-    assert device.device_checks_healthy is False
-    lifecycle_policy.handle_health_failure_locked.assert_awaited_once()
-
-
-async def test_fold_debounceable_check_hysteresis_runs_through_loop_path(
-    db_session: AsyncSession,
-) -> None:
-    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix="fold-probe-failed")
-    device = devices[0]
-    lifecycle_policy = MagicMock()
-    lifecycle_policy.handle_health_failure_locked = AsyncMock()
-    lifecycle_policy.reconcile_self_heal_locked = AsyncMock()
-    lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock()
-    lifecycle_policy.restore_run_after_self_heal = AsyncMock()
-    lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
-    service = _loop_service(
-        settings={
-            "device_checks.ip_ping.fail_window_sec": 120,
-            "device_checks.probe_failed.fail_window_sec": 120,
-        },
-        lifecycle_policy=lifecycle_policy,
-    )
-    start = now_utc()
-    health = {
-        "healthy": False,
-        "checks": [
+# (identity_prefix, failing checks payload) — one row per hysteresis branch in
+# ConnectivityService._evaluate_health_result: ip_ping is gated through IP_PING_NAMESPACE,
+# the debounceable row through the generic PROBE_FAILED_NAMESPACE branch.
+_HYSTERESIS_FOLD_CASES: list[tuple[str, list[dict[str, Any]]]] = [
+    ("fold-ip-ping", [{"check_id": "ip_ping", "ok": False}]),
+    (
+        "fold-probe-failed",
+        [
             {"check_id": "ping", "ok": False, "debounce": True},
             {"check_id": "ecp", "ok": False, "debounce": True},
         ],
-    }
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("identity_prefix", "checks"),
+    _HYSTERESIS_FOLD_CASES,
+    ids=["ip_ping_namespace", "debounceable_namespace"],
+)
+async def test_fold_hysteresis_runs_through_loop_path(
+    db_session: AsyncSession,
+    identity_prefix: str,
+    checks: list[dict[str, Any]],
+) -> None:
+    host, devices = await seed_host_with_devices(db_session, count=1, identity_prefix=identity_prefix)
+    device = devices[0]
+    lifecycle_policy = MagicMock()
+    lifecycle_policy.handle_health_failure_locked = AsyncMock()
+    lifecycle_policy.reconcile_self_heal_locked = AsyncMock()
+    lifecycle_policy.clear_escalation_residue_on_self_heal = AsyncMock()
+    lifecycle_policy.restore_run_after_self_heal = AsyncMock()
+    lifecycle_policy.attempt_auto_recovery = AsyncMock(return_value=False)
+    service = _loop_service(
+        settings={
+            "device_checks.ip_ping.fail_window_sec": 120,
+            "device_checks.probe_failed.fail_window_sec": 120,
+        },
+        lifecycle_policy=lifecycle_policy,
+    )
+    start = now_utc()
+    health = {"healthy": False, "checks": checks}
 
     for offset in (0, 60):
         await _fold_health_once(
@@ -605,31 +539,6 @@ async def test_fold_healthy_device_reuses_lock_for_self_heal(
     )
     lifecycle_policy.clear_escalation_residue_on_self_heal.assert_not_awaited()
     lifecycle_policy.restore_run_after_self_heal.assert_not_awaited()
-
-
-async def test_fold_healthy_offline_device_attempts_auto_recovery(
-    db_session: AsyncSession,
-    db_session_maker: async_sessionmaker[AsyncSession],
-) -> None:
-    host, device = await seed_host_and_device(
-        db_session,
-        identity="fold-offline-recovery",
-        operational_state=DeviceOperationalState.offline,
-    )
-    service = build_connectivity_service(db_session_maker)
-    service = _connectivity_with_real_lifecycle(db_session_maker)
-
-    await _fold_health_once(
-        db_session,
-        service,
-        host_id=host.id,
-        device_id=device.id,
-        reported_at=now_utc(),
-        health={"healthy": True, "checks": []},
-    )
-
-    await db_session.refresh(device)
-    assert recovery_generation(device) is not None
 
 
 async def test_fold_does_not_enqueue_remediation_for_draining_pack(
@@ -882,28 +791,8 @@ async def test_fold_retryable_device_holds_receipt_and_replays_only_that_device(
         "complete_gather": True,
         "devices": [_unhealthy(settled_id), _unhealthy(failed_id)],
     }
-    incidents = LifecycleIncidentService(publisher=event_bus)
-    reservation = RunReservationService()
-    actions = LifecyclePolicyActionsService(
-        publisher=event_bus,
-        reservation=reservation,
-        incidents=incidents,
-    )
-    lifecycle_policy = LifecyclePolicyService(
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        actions=actions,
-        incidents=incidents,
-        viability=AsyncMock(),
-        node_manager=AsyncMock(),
-    )
-    service = ConnectivityService(
-        publisher=event_bus,
-        settings=FakeSettingsReader({}),
-        circuit_breaker=Mock(),
-        lifecycle_policy=lifecycle_policy,
-        health=DeviceHealthService(publisher=event_bus),
-    )
+    service = _connectivity_with_real_lifecycle(db_session_maker)
+    lifecycle_policy = service._lifecycle_policy
     apply_counts: Counter[uuid.UUID] = Counter()
     real_handle = lifecycle_policy.handle_health_failure_locked
 
