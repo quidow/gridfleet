@@ -72,7 +72,7 @@ Every public health fact has exactly one durable home:
 | Namespace | Owner | Purpose |
 | --- | --- | --- |
 | `status_push.host_status` | `POST /agent/hosts/status` ingest (any worker); read by `status_fold_loop`, host diagnostics, and the device-capability active-target fill | latest consolidated agent status push per host (Appium processes + guarded health sections only; telemetry/properties sections fold synchronously off the in-memory payload and are not stored) — the single snapshot source; guarded health sections become eligible only after post-convergence stamping |
-| `heartbeat.appium_restart_sequence` | `host_sweep_loop` | last ingested local restart event sequence per host |
+| `heartbeat.appium_restart_sequence` | `host_sweep_loop` | last ingested local restart event sequence per host, scoped to `(host, agent boot)`: the stored value is `{"boot_id": ..., "sequence": ...}` and a cursor from another boot (including a legacy bare-integer value, treated as an unknown earlier boot) cannot suppress the current boot's events; the row is upgraded to the current boot's dict shape on the next valid event |
 | `connectivity.previously_offline` | `host_sweep` connectivity fold | remembers why a reconnect is treated as recovery rather than first startup |
 | `host_sweep.observation_fold` | `host_sweep` observation folds | per-host stamp watermark per pushed section, an optimization that skips redundant work; folds remain idempotent |
 | `session_viability.state` | `appium_sweep` viability pass | cadence bookkeeping for deeper session probes (the in-flight guard is the probe's own `Session` row since WS-16.1) |

@@ -40,6 +40,8 @@ from tests.helpers import test_event_bus as event_bus
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from app.devices.locking import LockedDevice
+    from app.events.protocols import EventPublisher
     from app.hosts.models import Host
 
 RUN_FAILURES_MODULE = "app.runs.service_lifecycle_failures"
@@ -1039,6 +1041,170 @@ async def test_report_preparation_failure_rejects_empty_message(
     failure_svc = _make_failure_svc(AsyncMock())
     with pytest.raises(ValueError, match="message is required"):
         await failure_svc.report_preparation_failure(run.id, device.id, message="  ")
+
+
+class _RecordingReservationService(RunReservationService):
+    """Real release behaviour plus a record of the reasons it was asked to release.
+
+    Used by the state-resolution tests below to tell "the release path ran" apart
+    from "the retry resolved from the already-released row", which a DB-state
+    assertion alone cannot distinguish once the row is released.
+    """
+
+    def __init__(self) -> None:
+        self.release_reasons: list[str] = []
+
+    async def release_locked(
+        self,
+        db: AsyncSession,
+        locked: LockedDevice,
+        *,
+        reason: str,
+        publisher: EventPublisher,
+    ) -> uuid.UUID | None:
+        self.release_reasons.append(reason)
+        return await super().release_locked(db, locked, reason=reason, publisher=publisher)
+
+
+def _make_prep_failure_svc(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    reservation: RunReservationService,
+    maintenance: AsyncMock,
+    lifecycle_actions: AsyncMock,
+    incidents: AsyncMock,
+) -> RunFailureService:
+    return RunFailureService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({"general.run_failure_escalates_to_maintenance": False}),
+        circuit_breaker=_circuit_breaker,
+        maintenance=maintenance,
+        lifecycle_actions=lifecycle_actions,
+        reservation=reservation,
+        incidents=incidents,
+        session_factory=session_factory,
+    )
+
+
+async def test_report_preparation_failure_active_reservation_runs_release_path(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Prep Active Reservation Device",
+        identity_value="run-prep-active-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="prep-active-run", devices=[device], state=RunState.active)
+    monkeypatch.setattr(f"{RUN_LOOKUP_MODULE}.reconcile_locked_device", AsyncMock())
+    poke = AsyncMock()
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.poke_node_refresh_target", poke)
+
+    reservation = _RecordingReservationService()
+    incidents = AsyncMock()
+    svc = _make_prep_failure_svc(
+        db_session_maker,
+        reservation=reservation,
+        maintenance=AsyncMock(),
+        lifecycle_actions=AsyncMock(),
+        incidents=incidents,
+    )
+
+    result = await svc.report_preparation_failure(run.id, device.id, message="  bad setup  ")
+
+    # An active reservation takes the release path, with the normalized reason.
+    assert reservation.release_reasons == ["bad setup"]
+    incidents.record_lifecycle_incident.assert_awaited_once()
+    assert result.wake_target is not None
+    poke.assert_awaited_once()
+
+
+async def test_report_preparation_failure_retry_resolves_from_released_reservation(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Prep Retry Device",
+        identity_value="run-prep-retry-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="prep-retry-run", devices=[device], state=RunState.active)
+    monkeypatch.setattr(f"{RUN_LOOKUP_MODULE}.reconcile_locked_device", AsyncMock())
+    poke = AsyncMock()
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.poke_node_refresh_target", poke)
+
+    first = _make_prep_failure_svc(
+        db_session_maker,
+        reservation=_RecordingReservationService(),
+        maintenance=AsyncMock(),
+        lifecycle_actions=AsyncMock(),
+        incidents=AsyncMock(),
+    )
+    await first.report_preparation_failure(run.id, device.id, message="bad setup")
+
+    retry_reservation = _RecordingReservationService()
+    retry_maintenance = AsyncMock()
+    retry_actions = AsyncMock()
+    retry_incidents = AsyncMock()
+    retry = _make_prep_failure_svc(
+        db_session_maker,
+        reservation=retry_reservation,
+        maintenance=retry_maintenance,
+        lifecycle_actions=retry_actions,
+        incidents=retry_incidents,
+    )
+
+    # Same report, re-sent because the caller could not tell whether the first committed.
+    # The whitespace proves the match is against the normalized reason.
+    result = await retry.report_preparation_failure(run.id, device.id, message="  bad setup  ")
+
+    assert result.run_id == run.id
+    # Resolved from the released row: no second release, maintenance action, incident, or wake hint.
+    assert retry_reservation.release_reasons == []
+    retry_maintenance.enter_maintenance_locked.assert_not_awaited()
+    retry_actions.record_run_escalation_failure.assert_not_awaited()
+    retry_incidents.record_lifecycle_incident.assert_not_awaited()
+    assert result.wake_target is None
+    poke.assert_awaited_once()
+
+
+async def test_report_preparation_failure_released_for_other_reason_still_conflicts(
+    db_session: AsyncSession,
+    db_session_maker: async_sessionmaker[AsyncSession],
+    db_host: Host,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="Prep Other Reason Device",
+        identity_value="run-prep-other-reason-001",
+        operational_state=DeviceOperationalState.available,
+    )
+    run = await create_reserved_run(db_session, name="prep-other-reason-run", devices=[device], state=RunState.active)
+    monkeypatch.setattr(f"{RUN_LOOKUP_MODULE}.reconcile_locked_device", AsyncMock())
+    monkeypatch.setattr(f"{RUN_FAILURES_MODULE}.poke_node_refresh_target", AsyncMock())
+
+    svc = _make_prep_failure_svc(
+        db_session_maker,
+        reservation=_RecordingReservationService(),
+        maintenance=AsyncMock(),
+        lifecycle_actions=AsyncMock(),
+        incidents=AsyncMock(),
+    )
+    await svc.report_preparation_failure(run.id, device.id, message="bad setup")
+
+    # A released row is only commit proof for the report that released it.
+    with pytest.raises(ValueError, match="not actively reserved"):
+        await svc.report_preparation_failure(run.id, device.id, message="a different failure")
 
 
 @pytest.mark.db

@@ -21,6 +21,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.devices.models import Device, DeviceOperationalState
 from app.devices.services.capability import DeviceCapabilityService
 from app.sessions import service_viability as session_viability
@@ -51,6 +52,19 @@ async def test_recovery_probe_admits_offline_reserved_device(
         operational_state=DeviceOperationalState.offline,
         verified=True,
     )
+    # An observed-running node (Task 8 made a missing/unobserved node its own benign-skip
+    # carve-out for recovery probes, so a node-down device can no longer prove reservation-gate
+    # admission by falling through to a terminal verdict — see below). This is otherwise the same
+    # fixture the reservation-deadlock bug this test guards actually manifested on.
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_state=AppiumDesiredState.running,
+        desired_port=4723,
+        pid=1234,
+        active_connection_target="viability-recovery-reserved",
+    )
+    db_session.add(node)
     await create_reservation(db_session, device_id=device.id)
     await db_session.commit()
 
@@ -59,6 +73,10 @@ async def test_recovery_probe_admits_offline_reserved_device(
         return True
 
     monkeypatch.setattr(session_viability, "is_ready_for_use_async", _always_ready)
+    monkeypatch.setattr(
+        DeviceCapabilityService, "get_device_capabilities", AsyncMock(return_value={"platformName": "Android"})
+    )
+    monkeypatch.setattr(SessionViabilityService, "probe_session_direct", AsyncMock(return_value=(True, None)))
 
     # Reload with the node relationship eagerly loaded; the probe reads device.appium_node.
     device = (
@@ -73,15 +91,15 @@ async def test_recovery_probe_admits_offline_reserved_device(
         health=AsyncMock(),
     )
 
-    # The recovery probe must NOT be rejected for being reserved. With no running appium
-    # node it falls through to the node-not-running terminal — proving it was admitted
-    # past the reservation gate instead of raising the gate ``ValueError``.
+    # The recovery probe must NOT be rejected for being reserved: with an observed-running node it
+    # runs all the way through to a real remote-probe verdict ("passed") instead of raising the
+    # reservation-gate ValueError. Reaching a verdict at all is only possible once both the
+    # reservation gate and the node precondition have been cleared.
     state = await svc.run_session_viability_probe(
         device.id,
         checked_by=SessionViabilityCheckedBy.recovery,
     )
-    assert state["status"] == "failed"
-    assert state["error"] == "Appium node is not running"
+    assert state["status"] == "passed"
 
 
 @pytest.mark.db

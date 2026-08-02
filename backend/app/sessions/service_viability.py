@@ -40,6 +40,7 @@ from app.sessions.viability_types import (
     SessionViabilityCheckedBy,
     SessionViabilityProbeInProgressError,
     SessionViabilityProbeNotPermittedError,
+    SessionViabilityReadinessLapsedError,
 )
 
 if TYPE_CHECKING:
@@ -61,6 +62,7 @@ __all__ = [
     "SESSION_VIABILITY_STATE_NAMESPACE",
     "SessionViabilityProbeInProgressError",
     "SessionViabilityProbeNotPermittedError",
+    "SessionViabilityReadinessLapsedError",
     "SessionViabilityService",
     "build_probe_capabilities",
     "grid_probe_response_to_result",
@@ -448,15 +450,17 @@ class SessionViabilityService:
                     "Session viability checks only run for available devices (state changed concurrently)"
                 )
             if not await is_ready_for_use_async(db, locked.device):
-                raise ValueError(
+                raise SessionViabilityReadinessLapsedError(
                     await readiness_error_detail_async(db, locked.device, action="run a session viability check")
                 )
             node = locked.device.appium_node
             if node is None or not node.observed_running:
-                if node is not None and checked_by == SessionViabilityCheckedBy.recovery:
+                if checked_by == SessionViabilityCheckedBy.recovery:
                     # A recovery probe races the node coming up: recovery has set the
-                    # node desired=running but the observed pid may not have folded yet.
-                    # Treat an unobserved node as a benign skip (retry next tick) rather
+                    # node desired=running but the observed pid may not have folded yet,
+                    # or the AppiumNode row itself has not been created yet (the
+                    # desired-state write and the row insert are not atomic). Treat a
+                    # missing/unobserved node as a benign skip (retry next tick) rather
                     # than a failure — a hard fail commissions an auto-stop that kills
                     # the node recovery just started, spiraling into exponential backoff
                     # (the recovery deadlock). A genuinely un-startable node still trips

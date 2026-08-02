@@ -13,6 +13,7 @@ from app.lifecycle.services.recovery_job import RecoveryJobService
 from app.sessions.service_viability import (
     SessionViabilityProbeInProgressError,
     SessionViabilityProbeNotPermittedError,
+    SessionViabilityService,
 )
 from app.sessions.viability_types import SessionViabilityCheckedBy
 from tests.fakes import FakeSettingsReader
@@ -186,6 +187,87 @@ async def test_recovery_probe_treats_in_progress_collision_as_skipped(
 
     assert result == {"status": "skipped"}
     assert probe_mock.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_recovery_probe_treats_readiness_lapse_as_skipped(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A real readiness recheck can raise mid-recovery — e.g. the device's
+    verification lapsed between the fold's snapshot and this probe running. That is
+    a precondition lapse, not a device verdict: ``_run_probe`` must treat it as a
+    benign skip, not commission failure/backoff work, the same as the two other
+    named viability exceptions above. Drives a real ``SessionViabilityService``
+    against an unverified device instead of a canned mock so the readiness recheck
+    actually raises its own ``SessionViabilityReadinessLapsedError``."""
+    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
+    from app.devices.services.capability import DeviceCapabilityService
+    from tests.helpers import create_device
+
+    device = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="probe-readiness-lapse",
+        verified=False,
+        operational_state=DeviceOperationalState.offline,
+    )
+    node = AppiumNode(
+        device_id=device.id,
+        port=4723,
+        desired_port=4723,
+        pid=12345,
+        active_connection_target="127.0.0.1:4723",
+        desired_state=AppiumDesiredState.running,
+    )
+    db_session.add(node)
+    await db_session.commit()
+
+    assert db_session.bind is not None
+    viability = SessionViabilityService(
+        publisher=event_bus,
+        settings=FakeSettingsReader({}),
+        session_factory=async_sessionmaker(db_session.bind, class_=type(db_session), expire_on_commit=False),
+        capability=DeviceCapabilityService(),
+        health=AsyncMock(),
+    )
+    worker = _make_worker(db_session, viability)
+
+    result = await worker._run_probe(device.id)
+
+    assert result == {"status": "skipped"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("seeded_driver_packs")
+async def test_recovery_probe_treats_bare_value_error_as_failed(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A plain ``ValueError`` from anywhere inside the probe is a *failure*, not a skip.
+
+    The three skip-worthy precondition lapses all subclass ``ValueError`` so manual
+    HTTP callers keep surfacing 409, so ``_run_probe`` must name them individually.
+    Catching the shared base instead would return ``skipped`` for an unrelated
+    ``ValueError`` — a capability-derivation bug, a parse — and ``_finalize_device``
+    would then commission no failure/backoff work, leaving a permanently faulted
+    device in recovery limbo with no escalation signal. Pins the narrowness that the
+    handler's comment claims."""
+    from app.lifecycle.services import recovery_job as rj
+    from tests.helpers import create_device
+
+    device = await create_device(db_session, host_id=db_host.id, name="probe-bare-value-error")
+    probe_mock = AsyncMock(side_effect=ValueError("unexpected capability derivation failure"))
+    viability = Mock()
+    viability.run_session_viability_probe = probe_mock
+    worker = _make_worker(db_session, viability)
+
+    result = await worker._run_probe(device.id)
+
+    assert result["status"] == "failed"
+    assert "unexpected capability derivation failure" in result["error"]
+    assert probe_mock.await_count == rj.RECOVERY_PROBE_ATTEMPTS
 
 
 @pytest.mark.asyncio

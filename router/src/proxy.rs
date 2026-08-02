@@ -190,7 +190,9 @@ impl ProxyHttp for GridRouter {
     }
 }
 
-/// Increment the allocate-outcome counter (allocated|queued|invalid|timeout|error).
+/// Increment the allocate-outcome counter. This function is the only writer, so
+/// the call sites below are the complete label set:
+/// `created|queued|invalid|create_failed|create_error|timeout|fatal|error|client_gone`.
 fn alloc_outcome(outcome: &str) {
     crate::metrics::metrics()
         .allocate_outcomes
@@ -316,16 +318,45 @@ impl GridRouter {
         let deadline = Instant::now() + self.new_session_timeout;
         let mut ticket: Option<String> = None;
         let created = loop {
-            match self
-                .backend
-                .create_session(
-                    &raw,
-                    ticket.as_deref(),
-                    run_id.as_deref(),
-                    deadline.saturating_duration_since(Instant::now()),
-                )
-                .await
-            {
+            let backend_fut = self.backend.create_session(
+                &raw,
+                ticket.as_deref(),
+                run_id.as_deref(),
+                deadline.saturating_duration_since(Instant::now()),
+            );
+            // Only race a wait that already holds a ticket. The backend mints
+            // tickets server-side (it cannot be pre-supplied), so a disconnect
+            // during the very first call — before any ticket exists — has
+            // nothing to cancel; abandoning that call early would leave the
+            // backend free to claim a device and create a real session behind
+            // the router's back. Falling through to a plain `await` there
+            // means a first-window disconnect instead falls back to the
+            // pre-existing post-create rollback path below (the `respond`
+            // error branch + `teardown_lost_session`), exactly as it did
+            // before this race existed. Once a ticket is in hand, the
+            // `read_body_or_idle` future is built fresh inside the loop (never
+            // hoisted into a variable) so its mutable borrow of `session` is
+            // dropped as soon as this `select!` resolves — the backend-branch
+            // response arms below still need `session` for `respond(...)`.
+            let backend_result = if ticket.is_some() {
+                tokio::select! {
+                    biased;
+                    downstream = session.read_body_or_idle(true) => {
+                        alloc_outcome("client_gone");
+                        crate::metrics::metrics().new_session_client_gone_total.inc();
+                        log::warn!("client gone during new-session queue wait; cancelling");
+                        if let Some(t) = &ticket {
+                            let _ = self.backend.cancel_ticket(t).await;
+                        }
+                        let err = downstream.err().unwrap_or_else(|| Error::new_down(ConnectionClosed));
+                        return Err(err);
+                    }
+                    backend = backend_fut => backend,
+                }
+            } else {
+                backend_fut.await
+            };
+            match backend_result {
                 Ok(CreateOutcome::Created {
                     session_id,
                     target,

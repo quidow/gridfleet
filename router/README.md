@@ -6,6 +6,8 @@ Accepts WebDriver `POST /session` requests, allocates a device via the backend i
 
 WebSocket upgrades on session paths (W3C BiDi / CDP pointed at `:4444`) are tunneled to the Appium host as a duplex stream; an established tunnel is exempt from `--proxy-timeout`, so idle gaps between frames do not tear it down. Note that Appium returns `webSocketUrl` pointing at its own host — clients honoring that capability verbatim connect directly to the device host and need network reach to it, same as in the relay era.
 
+Each backend `create-session` wait during a new-session request races against the downstream connection: if the client disconnects while the router is still queued or long-polling, the router cancels its ticket (and any session the backend concurrently claimed) instead of continuing to poll toward its own, much longer, deadline. The very first create call is deliberately not raced — no ticket exists yet to cancel, so it runs to completion (up to roughly 25 s) and a client that disconnected during it is cleaned up afterwards by the post-create `teardown_lost_session` rollback rather than by prompt cancellation.
+
 ## CLI flags
 
 | Flag | Default | Description |

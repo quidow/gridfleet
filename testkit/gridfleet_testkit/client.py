@@ -24,6 +24,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gridfleet_testkit")
 
+# Per-attempt HTTP timeout for the preparation-failure report. Must stay above the
+# backend's ``request_timeout_sec`` (timeout-lattice table, docs/reference/architecture.md):
+# below it, the client abandons the request before the ASGI watchdog can return its
+# classified response, and the retry becomes a blind re-send against an in-flight
+# transaction. Enforced by backend/tests/contracts/test_timeout_lattice_parity.py.
+PREPARATION_FAILURE_TIMEOUT_SEC = 35
+
 
 def _raise_plain(resp: httpx.Response) -> None:
     resp.raise_for_status()
@@ -186,16 +193,37 @@ class GridFleetClient:
         *,
         suppress_errors: bool = False,
     ) -> JsonObject | None:
-        try:
-            resp = self._send(
-                "POST",
-                f"/runs/{run_id}/devices/{device_id}/preparation-failed",
-                json={"message": message, "source": source},
-            )
-        except (httpx.HTTPError, TypeError, ValueError) as exc:
-            _raise_or_warn("report preparation failure", suppress_errors, exc)
-            return None
-        return cast("JsonObject", resp.json())
+        # At most two identical attempts: the backend bounds its own lock wait and returns a
+        # classified 503 (Retry-After) well inside the 30s ASGI watchdog, so a retry here is safe
+        # by construction rather than a gamble. ``PREPARATION_FAILURE_TIMEOUT_SEC`` covers that
+        # watchdog. Only transport failures and 503/504 are retried; every other failure is
+        # non-retryable.
+        final_exc: httpx.HTTPError | None = None
+        for _ in range(2):
+            try:
+                resp = self._send(
+                    "POST",
+                    f"/runs/{run_id}/devices/{device_id}/preparation-failed",
+                    json={"message": message, "source": source},
+                    timeout=PREPARATION_FAILURE_TIMEOUT_SEC,
+                )
+            except httpx.TransportError as exc:
+                final_exc = exc
+                continue
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code not in (503, 504):
+                    _raise_or_warn("report preparation failure", suppress_errors, exc)
+                    return None
+                final_exc = exc
+                continue
+            except (httpx.HTTPError, TypeError, ValueError) as exc:
+                _raise_or_warn("report preparation failure", suppress_errors, exc)
+                return None
+            else:
+                return cast("JsonObject", resp.json())
+        assert final_exc is not None  # loop only falls through after setting it twice
+        _raise_or_warn("report preparation failure", suppress_errors, final_exc)
+        return None
 
     def update_session_status(
         self,

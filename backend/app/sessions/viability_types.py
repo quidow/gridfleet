@@ -5,7 +5,7 @@ viability probe. Use it on every writer (`record_session_viability_result`,
 `run_session_viability_probe`, `_write_session_viability`) and on the public
 `SessionViabilityRead` response schema so reader and writer cannot drift.
 
-The probe exception pair lives here so row-claim code (`service_probes`) can
+The probe exception trio lives here so row-claim code (`service_probes`) can
 raise it without importing the service module.
 """
 
@@ -68,4 +68,18 @@ class SessionViabilityProbeNotPermittedError(ValueError):
     *skip* rather than a failed attempt. Like a probe collision, a gate rejection says
     nothing about device health, so counting it would feed backoff/shelving. Mirrors
     ``SessionViabilityProbeInProgressError``.
+    """
+
+
+class SessionViabilityReadinessLapsedError(ValueError):
+    """Raised when the device is no longer ready for use at probe time.
+
+    Subclasses ``ValueError`` so manual HTTP callers keep surfacing 409 (control.py)
+    and the message stays the readiness detail string. The distinct type exists so
+    the lifecycle recovery loop's skip catch can name all three precondition lapses
+    instead of falling back to the base ``ValueError`` — which would silently swallow
+    any unrelated ``ValueError`` raised deeper in the probe (capability derivation, a
+    parse) and return ``skipped`` where ``failed`` is owed. Third of the trio with
+    ``SessionViabilityProbeInProgressError`` and
+    ``SessionViabilityProbeNotPermittedError``.
     """

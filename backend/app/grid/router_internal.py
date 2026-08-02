@@ -234,10 +234,22 @@ async def create_session(
 
 @router.delete("/tickets/{ticket_id}", status_code=204)
 async def cancel_ticket(ticket_id: uuid.UUID, services: GridServicesDep) -> Response:
+    """Cancel a ticket, or close whatever claim already won the race.
+
+    ``lock_ticket`` serializes this against a concurrent claim on the same
+    ticket root. If the ticket is still waiting, cancel it here. Otherwise the
+    claim already consumed it (a pending or running ``Session.ticket_id``), so
+    reuse the interrupted-create cleanup after this transaction commits --
+    keeping remote Appium I/O outside the DB transaction.
+    """
+    cancelled_waiting = False
     async with services.session_factory.begin() as db:
-        ticket = await db.get(GridSessionQueueTicket, ticket_id)
+        ticket = await lock_ticket(db, ticket_id)
         if ticket is not None and ticket.status == GridQueueStatus.waiting:
             transition_ticket(ticket, GridQueueStatus.cancelled, reason="router_cancelled")
+            cancelled_waiting = True
+    if not cancelled_waiting:
+        await _finalize_interrupted_create(services, services.allocation, ticket_id)
     return Response(status_code=204)
 
 

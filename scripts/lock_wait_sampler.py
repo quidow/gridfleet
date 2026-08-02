@@ -74,11 +74,43 @@ SELECT a.pid,
        left(coalesce(a.query, ''), 200)  AS blocked_query,
        b.pid                              AS blocking_pid,
        left(coalesce(b.query, ''), 200)  AS blocking_query,
-       b.state                            AS blocking_state
+       b.state                            AS blocking_state,
+       bl.mode                            AS blocked_mode,
+       string_agg(DISTINCT kl.mode, '+' ORDER BY kl.mode) AS blocking_mode,
+       coalesce(c.relname, '')            AS relation
 FROM pg_stat_activity a
 JOIN LATERAL unnest(pg_blocking_pids(a.pid)) bp(pid) ON true
 JOIN pg_stat_activity b ON b.pid = bp.pid
+-- The specific lock a is waiting on (there is exactly one -- a backend blocks on one lock
+-- at a time).
+JOIN pg_locks bl ON bl.pid = a.pid AND NOT bl.granted
+-- Every granted lock b holds that matches bl's identity tuple, distinct-safe matched below because
+-- these columns are NULL for lock types that do not use them (a transactionid lock has no
+-- relation/page/tuple; a plain `=` would silently drop that row). Deliberately NOT matched on
+-- kl.mode: one backend can hold more than one granted mode on the same target at once (an
+-- ordinary read-then-write in one transaction holds both AccessShareLock and RowExclusiveLock
+-- until commit), so every matching mode is aggregated below into one row per (a.pid, b.pid)
+-- instead of joining once per mode and duplicating the row -- and, with it, the CSV row, the
+-- console line, and the pair/streak/episode accounting.
+JOIN pg_locks kl
+    ON kl.pid = b.pid
+   AND kl.granted
+   AND kl.locktype = bl.locktype
+   AND kl.database IS NOT DISTINCT FROM bl.database
+   AND kl.relation IS NOT DISTINCT FROM bl.relation
+   AND kl.page IS NOT DISTINCT FROM bl.page
+   AND kl.tuple IS NOT DISTINCT FROM bl.tuple
+   AND kl.virtualxid IS NOT DISTINCT FROM bl.virtualxid
+   AND kl.transactionid IS NOT DISTINCT FROM bl.transactionid
+   AND kl.classid IS NOT DISTINCT FROM bl.classid
+   AND kl.objid IS NOT DISTINCT FROM bl.objid
+   AND kl.objsubid IS NOT DISTINCT FROM bl.objsubid
+-- LEFT, not JOIN: a transactionid (or other relation-less) lock has bl.relation NULL, and must
+-- still produce a row -- just with an empty relation, not a dropped one.
+LEFT JOIN pg_class c ON c.oid = bl.relation
 WHERE a.wait_event_type = 'Lock'
+GROUP BY a.pid, a.wait_event_type, a.wait_event, blocked_query, blocking_pid, blocking_query,
+         blocking_state, blocked_mode, c.relname
 """
 
 CSV_HEADER = [
@@ -90,6 +122,9 @@ CSV_HEADER = [
     "blocking_state",
     "blocked_query",
     "blocking_query",
+    "blocked_mode",
+    "blocking_mode",
+    "relation",
 ]
 
 
@@ -107,6 +142,40 @@ def classify(query: str) -> str:
     lowered = query.lower()
     hits = [table for table in TABLES_OF_INTEREST if re.search(rf"\b{table}\b", lowered)]
     return "+".join(hits) if hits else "other"
+
+
+def build_csv_row(now: str, row: Any, blocked_kind: str, blocking_kind: str) -> list[Any]:
+    """One ``CSV_HEADER``-ordered row for a sampled lock wait.
+
+    ``row`` is a single ``SAMPLE_SQL`` result (an ``asyncpg.Record``, or -- in tests -- a plain
+    dict with the same keys). ``relation`` passes through whatever ``SAMPLE_SQL`` already
+    resolved: an empty string, never a placeholder, when the lock has no relation (e.g. a
+    transactionid wait). ``blocking_mode`` is one mode name, or several ``+``-joined (same
+    convention as ``classify()``'s table list) when the blocker holds more than one granted mode
+    on the same target at once.
+    """
+    return [
+        now,
+        row["pid"],
+        row["wait_event"],
+        blocked_kind,
+        blocking_kind,
+        row["blocking_state"],
+        row["blocked_query"],
+        row["blocking_query"],
+        row["blocked_mode"],
+        row["blocking_mode"],
+        row["relation"],
+    ]
+
+
+def format_console_line(now: str, row: Any, blocked_kind: str, blocking_kind: str) -> str:
+    """The live console line for one sampled lock wait, naming the blocker's pid and both modes."""
+    return (
+        f"[{now}] LOCK-WAIT pid={row['pid']} blocked_by={row['blocking_pid']} {row['wait_event']} "
+        f"blocked[{blocked_kind}] mode={row['blocked_mode']} <- "
+        f"blocking[{blocking_kind}] mode={row['blocking_mode']} rel={row['relation']}"
+    )
 
 
 class Sampler:
@@ -149,22 +218,8 @@ class Sampler:
                             blocked_kind,
                             blocking_kind,
                         )
-                        writer.writerow(
-                            [
-                                now,
-                                row["pid"],
-                                row["wait_event"],
-                                blocked_kind,
-                                blocking_kind,
-                                row["blocking_state"],
-                                row["blocked_query"],
-                                row["blocking_query"],
-                            ]
-                        )
-                        print(
-                            f"[{now}] LOCK-WAIT pid={row['pid']} {row['wait_event']} "
-                            f"blocked[{blocked_kind}] <- blocking[{blocking_kind}]"
-                        )
+                        writer.writerow(build_csv_row(now, row, blocked_kind, blocking_kind))
+                        print(format_console_line(now, row, blocked_kind, blocking_kind))
                     for pid in [pid for pid in self._streaks if pid not in waiting_pids]:
                         self.episodes.append(self._streaks.pop(pid))
                     with contextlib.suppress(asyncio.TimeoutError):

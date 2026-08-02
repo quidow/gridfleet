@@ -1157,6 +1157,62 @@ async def test_recovery_probe_skips_unobserved_node_instead_of_failing(
     assert await get_session_viability(db_session, loaded_device) is None
 
 
+async def test_recovery_probe_skips_missing_node_instead_of_failing(
+    db_session: AsyncSession,
+    db_host: Host,
+) -> None:
+    """A recovery probe can also race a node that has not been created at all
+    yet, not merely one whose pid is unobserved — the desired-state write and
+    the AppiumNode row insert are not atomic. Same benign-skip carve-out as the
+    unobserved-node case above: nothing is written, so nothing escalates to an
+    auto-stop. Manual and scheduled probes keep persisting a failure for a
+    missing node (test_run_session_viability_probe_rejects_missing_running_node)."""
+    device = Device(
+        pack_id="appium-uiautomator2",
+        platform_id="android_mobile",
+        identity_scheme="android_serial",
+        identity_scope="host",
+        identity_value="probe-recovery-no-node",
+        connection_target="probe-recovery-no-node",
+        name="Recovery No Node Device",
+        os_version="14",
+        host_id=db_host.id,
+        operational_state=DeviceOperationalState.offline,
+        verified_at=datetime.now(UTC),
+        device_type=DeviceType.real_device,
+        connection_type=ConnectionType.usb,
+    )
+    db_session.add(device)
+    await db_session.commit()
+
+    loaded_device = await db_session.get(Device, device.id)
+    assert loaded_device is not None
+    loaded_device.appium_node = None
+    assert loaded_device.session_viability_status is None
+    assert loaded_device.session_viability_error is None
+
+    # A real DeviceHealthService (not the module-level ``_svc``'s AsyncMock) so
+    # a Device column write, if it happened, would be visible below.
+    svc = SessionViabilityService(
+        publisher=_test_event_bus,
+        settings=FakeSettingsReader({}),
+        session_factory=async_sessionmaker(db_session.bind, class_=AsyncSession, expire_on_commit=False),
+        capability=DeviceCapabilityService(),
+        health=DeviceHealthService(publisher=_test_event_bus),
+    )
+
+    with pytest.raises(SessionViabilityProbeNotPermittedError):
+        await svc.run_session_viability_probe(
+            loaded_device.id, checked_by=session_viability.SessionViabilityCheckedBy.recovery
+        )
+
+    # Neither the control-plane state nor the Device columns were written.
+    assert await get_session_viability(db_session, loaded_device) is None
+    await db_session.refresh(loaded_device)
+    assert loaded_device.session_viability_status is None
+    assert loaded_device.session_viability_error is None
+
+
 async def test_run_session_viability_probe_rejects_duplicate_and_not_ready(
     db_session: AsyncSession,
     db_host: Host,

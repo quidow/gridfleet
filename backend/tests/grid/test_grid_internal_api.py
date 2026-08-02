@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 
 from app.devices.services.health import DeviceHealthService
 from app.grid import router_internal, session_create
@@ -585,6 +586,100 @@ async def test_cancel_ticket_moves_to_tickets_route(
     assert ticket is not None
     await db_session.refresh(ticket)
     assert ticket.status == GridQueueStatus.cancelled
+
+    # Idempotent repeat: still 204, ticket stays cancelled once, no session
+    # was ever created for it.
+    resp3 = await client.delete(f"/internal/grid/tickets/{ticket_id}")
+    assert resp3.status_code == 204
+    await db_session.refresh(ticket)
+    assert ticket.status == GridQueueStatus.cancelled
+    live_session = await db_session.scalar(select(Session).where(Session.ticket_id == uuid.UUID(ticket_id)))
+    assert live_session is None
+
+
+@pytest.mark.db
+async def test_cancel_ticket_closes_interrupted_pending_claim(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    seeded_available_device: Device,
+) -> None:
+    """A ticket already claimed into a pending Session (the allocation won the
+    race before the router's cancel arrived) must not survive cancellation:
+    the pending row is failed via the existing interrupted-create cleanup."""
+    ticket_id = uuid.uuid4()
+    row = Session(
+        session_id=f"alloc-{uuid.uuid4()}",
+        device_id=seeded_available_device.id,
+        status=SessionStatus.pending,
+        ticket_id=ticket_id,
+        router_target="http://host:4730",
+    )
+    db_session.add(row)
+    await db_session.commit()
+
+    resp = await client.delete(f"/internal/grid/tickets/{ticket_id}")
+    assert resp.status_code == 204
+
+    await db_session.refresh(row)
+    assert row.status == SessionStatus.error
+    assert row.ended_at is not None
+
+    routes = await client.get("/internal/grid/routes")
+    assert routes.json()["routes"] == []
+
+    # Idempotent repeat: the row is already terminal, nothing left to close.
+    resp2 = await client.delete(f"/internal/grid/tickets/{ticket_id}")
+    assert resp2.status_code == 204
+
+
+@pytest.mark.db
+async def test_cancel_ticket_terminates_interrupted_running_claim(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    seeded_available_device: Device,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ticket already claimed and promoted to running before the router's
+    cancel arrived must still be torn down: cancellation reuses the
+    interrupted-create path to terminate the remote Appium session, end the
+    row, and drop it from the route table."""
+    ticket_id = uuid.uuid4()
+    row = Session(
+        session_id="cancel-race-running",
+        device_id=seeded_available_device.id,
+        status=SessionStatus.running,
+        ticket_id=ticket_id,
+        router_target="http://fallback-target:4730",
+    )
+    db_session.add(row)
+    await db_session.commit()
+
+    terminated: list[str] = []
+
+    async def fake_terminate(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        terminated.append(session_id)
+        return True
+
+    monkeypatch.setattr(router_internal.appium_direct, "terminate_session", fake_terminate)
+
+    routes_before = await client.get("/internal/grid/routes")
+    assert any(entry["session_id"] == "cancel-race-running" for entry in routes_before.json()["routes"])
+
+    resp = await client.delete(f"/internal/grid/tickets/{ticket_id}")
+    assert resp.status_code == 204
+    assert terminated == ["cancel-race-running"]
+
+    await db_session.refresh(row)
+    assert row.ended_at is not None
+    assert row.status != SessionStatus.running
+
+    routes_after = await client.get("/internal/grid/routes")
+    assert routes_after.json()["routes"] == []
+
+    # Idempotent repeat: the row is already ended, no second remote terminate.
+    resp2 = await client.delete(f"/internal/grid/tickets/{ticket_id}")
+    assert resp2.status_code == 204
+    assert terminated == ["cancel-race-running"]
 
 
 @pytest.mark.db

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import httpx2 as httpx
+import pytest
 
 import gridfleet_testkit
 from gridfleet_testkit.client import GridFleetClient
@@ -23,7 +24,7 @@ class DummyResponse:
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
-            raise httpx.HTTPStatusError("request failed", request=httpx.Request("GET", "http://test"), response=None)
+            raise httpx.HTTPStatusError("request failed", request=httpx.Request("GET", "http://test"), response=self)
 
 
 def test_list_devices_sends_supported_filters(monkeypatch):
@@ -366,7 +367,7 @@ def test_report_preparation_failure_posts_expected_payload(monkeypatch):
             "message": "ADB install failed",
             "source": "github_actions",
         },
-        "timeout": 10,
+        "timeout": 35,
     }
 
 
@@ -485,7 +486,9 @@ def test_client_explicit_auth_overrides_env_default(monkeypatch):
 # --- Step 2: preparation-failure suppress test ---
 
 
-def test_report_preparation_failure_can_suppress_errors(monkeypatch, caplog):
+def test_report_preparation_failure_two_transport_failures_suppressed_returns_none(monkeypatch, caplog):
+    calls: list[str] = []
+
     def fake_request(
         method: str,
         url: str,
@@ -495,21 +498,139 @@ def test_report_preparation_failure_can_suppress_errors(monkeypatch, caplog):
         timeout: int = 10,
         auth: object = None,
     ) -> DummyResponse:
-        raise httpx.ConnectError("network down")
+        calls.append(url)
+        raise httpx.ConnectError(f"network down (attempt {len(calls)})")
 
     monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
 
     client = GridFleetClient("http://manager/api")
 
-    assert (
-        client.report_preparation_failure(
-            "run-1",
-            "dev-1",
-            "setup failed",
-            suppress_errors=True,
-        )
-        is None
+    result = client.report_preparation_failure(
+        "run-1",
+        "dev-1",
+        "setup failed",
+        suppress_errors=True,
     )
+
+    assert result is None
+    assert len(calls) == 2
+    assert "Failed to report preparation failure with GridFleet" in caplog.text
+
+
+def test_report_preparation_failure_two_transport_failures_raises_final_exception(monkeypatch):
+    calls: list[str] = []
+
+    def fake_request(
+        method: str,
+        url: str,
+        *,
+        json: JsonObject | None = None,
+        params: object = None,
+        timeout: int = 10,
+        auth: object = None,
+    ) -> DummyResponse:
+        calls.append(url)
+        raise httpx.ConnectError(f"network down (attempt {len(calls)})")
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
+
+    client = GridFleetClient("http://manager/api")
+
+    with pytest.raises(httpx.ConnectError, match="attempt 2"):
+        client.report_preparation_failure("run-1", "dev-1", "setup failed")
+
+    assert len(calls) == 2
+
+
+# --- Task 6: preparation-failure retry tests ---
+
+
+def test_report_preparation_failure_retries_transport_error_then_succeeds(monkeypatch):
+    calls: list[tuple[str, JsonObject | None, int]] = []
+
+    def fake_request(
+        method: str,
+        url: str,
+        *,
+        json: JsonObject | None = None,
+        params: object = None,
+        timeout: int = 10,
+        auth: object = None,
+    ) -> DummyResponse:
+        calls.append((url, json, timeout))
+        if len(calls) == 1:
+            raise httpx.ConnectError("network down")
+        return DummyResponse({"state": "preparing"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
+
+    client = GridFleetClient("http://manager/api")
+    result = client.report_preparation_failure("run-1", "dev-1", "ADB install failed")
+
+    assert result == {"state": "preparing"}
+    expected_call = (
+        "http://manager/api/runs/run-1/devices/dev-1/preparation-failed",
+        {"message": "ADB install failed", "source": "ci_preparation"},
+        35,
+    )
+    assert calls == [expected_call, expected_call]
+
+
+@pytest.mark.parametrize("status_code", [503, 504])
+def test_report_preparation_failure_retries_503_504_then_succeeds(monkeypatch, status_code):
+    calls: list[tuple[str, JsonObject | None, int]] = []
+
+    def fake_request(
+        method: str,
+        url: str,
+        *,
+        json: JsonObject | None = None,
+        params: object = None,
+        timeout: int = 10,
+        auth: object = None,
+    ) -> DummyResponse:
+        calls.append((url, json, timeout))
+        if len(calls) == 1:
+            return DummyResponse({"error": "unavailable"}, status_code=status_code)
+        return DummyResponse({"state": "preparing"})
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
+
+    client = GridFleetClient("http://manager/api")
+    result = client.report_preparation_failure("run-1", "dev-1", "ADB install failed")
+
+    assert result == {"state": "preparing"}
+    expected_call = (
+        "http://manager/api/runs/run-1/devices/dev-1/preparation-failed",
+        {"message": "ADB install failed", "source": "ci_preparation"},
+        35,
+    )
+    assert calls == [expected_call, expected_call]
+
+
+def test_report_preparation_failure_409_makes_one_request_and_raises(monkeypatch):
+    calls: list[str] = []
+
+    def fake_request(
+        method: str,
+        url: str,
+        *,
+        json: JsonObject | None = None,
+        params: object = None,
+        timeout: int = 10,
+        auth: object = None,
+    ) -> DummyResponse:
+        calls.append(url)
+        return DummyResponse({"error": "conflict"}, status_code=409)
+
+    monkeypatch.setattr("gridfleet_testkit.client.httpx.request", fake_request)
+
+    client = GridFleetClient("http://manager/api")
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.report_preparation_failure("run-1", "dev-1", "ADB install failed")
+
+    assert len(calls) == 1
 
 
 # --- Step 3: lazy environment tests ---
