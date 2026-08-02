@@ -1,7 +1,7 @@
 {
   "backend": "0.6.0",
   "agent": "0.40.1",
-  "frontend": "0.6.1",
+  "frontend": "0.7.0",
   "router": "0.5.0",
   "testkit": "0.16.0"
 }
