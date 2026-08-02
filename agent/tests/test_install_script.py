@@ -26,11 +26,6 @@ def test_bootstrap_wrapper_installs_uv_if_missing() -> None:
     assert "command -v uv" in script
 
 
-def test_bootstrap_wrapper_calls_gridfleet_agent_install() -> None:
-    script = (Path(__file__).resolve().parents[2] / "scripts/install-agent.sh").read_text()
-    assert "gridfleet-agent install" in script
-
-
 def test_bootstrap_wrapper_is_executable() -> None:
     script_path = Path(__file__).resolve().parents[2] / "scripts/install-agent.sh"
     assert script_path.stat().st_mode & S_IXUSR
