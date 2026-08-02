@@ -46,16 +46,13 @@ _SECTION_SEQUENCE = 7
 _BOOT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 
 
-@pytest_asyncio.fixture
-async def unhealthy_fold(
-    db_session: AsyncSession,
-) -> tuple[ConnectivityService, Device, AppiumNode, dict[str, Any]]:
-    _host, device = await seed_host_and_device(db_session, identity="unhealthy-transition")
+def _mark_healthy_and_attach_node(device: Device) -> AppiumNode:
+    """Mark ``device`` healthy as of one minute before ``_OBSERVED_AT`` and build its running node."""
     device.device_checks_healthy = True
     device.device_checks_summary = "Healthy"
     device.device_checks_checked_at = _OBSERVED_AT - timedelta(minutes=1)
     device.device_checks_observation_revision = 1
-    node = AppiumNode(
+    return AppiumNode(
         device_id=device.id,
         port=4723,
         desired_state=AppiumDesiredState.running,
@@ -66,6 +63,14 @@ async def unhealthy_fold(
         last_health_checked_at=_OBSERVED_AT - timedelta(minutes=1),
         last_observed_at=_OBSERVED_AT - timedelta(minutes=1),
     )
+
+
+@pytest_asyncio.fixture
+async def unhealthy_fold(
+    db_session: AsyncSession,
+) -> tuple[ConnectivityService, Device, AppiumNode, dict[str, Any]]:
+    _host, device = await seed_host_and_device(db_session, identity="unhealthy-transition")
+    node = _mark_healthy_and_attach_node(device)
     db_session.add(node)
     await db_session.commit()
 
@@ -550,23 +555,7 @@ async def test_unhealthy_fold_failure_keeps_prior_device_and_retries_remaining_d
             name=f"unhealthy-transition-{suffix}",
             operational_state=DeviceOperationalState.available,
         )
-        device.device_checks_healthy = True
-        device.device_checks_summary = "Healthy"
-        device.device_checks_checked_at = _OBSERVED_AT - timedelta(minutes=1)
-        device.device_checks_observation_revision = 1
-        db_session.add(
-            AppiumNode(
-                device_id=device.id,
-                port=4723,
-                desired_state=AppiumDesiredState.running,
-                desired_port=4723,
-                pid=1000,
-                active_connection_target=device.identity_value,
-                health_running=True,
-                last_health_checked_at=_OBSERVED_AT - timedelta(minutes=1),
-                last_observed_at=_OBSERVED_AT - timedelta(minutes=1),
-            )
-        )
+        db_session.add(_mark_healthy_and_attach_node(device))
         devices.append(device)
     await db_session.commit()
     ordered = sorted(devices, key=lambda item: item.id)
