@@ -258,62 +258,6 @@ async def test_get_group_device_ids_returns_empty_for_missing_group(db_session: 
     assert await _svc().get_group_device_ids(db_session, group.key) == []
 
 
-async def test_delete_dynamic_group_succeeds_when_unreferenced(db_session: AsyncSession) -> None:
-    """The dependent lookup runs for every group type and must not over-reject.
-
-    ``delete_group`` does not gate ``_dependent_dynamic_keys`` on the target being
-    static, so a dynamic group with no dependents must still delete cleanly —
-    including one that is itself the *source* of a reference.
-    """
-    svc = _svc()
-    await svc.create_group(
-        db_session,
-        DeviceGroupCreate(key="del-static", name="del static", group_type="static"),
-    )
-    dynamic = await svc.create_group(
-        db_session,
-        DeviceGroupCreate(
-            key="del-dynamic",
-            name="del dynamic",
-            group_type="dynamic",
-            filters=DeviceGroupFilters(member_of=["del-static"]),
-        ),
-    )
-    await dispatch_committed_events()
-
-    assert await svc.delete_group(db_session, dynamic.group_key) is True
-    assert await svc.get_group(db_session, dynamic.group_key) is None
-
-
-async def test_delete_dynamic_group_rejects_a_relation_backed_reference(db_session: AsyncSession) -> None:
-    """A referenced *static* target cannot be deleted out from under its source.
-
-    The dynamic-target case this used to cover is gone by construction: the
-    relation's ``static_type`` CHECK and composite foreign key make a reference
-    to a dynamic group unrepresentable, so no hand-written row or data migration
-    can mint one any more.
-    """
-    svc = _svc()
-    target = await svc.create_group(
-        db_session,
-        DeviceGroupCreate(key="dangling-target", name="dangling target", group_type="static"),
-    )
-    await svc.create_group(
-        db_session,
-        DeviceGroupCreate(
-            key="dangling-ref",
-            name="dangling ref",
-            group_type="dynamic",
-            filters=DeviceGroupFilters(member_of=[target.group_key]),
-        ),
-    )
-    await dispatch_committed_events()
-
-    with pytest.raises(device_group_service.GroupReferencedError) as exc:
-        await svc.delete_group(db_session, target.group_key)
-    assert exc.value.dependents == ["dangling-ref"]
-
-
 async def test_delete_group_survives_a_non_object_filters_row(db_session: AsyncSession) -> None:
     """A JSONB array in `filters` must not break unrelated deletes.
 

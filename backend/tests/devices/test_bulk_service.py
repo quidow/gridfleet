@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import uuid as uuid_module
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import NoResultFound
 
 from tests.helpers import test_event_bus as event_bus
 
@@ -32,18 +34,47 @@ from app.devices.models import (
     DeviceOperationalState,
 )
 from app.devices.services import bulk as bulk_service
-from app.devices.services.bulk import BulkOperationsService
+from app.devices.services.bulk import BulkItemResult, BulkOperationsService
 from app.devices.services.identity_conflicts import DeviceIdentityConflictService
 from app.devices.services.maintenance import MaintenanceService
 from app.devices.services.service import DeviceCrudService
 from app.events.models import SystemEvent
 from app.jobs.kinds import JOB_KIND_DEVICE_RECOVERY
 from app.jobs.models import Job
-from app.lifecycle.services.operator_node import OperatorNodeLifecycleService
-from tests.fakes import FakeSettingsReader
+from app.lifecycle.services.operator_node import (
+    OperatorNodeLifecycleService,
+    operator_stop_intents,
+    operator_stop_sources,
+)
+from tests.fakes import FakeSessionFactory, FakeSettingsReader
 from tests.helpers import create_device
 
-pytestmark = pytest.mark.asyncio
+
+def _mock_db() -> MagicMock:
+    db = MagicMock()
+    db.bind = object()
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    return db
+
+
+def _locked_mock_device(**overrides: object) -> SimpleNamespace:
+    values: dict[str, object] = {
+        "id": uuid_module.uuid4(),
+        "host_id": uuid_module.uuid4(),
+        "appium_node": None,
+        "pack_id": "pack",
+        "platform_id": "platform",
+        "device_type": SimpleNamespace(value="mobile"),
+        "connection_type": SimpleNamespace(value="network"),
+        "connection_target": "target",
+        "ip_address": "10.0.0.2",
+        "host": SimpleNamespace(ip="10.0.0.1", agent_port=5100),
+    }
+    values.update(overrides)
+    return SimpleNamespace(device=SimpleNamespace(**values), assert_active=lambda _db: None)
 
 
 async def test_bulk_start_stop_and_restart_nodes_collect_errors(
@@ -132,6 +163,15 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         connection_target="10.0.0.21:5555",
         verified=True,
     )
+    eligible_reports_unsuccessful = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="bulk-rc-unsuccessful",
+        connection_type="network",
+        ip_address="10.0.0.22",
+        connection_target="10.0.0.22:5555",
+        verified=True,
+    )
     ineligible = await create_device(
         db_session,
         host_id=db_host.id,
@@ -144,6 +184,8 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
     outcomes = {
         "10.0.0.20:5555": {"success": True},
         "10.0.0.21:5555": AgentCallError("10.0.0.10", "boom"),
+        # No exception: the agent call itself succeeded but reported failure.
+        "10.0.0.22:5555": {"success": False},
     }
 
     async def fake_lifecycle_action(*args: object, **kwargs: object) -> dict[str, object]:
@@ -163,12 +205,14 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(settings=_settings_rc, publisher=event_bus),
         session_factory=db_session_maker,
-    ).bulk_reconnect([eligible_ok.id, eligible_fail.id, ineligible.id])
+    ).bulk_reconnect([eligible_ok.id, eligible_fail.id, eligible_reports_unsuccessful.id, ineligible.id])
 
     assert result["succeeded"] == 1
-    assert result["failed"] == 2
+    assert result["failed"] == 3
     assert result["errors"][str(ineligible.id)] == "Not a network-connected Android device"
     assert result["errors"][str(eligible_fail.id)] == "boom"
+    # The structural-failure branch: no exception, just `{"success": False}`.
+    assert result["errors"][str(eligible_reports_unsuccessful.id)] == "Reconnect failed"
 
 
 async def test_bulk_delete_and_maintenance_operations_collect_failures(
@@ -515,6 +559,162 @@ async def test_bulk_delete_sorts_and_dedupes_input_ids(
 
 async def test_load_existing_device_ids_returns_empty_without_opening_a_session() -> None:
     assert await bulk_service._load_existing_device_ids(AsyncMock(), []) == []
+
+
+async def test_node_action_helpers_delegate_to_operator_service() -> None:
+    """_bulk_*_one are thin wrappers over operator.request_start/stop/restart."""
+    db = _mock_db()
+    returned_node = SimpleNamespace(observed_running=True, port=4723)
+
+    mock_operator = SimpleNamespace(
+        request_start=AsyncMock(return_value=returned_node),
+        request_stop=AsyncMock(return_value=returned_node),
+        request_restart=AsyncMock(return_value=returned_node),
+    )
+
+    # _bulk_start_one delegates to operator.request_start; the transaction is the
+    # orchestrator's responsibility (_run_per_device_action opens one per device).
+    node = await bulk_service._bulk_start_one(  # type: ignore[arg-type]
+        db, _locked_mock_device(), "operator", operator=mock_operator
+    )
+    assert node is returned_node
+    mock_operator.request_start.assert_awaited_once()
+    assert mock_operator.request_start.call_args.kwargs["reason"] == "operator start requested"
+    db.commit.assert_not_awaited()
+
+    # _bulk_stop_one raises NodeManagerError when node is None or not running
+    with pytest.raises(NodeManagerError, match="No running node"):
+        await bulk_service._bulk_stop_one(  # type: ignore[arg-type]
+            db, _locked_mock_device(appium_node=None), "operator", operator=mock_operator
+        )
+    not_running_node = SimpleNamespace(observed_running=False, port=4723)
+    with pytest.raises(NodeManagerError, match="No running node"):
+        await bulk_service._bulk_stop_one(  # type: ignore[arg-type]
+            db, _locked_mock_device(appium_node=not_running_node), "operator", operator=mock_operator
+        )
+
+    # _bulk_stop_one delegates to operator.request_stop when node is running
+    running_node = SimpleNamespace(observed_running=True, port=4723)
+    stopped = await bulk_service._bulk_stop_one(  # type: ignore[arg-type]
+        db, _locked_mock_device(appium_node=running_node), "operator", operator=mock_operator
+    )
+    assert stopped is returned_node
+    mock_operator.request_stop.assert_awaited_once()
+    assert mock_operator.request_stop.call_args.kwargs["reason"] == "operator stop requested"
+
+    # _bulk_restart_one delegates to operator.request_restart
+    restarted = await bulk_service._bulk_restart_one(  # type: ignore[arg-type]
+        db,
+        _locked_mock_device(appium_node=running_node),
+        "operator",
+        operator=mock_operator,
+    )
+    assert restarted is returned_node
+    mock_operator.request_restart.assert_awaited_once()
+    assert mock_operator.request_restart.call_args.kwargs["reason"] == "operator restart requested"
+
+
+async def test_bulk_exit_maintenance_schedules_recovery_only_for_the_succeeding_item(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    success = uuid_module.uuid4()
+    failure = uuid_module.uuid4()
+
+    async def fake_load_existing(_factory: object, _device_ids: list[uuid_module.UUID]) -> list[uuid_module.UUID]:
+        return [success, failure]
+
+    monkeypatch.setattr(bulk_service, "_load_existing_device_ids", fake_load_existing)
+    monkeypatch.setattr(
+        device_locking,
+        "lock_device_handle",
+        AsyncMock(side_effect=lambda _db, device_id, **_: _locked_mock_device(id=device_id)),
+    )
+
+    mock_maintenance = MagicMock()
+    mock_maintenance.exit_maintenance_locked = AsyncMock(
+        side_effect=lambda _db, locked: (
+            (_ for _ in ()).throw(ValueError("not in maintenance"))
+            if locked.device.id == failure
+            else SimpleNamespace(device_id=locked.device.id)
+        )
+    )
+    mock_maintenance.schedule_device_recovery = AsyncMock()
+
+    exited = await _real_service(FakeSessionFactory(_mock_db()), maintenance=mock_maintenance).bulk_exit_maintenance(
+        [success, failure]
+    )
+    assert exited["succeeded"] == 1
+    assert exited["errors"][str(failure)] == "not in maintenance"
+    # Recovery is owed only by the item whose transaction committed.
+    mock_maintenance.schedule_device_recovery.assert_awaited_once_with(success)
+
+
+def test_bulk_result_helper_builds_the_summary_shape() -> None:
+    assert bulk_service._result(3, 2, {"x": "bad"}) == {
+        "total": 3,
+        "succeeded": 2,
+        "failed": 1,
+        "errors": {"x": "bad"},
+    }
+
+
+def test_operator_stop_intents_drops_redundant_grid_intent() -> None:
+    """P5: operator stop registers only the node hard-stop + recovery deny. The
+    node stop already forces accepting_new_sessions=False (node_factor), so the
+    operator:stop:grid intent was pure redundancy and has been dropped from both
+    the intent set and the revoke sources."""
+    device_id = uuid_module.uuid4()
+    sources = {intent.source for intent in operator_stop_intents(device_id)}
+    assert sources == {
+        f"operator:stop:node:{device_id}",
+        f"operator:stop:recovery:{device_id}",
+    }
+    # operator:stop:grid is no longer a revoke target:
+    assert f"operator:stop:grid:{device_id}" not in operator_stop_sources(device_id)
+    assert operator_stop_sources(device_id) == [
+        f"operator:stop:node:{device_id}",
+        f"operator:stop:recovery:{device_id}",
+    ]
+
+
+async def test_bulk_per_device_action_records_lock_and_action_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    first = uuid_module.uuid4()
+    second = uuid_module.uuid4()
+    third = uuid_module.uuid4()
+
+    async def fake_load_existing(_factory: object, _device_ids: list[uuid_module.UUID]) -> list[uuid_module.UUID]:
+        return [first, second, third]
+
+    monkeypatch.setattr(bulk_service, "_load_existing_device_ids", fake_load_existing)
+    monkeypatch.setattr(
+        device_locking,
+        "lock_device_handle",
+        AsyncMock(side_effect=[NoResultFound, _locked_mock_device(id=second), _locked_mock_device(id=third)]),
+    )
+
+    async def action(_session: object, locked: object, _caller: str) -> None:
+        if locked.device.id == second:  # type: ignore[attr-defined]
+            raise RuntimeError("action failed")
+
+    result = await bulk_service._run_per_device_action(
+        FakeSessionFactory(_mock_db()),  # type: ignore[arg-type]
+        [first, second, third],
+        operation="restart",
+        action_fn=action,
+        caller="bulk",
+        publisher=event_bus,
+    )
+
+    assert result["succeeded"] == 1
+    assert result["errors"][str(first)] == "Device not found"
+    assert result["errors"][str(second)] == "action failed"
+
+
+def test_bulk_item_result_is_immutable() -> None:
+    """Item results cross the gather boundary, so they must be frozen scalars."""
+    item = BulkItemResult(uuid_module.uuid4(), None)
+    with pytest.raises(AttributeError):
+        item.error = "mutated"  # type: ignore[misc]
 
 
 async def _summary_event_count(db_session: AsyncSession) -> int:
