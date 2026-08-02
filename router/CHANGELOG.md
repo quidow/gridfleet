@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.1](https://github.com/quidow/gridfleet/compare/gridfleet-router-v0.5.0...gridfleet-router-v0.5.1) (2026-08-02)
+
+
+### Bug Fixes
+
+* restore crash evidence, stop abandoned creates, bound preparation-failure reports ([8ab8fa2](https://github.com/quidow/gridfleet/commit/8ab8fa20e25582ccae4bc3a9313e8b059da0caee))
+* **router:** cancel creates when clients disconnect ([9279b9d](https://github.com/quidow/gridfleet/commit/9279b9dd49ed1dd2701128396263871d81349279))
+* **router:** only race ticketed create waits against disconnect ([350396f](https://github.com/quidow/gridfleet/commit/350396f515621d23dfed344a27d6d288cb9a7534))
+
 ## [0.5.0](https://github.com/quidow/gridfleet/compare/gridfleet-router-v0.4.0...gridfleet-router-v0.5.0) (2026-07-21)
 
 
