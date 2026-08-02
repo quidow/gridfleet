@@ -163,7 +163,9 @@ async def test_create_device_txn_stamps_payload_and_leaves_integrity_error_alone
     db.rollback.assert_not_awaited()
 
 
-async def test_update_device_txn_contract_missing_and_integrity_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_update_device_txn_rejects_a_non_patch_payload_and_leaves_integrity_errors_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """update_device_txn rejects a non-``DevicePatch`` payload under the enforced
     contract, and — once past that gate — leaves a persist-time ``IntegrityError``
     to propagate untouched rather than defensively rolling back the caller's

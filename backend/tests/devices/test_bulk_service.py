@@ -179,6 +179,19 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         connection_type="usb",
         verified=True,
     )
+    # Network-connected but unsupported by its driver pack: a separate gate
+    # (_supports_reconnect) from the connection-type check above, and one that
+    # must reject before an agent call is ever attempted.
+    unsupported_pack = await create_device(
+        db_session,
+        host_id=db_host.id,
+        name="bulk-rc-unsupported-pack",
+        pack_id="missing-pack",
+        connection_type="network",
+        ip_address="10.0.0.23",
+        connection_target="10.0.0.23:5555",
+        verified=True,
+    )
     await db_session.commit()
 
     outcomes = {
@@ -205,14 +218,25 @@ async def test_bulk_reconnect_filters_ineligible_devices_and_reports_agent_error
         crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
         operator=OperatorNodeLifecycleService(settings=_settings_rc, publisher=event_bus),
         session_factory=db_session_maker,
-    ).bulk_reconnect([eligible_ok.id, eligible_fail.id, eligible_reports_unsuccessful.id, ineligible.id])
+    ).bulk_reconnect(
+        [
+            eligible_ok.id,
+            eligible_fail.id,
+            eligible_reports_unsuccessful.id,
+            ineligible.id,
+            unsupported_pack.id,
+        ]
+    )
 
     assert result["succeeded"] == 1
-    assert result["failed"] == 3
+    assert result["failed"] == 4
     assert result["errors"][str(ineligible.id)] == "Not a network-connected Android device"
     assert result["errors"][str(eligible_fail.id)] == "boom"
     # The structural-failure branch: no exception, just `{"success": False}`.
     assert result["errors"][str(eligible_reports_unsuccessful.id)] == "Reconnect failed"
+    # The driver-pack gate: a different branch (_supports_reconnect) from the
+    # connection-type check above, reached before any agent call.
+    assert result["errors"][str(unsupported_pack.id)] == "Not a network-connected Android device"
 
 
 async def test_bulk_delete_and_maintenance_operations_collect_failures(
