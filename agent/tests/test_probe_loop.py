@@ -431,16 +431,37 @@ def test_join_falls_back_to_target_when_process_side_has_no_id() -> None:
 
 def test_join_by_id_survives_stale_target_past_the_settle_grace() -> None:
     """Proves the join is genuinely by device_id and not merely riding the
-    first-sighting/settle-grace leniency for an unmatched stale target: the
-    match still holds long after the grace window for the stale target key
-    would have expired."""
+    first-sighting/settle-grace leniency for an unmatched stale target.
+
+    A single cold call is not a discriminator here: an unseen key returns
+    True from ``_resolve_live``'s first-sighting branch regardless of ``now``,
+    so a hypothetical target-only join would pass a single-call check too.
+    This test instead seeds the stale target key's settle-grace clock and lets
+    it run out untouched -- exactly what a target-only join would do, since
+    the live node's real (host-resolved) target never again matches the
+    roster's stale cached value -- then proves the ID-based join is
+    unaffected by that decay.
+    """
     loop = _loop_with(_Manager())
+    stale_target_key = ("connection_target", "stable-avd-name")
     entry = {"device_id": "d1", "connection_target": "stable-avd-name"}
-    live_snapshot = {
-        "running_nodes": [{"device_id": "d1", "connection_target": "emulator-5554", "has_active_session": True}]
-    }
 
-    later = 100.0 + SESSION_SETTLE_GRACE_SEC + 1
-    live, id_owned_targets = loop._live_session_flags(live_snapshot, now=later)
+    # Seed the stale target key's grace clock at t=0, as its first (and, under
+    # a target-only join, only) sighting would.
+    loop._resolve_live(stale_target_key, False, now=0.0)
 
+    # The device's real, host-resolved node reports a different target string
+    # under the same device_id, and never again touches the stale target key
+    # -- exactly as in production once host resolution has run.
+    later = SESSION_SETTLE_GRACE_SEC + 1
+    live, id_owned_targets = loop._live_session_flags(
+        {"running_nodes": [{"device_id": "d1", "connection_target": "emulator-5554", "has_active_session": True}]},
+        now=later,
+    )
+
+    # The stale target key's own grace has now expired with no fresh signal:
+    # a target-only join would report False for this roster entry.
+    assert loop._resolve_live(stale_target_key, False, now=later) is False
+    # The ID-based join does not decay with it -- it never depended on the
+    # stale target key at all.
     assert loop._resolve_entry_live(live, id_owned_targets, entry, now=later) is True
