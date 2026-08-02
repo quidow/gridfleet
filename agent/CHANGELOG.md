@@ -2,6 +2,16 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.40.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.40.1...gridfleet-agent-v0.40.2) (2026-08-02)
+
+
+### Bug Fixes
+
+* **agent:** bound macos service logs ([d5ea9c5](https://github.com/quidow/gridfleet/commit/d5ea9c5cf994f657ab39d80f9254443877080c8d))
+* **agent:** close previous log handler on reconfigure ([4baac64](https://github.com/quidow/gridfleet/commit/4baac6478c3a81ff94796450b05fcb8fcf7fda57))
+* **agent:** open the operator log only in the serving process ([cd2dde3](https://github.com/quidow/gridfleet/commit/cd2dde3e9451fc731d8a6f2502ba9f353b7208eb))
+* restore crash evidence, stop abandoned creates, bound preparation-failure reports ([8ab8fa2](https://github.com/quidow/gridfleet/commit/8ab8fa20e25582ccae4bc3a9313e8b059da0caee))
+
 ## [0.40.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.40.0...gridfleet-agent-v0.40.1) (2026-07-31)
 
 
