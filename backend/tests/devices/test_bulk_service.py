@@ -119,16 +119,7 @@ async def test_bulk_start_stop_and_restart_nodes_collect_errors(
     monkeypatch.setattr("app.devices.services.bulk._bulk_start_one", fake_start_node)
     monkeypatch.setattr("app.devices.services.bulk._bulk_stop_one", fake_stop_node)
     monkeypatch.setattr("app.devices.services.bulk._bulk_restart_one", fake_restart_node)
-    settings = FakeSettingsReader({})
-    svc = BulkOperationsService(
-        publisher=event_bus,
-        settings=settings,
-        circuit_breaker=MagicMock(),
-        maintenance=MagicMock(),
-        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(settings=settings, publisher=event_bus),
-        session_factory=db_session_maker,
-    )
+    svc = _real_service(db_session_maker, maintenance=MagicMock())
     started = await svc.bulk_start_nodes([device.id for device in devices])
     stopped = await svc.bulk_stop_nodes([device.id for device in devices])
     restarted = await svc.bulk_restart_nodes([device.id for device in devices])
@@ -317,20 +308,7 @@ async def test_bulk_exit_maintenance_enqueues_recovery_jobs(
     ]
     await db_session.commit()
 
-    _settings_exit = FakeSettingsReader()
-    result = await BulkOperationsService(
-        publisher=event_bus,
-        settings=_settings_exit,
-        circuit_breaker=MagicMock(),
-        maintenance=MaintenanceService(
-            settings=FakeSettingsReader({}),
-            publisher=event_bus,
-            session_factory=db_session_maker,
-        ),
-        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        operator=OperatorNodeLifecycleService(settings=_settings_exit, publisher=event_bus),
-        session_factory=db_session_maker,
-    ).bulk_exit_maintenance([d.id for d in devices])
+    result = await _real_service(db_session_maker).bulk_exit_maintenance([d.id for d in devices])
 
     assert result["succeeded"] == 3
     assert result["failed"] == 0
