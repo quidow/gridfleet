@@ -1208,12 +1208,25 @@ class AppiumProcessManager:
             coalesced_node = await self._running_node_snapshot(info)
             coalesced_node["observation_coalesced"] = True
             running_nodes.append(coalesced_node)
+        # The backend dedupes restart events against a single host-wide sequence
+        # cursor (highest sequence seen), not a per-port one. Dropping only the
+        # withheld sequence numbers would still let a *later*, already-released
+        # sequence advance that cursor past a withheld one -- permanently
+        # hiding it once released (a second port's crash arriving between a
+        # first port's crash and its release). Truncate the emitted stream
+        # instead: nothing at or after the earliest still-withheld sequence is
+        # ever sent, so the cursor never advances past it and the whole
+        # deferred tail releases atomically once that sequence is released.
         withheld_sequences = set(self._withheld_restart_sequence_by_port.values())
+        truncate_at = min(withheld_sequences) if withheld_sequences else None
+        emitted_events = [
+            event.to_payload()
+            for event in self._recent_restart_events
+            if truncate_at is None or event.sequence < truncate_at
+        ]
         return {
             "running_nodes": running_nodes,
-            "recent_restart_events": [
-                event.to_payload() for event in self._recent_restart_events if event.sequence not in withheld_sequences
-            ],
+            "recent_restart_events": emitted_events,
             "start_failures": [failure.to_payload() for failure in self._start_failures],
         }
 

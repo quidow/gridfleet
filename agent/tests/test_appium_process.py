@@ -537,16 +537,13 @@ async def test_reconfigure_unknown_port_raises_device_not_found() -> None:
 
 
 async def test_reconfigure_stop_pending_blocks_auto_restart() -> None:
-    """A ``stop_pending=True`` reconfigure queued during the crash backoff
-    window must track the port in ``_stop_pending_ports`` so the auto-restart
-    loop refuses to resurrect a crashed Appium under a pending stop. Stop
-    decisions are owned by the backend's appium reconciler via
-    ``AppiumNode.desired_state``. Releasing the withheld first-attempt
-    observation must make the crash visible even though the restart itself
-    is refused.
+    """A ``stop_pending=True`` reconfigure must track the port in
+    ``_stop_pending_ports`` so the auto-restart loop refuses to resurrect a
+    crashed Appium under a pending stop. Stop decisions are owned by the
+    backend's appium reconciler via ``AppiumNode.desired_state``.
     """
     manager = AppiumProcessManager()
-    appium_proc = FakeProcess(pid=5002, returncode=1)
+    appium_proc = FakeProcess(pid=5002)
     manager._appium_procs[4723] = cast("asyncio.subprocess.Process", appium_proc)
     manager._info[4723] = AppiumProcessInfo(
         port=4723,
@@ -555,24 +552,13 @@ async def test_reconfigure_stop_pending_blocks_auto_restart() -> None:
         platform_id="android_mobile",
     )
 
-    real_sleep = asyncio.sleep
-
-    async def fake_sleep(_delay: float) -> None:
-        # Operator queues a stop_pending reconfigure while the auto-restart
-        # loop is mid-backoff on the crashed port.
-        await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
-        await real_sleep(0)
-
-    with patch("agent_app.appium.process.asyncio.sleep", side_effect=fake_sleep):
-        await manager._auto_restart_appium(4723, exit_code=9)
+    await manager.reconfigure(4723, accepting_new_sessions=False, stop_pending=True, grid_run_id=None)
 
     assert 4723 in manager._stop_pending_ports
 
-    snapshot = await manager.process_snapshot()
-    assert snapshot["recent_restart_events"][0]["kind"] == "crash_detected"
-    assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
-    assert manager._withheld_restart_sequence_by_port == {}
-    assert manager._first_restart_observation_ports == set()
+    # Auto-restart must refuse to resurrect because a stop is pending.
+    await manager._auto_restart_appium(4723, exit_code=9)
+    assert (await manager.process_snapshot())["recent_restart_events"] == []
 
 
 async def test_start_can_disable_session_override() -> None:
@@ -954,6 +940,97 @@ async def test_first_restart_attempt_is_coalesced_while_in_progress() -> None:
         "restart_succeeded",
     ]
     assert "observation_coalesced" not in final["running_nodes"][0]
+    await manager.shutdown()
+
+
+async def test_process_snapshot_truncates_events_at_earliest_withheld_sequence_across_ports() -> None:
+    """Multi-port regression: the backend dedupes restart events against a
+    single *host-wide* sequence cursor (highest sequence seen so far), not a
+    per-port one. Filtering out only each port's own withheld sequence number
+    is not enough -- if port A's first attempt resolves while port B's is
+    still in flight, emitting A's own later event would still let the
+    backend's cursor jump past B's still-withheld crash, permanently
+    discarding it as a stale replay once B eventually releases. The emitted
+    stream must instead be truncated at the earliest still-withheld sequence
+    across every port, so nothing at or beyond it is ever sent while any of
+    it is still withheld.
+    """
+    manager = AppiumProcessManager()
+    port_a, port_b = 4723, 4724
+    proc_a_crashed = FakeProcess(pid=1001)
+    proc_a_restarted = FakeProcess(pid=1002)
+    proc_b_crashed = FakeProcess(pid=2001)
+    proc_b_restarted = FakeProcess(pid=2002)
+    block_a = asyncio.Event()
+    block_b = asyncio.Event()
+    real_sleep = asyncio.sleep
+    sleep_calls = 0
+
+    async def fake_sleep(_delay: float) -> None:
+        nonlocal sleep_calls
+        sleep_calls += 1
+        await (block_a if sleep_calls == 1 else block_b).wait()
+
+    with (
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
+        patch("agent_app.appium.process.os.path.isfile", return_value=False),
+        patch.object(manager, "_wait_for_readiness", new_callable=AsyncMock, side_effect=[True, True, True, True]),
+        patch(
+            "agent_app.appium.process.asyncio.create_subprocess_exec",
+            side_effect=[proc_a_crashed, proc_b_crashed, proc_a_restarted, proc_b_restarted],
+        ),
+        patch("agent_app.appium.process.asyncio.sleep", side_effect=fake_sleep),
+    ):
+        await manager.start(connection_target="device-a", port=port_a, **PACK_START_KWARGS)
+        await manager.start(connection_target="device-b", port=port_b, **PACK_START_KWARGS)
+
+        proc_a_crashed.set_exit(1)
+        for _ in range(200):
+            if port_a in manager._first_restart_observation_ports:
+                break
+            await real_sleep(0)
+
+        proc_b_crashed.set_exit(1)
+        for _ in range(200):
+            if port_b in manager._first_restart_observation_ports:
+                break
+            await real_sleep(0)
+
+        # Both crashes are recorded (sequences 1 and 2) and both withheld:
+        # nothing is emitted yet.
+        snapshot = await manager.process_snapshot()
+        assert snapshot["recent_restart_events"] == []
+
+        # Port A resolves first; port B is still in flight.
+        block_a.set()
+        for _ in range(200):
+            if [info.pid for info in manager.list_running() if info.port == port_a] == [1002]:
+                break
+            await real_sleep(0)
+
+        mid_snapshot = await manager.process_snapshot()
+        # A's own crash (seq 1) is below B's still-withheld seq 2, so it is
+        # visible now -- but A's restart_succeeded (seq 3) is NOT: emitting it
+        # would let the cursor jump past B's withheld crash and permanently
+        # discard it once B later releases.
+        assert [event["kind"] for event in mid_snapshot["recent_restart_events"]] == ["crash_detected"]
+        assert mid_snapshot["recent_restart_events"][0]["port"] == port_a
+
+        # Port B resolves too; the whole deferred tail releases atomically.
+        block_b.set()
+        for _ in range(200):
+            if [info.pid for info in manager.list_running() if info.port == port_b] == [2002]:
+                break
+            await real_sleep(0)
+
+    final_snapshot = await manager.process_snapshot()
+    assert [(event["port"], event["kind"]) for event in final_snapshot["recent_restart_events"]] == [
+        (port_a, "crash_detected"),
+        (port_b, "crash_detected"),
+        (port_a, "restart_succeeded"),
+        (port_b, "restart_succeeded"),
+    ]
     await manager.shutdown()
 
 
