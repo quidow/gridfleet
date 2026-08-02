@@ -266,28 +266,9 @@ async def test_import_endpoint_returns_409_on_hash_mismatch(
     client: AsyncClient, db_session: AsyncSession, seeded_driver_packs: None
 ) -> None:
     host = await seed_host_named(db_session, "lab-04")
+    bundle = _bundle([_device()])
     body = {
-        "bundle": {
-            "schema_version": 2,
-            "exported_at": "2026-05-23T00:00:00+00:00",
-            "groups": [],
-            "devices": [
-                {
-                    "pack_id": "appium-uiautomator2",
-                    "platform_id": "android_mobile",
-                    "identity_scheme": "android_serial",
-                    "identity_scope": "host",
-                    "identity_value": "R58",
-                    "name": "Pixel",
-                    "device_type": "real_device",
-                    "connection_type": "usb",
-                    "static_groups": [],
-                    "device_config": {},
-                    "test_data": {},
-                    "original_host": {"hostname": "lab-04"},
-                }
-            ],
-        },
+        "bundle": bundle.model_dump(mode="json"),
         "bundle_hash": "sha256:" + "0" * 64,
         "mappings": [{"index": 0, "target_host_id": str(host.id)}],
     }
@@ -301,30 +282,9 @@ async def test_import_endpoint_commits_valid_row(
     client: AsyncClient, db_session: AsyncSession, seeded_driver_packs: None
 ) -> None:
     host = await seed_host_named(db_session, "lab-04")
-    bundle_body = {
-        "schema_version": 2,
-        "exported_at": "2026-05-23T00:00:00+00:00",
-        "groups": [],
-        "devices": [
-            {
-                "pack_id": "appium-uiautomator2",
-                "platform_id": "android_mobile",
-                "identity_scheme": "android_serial",
-                "identity_scope": "host",
-                "identity_value": "R58",
-                "name": "Pixel",
-                "device_type": "real_device",
-                "connection_type": "usb",
-                "static_groups": [],
-                "device_config": {},
-                "test_data": {},
-                "original_host": {"hostname": "lab-04"},
-            }
-        ],
-    }
-    bundle = ExportBundle.model_validate(bundle_body)
+    bundle = _bundle([_device()])
     body = {
-        "bundle": bundle_body,
+        "bundle": bundle.model_dump(mode="json"),
         "bundle_hash": compute_bundle_hash(bundle),
         "mappings": [{"index": 0, "target_host_id": str(host.id)}],
     }
@@ -861,14 +821,8 @@ async def test_import_endpoint_returns_409_when_a_group_key_is_created_concurren
     db_session.add(DeviceGroup(key="lab-fleet", name="lab fleet", group_type=GroupType.static))
     await db_session.commit()
 
-    bundle_body = {
-        "schema_version": 2,
-        "exported_at": "2026-05-23T00:00:00+00:00",
-        "groups": [{"key": "lab-fleet", "name": "lab fleet", "group_type": "static", "filters": None}],
-        "devices": [],
-    }
-    bundle = ExportBundle.model_validate(bundle_body)
-    body = {"bundle": bundle_body, "bundle_hash": compute_bundle_hash(bundle), "mappings": []}
+    bundle = _bundle([], groups=[_static_group("lab-fleet")])
+    body = {"bundle": bundle.model_dump(mode="json"), "bundle_hash": compute_bundle_hash(bundle), "mappings": []}
 
     real_load = import_bundle_module._load_existing_group_keys
     calls = 0
