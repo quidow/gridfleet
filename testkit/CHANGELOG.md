@@ -2,6 +2,14 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.16.1](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.16.0...gridfleet-testkit-v0.16.1) (2026-08-02)
+
+
+### Bug Fixes
+
+* restore crash evidence, stop abandoned creates, bound preparation-failure reports ([8ab8fa2](https://github.com/quidow/gridfleet/commit/8ab8fa20e25582ccae4bc3a9313e8b059da0caee))
+* **testkit:** retry preparation failure reports safely ([5c48e9b](https://github.com/quidow/gridfleet/commit/5c48e9b2995f81f4f30e5ffa6c522fcc2076081c))
+
 ## [0.16.0](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.15.0...gridfleet-testkit-v0.16.0) (2026-07-21)
 
 
