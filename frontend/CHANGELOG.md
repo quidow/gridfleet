@@ -12,6 +12,26 @@ All notable changes to the GridFleet operator dashboard (React + TypeScript + Vi
 
 - Run frontend nginx container as non-root user.
 
+## [0.7.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.6.1...gridfleet-frontend-v0.7.0) (2026-08-02)
+
+
+### Features
+
+* **backend:** add an opt-in policy scope to lifecycle incidents ([f0ba6a2](https://github.com/quidow/gridfleet/commit/f0ba6a25297295c670ad094b2b58441f9c570631))
+* **frontend:** drop shelving from device triage and node states ([5c90f9b](https://github.com/quidow/gridfleet/commit/5c90f9bd532732ea7784a2574069717ea9d666d3))
+* **frontend:** show failure and maintenance events in device state history ([3fcd9a4](https://github.com/quidow/gridfleet/commit/3fcd9a42deef9682c7edb84e5751e1acdd24d7af))
+* widen device history to failure and maintenance events ([2d0a768](https://github.com/quidow/gridfleet/commit/2d0a768672b9d16a28396007000f9a509ad19c04))
+
+
+### Bug Fixes
+
+* **backend:** paginate lifecycle incidents with the shared keyset cursor ([251c30f](https://github.com/quidow/gridfleet/commit/251c30f6ddb5d15839187165d13835366912e19d))
+* **backend:** stop allocating to a device whose appium node is unreachable ([eaa2494](https://github.com/quidow/gridfleet/commit/eaa2494a26205eeb9c0c17a272bcc94ecbe1e938))
+* **frontend:** give the maintenance and escalated-cooldown incidents a badge tone ([ccee2b2](https://github.com/quidow/gridfleet/commit/ccee2b213244c41e8fe1984927ade19733ae5bae))
+* **frontend:** render device history badges from the API label and shared tone ([725ac12](https://github.com/quidow/gridfleet/commit/725ac12039701e9fcb3b5666cf6ccb9ebd490c24))
+* keyset pagination and single-source labels for device history ([fb1b434](https://github.com/quidow/gridfleet/commit/fb1b434e4121ffb1756dc736ca62e3be795c5b4e))
+* resolve state-testing product findings P1-P4 ([3e519cb](https://github.com/quidow/gridfleet/commit/3e519cb90108158e459012a873569780cca2665c))
+
 ## [0.6.1](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.6.0...gridfleet-frontend-v0.6.1) (2026-07-22)
 
 
