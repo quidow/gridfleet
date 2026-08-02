@@ -22,7 +22,7 @@ from tests.helpers import dispatch_committed_events
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +51,43 @@ async def db_with_device(db_session: AsyncSession, db_host: Host) -> AsyncGenera
     await db_session.flush()
     await db_session.refresh(device, attribute_names=["appium_node"])
     yield db_session, device
+
+
+@pytest_asyncio.fixture
+async def node_with_reconcile_spy(
+    db_with_device: tuple[AsyncSession, Device], monkeypatch: pytest.MonkeyPatch
+) -> Callable[[bool, str | None], Awaitable[list[str]]]:
+    """Attach a running AppiumNode with the given initial health columns and spy on
+    IntentService.reconcile_locked. Returns a factory: each test picks its own
+    initial health_running/health_state and reads its own literal expectation off
+    the returned ``calls`` list.
+    """
+    db, device = db_with_device
+
+    async def _make(health_running: bool, health_state: str | None) -> list[str]:
+        node = AppiumNode(
+            device_id=device.id,
+            port=4723,
+            desired_state=AppiumDesiredState.running,
+            desired_port=4723,
+            pid=1,
+            active_connection_target="target",
+            health_running=health_running,
+            health_state=health_state,
+        )
+        db.add(node)
+        await db.flush()
+        await db.refresh(device, attribute_names=["appium_node"])
+
+        calls: list[str] = []
+
+        async def _spy(self: object, locked: object, **kwargs: object) -> None:
+            calls.append("called")
+
+        monkeypatch.setattr(svc.IntentService, "reconcile_locked", _spy)
+        return calls
+
+    return _make
 
 
 @pytest.mark.db
@@ -570,33 +607,12 @@ async def test_update_session_viability_passed_skips_inline_reconcile(
 @pytest.mark.asyncio
 async def test_apply_node_state_transition_steady_healthy_skips_reconcile(
     db_with_device: tuple[AsyncSession, Device],
-    monkeypatch: pytest.MonkeyPatch,
+    node_with_reconcile_spy: Callable[[bool, str | None], Awaitable[list[str]]],
 ) -> None:
     """node_health re-asserts health_running=True/health_state=None every cycle for a
     steady-running node. With no column change, that must NOT reconcile inline."""
     db, device = db_with_device
-    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=1,
-        active_connection_target="target",
-        health_running=True,
-        health_state=None,
-    )
-    db.add(node)
-    await db.flush()
-    await db.refresh(device, attribute_names=["appium_node"])
-
-    calls: list[str] = []
-
-    async def _spy(self: object, locked: object, **kwargs: object) -> None:
-        calls.append("called")
-
-    monkeypatch.setattr(svc.IntentService, "reconcile_locked", _spy)
+    calls = await node_with_reconcile_spy(True, None)
 
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
         db, device, health_running=True, health_state=None, mark_offline=False
@@ -605,124 +621,66 @@ async def test_apply_node_state_transition_steady_healthy_skips_reconcile(
     assert calls == []  # steady running observation, no churn
 
 
+_RECONCILE_FORCING_CASES = [
+    # initial_health_running, initial_health_state, call_health_running, call_health_state, call_mark_offline
+    (False, "error", True, None, False),
+    (True, None, True, None, True),
+]
+
+
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_apply_node_state_transition_recovery_reconciles(
+@pytest.mark.parametrize(
+    (
+        "initial_health_running",
+        "initial_health_state",
+        "call_health_running",
+        "call_health_state",
+        "call_mark_offline",
+    ),
+    _RECONCILE_FORCING_CASES,
+    ids=["health_state_recovery", "mark_offline_forces_reconcile"],
+)
+async def test_apply_node_state_transition_forces_reconcile(
     db_with_device: tuple[AsyncSession, Device],
-    monkeypatch: pytest.MonkeyPatch,
+    node_with_reconcile_spy: Callable[[bool, str | None], Awaitable[list[str]]],
+    initial_health_running: bool,
+    initial_health_state: str | None,
+    call_health_running: bool,
+    call_health_state: str | None,
+    call_mark_offline: bool,
 ) -> None:
     """error → running is a node-health column change, so it reconciles inline to
     re-derive the node's agent-visible desired state (operational_state itself is
-    read-time)."""
+    read-time). mark_offline=True (explicit offline intent — connectivity park /
+    max-failures) must always reconcile the node axis too, even when the health
+    columns are unchanged (True/None → True/None in that row)."""
     db, device = db_with_device
-    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=1,
-        active_connection_target="target",
-        health_running=False,
-        health_state="error",
-    )
-    db.add(node)
-    await db.flush()
-    await db.refresh(device, attribute_names=["appium_node"])
-
-    calls: list[str] = []
-
-    async def _spy(self: object, locked: object, **kwargs: object) -> None:
-        calls.append("called")
-
-    monkeypatch.setattr(svc.IntentService, "reconcile_locked", _spy)
+    calls = await node_with_reconcile_spy(initial_health_running, initial_health_state)
 
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
-        db, device, health_running=True, health_state=None, mark_offline=False
+        db, device, health_running=call_health_running, health_state=call_health_state, mark_offline=call_mark_offline
     )
     await db.commit()
-    assert len(calls) >= 1  # recovery transition reconciles the node axis
+    assert len(calls) >= 1  # both cases must force an inline reconcile
 
 
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_apply_node_state_transition_unset_caller_still_reconciles(
     db_with_device: tuple[AsyncSession, Device],
-    monkeypatch: pytest.MonkeyPatch,
+    node_with_reconcile_spy: Callable[[bool, str | None], Awaitable[list[str]]],
 ) -> None:
     """A caller that makes no health statement (UNSET, e.g. mark_node_started after
     setting pid) still reconciles so the node's desired state is re-derived (the
     node reads ``running``, not a stale ``restarting``)."""
     db, device = db_with_device
-    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=1,
-        active_connection_target="target",
-        health_running=True,
-        health_state=None,
-    )
-    db.add(node)
-    await db.flush()
-    await db.refresh(device, attribute_names=["appium_node"])
-
-    calls: list[str] = []
-
-    async def _spy(self: object, locked: object, **kwargs: object) -> None:
-        calls.append("called")
-
-    monkeypatch.setattr(svc.IntentService, "reconcile_locked", _spy)
+    calls = await node_with_reconcile_spy(True, None)
 
     # No health_running/health_state args → UNSET sentinel.
     await DeviceHealthService(publisher=event_bus).apply_node_state_transition(db, device, mark_offline=False)
     await db.commit()
     assert len(calls) >= 1  # UNSET caller still reconciles the node axis
-
-
-@pytest.mark.db
-@pytest.mark.asyncio
-async def test_apply_node_state_transition_mark_offline_always_acts(
-    db_with_device: tuple[AsyncSession, Device],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """mark_offline=True (explicit offline intent — connectivity park / max-failures)
-    must always reconcile the node axis, even when the health columns are unchanged."""
-    db, device = db_with_device
-    from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-
-    node = AppiumNode(
-        device_id=device.id,
-        port=4723,
-        desired_state=AppiumDesiredState.running,
-        desired_port=4723,
-        pid=1,
-        active_connection_target="target",
-        health_running=True,
-        health_state=None,
-    )
-    db.add(node)
-    await db.flush()
-    await db.refresh(device, attribute_names=["appium_node"])
-
-    calls: list[str] = []
-
-    async def _spy(self: object, locked: object, **kwargs: object) -> None:
-        calls.append("called")
-
-    monkeypatch.setattr(svc.IntentService, "reconcile_locked", _spy)
-
-    # Health columns are unchanged (True/None == True/None), but mark_offline=True
-    # is an explicit offline intent and must still force the node-axis reconcile.
-    await DeviceHealthService(publisher=event_bus).apply_node_state_transition(
-        db, device, health_running=True, health_state=None, mark_offline=True
-    )
-    await db.commit()
-    assert len(calls) >= 1  # mark_offline=True always reconciles
 
 
 async def test_device_health_missing_lock_guard_branch(monkeypatch: pytest.MonkeyPatch) -> None:
