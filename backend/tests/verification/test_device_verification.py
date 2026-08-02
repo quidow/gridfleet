@@ -1789,6 +1789,24 @@ async def test_existing_device_verification_rejected_when_session_running(
     assert enqueued is None
 
 
+async def test_existing_device_verification_unknown_device_is_404(
+    client: AsyncClient,
+    default_host_id: str,
+) -> None:
+    resp = await client.post(f"/api/verification/devices/{uuid.uuid4()}/jobs", json={"host_id": default_host_id})
+    assert resp.status_code == 404
+
+
+async def test_get_verification_job_unknown_id_is_404(client: AsyncClient) -> None:
+    resp = await client.get("/api/verification/jobs/no-such-job")
+    assert resp.status_code == 404
+
+
+async def test_verification_job_event_stream_unknown_id_is_404(client: AsyncClient) -> None:
+    resp = await client.get("/api/verification/jobs/no-such-job/events")
+    assert resp.status_code == 404
+
+
 async def test_existing_device_verification_rejected_when_operator_stopped(
     client: AsyncClient,
     db_session: AsyncSession,

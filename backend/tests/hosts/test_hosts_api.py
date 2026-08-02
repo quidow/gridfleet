@@ -4,6 +4,7 @@ from unittest.mock import ANY, AsyncMock, patch
 from uuid import UUID
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.core.leader import state_store as control_plane_state_store
@@ -188,6 +189,52 @@ async def test_get_host_resource_telemetry_returns_bucketed_samples(
 
 async def test_get_host_resource_telemetry_returns_404_for_unknown_host(client: AsyncClient) -> None:
     resp = await client.get("/api/hosts/00000000-0000-0000-0000-000000000000/resource-telemetry")
+    assert resp.status_code == 404
+
+
+class _ConstraintViolationError(Exception):
+    """Stand-in for the driver error ``constraint_name`` is unwrapped from."""
+
+    def __init__(self, constraint_name: str) -> None:
+        super().__init__(constraint_name)
+        self.constraint_name = constraint_name
+
+
+async def test_register_conflict_that_is_not_a_hostname_race_is_409(client: AsyncClient) -> None:
+    """Only a hostname collision degrades to the re-register fallback.
+
+    ``hostname`` is the sole unique index on ``hosts``, so any other integrity
+    violation cannot be produced through the API; it is injected at the
+    transaction seam the route actually catches. Retrying the fallback for one
+    would re-run ``reregister_host`` against a host that never conflicted.
+    """
+    body = {
+        "hostname": "integrity-conflict-host",
+        "ip": "192.168.1.212",
+        "os_type": "linux",
+        "agent_port": 5100,
+        "capabilities": {"orchestration_contract_version": 7},
+    }
+    other_constraint = IntegrityError("", {}, _ConstraintViolationError("uq_host_resource_samples_host_recorded"))
+
+    with patch("app.hosts.router._register_host_txn", new=AsyncMock(side_effect=other_constraint)):
+        resp = await client.post("/api/hosts/register", json=body)
+
+    assert resp.status_code == 409
+
+
+async def test_approve_unknown_host_is_404(client: AsyncClient) -> None:
+    resp = await client.post("/api/hosts/00000000-0000-0000-0000-000000000000/approve")
+    assert resp.status_code == 404
+
+
+async def test_reject_unknown_host_is_404(client: AsyncClient) -> None:
+    resp = await client.post("/api/hosts/00000000-0000-0000-0000-000000000000/reject")
+    assert resp.status_code == 404
+
+
+async def test_host_driver_packs_unknown_host_is_404(client: AsyncClient) -> None:
+    resp = await client.get("/api/hosts/00000000-0000-0000-0000-000000000000/driver-packs")
     assert resp.status_code == 404
 
 

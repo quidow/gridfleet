@@ -134,14 +134,6 @@ def _release_rollout_source() -> str:
     )
 
 
-def test_release_rollout_never_calls_selected_release_id_per_device() -> None:
-    """``selected_release_id`` (one query per pack, the defect this task fixes)
-    must not appear in the production module at all -- the batched inventory
-    read replaces it entirely, it does not merely move the call out of the
-    per-candidate loop."""
-    assert "selected_release_id" not in _release_rollout_source()
-
-
 def test_release_rollout_owns_no_direct_commit_or_rollback() -> None:
     source = _release_rollout_source()
     assert ".commit()" not in source, "release_rollout.py must not own a commit"

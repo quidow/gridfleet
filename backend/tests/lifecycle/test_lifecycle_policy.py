@@ -1978,19 +1978,6 @@ async def test_handle_health_failure_suppressed_by_maintenance_reason_signal(
     append_failure.assert_awaited_once_with(db, locked, source="checks", reason="bad")
 
 
-async def test_attempt_auto_recovery_rejoin_and_busy_autostop_success_branches(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Migrated: the rejoin (excluded reservation restored) and busy-autostop
-    # (no reservation, already-excluded) success branches are now covered by
-    # finalize_auto_recovery_locked's "recovered" path (test_successful_recovery_rejoins_run)
-    # and the prepare path (Task 4). The old attempt_auto_recovery orchestration
-    # that this test exercised (reload → guards → start node → wait → probe →
-    # finalize) is split across prepare_auto_recovery_locked + the worker +
-    # finalize_auto_recovery_locked, each covered by targeted tests.
-    pass
-
-
 async def test_attempt_auto_recovery_records_backoff_when_restart_cannot_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

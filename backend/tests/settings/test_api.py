@@ -159,6 +159,18 @@ async def test_bulk_update_validation_error(client: AsyncClient) -> None:
     assert resp.status_code == 400
 
 
+async def test_bulk_update_unknown_setting(client: AsyncClient) -> None:
+    resp = await client.put(
+        "/api/settings/bulk",
+        json={"settings": {"general.session_viability_timeout_sec": 20, "unknown.key": 1}},
+    )
+    assert resp.status_code == 404
+
+    # The whole batch is rejected, not partially applied.
+    unchanged = await client.get("/api/settings/general.session_viability_timeout_sec")
+    assert unchanged.json()["is_overridden"] is False
+
+
 async def test_reset_setting(client: AsyncClient) -> None:
     # Override first
     await client.put(

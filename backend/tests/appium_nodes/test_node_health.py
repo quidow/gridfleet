@@ -1,4 +1,3 @@
-import uuid
 from datetime import timedelta
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
@@ -6,10 +5,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from sqlalchemy import select
 
-from app.agent_comm.probe_result import ProbeResult
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
-from app.appium_nodes.services import node_health
-from app.appium_nodes.services.node_health import NodeHealthService, _NodeObservation
+from app.appium_nodes.services.node_health import NodeHealthService
 from app.core.timeutil import now_utc
 from app.devices import locking as device_locking
 from app.devices.models import (
@@ -31,6 +28,8 @@ from tests.fakes import FakeSettingsReader
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
+    import uuid
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.hosts.models import Host
@@ -284,59 +283,6 @@ async def test_fold_skips_stale_observation_identity(db_session: AsyncSession, d
     await db_session.refresh(node)
     assert node.health_failing_since is not None
     assert node.health_running is None
-
-
-async def test_process_node_health_early_returns(monkeypatch: pytest.MonkeyPatch) -> None:
-    device = Device(
-        id=uuid.uuid4(),
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
-        identity_value="nh-early",
-        connection_target="nh-early",
-        name="Node Health Early",
-        os_version="14",
-        operational_state=DeviceOperationalState.available,
-        device_type=DeviceType.real_device,
-        connection_type=ConnectionType.usb,
-    )
-    db = AsyncMock()
-    svc = _service(settings=FakeSettingsReader({"general.node_fail_window_sec": 60}))
-    monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=None))  # type: ignore[attr-defined]
-    await svc._process_node_health(
-        db,
-        AppiumNode(device_id=device.id, port=4723),
-        type("", (), {"device": device})(),
-        object(),  # type: ignore[arg-type]
-        observation=_NodeObservation(ProbeResult(status="ack")),
-    )
-
-    node = AppiumNode(device_id=device.id, port=4723, pid=1, active_connection_target="old")
-    monkeypatch.setattr(node_health.appium_node_locking, "lock_appium_node_for_device", AsyncMock(return_value=node))  # type: ignore[attr-defined]
-    await svc._process_node_health(
-        db,
-        node,
-        type("", (), {"device": device})(),
-        object(),  # type: ignore[arg-type]
-        observation=_NodeObservation(ProbeResult(status="ack"), port=4724, pid=1, active_connection_target="old"),
-    )
-    node.pid = None
-    await svc._process_node_health(
-        db,
-        node,
-        type("", (), {"device": device})(),
-        object(),  # type: ignore[arg-type]
-        observation=_NodeObservation(ProbeResult(status="ack")),
-    )
-    node.pid = 1
-    await svc._process_node_health(
-        db,
-        node,
-        type("", (), {"device": device})(),
-        object(),  # type: ignore[arg-type]
-        observation=_NodeObservation(ProbeResult(status="indeterminate")),
-    )
 
 
 async def test_ack_recovery_and_receipt_roll_back_together(

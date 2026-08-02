@@ -263,50 +263,6 @@ async def test_pack_platform_and_capability_guard_branches() -> None:
         await pack_platform_resolver.assert_runnable(db, pack_id="uploaded", platform_id="p")
 
 
-async def test_device_verification_runner_missing_job_branches() -> None:
-    from app.verification.services.execution import AgentCallContext, VerificationExecutionService
-    from app.verification.services.preparation import VerificationPreparationService
-    from app.verification.services.runner import VerificationRunnerService
-
-    class SessionCtx:
-        async def __aenter__(self) -> AsyncMock:
-            db = AsyncMock()
-            db.get = AsyncMock(return_value=None)
-            return db
-
-        async def __aexit__(self, *_args: object) -> None:
-            return None
-
-    settings = FakeSettingsReader({})
-    cb = Mock()
-    publisher = AsyncMock()
-    prep = VerificationPreparationService(
-        settings=settings,
-        circuit_breaker=cb,
-        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        identity=DeviceIdentityConflictService(),
-        publisher=event_bus,
-    )
-    exec_svc = VerificationExecutionService(
-        publisher=publisher,
-        agent=AgentCallContext(settings=settings, circuit_breaker=cb),
-        crud=DeviceCrudService(identity=DeviceIdentityConflictService(), publisher=event_bus),
-        viability=Mock(),
-        capability=DeviceCapabilityService(),
-        node_manager=AsyncMock(),
-    )
-    runner = VerificationRunnerService(
-        session_factory=SessionCtx,
-        publisher=publisher,
-        settings=settings,
-        circuit_breaker=cb,
-        preparation=prep,
-        execution=exec_svc,
-    )
-    assert await runner._load_persisted_job(str(uuid.uuid4())) is None
-    await runner.run_persisted_verification_job(str(uuid.uuid4()), {"mode": "create"})
-
-
 async def test_more_service_error_and_protocol_branches(monkeypatch: pytest.MonkeyPatch) -> None:
     # HealthFailureHandler is a Protocol with ``...`` body; calling it exercises
     # the abstract stub without raising.

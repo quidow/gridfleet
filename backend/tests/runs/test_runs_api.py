@@ -1,11 +1,13 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -724,6 +726,16 @@ async def test_force_release(client: AsyncClient, db_session: AsyncSession, defa
     assert reservations[0].released_at is not None
 
 
+async def test_force_release_unknown_run_is_404(client: AsyncClient) -> None:
+    resp = await client.post(f"/api/runs/{uuid.uuid4()}/force-release")
+    assert resp.status_code == 404
+
+
+async def test_heartbeat_unknown_run_is_404(client: AsyncClient) -> None:
+    resp = await client.post(f"/api/runs/{uuid.uuid4()}/heartbeat")
+    assert resp.status_code == 404
+
+
 async def test_force_release_restores_busy_run_devices(
     client: AsyncClient,
     db_session: AsyncSession,
@@ -1275,3 +1287,39 @@ async def test_cooldown_escalation_status_is_released_when_toggle_off(
         )
     ).scalar_one_or_none()
     assert active is None
+
+
+async def test_cooldown_without_expiry_is_a_500_not_a_malformed_200() -> None:
+    """A non-escalated cooldown must carry an expiry.
+
+    The service cannot currently return that pair, so this guard is only
+    reachable by constructing the contradictory result directly: the route must
+    refuse to serialize a ``RunCooldownResponse`` with a null ``excluded_until``
+    rather than hand the caller a cooldown it cannot wait out.
+    """
+    from app.runs import router as runs_router
+    from app.runs.service_lifecycle_failures import CooldownResult
+
+    run_services = SimpleNamespace(
+        failure=SimpleNamespace(
+            cooldown_device=AsyncMock(
+                return_value=CooldownResult(
+                    excluded_until=None,
+                    cooldown_count=1,
+                    escalated=False,
+                    threshold=2,
+                    entered_maintenance=False,
+                )
+            )
+        )
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await runs_router.cooldown_device_endpoint(
+            uuid.uuid4(),
+            uuid.uuid4(),
+            runs_router.RunCooldownRequest(reason="flaky", ttl_seconds=30),
+            run_services=run_services,  # type: ignore[arg-type]
+        )
+
+    assert caught.value.status_code == 500

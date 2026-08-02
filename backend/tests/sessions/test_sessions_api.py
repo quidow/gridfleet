@@ -352,6 +352,11 @@ async def test_get_session_not_found(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
+async def test_update_session_status_not_found(client: AsyncClient) -> None:
+    resp = await client.patch("/api/sessions/nonexistent/status", json={"status": "passed"})
+    assert resp.status_code == 404
+
+
 async def test_list_sessions_includes_device_less_sessions(
     client: AsyncClient,
     db_session: AsyncSession,

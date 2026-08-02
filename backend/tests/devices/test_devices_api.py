@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx2 as httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
@@ -2317,6 +2318,73 @@ async def test_reconnect_dispatches_the_agent_call_with_no_transaction_open(
         row = (await verify.execute(select(Device).where(Device.id == device_id))).scalar_one()
     assert row.session_viability_status is None, "the route's own write boundary did not persist"
     assert row.session_viability_error is None
+
+
+@pytest.mark.asyncio
+async def test_device_logs_unreachable_agent_is_502(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """An agent that cannot be dialled is an upstream failure, not a 500."""
+    device = await _seed_reconnectable_device(db_session, default_host_id, identity="logs-unreachable", port=4791)
+    await db_session.commit()
+
+    with patch(
+        "app.devices.routers.control.appium_logs",
+        new_callable=AsyncMock,
+        side_effect=httpx.ConnectError("connection refused"),
+    ):
+        resp = await client.get(f"/api/devices/{device.id}/logs")
+
+    assert resp.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_session_test_on_maintenance_device_is_409(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """A viability probe only runs on an available device; maintenance is a conflict, not a failure."""
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="session-test-maint",
+        connection_target="session-test-maint",
+        verified=True,
+    )
+    await db_session.commit()
+    enter = await client.post(f"/api/devices/{device.id}/maintenance", json={"reason": "bench"})
+    assert enter.status_code == 200
+
+    resp = await client.post(f"/api/devices/{device.id}/session-test")
+
+    assert resp.status_code == 409
+    assert "available" in resp.json()["error"]["message"].lower()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_rejects_usb_connected_device(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    default_host_id: str,
+) -> None:
+    """Reconnect re-establishes a network link, so a USB device has nothing to reconnect."""
+    device = await _create_device(
+        db_session,
+        default_host_id,
+        identity_value="reconnect-usb",
+        connection_target="reconnect-usb",
+        connection_type="usb",
+        verified=True,
+    )
+    await db_session.commit()
+
+    resp = await client.post(f"/api/devices/{device.id}/reconnect")
+
+    assert resp.status_code == 400
+    assert "network" in resp.json()["error"]["message"].lower()
 
 
 @pytest.mark.asyncio

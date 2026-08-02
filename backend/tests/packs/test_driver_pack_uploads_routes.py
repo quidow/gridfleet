@@ -169,6 +169,12 @@ async def test_upload_route_persists_pack(client: AsyncClient) -> None:
     assert "origin" not in body
 
 
+async def test_upload_route_rejects_empty_tarball(client: AsyncClient) -> None:
+    files = {"tarball": ("empty-0.1.0.tar.gz", b"", "application/gzip")}
+    res = await client.post("/api/driver-packs/uploads", files=files)
+    assert res.status_code == 400
+
+
 async def test_tarball_fetch_returns_bytes(client: AsyncClient) -> None:
     tarball = _tarball()
     files = {"tarball": ("vendor-foo-0.1.0.tar.gz", tarball, "application/gzip")}

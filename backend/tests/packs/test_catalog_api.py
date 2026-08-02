@@ -147,6 +147,31 @@ async def test_get_single_pack_not_found(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_pack_hosts_unknown_pack_is_404(client: AsyncClient) -> None:
+    resp = await client.get("/api/driver-packs/nonexistent-pack/hosts")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_unknown_pack_is_404(client: AsyncClient) -> None:
+    resp = await client.delete("/api/driver-packs/nonexistent-pack")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_pack_rejects_unknown_state(client: AsyncClient, db_session: AsyncSession) -> None:
+    await seed_test_packs(db_session)
+    await db_session.flush()
+
+    resp = await client.patch("/api/driver-packs/appium-uiautomator2", json={"state": "not-a-state"})
+    assert resp.status_code == 400
+
+    # The pack is untouched: an invalid target state is rejected before any transition.
+    unchanged = await client.get("/api/driver-packs/appium-uiautomator2")
+    assert unchanged.json()["state"] == PackState.enabled.value
+
+
+@pytest.mark.asyncio
 async def test_catalog_exposes_display_metadata(client: AsyncClient, db_session: AsyncSession) -> None:
     await seed_test_packs(db_session)
     await db_session.flush()

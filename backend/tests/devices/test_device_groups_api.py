@@ -277,6 +277,47 @@ async def test_add_members_to_dynamic_group_fails(
     assert resp.status_code == 400
 
 
+async def test_remove_members_from_dynamic_group_fails(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    group = await _create_group(
+        client, name="Dynamic Remove", group_type="dynamic", filters={"platform_id": "android_mobile"}
+    )
+    d1 = await _create_device(db_session, "grp-dyn-002", "D-dyn-rm", default_host_id)
+
+    resp = await client.request(
+        "DELETE",
+        f"/api/device-groups/{group['key']}/members",
+        json={"device_ids": [d1["id"]]},
+    )
+    assert resp.status_code == 400
+
+
+async def test_add_members_to_unknown_group_is_404(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    d1 = await _create_device(db_session, "grp-missing-001", "D-missing", default_host_id)
+
+    resp = await client.post(
+        "/api/device-groups/no-such-group/members",
+        json={"device_ids": [d1["id"]]},
+    )
+    assert resp.status_code == 404
+
+
+async def test_remove_members_from_unknown_group_is_404(
+    client: AsyncClient, db_session: AsyncSession, default_host_id: str
+) -> None:
+    d1 = await _create_device(db_session, "grp-missing-002", "D-missing-rm", default_host_id)
+
+    resp = await client.request(
+        "DELETE",
+        "/api/device-groups/no-such-group/members",
+        json={"device_ids": [d1["id"]]},
+    )
+    assert resp.status_code == 404
+
+
 async def test_dynamic_group_resolves_members(
     client: AsyncClient, db_session: AsyncSession, default_host_id: str
 ) -> None:

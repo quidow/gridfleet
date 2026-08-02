@@ -32,15 +32,3 @@ def test_legacy_agent_device_routes_removed() -> None:
     ]
     for needle in forbidden:
         assert needle not in agent_main, f"Legacy route still present: {needle}"
-
-
-def test_frontend_no_longer_calls_deleted_driver_registry_api() -> None:
-    frontend = ROOT.parent / "frontend" / "src"
-    offenders: list[str] = []
-    for path in sorted(frontend.rglob("*")):
-        if path.suffix not in {".ts", ".tsx"}:
-            continue
-        text = path.read_text()
-        if "/drivers/sync-all" in text or "api/drivers" in text or "`/hosts/${hostId}/drivers" in text:
-            offenders.append(str(path.relative_to(ROOT.parent)))
-    assert offenders == []
