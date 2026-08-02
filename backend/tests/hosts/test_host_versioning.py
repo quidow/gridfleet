@@ -27,6 +27,10 @@ def test_normalize_agent_version_setting_empty_value_returns_none() -> None:
     assert host_versioning.normalize_agent_version_setting(" ") is None
 
 
+def test_normalize_agent_version_setting_non_string_value_returns_none() -> None:
+    assert host_versioning.normalize_agent_version_setting(123) is None
+
+
 def test_agent_recommended_version_setting_is_registered() -> None:
     from app.settings.registry import SETTINGS_REGISTRY
 

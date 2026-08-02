@@ -1,6 +1,7 @@
 import asyncio
 import uuid
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -17,6 +18,10 @@ if TYPE_CHECKING:
     from app.hosts.models import Host
 
 pytestmark = pytest.mark.asyncio
+
+
+async def test_lock_devices_returns_empty_without_a_query_for_an_empty_id_list() -> None:
+    assert await lock_devices(AsyncMock(), []) == []
 
 
 async def make_device(db_session: AsyncSession, db_host: Host, *, device_id: UUID) -> Device:

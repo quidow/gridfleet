@@ -4,6 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
+import pytest
+
 from app.appium_nodes.models import AppiumDesiredState, AppiumNode
 from app.appium_nodes.services import common as node_service_common
 from app.devices.models import ConnectionType, Device, DeviceType
@@ -129,6 +131,19 @@ def test_build_capabilities_handles_roku_tvos_and_simulator() -> None:
     assert simulator_caps["appium:simulatorRunning"] is True
 
 
+def test_build_capabilities_raises_lookup_error_without_a_resolved_platform_name() -> None:
+    device = SimpleNamespace(
+        id=uuid4(),
+        name="Pixel",
+        device_type=DeviceType.simulator,
+        appium_node=None,
+        host_id=None,
+    )
+
+    with pytest.raises(LookupError, match="no resolved Appium platform name"):
+        capability_service.build_capabilities(device, None, appium_platform_name=None)
+
+
 def test_appium_udid_prefers_active_target_for_running_android_emulator() -> None:
     device = _device(device_type=DeviceType.emulator, connection_target="Pixel_8")
     device.appium_node = AppiumNode(
@@ -203,6 +218,24 @@ async def test_active_target_from_host_snapshot_returns_none_for_invalid_snapsho
                 "payload": {"appium_processes": {"running_nodes": [{"port": 9999, "connection_target": "emulator-1"}]}}
             }
         ),
+    ):
+        assert await capability_service._active_target_from_host_snapshot(db, device) is None
+
+
+async def test_active_target_from_host_snapshot_returns_none_without_an_appium_node() -> None:
+    db = AsyncMock()
+    device = SimpleNamespace(id=uuid4(), name="Pixel", device_type=DeviceType.simulator, appium_node=None, host_id=None)
+
+    assert await capability_service._active_target_from_host_snapshot(db, device) is None
+
+
+async def test_active_target_from_host_snapshot_returns_none_when_the_snapshot_has_no_payload_key() -> None:
+    db = AsyncMock()
+    device = SimpleNamespace(appium_node=SimpleNamespace(port=4723), host_id=uuid4())
+
+    with patch(
+        "app.devices.services.capability.control_plane_state_store.get_value",
+        new=AsyncMock(return_value={"running_nodes": "bad"}),
     ):
         assert await capability_service._active_target_from_host_snapshot(db, device) is None
 

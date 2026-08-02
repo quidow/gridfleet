@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
-from app.devices.services.platform_label import load_platform_label_map, platform_labels_from_catalog
+from app.devices.services.platform_label import (
+    load_platform_label,
+    load_platform_label_map,
+    platform_labels_from_catalog,
+)
 from app.packs.models import PackState
 from app.packs.services.catalog_view import PackPlatformView, PackReleaseView, PackView, load_pack_catalog
 
@@ -51,6 +57,32 @@ def test_labels_fall_back_to_the_latest_release_when_none_is_pinned() -> None:
 
 def test_a_pack_with_no_releases_contributes_no_labels() -> None:
     assert platform_labels_from_catalog(_pack(current_release=None)) == {}
+
+
+async def test_load_platform_label_map_with_no_pairs_returns_empty_without_a_query() -> None:
+    assert await load_platform_label_map(AsyncMock(), []) == {}
+
+
+async def test_load_platform_label_returns_none_when_the_map_has_no_entry() -> None:
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])))
+
+    result = await load_platform_label(db, pack_id="pack", platform_id="platform")
+
+    assert result is None
+
+
+async def test_load_platform_label_map_keeps_the_default_none_for_a_pack_with_no_releases() -> None:
+    db = AsyncMock()
+    db.execute = AsyncMock(
+        return_value=SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: [SimpleNamespace(releases=[], current_release=None)])
+        )
+    )
+
+    result = await load_platform_label_map(db, [("pack", "platform")])
+
+    assert result == {("pack", "platform"): None}
 
 
 @pytest.mark.db

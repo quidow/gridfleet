@@ -98,6 +98,18 @@ async def test_invalid_transition_raises(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_transition_pack_state_txn_raises_lookup_error_for_missing_pack(db_session: AsyncSession) -> None:
+    with pytest.raises(LookupError):
+        await transition_pack_state_txn(db_session, "missing-pack", PackState.enabled)
+
+
+@pytest.mark.asyncio
+async def test_try_complete_drain_raises_lookup_error_for_missing_pack(db_session: AsyncSession) -> None:
+    with pytest.raises(LookupError):
+        await _lifecycle.try_complete_drain(db_session, "missing-pack")
+
+
+@pytest.mark.asyncio
 async def test_enabled_to_disabled_commits_once_and_never_publishes_draining(
     client: AsyncClient,
     db_session: AsyncSession,

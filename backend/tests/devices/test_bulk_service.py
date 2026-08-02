@@ -513,6 +513,10 @@ async def test_bulk_delete_sorts_and_dedupes_input_ids(
     )
 
 
+async def test_load_existing_device_ids_returns_empty_without_opening_a_session() -> None:
+    assert await bulk_service._load_existing_device_ids(AsyncMock(), []) == []
+
+
 async def _summary_event_count(db_session: AsyncSession) -> int:
     total = await db_session.scalar(
         select(func.count()).select_from(SystemEvent).where(SystemEvent.type == "bulk.operation_completed")

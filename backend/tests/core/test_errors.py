@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-from app.core.errors import AgentCallError, AgentResponseError, AgentUnreachableError, CircuitOpenError
+from app.core.errors import (
+    AgentCallError,
+    AgentResponseError,
+    AgentUnreachableError,
+    CircuitOpenError,
+    PackDrainingError,
+)
 
 
 def test_agent_response_error_is_agent_call_error_but_not_unreachable() -> None:
@@ -20,3 +26,9 @@ def test_agent_response_error_without_status() -> None:
     err = AgentResponseError("host-b", "transport boom")
     assert err.http_status is None
     assert "http_status" not in err.details
+
+
+def test_pack_draining_error_carries_pack_id_and_stringifies_to_it() -> None:
+    error = PackDrainingError("pack-a")
+    assert error.pack_id == "pack-a"
+    assert str(error) == "pack-a"

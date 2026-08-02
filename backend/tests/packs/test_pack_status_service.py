@@ -7,7 +7,10 @@ and the installed pack is not affected by the blocked one.
 
 from __future__ import annotations
 
+import uuid
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -117,6 +120,23 @@ async def test_host_driver_pack_status_omits_incompatible_pack_rows(db_session: 
     payload = await _status_svc.get_host_driver_pack_status(db_session, db_host.id)
 
     assert payload["packs"] == []
+
+
+async def test_compute_desired_skips_an_enabled_pack_with_no_releases() -> None:
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=None)
+    db.execute = AsyncMock(
+        side_effect=[
+            SimpleNamespace(
+                scalars=lambda: SimpleNamespace(all=lambda: [SimpleNamespace(releases=[], current_release=None)])
+            ),
+            SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: [])),
+        ]
+    )
+
+    result = await _status_svc.compute_desired(db, uuid.uuid4())
+
+    assert result["packs"] == []
 
 
 @pytest.mark.asyncio

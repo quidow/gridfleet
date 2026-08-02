@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -185,3 +187,17 @@ async def test_write_desired_state_newer_watermark_silently_replaces_old_waterma
     await db_session.refresh(node)
 
     assert node.restart_requested_at == newer
+
+
+async def test_write_desired_state_rejects_a_port_on_a_stop_target() -> None:
+    with pytest.raises(ValueError, match="desired_port"):
+        await write_desired_state(
+            AsyncMock(),
+            node=SimpleNamespace(
+                desired_state=AppiumDesiredState.running,
+                restart_requested_at=None,
+                desired_port=1,
+            ),
+            caller="test",
+            write=DesiredStateWrite(target=AppiumDesiredState.stopped, desired_port=1),
+        )

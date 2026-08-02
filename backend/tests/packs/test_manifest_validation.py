@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.packs.manifest import ManifestValidationError, load_manifest_yaml
+from app.packs.manifest import AppiumInstallable, ManifestValidationError, load_manifest_yaml
 
 
 def _base_yaml() -> str:
@@ -440,3 +440,8 @@ def test_curated_manifests_pin_appium_and_driver_versions() -> None:
         assert manifest.appium_server.recommended == server_recommended
         assert manifest.appium_driver.version == driver_version
         assert manifest.appium_driver.recommended == driver_recommended
+
+
+def test_recommended_field_defaults_to_none_and_skips_the_satisfies_check() -> None:
+    """The ``_recommended_satisfies_version`` validator early-exits when ``recommended`` is unset."""
+    assert AppiumInstallable(source="npm", package="appium", version=">=1").recommended is None

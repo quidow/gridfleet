@@ -66,6 +66,7 @@ async def test_release_swallows_unlock_failure_and_closes_connection() -> None:
     leader = ControlPlaneLeader()
     connection = AsyncMock()
     connection.execute.side_effect = RuntimeError("unlock failed")
+    connection.close.side_effect = RuntimeError("close failed")
     leader._connection = connection
 
     await leader.release()

@@ -1,4 +1,6 @@
+import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, Mock
 
@@ -247,6 +249,30 @@ async def test_pack_discovery_candidate_refresh_and_confirm_paths(
     assert confirm_result.added == ["discovery-new"]
     assert confirm_result.removed == ["discovery-removed"]
     assert confirm_result.updated == ["discovery-existing"]
+
+
+async def test_pack_discovery_classifies_an_empty_candidate_list_as_no_new_devices(
+    db_session: AsyncSession,
+) -> None:
+    class DummyClient:
+        async def get_pack_devices(
+            self, _host: str, _port: int, *, circuit_breaker: object, pool: object = None
+        ) -> dict[str, object]:
+            del circuit_breaker, pool
+            return {"devices": []}
+
+    svc = PackDiscoveryService(
+        agent_get_pack_devices=DummyClient().get_pack_devices,
+        circuit_breaker=Mock(),
+        serializer=DevicePresenterService(),
+        identity_guard=DeviceIdentityConflictService(),
+    )
+    target = SimpleNamespace(host_id=uuid.uuid4(), ip="127.0.0.1", agent_port=5100)
+
+    candidates = await svc.fetch_pack_candidates(target)
+    result = await svc.classify_discovery(db_session, target.host_id, candidates)
+
+    assert result.new_devices == []
 
 
 async def test_lifecycle_incidents_cursor_pages_do_not_skip_ties(

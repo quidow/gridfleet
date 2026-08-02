@@ -273,6 +273,7 @@ async def test_approve_and_reject_host_only_work_for_pending(db_session: AsyncSe
     # the decision to commit. reject_host has not ended it.
     assert db_session.in_transaction() is True
     assert await svc.reject_host(db_session, online.id) is False
+    assert await svc.reject_host(db_session, uuid4()) is False
 
 
 async def test_list_hosts_and_missing_host_paths(db_session: AsyncSession) -> None:

@@ -1,4 +1,6 @@
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -345,3 +347,22 @@ def test_coerce_device_config_fields_normalizes_bool_strings() -> None:
 
     out = coerce_device_config_fields(schema, {"prefer_devicectl": "not-a-bool"})
     assert out["prefer_devicectl"] == "not-a-bool"  # unrecognized strings left as-is
+
+
+async def test_resolve_appium_env_returns_empty_when_manifest_has_no_appium_env_key() -> None:
+    resolved_pack = SimpleNamespace(
+        is_runnable=True,
+        releases=[SimpleNamespace(release="1", manifest_json={})],
+        current_release=None,
+    )
+    db = AsyncMock(scalar=AsyncMock(return_value=resolved_pack))
+
+    env = await resolve_appium_env(
+        db,
+        pack_id="pack",
+        platform_id="android",
+        device_type="real_device",
+        os_version="1",
+    )
+
+    assert env == {}

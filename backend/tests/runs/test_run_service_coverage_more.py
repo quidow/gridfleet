@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -62,6 +63,22 @@ def _make_lifecycle_svc(session_factory: async_sessionmaker[AsyncSession]) -> Ru
     return RunLifecycleService(
         publisher=event_bus, settings=_settings, release=_release_svc, session_factory=session_factory
     )
+
+
+def test_reserved_devices_setter_clears_device_reservations_on_none() -> None:
+    run = TestRun(name="run")
+    run.reserved_devices = None
+    assert run.device_reservations == []
+
+
+def test_device_requirement_min_count_defaults_to_one_for_all_available() -> None:
+    requirement = DeviceRequirement(pack_id="pack", platform_id="platform", allocation="all_available")
+    assert requirement.min_count == 1
+
+
+def test_device_requirement_rejects_min_count_without_all_available_allocation() -> None:
+    with pytest.raises(ValidationError, match="min_count can only be provided"):
+        DeviceRequirement(pack_id="pack", platform_id="platform", min_count=1)
 
 
 def _make_failure_svc(session_factory: async_sessionmaker[AsyncSession]) -> RunFailureService:

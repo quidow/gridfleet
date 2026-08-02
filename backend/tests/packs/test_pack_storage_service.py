@@ -38,3 +38,18 @@ def test_collision_with_different_sha_raises(tmp_path: Path) -> None:
     svc.store(pack_id="vendor-foo", release="0.1.0", data=b"first")
     with pytest.raises(PackStorageError, match="hash mismatch"):
         svc.store(pack_id="vendor-foo", release="0.1.0", data=b"second")
+
+
+def test_safe_segment_rejects_an_empty_segment(tmp_path: Path) -> None:
+    svc = PackStorageService(tmp_path)
+    with pytest.raises(PackStorageError):
+        svc._safe_segment("")
+
+
+def test_open_rejects_a_path_outside_the_storage_root(tmp_path: Path) -> None:
+    svc = PackStorageService(tmp_path)
+    outside = tmp_path.parent / "outside-storage-file"
+    outside.write_bytes(b"x")
+
+    with pytest.raises(PackStorageError), svc.open(str(outside)):
+        pass

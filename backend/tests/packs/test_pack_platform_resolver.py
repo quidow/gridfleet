@@ -1,10 +1,12 @@
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
 
-from app.core.errors import PackDisabledError, PackUnavailableError, PlatformRemovedError
-from app.packs.models import DriverPack
+from app.core.errors import PackDisabledError, PackDrainingError, PackUnavailableError, PlatformRemovedError
+from app.packs.models import DriverPack, PackState
 from app.packs.services.platform_resolver import (
     PackPlatformNotFound,
     ResolvedPackPlatform,
@@ -101,3 +103,28 @@ async def test_assert_runnable_raises_platform_removed_when_pack_enabled_but_pla
             pack_id="appium-uiautomator2",
             platform_id="never_existed",
         )
+
+
+_ASSERT_RUNNABLE_REJECTIONS = [
+    (None, PackUnavailableError),
+    (PackState.disabled, PackDisabledError),
+    (PackState.draining, PackDrainingError),
+    ("unknown", PackDisabledError),
+]
+
+
+@pytest.mark.parametrize(
+    ("pack_state", "expected_error"),
+    _ASSERT_RUNNABLE_REJECTIONS,
+    ids=["pack-missing", "pack-disabled", "pack-draining", "pack-state-not-enabled-falls-back-to-disabled"],
+)
+async def test_assert_runnable_rejects_by_pack_state(
+    pack_state: PackState | str | None,
+    expected_error: type[Exception],
+) -> None:
+    pack = None if pack_state is None else SimpleNamespace(state=pack_state)
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda pack=pack: pack))
+
+    with pytest.raises(expected_error):
+        await assert_runnable(db, pack_id="pack", platform_id="p")

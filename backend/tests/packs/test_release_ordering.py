@@ -1,4 +1,4 @@
-from app.packs.services.release_ordering import latest_release, parse_release_key
+from app.packs.services.release_ordering import latest_release, parse_release_key, selected_release
 
 
 def test_parse_release_key_calver() -> None:
@@ -43,3 +43,7 @@ def test_latest_release_empty_returns_none() -> None:
 def test_parse_release_key_non_numeric_fallback() -> None:
     key = parse_release_key("beta-1")
     assert isinstance(key, tuple)
+
+
+def test_selected_release_with_no_current_release_and_no_releases_returns_none() -> None:
+    assert selected_release([], None) is None

@@ -8,6 +8,7 @@ from app.core import errors
 
 
 def test_http_error_helpers_cover_supported_statuses() -> None:
+    assert errors._http_error_code(403) == "FORBIDDEN"
     assert errors._http_error_code(404) == "NOT_FOUND"
     assert errors._http_error_code(409) == "CONFLICT"
     assert errors._http_error_code(422) == "VALIDATION_ERROR"

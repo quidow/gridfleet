@@ -173,6 +173,16 @@ async def test_release_locked_marks_released_and_reconciles(monkeypatch: pytest.
     reconcile.assert_awaited()
 
 
+async def test_exclude_and_restore_return_none_when_no_reservation_entry_is_found() -> None:
+    """Unlike the monkeypatched tests above, this drives the real ``get_device_reservation_with_entry`` query."""
+    db = AsyncMock()
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None)))
+    svc = RunReservationService()
+
+    assert await svc.exclude_device_from_run(db, uuid.uuid4(), reason="r") is None
+    assert await svc.restore_device_to_run(db, uuid.uuid4()) is None
+
+
 async def test_get_run_and_device_reservation_query_result_shapes() -> None:
     run = SimpleNamespace(id=uuid.uuid4())
     reservation = SimpleNamespace(run=run)

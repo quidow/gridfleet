@@ -1,10 +1,13 @@
 import asyncio
+import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from app.settings import service as settings_module
+from app.settings import service_config as config_service
+from app.settings.service_config import SettingsConfigService
 from tests.fakes import FakeSessionFactory
 from tests.helpers import test_event_bus as event_bus
 
@@ -106,3 +109,17 @@ async def test_settings_service_remaining_validation_and_update_paths(monkeypatc
     assert bulk_response[0]["value"] == 12
     assert row.value == 12
     assert factory.begun == 2
+
+
+def test_deep_merge_combines_nested_keys_from_both_sides() -> None:
+    assert config_service._deep_merge({"a": {"b": 1}}, {"a": {"c": 2}}) == {"a": {"b": 1, "c": 2}}
+
+
+async def test_get_config_history_returns_the_audit_rows() -> None:
+    db = AsyncMock()
+    audit_rows = [object()]
+    db.execute = AsyncMock(return_value=SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: audit_rows)))
+
+    result = await SettingsConfigService(publisher=Mock()).get_config_history(db, uuid.uuid4(), limit=1)
+
+    assert result == audit_rows

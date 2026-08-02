@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from importlib import import_module
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.events import Event, EventBus
+from app.events.catalog import normalize_public_event_names
 from app.events.event_bus import _LogBackoff
 from app.events.models import SystemEvent
 from tests.helpers import drain_handlers, recent_events
+from tests.helpers import test_event_bus as event_bus
+
+event_bus_mod = import_module("app.events.event_bus")
 
 
 def _session_factory(db_session: AsyncSession) -> async_sessionmaker[AsyncSession]:
@@ -782,6 +787,62 @@ def test_log_backoff_suppresses_inside_the_window_and_reports_the_count() -> Non
     assert backoff.report(now=0.0) == 0, "the onset report fires before anything is suppressed"
     assert backoff.report(now=1.0) is None, "inside the window"
     assert backoff.report(now=2.0) == 1, "one suppressed failure carried into the next report"
+
+
+def test_normalize_public_event_names_drops_unknown_and_non_string_entries() -> None:
+    assert normalize_public_event_names("bad") == []
+    assert normalize_public_event_names(
+        ["bad", 1, "device.operational_state_changed", "device.operational_state_changed"]
+    ) == ["device.operational_state_changed"]
+
+
+async def test_dispatch_pending_fallback_logs_and_swallows_a_handler_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(event_bus, "_remember_and_dispatch", Mock(side_effect=RuntimeError("dispatch failed")))
+    monkeypatch.setattr(event_bus_mod.logger, "exception", Mock())
+
+    await event_bus_mod._dispatch_pending_fallback(
+        [event_bus_mod.Event(type="device.operational_state_changed", data={"device_id": "d"})], event_bus
+    )
+
+    event_bus_mod.logger.exception.assert_called_once()
+
+
+async def test_queue_for_session_registers_the_after_commit_listener_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A second ``queue_for_session`` call on the same sync session must not re-register the listener."""
+    listeners: dict[str, object] = {}
+
+    def capture_listener(_target: object, identifier: str, fn: object, **_kwargs: object) -> None:
+        listeners[identifier] = fn
+
+    monkeypatch.setattr(event_bus_mod.sa_event, "listen", capture_listener)
+    active_transaction = SimpleNamespace()
+    sync_session = SimpleNamespace(info={}, get_transaction=lambda: active_transaction)
+
+    event_bus.queue_for_session(sync_session, "device.operational_state_changed", {"device_id": "d"})
+    event_bus.queue_for_session(sync_session, "device.operational_state_changed", {"device_id": "d"})
+
+    assert sync_session.info[event_bus_mod._PENDING_EVENTS_LISTENER_KEY] is True
+
+    # An after_commit fire with no pending events left must spawn no dispatch task.
+    event_bus._handler_tasks.clear()
+    sync_session.info[event_bus_mod._PENDING_EVENTS_KEY] = []
+    listeners["after_commit"](sync_session)  # type: ignore[operator]
+
+    assert event_bus._handler_tasks == set()
+
+
+def test_queue_for_session_on_a_configured_bus_stages_an_outbox_row_only() -> None:
+    """A configured (persistent) bus stages an outbox row and leaves session.info alone."""
+    staging_bus = event_bus_mod.EventBus()
+    staging_bus._session_factory = object()  # type: ignore[assignment]
+    staged_rows: list[object] = []
+    staging_session = SimpleNamespace(info={}, add=staged_rows.append)
+
+    staged = staging_bus.queue_for_session(staging_session, "device.operational_state_changed", {"device_id": "d"})
+
+    assert isinstance(staged, event_bus_mod.SystemEvent)
+    assert staged_rows == [staged]
+    assert staging_session.info == {}
 
 
 def test_log_backoff_resets_after_a_quiet_period_measured_from_the_last_report() -> None:

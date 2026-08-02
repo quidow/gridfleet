@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.hosts.models import Host, HostStatus, OSType
@@ -263,3 +264,27 @@ async def test_delete_pack_missing_and_runtime_policy_update(db_session: AsyncSe
     policy = RuntimePolicy(strategy="recommended")
     pack = await _catalog_svc.set_runtime_policy(db_session, "local/coverage-pack", policy)
     assert pack.runtime_policy == RuntimePolicy(strategy="recommended")
+
+
+def test_runtime_policy_rejects_an_unsupported_strategy() -> None:
+    with pytest.raises(ValidationError):
+        RuntimePolicy(strategy="latest_patch")
+
+
+async def test_delete_pack_raises_when_active_runs_or_live_sessions_reference_it(
+    db_session: AsyncSession,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The active-work guard is distinct from the device-still-attached guard above."""
+    pack, _old_release, _new_release, _old_artifact, _new_artifact = await _seed_pack_with_releases(
+        db_session, tmp_path
+    )
+    monkeypatch.setattr(
+        PackLifecycleService,
+        "count_active_work_for_pack",
+        AsyncMock(return_value={"active_runs": 1, "live_sessions": 0}),
+    )
+
+    with pytest.raises(RuntimeError, match="active run"):
+        await _catalog_svc.delete_pack(db_session, pack.id)

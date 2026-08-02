@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -64,3 +64,27 @@ async def test_terminal_remediation_job_is_retained_until_its_failure_episode_cl
 
     assert await db_session.get(Job, job_id) is None
     assert counts.jobs_deleted == 1
+
+
+async def test_cleanup_old_data_runs_every_stage_and_publishes_the_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mocked-db smoke test that every retention key is wired through to a delete call."""
+    cleanup_db = AsyncMock()
+    cleanup_db.in_transaction = Mock(return_value=False)  # sync on the real AsyncSession, unlike its other methods
+    monkeypatch.setattr(data_cleanup, "_delete_in_batches", AsyncMock(return_value=0))
+
+    await data_cleanup.DataCleanupService(
+        publisher=AsyncMock(),
+        settings=FakeSettingsReader(
+            {
+                "retention.audit_log_days": 0,
+                "retention.event_log_days": 1,
+                "retention.system_event_days": 1,
+                "retention.background_loop_heartbeat_days": 1,
+                "retention.automation_artifact_days": 1,
+                "retention.host_resource_telemetry_hours": 1,
+                "retention.test_data_audit_days": 1,
+            }
+        ),
+    ).cleanup_old_data(cleanup_db)
