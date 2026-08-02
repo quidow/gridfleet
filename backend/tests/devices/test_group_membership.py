@@ -382,21 +382,13 @@ async def _seed_groups_and_devices(
         await db_session.flush()
         db_session.add(DeviceGroupMemberOf(dynamic_group_id=dg.id, static_group_id=static.id))
     for j in range(devices):
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
+        await create_device_record(
+            db_session,
+            host_id=host_id,
             identity_value=f"gd-{uuid.uuid4().hex[:8]}",
             connection_target=f"gd-{j}",
             name=f"GD {j}",
-            os_version="14",
-            host_id=host_id,
-            device_type="real_device",
-            connection_type="usb",
         )
-        db_session.add(device)
-    await db_session.commit()
 
 
 @pytest.mark.db
@@ -439,21 +431,13 @@ async def test_group_detail_reads_do_not_scale_beyond_device_list_serialization(
     assert create.status_code == 201
 
     async def _add_device(identity: str, name: str) -> Device:
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
+        return await create_device_record(
+            db_session,
+            host_id=db_host.id,
             identity_value=identity,
             connection_target=identity,
             name=name,
-            os_version="14",
-            host_id=db_host.id,
-            device_type="real_device",
-            connection_type="usb",
         )
-        db_session.add(device)
-        return device
 
     one_device = await _add_device("scale-1", "Scale 1")
     await db_session.commit()
@@ -516,21 +500,13 @@ async def _seed_static_groups_and_devices(
         db_session.add(row)
     await db_session.flush()
     for j in range(devices):
-        device = Device(
-            pack_id="appium-uiautomator2",
-            platform_id="android_mobile",
-            identity_scheme="android_serial",
-            identity_scope="host",
+        device = await create_device_record(
+            db_session,
+            host_id=host_id,
             identity_value=f"sg-{uuid.uuid4().hex[:8]}",
             connection_target=f"sg-{j}-{uuid.uuid4().hex[:4]}",
             name=f"SG {j}",
-            os_version="14",
-            host_id=host_id,
-            device_type="real_device",
-            connection_type="usb",
         )
-        db_session.add(device)
-        await db_session.flush()
         db_session.add(DeviceGroupMembership(group_id=rows[0].id, device_id=device.id))
     await db_session.commit()
     return keys[0]
@@ -706,34 +682,21 @@ async def test_narrow_group_scopes_stay_bounded_and_unbounded_ones_are_reported(
     """
     from app.devices.services.groups import _load_devices_in_scope
 
-    in_scope = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
+    in_scope = await create_device_record(
+        db_session,
+        host_id=db_host.id,
         identity_value=f"scope-in-{uuid.uuid4().hex[:8]}",
         connection_target="scope-in",
         name="In scope",
-        os_version="14",
-        host_id=db_host.id,
-        device_type="real_device",
-        connection_type="usb",
     )
-    out_of_scope = Device(
-        pack_id="appium-uiautomator2",
-        platform_id="android_mobile",
-        identity_scheme="android_serial",
-        identity_scope="host",
+    out_of_scope = await create_device_record(
+        db_session,
+        host_id=db_host.id,
         identity_value=f"scope-out-{uuid.uuid4().hex[:8]}",
         connection_target="scope-out",
         name="Out of scope",
-        os_version="14",
-        host_id=db_host.id,
         device_type="emulator",
-        connection_type="usb",
     )
-    db_session.add_all([in_scope, out_of_scope])
-    await db_session.commit()
 
     narrow = _dynamic("narrow-real", filters={"device_type": "real_device"})
     loaded = await _load_devices_in_scope(db_session, [narrow], {})
