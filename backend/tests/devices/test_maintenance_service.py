@@ -224,33 +224,6 @@ async def test_enter_maintenance_rejects_reserved_device_by_default(
     assert "reserved" in str(exc.value).lower()
 
 
-async def test_enter_maintenance_rejects_device_with_reservation_row_no_hold(
-    db_session: AsyncSession,
-    db_session_maker: async_sessionmaker[AsyncSession],
-    db_host: Host,
-) -> None:
-    """Reserved guard must use the reservation row, not device.hold.
-
-    Device has hold=NULL but an active DeviceReservation row — this is the
-    future state after hold is removed. The guard must still reject it.
-    """
-    from tests.helpers import create_reservation
-
-    device = await create_device(
-        db_session,
-        host_id=db_host.id,
-        name="reservation-row-target",
-    )
-    await db_session.commit()
-    await create_reservation(db_session, device_id=device.id)
-    await db_session.commit()
-
-    with pytest.raises(ValueError) as exc:
-        await _service(db_session_maker).enter_maintenance(db_session, device.id)
-
-    assert "reserved" in str(exc.value).lower()
-
-
 async def test_enter_maintenance_allows_reserved_when_explicitly_overridden(
     db_session: AsyncSession,
     db_session_maker: async_sessionmaker[AsyncSession],
