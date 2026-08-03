@@ -80,6 +80,15 @@ AUTO_RESTART_DELAYS_SEC = (1, 2, 4, 8, 16, 30)
 AUTO_RESTART_MAX_ATTEMPTS = 5
 AUTO_RESTART_WINDOW_SEC = 300
 MAX_RESTART_EVENTS = 200
+# Absolute ceiling on how long a first-restart withhold may suppress
+# publication, measured from the crash that armed it and never re-armed. The
+# realistic worst case for a legitimate first attempt is a 1 s backoff, one 5 s
+# convergence retry, and a full READINESS_TIMEOUT wait -- about 36 s -- so this
+# leaves headroom while capping the host-wide event mute at roughly six status
+# pushes. The bound must be wall-clock rather than attempt-count: the failure
+# mode is "the deferral condition never clears", which no attempt counter
+# observes.
+FIRST_RESTART_WITHHOLD_MAX_SEC = 60
 APPIUM_DRIVER_CAPABILITY_DROP_KEYS = {
     "appium:connection_type",
     "appium:device_type",
@@ -341,9 +350,16 @@ class _WithheldRestart:
     event; ``process_snapshot`` truncates the emitted stream at the lowest
     such sequence across the host, so a record nobody discharges mutes
     restart events for every port, not just this one.
+
+    ``expires_at`` is the owner of last resort. Past it the record stops
+    suppressing publication, but it is *not* discarded: ownership and
+    publication are separate concerns, so a recovery that completes late still
+    finds its record and pairs the crash with a resolving event.
     """
 
     sequence: int
+    expires_at: float
+    expiry_logged: bool = False
 
 
 class AppiumProcessManager:
@@ -720,7 +736,10 @@ class AppiumProcessManager:
             # after recording restart_succeeded -- via the finally block.
             is_first_attempt = next_attempt == 1 and can_retry
             if is_first_attempt:
-                self._withheld_restart_by_port[port] = _WithheldRestart(sequence=sequence)
+                self._withheld_restart_by_port[port] = _WithheldRestart(
+                    sequence=sequence,
+                    expires_at=asyncio.get_running_loop().time() + FIRST_RESTART_WITHHOLD_MAX_SEC,
+                )
             superseded = False
             try:
                 if not can_retry:
@@ -1346,11 +1365,9 @@ class AppiumProcessManager:
             key = (info.port, info.pid)
             active_sessions[key] = await self._node_has_active_session(info.port)
 
-        first_restart_observation_ports = set(self._withheld_restart_by_port)
-        truncate_at = min(
-            (record.sequence for record in self._withheld_restart_by_port.values()),
-            default=None,
-        )
+        active_withholds = self._active_withholds()
+        first_restart_observation_ports = set(active_withholds)
+        truncate_at = min((record.sequence for record in active_withholds.values()), default=None)
         running_infos = self.list_running()
         running_nodes: list[dict[str, Any]] = []
         for info in running_infos:
@@ -1417,6 +1434,31 @@ class AppiumProcessManager:
             "recent_restart_events": emitted_events,
             "start_failures": [failure.to_payload() for failure in self._start_failures],
         }
+
+    def _active_withholds(self) -> dict[int, _WithheldRestart]:
+        """Withholds still inside their wall-clock backstop.
+
+        Synchronous by contract: process_snapshot assembles its published view
+        from this without yielding to the event loop.
+
+        Expired records are filtered, not popped. Discharge still needs to find
+        them -- expiry bounds how long a crash stays unpublished, not who owns
+        finishing the restart.
+        """
+        now = asyncio.get_running_loop().time()
+        active: dict[int, _WithheldRestart] = {}
+        for port, record in self._withheld_restart_by_port.items():
+            if now < record.expires_at:
+                active[port] = record
+            elif not record.expiry_logged:
+                record.expiry_logged = True
+                logger.warning(
+                    "First Appium restart withhold expired for port=%d sequence=%d after %ds; publishing the crash",
+                    port,
+                    record.sequence,
+                    FIRST_RESTART_WITHHOLD_MAX_SEC,
+                )
+        return active
 
     def _running_node_payload(self, info: AppiumProcessInfo) -> dict[str, Any]:
         """The structural half of a running-node observation -- no network I/O.

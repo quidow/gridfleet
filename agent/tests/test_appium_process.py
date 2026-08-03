@@ -25,6 +25,7 @@ from agent_app.appium.exceptions import (
 )
 from agent_app.appium.log_files import appium_log_path, port_log_paths
 from agent_app.appium.process import (
+    FIRST_RESTART_WITHHOLD_MAX_SEC,
     MAX_RESTART_EVENTS,
     AppiumInvocation,
     AppiumLaunchSpec,
@@ -1075,7 +1076,10 @@ async def test_process_snapshot_coalesces_crash_that_enters_during_session_enume
             exit_code=1,
             will_retry=True,
         )
-        manager._withheld_restart_by_port[port] = _WithheldRestart(sequence=sequence)
+        manager._withheld_restart_by_port[port] = _WithheldRestart(
+            sequence=sequence,
+            expires_at=asyncio.get_running_loop().time() + FIRST_RESTART_WITHHOLD_MAX_SEC,
+        )
         resume_enumeration.set()
         snapshot = await snapshot_task
 
@@ -1140,7 +1144,10 @@ async def test_process_snapshot_publishes_final_view_when_restart_completes_duri
         exit_code=1,
         will_retry=True,
     )
-    manager._withheld_restart_by_port[restarted_port] = _WithheldRestart(sequence=crash_sequence)
+    manager._withheld_restart_by_port[restarted_port] = _WithheldRestart(
+        sequence=crash_sequence,
+        expires_at=asyncio.get_running_loop().time() + FIRST_RESTART_WITHHOLD_MAX_SEC,
+    )
     enumeration_started = asyncio.Event()
     resume_enumeration = asyncio.Event()
 
