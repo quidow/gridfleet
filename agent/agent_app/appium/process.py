@@ -645,6 +645,21 @@ class AppiumProcessManager:
         ``FIRST_RESTART_WITHHOLD_MAX_SEC``, and publication expiry does not
         require ownership to have lapsed -- so there is no resolving event
         left to protect by keeping it, only a misattribution risk to close.
+
+        Keep the early-return above on faith, not on test coverage: no test
+        currently fails if it is deleted, because ``_auto_restart_appium``'s
+        success path records ``restart_succeeded`` unconditionally, so a reap
+        out from under a live owner is invisible today -- a test here would
+        pin that coincidence, not an invariant. It is not dead code either:
+        with no ``await`` between ``_cancel_task`` and this call, a present
+        entry can only be the owning task's own self-cancel exemption, so
+        this branch is taken on *every* auto-restart-driven ``start()``, one
+        of the hottest paths in the file. It stays load-bearing against a
+        refactor that conditions the success path on the record the way the
+        adoption path already conditions ``attempt_charged`` on it -- if that
+        ever happens, reaping under the owner would drop the resolving event
+        and reproduce the bare ``crash_detected`` this backstop exists to
+        prevent.
         """
         if port in self._appium_restart_tasks:
             return

@@ -38,6 +38,25 @@ from tests.withhold_helpers import (
 pytestmark = pytest.mark.asyncio
 
 
+async def test_ownership_ceiling_outlives_publication_ceiling() -> None:
+    """The two bounds are not independent: ownership must strictly outlive
+    publication, or reaping stops being safe.
+
+    ``_reap_stale_withhold`` pops a record once it is too old to *adopt*, on
+    the assumption that its crash has already had a chance to *publish* on
+    its own. If ``WITHHOLD_OWNERSHIP_MAX_SEC`` were ever the shorter of the
+    two, a record could be reaped while still inside its publication window
+    -- the crash would then publish with no way to pair a later-arriving
+    resolving event, reproducing the bare ``crash_detected`` this whole
+    backstop exists to eliminate. This assertion is the one thing standing
+    between that regression and 19 passing withhold tests that do not
+    exercise it: setting ``WITHHOLD_OWNERSHIP_MAX_SEC`` below
+    ``FIRST_RESTART_WITHHOLD_MAX_SEC`` leaves every other test in this suite
+    green.
+    """
+    assert WITHHOLD_OWNERSHIP_MAX_SEC > FIRST_RESTART_WITHHOLD_MAX_SEC
+
+
 async def test_arming_applies_the_backstop_constant() -> None:
     """Pins the constant to the arming site, so the two cannot drift apart —
     every other test here reaches expiry by moving ``expires_at`` directly."""
@@ -94,12 +113,25 @@ async def test_expiry_is_logged_once(caplog: pytest.LogCaptureFixture) -> None:
 async def test_expiry_is_not_disownership(stub_port_probe: None) -> None:
     """Expiry bounds publication, not ownership. A deferral that clears after
     the deadline must still pair its crash with a resolving event rather than
-    leaving a dangling ``crash_detected`` the backend folds to offline."""
+    leaving a dangling ``crash_detected`` the backend folds to offline.
+
+    Ages both ``armed_at`` and ``expires_at`` past the publication bound
+    (``FIRST_RESTART_WITHHOLD_MAX_SEC``) but not past the ownership bound
+    (``WITHHOLD_OWNERSHIP_MAX_SEC``), exercising the real "after 60s, before
+    300s" window the two-bound design depends on. Aging ``expires_at`` alone
+    cannot catch an inverted ordering: ``_reap_stale_withhold`` reads only
+    ``armed_at``, so a stale ownership bound would go undetected unless
+    ``armed_at`` is aged far enough to cross it too. With both aged by the
+    same amount, an ownership ceiling shorter than the publication one would
+    reap this record before adoption -- turning the expected
+    ``restart_succeeded`` pairing below into a bare ``crash_detected``.
+    """
     mgr = manager_with_crashed_node()
     task = await restart_task_in_backoff(mgr)
     task.cancel()
     await settle()
     mgr._appium_restart_tasks.pop(PORT, None)
+    mgr._withheld_restart_by_port[PORT].armed_at -= FIRST_RESTART_WITHHOLD_MAX_SEC + 1
     mgr._withheld_restart_by_port[PORT].expires_at -= FIRST_RESTART_WITHHOLD_MAX_SEC + 1
 
     async def fake_spawn(*_args: object, **_kwargs: object) -> FakeProcess:
@@ -139,9 +171,15 @@ async def test_an_ancient_abandoned_withhold_is_not_adopted_by_an_unrelated_star
     only a same-device recovery finishing very late.
 
     The record is reaped, not merely skipped: a leaked entry would otherwise
-    sit in the per-port dict for the life of the process. Reaping does not
-    resurrect the truncation it already stopped causing at publication expiry
-    -- the original crash still surfaces, just without a spurious pair.
+    sit in the per-port dict for the life of the process. Only ``armed_at``
+    is aged here -- a combination production never reaches, since
+    ``armed_at`` is always the earlier of the two fields -- because
+    ``_reap_stale_withhold`` reads only ``armed_at``. The crash surfaces
+    afterward not because publication expiry independently fired
+    (``expires_at`` is untouched and still in the future), but because
+    reaping pops the record outright, so ``_active_withholds`` -- which
+    filters only on ``expires_at`` -- never has an entry for this port left
+    to truncate on.
     """
     mgr = manager_with_crashed_node()
     task = await restart_task_in_backoff(mgr)
