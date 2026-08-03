@@ -814,6 +814,34 @@ async def test_orphan_session_killed(
     assert (target, "sess-tracked") not in _stub_appium_direct["terminated"]
 
 
+async def test_orphan_sweep_spares_session_committed_during_enumeration(
+    db_session: AsyncSession,
+    db_host: Host,
+    _stub_appium_direct: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    device = await _seed_device_with_node(
+        db_session, db_host, identity_value="orph-race", operational_state=DeviceOperationalState.busy
+    )
+    await db_session.commit()
+
+    target = f"http://{db_host.ip}:4723"
+    session = Session(session_id="sess-created-during-enumeration", device_id=device.id, status=SessionStatus.running)
+
+    async def fake_list_sessions(actual_target: str, **_: object) -> tuple[list[str], bool]:
+        assert actual_target == target
+        await device_locking.lock_device(db_session, device.id)
+        db_session.add(session)
+        await db_session.commit()
+        return [session.session_id], False
+
+    monkeypatch.setattr(service_sync.appium_direct, "list_sessions", fake_list_sessions)
+
+    await _make_sync_service().sync(db_session)
+
+    assert _stub_appium_direct["terminated"] == []
+
+
 async def test_orphan_spared_when_pending_row_exists(
     db_session: AsyncSession, db_host: Host, _stub_appium_direct: dict[str, Any]
 ) -> None:

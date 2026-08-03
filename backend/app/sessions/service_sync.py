@@ -322,11 +322,11 @@ class SessionSyncService:
         by the allocation and probe paths.
 
         ``db`` is used only to derive a fresh session factory bound to the same
-        engine (Task 7): the immutable sweep targets are loaded in one short
-        read session that is closed before any Appium call, the liveness/list
-        Appium effects then run with no DB session open at all, and each
-        changed Session is finalized in its own fresh transaction. No
-        transaction is ever held open across a remote call.
+        engine (Task 7): immutable sweep targets are loaded in one short read,
+        orphan truth is refreshed in another after Appium enumeration, and both
+        sessions close before any Appium mutation. Each changed Session is
+        finalized in its own fresh transaction. No transaction is ever held open
+        across a remote call.
 
         Returns this tick's per-device enumeration verdict. The sweep does not
         act on it: an unreachable node is a fact about the device, and the
@@ -348,6 +348,8 @@ class SessionSyncService:
         )
 
         enumerations = await self._enumerate_orphan_targets(orphan_targets)
+        async with session_factory() as read_db:
+            orphan_targets = await self._refresh_orphan_truth(read_db, orphan_targets)
         await self._terminate_orphans(orphan_targets, enumerations)
         return NodeReachability(
             observed=tuple(candidate.device_id for candidate in orphan_targets.candidates),
@@ -599,10 +601,7 @@ class SessionSyncService:
             await intent_service.IntentService(db).reconcile_now(locked_device.id, publisher=self._publisher)
 
     async def _load_orphan_targets(self, db: AsyncSession) -> _OrphanTargets:
-        """Read the running-node candidates, their pending-row shield, and the known
-        (running/pending) session ids per candidate device — everything the batched
-        ``list_sessions``/``terminate_session`` effect phase needs. No further query
-        is issued once this returns."""
+        """Read the running-node candidates before Appium enumeration."""
         # Filter to desired-running nodes in SQL (#20) instead of loading every
         # node-bearing device and discarding the stopped ones in Python.
         device_stmt = (
@@ -624,7 +623,11 @@ class SessionSyncService:
                 continue
             candidates.append(_OrphanCandidate(device_id=device.id, host_id=device.host_id, target=target))
 
-        candidate_ids = [candidate.device_id for candidate in candidates]
+        return _OrphanTargets(candidates=candidates, known_ids_by_device={}, devices_with_pending=set())
+
+    async def _refresh_orphan_truth(self, db: AsyncSession, targets: _OrphanTargets) -> _OrphanTargets:
+        """Refresh DB truth after enumeration and before any Appium delete."""
+        candidate_ids = [candidate.device_id for candidate in targets.candidates]
         devices_with_pending: set[uuid.UUID] = set()
         if candidate_ids:
             pending_rows = await db.execute(
@@ -636,10 +639,8 @@ class SessionSyncService:
             )
             devices_with_pending = {device_id for (device_id,) in pending_rows.all() if device_id is not None}
 
-        # Resolve the known (running/pending) session ids for every candidate device in
-        # one IN-query, grouped by device (#12), before the batched enumerate/terminate
-        # effect phase runs — this used to run interleaved with list_sessions/terminate_session
-        # (Task 7 closes that gap so no DB access happens once the effect phase starts).
+        # Resolve the known (running/pending) session ids for every candidate device
+        # in one IN-query, grouped by device (#12).
         known_ids_by_device: defaultdict[uuid.UUID, set[str]] = defaultdict(set)
         if candidate_ids:
             known_rows = await db.execute(
@@ -653,7 +654,7 @@ class SessionSyncService:
                     known_ids_by_device[device_id].add(session_id)
 
         return _OrphanTargets(
-            candidates=candidates,
+            candidates=targets.candidates,
             known_ids_by_device=dict(known_ids_by_device),
             devices_with_pending=devices_with_pending,
         )
