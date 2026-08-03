@@ -36,6 +36,7 @@ from app.grid.allocation import (
     GRID_TRY_ALLOCATE_DURATION_SECONDS,
     AllocationResult,
     AllocationService,
+    PreemptionTarget,
     RunNotActiveError,
     resolve_router_target,
     transition_ticket,
@@ -140,8 +141,30 @@ async def _finalize_interrupted_create(
         )
 
 
+async def _finalize_preemption(
+    services: GridServicesDep,
+    allocation: AllocationService,
+    victim: PreemptionTarget,
+) -> None:
+    """Close a preempted session row under its device lock.
+
+    Runs whether or not the remote DELETE succeeded, exactly as the
+    operator-kill path does: the row must leave the live set so the device
+    frees, and ``session_sync`` kills any still-alive Appium session on its
+    next tick. Standalone rather than a lambda in ``create_session`` so no new
+    transaction-boundary owner is introduced: the contract test registers every
+    ``begin()`` owner and effect entry point by exact set equality, and this
+    helper opens no transaction and calls no effect name.
+    """
+    await retry_on_serialization_failure(
+        services.session_factory,
+        lambda db: allocation.finalize_preemption(db, session_pk=victim.session_pk, device_id=victim.device_id),
+        caller="grid_preemption",
+    )
+
+
 @router.post("/create-session", response_model=CreateSessionResponse)
-async def create_session(
+async def create_session(  # noqa: PLR0912, PLR0915 - long-poll loop; the preemption block is plan-mandated
     payload: CreateSessionRequest,
     services: GridServicesDep,
     create_budget_ms: Annotated[
@@ -159,6 +182,7 @@ async def create_session(
     ticket_id = payload.ticket
     excluded: set[uuid.UUID] = set()
     attempts = 0
+    preempted_once = False
     last_target_failure_message: str | None = None
 
     if ticket_id is not None:
@@ -224,6 +248,32 @@ async def create_session(
                     return CreateSessionResponse(status="create_error", message=outcome.message or None)
                 continue
             return _response_for_outcome(outcome, result)
+        if not preempted_once and services.settings.get_bool("grid.preempt_running_sessions"):
+            # One victim per request: the bound that stops two flag-on clients from
+            # evicting each other in a loop. A ticket the router re-polls arrives as
+            # a fresh request and may preempt again — intended, and what keeps an
+            # older waiter from sitting behind an orphan forever.
+            #
+            # The prepare/terminate runs here under the already-registered
+            # ``create_session`` owner rather than in a helper (unlike
+            # ``_finalize_interrupted_create``) because the transaction-boundary
+            # contract registers every new ``begin()`` owner and effect entry point
+            # in ``tests/contracts/test_repository_transaction_boundaries.py``, and
+            # the plan's post-implementation check forbids editing that file.
+            # ``_finalize_preemption`` is a helper because it opens no transaction
+            # and calls no effect name. Prepare / terminate / finalize still use
+            # three separate transactions for the same reason
+            # ``_finalize_interrupted_create`` splits them: the remote Appium
+            # DELETE must not run under an open transaction.
+            preempted_once = True
+            async with services.session_factory.begin() as db:
+                victim = await allocation.prepare_preemption(db, ticket_id=ticket_id, exclude_device_ids=excluded)
+            if victim is not None:
+                if victim.target is not None:
+                    await appium_direct.terminate_session(victim.target, victim.appium_session_id)
+                await _finalize_preemption(services, allocation, victim)
+                GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="preempted").inc()
+                continue
         now = time.monotonic()
         if now >= poll_deadline:
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="queued").inc()

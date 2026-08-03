@@ -88,7 +88,7 @@ _RESTART_WINDOW_FALLBACK_SEC = 120
 GRID_ALLOCATION_OUTCOME_TOTAL = Counter(
     "gridfleet_grid_allocation_outcome",
     "Allocation attempt outcomes for new-session requests.",
-    labelnames=("outcome",),  # allocated | queued | invalid | expired | claim_expired
+    labelnames=("outcome",),  # allocated | queued | invalid | expired | claim_expired | preempted
 )
 GRID_QUEUE_DEPTH = Gauge(
     "gridfleet_grid_queue_depth",
