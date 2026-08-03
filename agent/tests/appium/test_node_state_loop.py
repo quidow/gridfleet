@@ -43,6 +43,7 @@ class _Manager:
         }
         self.started: list[dict[str, object]] = []
         self.stopped: list[int] = []
+        self.stop_calls: list[tuple[int, str]] = []
         self.reconfigured: list[tuple[int, dict[str, Any]]] = []
         self.start_failures: list[dict[str, Any]] = []
         self._fail_start_with = fail_start_with
@@ -72,8 +73,9 @@ class _Manager:
             {"port": port, "connection_target": connection_target, "kind": kind, "detail": detail}
         )
 
-    async def stop(self, port: int) -> None:
+    async def stop(self, port: int, *, reason: str = "unspecified") -> None:
         self.stopped.append(port)
+        self.stop_calls.append((port, reason))
         self.running = [info for info in self.running if info.port != port]
         self._launch_specs.pop(port, None)
 
@@ -188,6 +190,14 @@ async def test_starts_desired_running_node_that_is_not_local() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_passes_stable_device_id_to_process_manager() -> None:
+    desired = _node()
+    manager = _Manager()
+    await NodeStateLoop(client=_Client([desired]), manager=manager).run_once()
+    assert manager.started[0]["device_id"] == desired["device_id"]
+
+
+@pytest.mark.asyncio
 async def test_stops_desired_stopped_node() -> None:
     manager = _Manager([_Info(port=4723, connection_target="device-1")])
     loop = NodeStateLoop(client=_Client([_node(desired_state="stopped", launch=None)]), manager=manager)
@@ -195,6 +205,7 @@ async def test_stops_desired_stopped_node() -> None:
     await loop.run_once()
 
     assert manager.stopped == [4723]
+    assert manager.stop_calls == [(4723, "desired_stopped")]
 
 
 @pytest.mark.asyncio
@@ -230,6 +241,7 @@ async def test_stale_process_restarts_on_watermark() -> None:
     await loop.run_once()
 
     assert manager.stopped == [4723]
+    assert manager.stop_calls == [(4723, "needs_restart")]
     assert len(manager.started) == 1
 
 
@@ -281,6 +293,7 @@ async def test_local_process_with_no_desired_spec_is_stopped() -> None:
     await loop.run_once()
 
     assert manager.stopped == [4799]
+    assert manager.stop_calls == [(4799, "orphan")]
 
 
 @pytest.mark.asyncio

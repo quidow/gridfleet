@@ -37,6 +37,21 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+type LiveKey = tuple[str, str]
+
+
+def _live_keys(item: dict[str, Any]) -> tuple[LiveKey | None, LiveKey | None]:
+    """Derive the identity-first and connection-target join keys for a running
+    node or a roster entry. Tagged tuples keep a bare device-ID string from ever
+    colliding with a connection-target string that happens to be equal."""
+    device_id = item.get("device_id")
+    target = item.get("connection_target")
+    return (
+        ("device_id", device_id) if isinstance(device_id, str) else None,
+        ("connection_target", target) if isinstance(target, str) else None,
+    )
+
+
 @dataclass
 class ProbeLoop:
     roster_client: Any
@@ -53,7 +68,7 @@ class ProbeLoop:
     _section_seq: dict[str, int] = field(default_factory=dict, init=False)
     _due_overrides: set[str] = field(default_factory=set, init=False)
     _wake_event: asyncio.Event = field(default_factory=asyncio.Event, init=False, repr=False)
-    _last_live_at: dict[str, float] = field(default_factory=dict, init=False)
+    _last_live_at: dict[LiveKey, float] = field(default_factory=dict, init=False)
 
     def latest_results(self) -> dict[str, Any] | None:
         return self._results or None
@@ -133,7 +148,12 @@ class ProbeLoop:
         snapshot = await self.manager.process_snapshot()
         nodes: list[dict[str, Any]] = []
         for node in snapshot.get("running_nodes", []):
-            status = await self.manager.status(node["port"])
+            # A coalesced entry is a retained dead process from a withheld,
+            # in-progress first restart attempt (agent_app.appium.process);
+            # its own status() would hit the already-crashed process and
+            # contradict the process snapshot it is agreeing to withhold.
+            coalesced = node.get("observation_coalesced") is True
+            status = {"running": True} if coalesced else await self.manager.status(node["port"])
             nodes.append(
                 {
                     "port": node["port"],
@@ -145,8 +165,8 @@ class ProbeLoop:
             )
         return {"reported_at": _now_iso(), "nodes": nodes}
 
-    def _resolve_live(self, target: str, active: object, *, now: float) -> bool:
-        """Whether session-scoped resources may still legitimately be held for *target*.
+    def _resolve_live(self, key: LiveKey, active: object, *, now: float) -> bool:
+        """Whether session-scoped resources may still legitimately be held for *key*.
 
         This is the value adapters read as ``has_live_session``, and its contract
         (``adapter_types.py``) is that ``False`` means the agent positively
@@ -157,43 +177,85 @@ class ProbeLoop:
         if active is None:
             # Unknown, not "no session": Appium unreachable, non-200, or a node
             # without session_discovery. Stamp it so the grace runs from here.
-            self._last_live_at[target] = now
+            self._last_live_at[key] = now
             return True
         if active:
-            self._last_live_at[target] = now
+            self._last_live_at[key] = now
             return True
-        last = self._last_live_at.get(target)
+        last = self._last_live_at.get(key)
         if last is None:
             # First sighting (agent restart, new node): start the grace rather
             # than call a bound port orphaned against an empty cache.
-            self._last_live_at[target] = now
+            self._last_live_at[key] = now
             return True
         return now - last < SESSION_SETTLE_GRACE_SEC
 
-    def _live_session_flags(self, snapshot: dict[str, Any], *, now: float) -> dict[str, bool]:
-        """Per-connection-target live-session verdicts for one gather."""
-        flags: dict[str, bool] = {}
+    def _live_session_flags(self, snapshot: dict[str, Any], *, now: float) -> tuple[dict[LiveKey, bool], set[str]]:
+        """Per-identity live-session verdicts for one gather.
+
+        Each running node resolves once under its stable device-ID key when the
+        snapshot reports one -- surviving a host-resolved connection target that
+        differs from the roster's cached value (S29) -- falling back to its
+        connection-target key otherwise. The same verdict is republished under
+        the target key too, so a caller that only carries a target string (an
+        old/direct ``start()``) can still resolve. ``id_owned_targets`` names
+        every target claimed by an ID-bearing node this gather, so a join can
+        refuse a target-only fallback for an entry whose own ID does not match
+        -- reporting "not matched" rather than silently borrowing another
+        device's session.
+        """
+        flags: dict[LiveKey, bool] = {}
+        id_owned_targets: set[str] = set()
         for node in snapshot.get("running_nodes", []):
-            target = node.get("connection_target")
-            if not isinstance(target, str):
+            id_key, target_key = _live_keys(node)
+            primary = id_key if id_key is not None else target_key
+            if primary is None:
                 continue
-            flags[target] = self._resolve_live(target, node.get("has_active_session"), now=now)
-        return flags
+            verdict = self._resolve_live(primary, node.get("has_active_session"), now=now)
+            flags[primary] = verdict
+            if target_key is not None:
+                flags[target_key] = verdict
+                if id_key is not None:
+                    id_owned_targets.add(target_key[1])
+        return flags, id_owned_targets
+
+    def _resolve_entry_live(
+        self,
+        live: dict[LiveKey, bool],
+        id_owned_targets: set[str],
+        entry: dict[str, Any],
+        *,
+        now: float,
+    ) -> bool:
+        """Join one roster entry against a gather's live-session flags.
+
+        Prefers the entry's device-ID key. Falls back to its connection-target
+        key only when that target is not claimed by an ID-bearing node -- the ID
+        branch above already missed, so a claimed target necessarily belongs to
+        a *different* ID, and matching it would hide the mismatch rather than
+        report it.
+        """
+        id_key, target_key = _live_keys(entry)
+        if id_key is not None:
+            if id_key in live:
+                return live[id_key]
+            if target_key is not None and target_key[1] not in id_owned_targets and target_key in live:
+                return live[target_key]
+            return self._resolve_live(id_key, False, now=now)
+        if target_key is not None:
+            return live[target_key] if target_key in live else self._resolve_live(target_key, False, now=now)
+        # Neither a device_id nor a connection_target: a malformed entry must not
+        # coerce into a shared cache key.
+        return False
 
     async def _probe_devices(self, runner: ProbeRunner) -> dict[str, Any]:
         semaphore = asyncio.Semaphore(_PROBE_CONCURRENCY)
         snapshot = await self.manager.process_snapshot()
         now = time.monotonic()
-        live = self._live_session_flags(snapshot, now=now)
+        live, id_owned_targets = self._live_session_flags(snapshot, now=now)
 
         async def one(entry: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
-            target = entry.get("connection_target")
-            if isinstance(target, str):
-                has_live_session = live[target] if target in live else self._resolve_live(target, False, now=now)
-            else:
-                # connection_target is contractually a required str (ProbeTargetOut);
-                # a malformed roster entry must not coerce into a shared "None" cache key.
-                has_live_session = False
+            has_live_session = self._resolve_entry_live(live, id_owned_targets, entry, now=now)
             async with semaphore:
                 try:
                     observation = await runner(entry, has_live_session)
@@ -219,16 +281,10 @@ class ProbeLoop:
         semaphore = asyncio.Semaphore(_PROBE_CONCURRENCY)
         snapshot = await self.manager.process_snapshot()
         now = time.monotonic()
-        live = self._live_session_flags(snapshot, now=now)
+        live, id_owned_targets = self._live_session_flags(snapshot, now=now)
 
         async def one(entry: dict[str, Any]) -> dict[str, Any]:
-            target = entry.get("connection_target")
-            if isinstance(target, str):
-                has_live_session = live[target] if target in live else self._resolve_live(target, False, now=now)
-            else:
-                # connection_target is contractually a required str (ProbeTargetOut);
-                # a malformed roster entry must not coerce into a shared "None" cache key.
-                has_live_session = False
+            has_live_session = self._resolve_entry_live(live, id_owned_targets, entry, now=now)
             async with semaphore:
                 health = await self._run_health(entry, has_live_session)
             return {

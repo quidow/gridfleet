@@ -62,7 +62,7 @@ class NodeStateLoop:
 
         for port in sorted(set(running_by_port) - desired_ports):
             try:
-                await self.manager.stop(port)
+                await self.manager.stop(port, reason="orphan")
                 self._notify()
             except Exception:
                 logger.exception("failed to stop orphan Appium process on port %d", port)
@@ -71,7 +71,7 @@ class NodeStateLoop:
         local = running_by_port.get(spec.port)
         if spec.desired_state == "stopped":
             if local is not None:
-                await self.manager.stop(spec.port)
+                await self.manager.stop(spec.port, reason="desired_stopped")
                 running_by_port.pop(spec.port, None)
                 self._notify()
             return
@@ -144,13 +144,20 @@ class NodeStateLoop:
                     launch.pack_release,
                 )
         if local is not None and needs_restart:
-            await self.manager.stop(spec.port)
+            await self.manager.stop(spec.port, reason="needs_restart")
             running_by_port.pop(spec.port, None)
             local = None
 
         if local is None:
             try:
-                started = await self.manager.start(**self._launch_kwargs(launch))
+                # device_id is passed explicitly because AppiumStartRequest has no
+                # such field today; if it ever gains one, _launch_kwargs(launch)
+                # would also yield device_id and this call would raise TypeError
+                # ("got multiple values for keyword argument 'device_id'").
+                started = await self.manager.start(
+                    device_id=str(spec.device_id),
+                    **self._launch_kwargs(launch),
+                )
             except StartDeferredError as exc:
                 # Start could not proceed yet (adapter/runtime still loading, or
                 # release changed mid-start). Retry next tick without recording a

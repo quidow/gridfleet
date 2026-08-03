@@ -71,3 +71,12 @@ async def test_auto_restart_returns_when_stop_pending_queued_during_backoff() ->
         "_auto_restart_appium resurrected appium despite stop_pending queued during backoff"
     )
     assert port in mgr._stop_pending_ports
+
+    # The crash was withheld as the first in-progress attempt (GridFleet task
+    # 2: coalesce only the first local Appium restart observation); the
+    # stop_pending refusal is a non-success return, so releasing it must make
+    # the crash visible even though the restart itself never happens.
+    snapshot = await mgr.process_snapshot()
+    assert snapshot["recent_restart_events"][0]["kind"] == "crash_detected"
+    assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
+    assert mgr._withheld_restart_by_port == {}

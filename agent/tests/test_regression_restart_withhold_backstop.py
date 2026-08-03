@@ -1,0 +1,209 @@
+"""The first-restart withhold is bounded by wall clock, not only by its owner.
+
+``process_snapshot`` truncates the emitted restart-event stream at the lowest
+withheld sequence and that cursor is host-wide, so a withhold nobody discharges
+mutes restart events for every port on the host, forever. Task ownership alone
+cannot bound it: a path that hands the withhold off to an actor that never
+arrives leaves no owner at all.
+
+The bound is absolute from arming and never re-armed. Expiry governs
+*publication* only — the record survives, so a recovery that completes late
+still records its resolving event and closes the audit trail.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from unittest.mock import patch
+
+import pytest
+
+from agent_app.appium.process import FIRST_RESTART_WITHHOLD_MAX_SEC, WITHHOLD_OWNERSHIP_MAX_SEC
+from tests.withhold_helpers import (
+    PACK_START_KWARGS,
+    PORT,
+    RESPAWNED_PID,
+    TARGET,
+    FakeProcess,
+    kinds,
+    manager_with_crashed_node,
+    restart_task_in_backoff,
+    settle,
+)
+from tests.withhold_helpers import (
+    stub_port_probe as stub_port_probe,  # pytest fixture, used by name
+)
+
+pytestmark = pytest.mark.asyncio
+
+
+async def test_ownership_ceiling_outlives_publication_ceiling() -> None:
+    """The two bounds are not independent: ownership must strictly outlive
+    publication, or reaping stops being safe.
+
+    ``_reap_stale_withhold`` pops a record once it is too old to *adopt*, on
+    the assumption that its crash has already had a chance to *publish* on
+    its own. If ``WITHHOLD_OWNERSHIP_MAX_SEC`` were ever the shorter of the
+    two, a record could be reaped while still inside its publication window
+    -- the crash would then publish with no way to pair a later-arriving
+    resolving event, reproducing the bare ``crash_detected`` this whole
+    backstop exists to eliminate. This assertion is the one thing standing
+    between that regression and 19 passing withhold tests that do not
+    exercise it: setting ``WITHHOLD_OWNERSHIP_MAX_SEC`` below
+    ``FIRST_RESTART_WITHHOLD_MAX_SEC`` leaves every other test in this suite
+    green.
+    """
+    assert WITHHOLD_OWNERSHIP_MAX_SEC > FIRST_RESTART_WITHHOLD_MAX_SEC
+
+
+async def test_arming_applies_the_backstop_constant() -> None:
+    """Pins the constant to the arming site, so the two cannot drift apart —
+    every other test here reaches expiry by moving ``expires_at`` directly."""
+    # Deliberate pin on a derived design value, not a restatement of the code:
+    # 60 = 1s backoff + one 5s convergence retry + 30s READINESS_TIMEOUT
+    # (~36s) plus headroom, chosen to cap the host-wide event mute at
+    # roughly six 10s status pushes (see the constant's definition comment).
+    # The linkage assertion below moves in lockstep with the constant and so
+    # cannot catch a drift in the constant's *value* on its own -- this one
+    # can, and changing it is meant to force re-reading that derivation.
+    assert FIRST_RESTART_WITHHOLD_MAX_SEC == 60
+
+    mgr = manager_with_crashed_node()
+    await restart_task_in_backoff(mgr)
+
+    armed_at = asyncio.get_running_loop().time()
+    record = mgr._withheld_restart_by_port[PORT]
+    assert record.expires_at == pytest.approx(armed_at + FIRST_RESTART_WITHHOLD_MAX_SEC, abs=1.0)
+
+
+async def test_an_expired_withhold_stops_suppressing_the_crash() -> None:
+    """The backstop's whole purpose: a recovery that never completes must not
+    keep the host's restart-event stream truncated indefinitely."""
+    mgr = manager_with_crashed_node()
+    await restart_task_in_backoff(mgr)
+
+    snapshot = await mgr.process_snapshot()
+    assert kinds(snapshot) == [], "the withhold was not suppressing the crash to begin with"
+
+    mgr._withheld_restart_by_port[PORT].expires_at -= FIRST_RESTART_WITHHOLD_MAX_SEC + 1
+
+    snapshot = await mgr.process_snapshot()
+    assert kinds(snapshot) == ["crash_detected"], (
+        f"an expired withhold still muted the host's restart events: {kinds(snapshot)}"
+    )
+    assert snapshot["running_nodes"] == [], "an expired withhold still retained a dead node as coalesced"
+
+
+async def test_expiry_is_logged_once(caplog: pytest.LogCaptureFixture) -> None:
+    """Forensics: the expiry boundary must be timestampable in a log bundle,
+    and must not then flood every subsequent push."""
+    mgr = manager_with_crashed_node()
+    await restart_task_in_backoff(mgr)
+    mgr._withheld_restart_by_port[PORT].expires_at -= FIRST_RESTART_WITHHOLD_MAX_SEC + 1
+
+    with caplog.at_level(logging.WARNING, logger="agent_app.appium.process"):
+        await mgr.process_snapshot()
+        await mgr.process_snapshot()
+
+    expiries = [record for record in caplog.records if "withhold expired" in record.getMessage()]
+    assert len(expiries) == 1, f"expected exactly one expiry log line, got {len(expiries)}"
+
+
+async def test_expiry_is_not_disownership(stub_port_probe: None) -> None:
+    """Expiry bounds publication, not ownership. A deferral that clears after
+    the deadline must still pair its crash with a resolving event rather than
+    leaving a dangling ``crash_detected`` the backend folds to offline.
+
+    Ages both ``armed_at`` and ``expires_at`` past the publication bound
+    (``FIRST_RESTART_WITHHOLD_MAX_SEC``) but not past the ownership bound
+    (``WITHHOLD_OWNERSHIP_MAX_SEC``), exercising the real "after 60s, before
+    300s" window the two-bound design depends on. Aging ``expires_at`` alone
+    cannot catch an inverted ordering: ``_reap_stale_withhold`` reads only
+    ``armed_at``, so a stale ownership bound would go undetected unless
+    ``armed_at`` is aged far enough to cross it too. With both aged by the
+    same amount, an ownership ceiling shorter than the publication one would
+    reap this record before adoption -- turning the expected
+    ``restart_succeeded`` pairing below into a bare ``crash_detected``.
+    """
+    mgr = manager_with_crashed_node()
+    task = await restart_task_in_backoff(mgr)
+    task.cancel()
+    await settle()
+    mgr._appium_restart_tasks.pop(PORT, None)
+    mgr._withheld_restart_by_port[PORT].armed_at -= FIRST_RESTART_WITHHOLD_MAX_SEC + 1
+    mgr._withheld_restart_by_port[PORT].expires_at -= FIRST_RESTART_WITHHOLD_MAX_SEC + 1
+
+    async def fake_spawn(*_args: object, **_kwargs: object) -> FakeProcess:
+        return FakeProcess(RESPAWNED_PID)
+
+    async def ready(_port: int, _proc: object) -> bool:
+        return True
+
+    with (
+        patch.object(mgr, "_start_appium_server", side_effect=fake_spawn),
+        patch.object(mgr, "_wait_for_readiness", new=ready),
+    ):
+        await mgr.start(connection_target=TARGET, port=PORT, **PACK_START_KWARGS)
+    await settle()
+
+    assert mgr._withheld_restart_by_port == {}
+    with patch.object(mgr, "_node_has_active_session", return_value=False):
+        snapshot = await mgr.process_snapshot()
+    assert kinds(snapshot) == ["crash_detected", "restart_succeeded"], (
+        f"an expired withhold was treated as disowned, so the crash never got its pair: {kinds(snapshot)}"
+    )
+
+
+async def test_an_ancient_abandoned_withhold_is_not_adopted_by_an_unrelated_start(
+    stub_port_probe: None,
+) -> None:
+    """Ownership is a separate, longer bound than publication expiry.
+
+    Nothing ties a start() arriving after ``WITHHOLD_OWNERSHIP_MAX_SEC`` to the
+    crash that armed the record -- adopting it anyway would record a
+    ``restart_succeeded`` paired with a crash that belongs to whichever actor
+    is now on this port, not the one that originally crashed. That matters
+    most once the port has been handed to a different device:
+    ``candidate_ports()`` frees a port the instant its owning device row is
+    deleted, with no liveness check against the agent, so an unrelated
+    device's first ``start()`` on a recycled port is a real path here, not
+    only a same-device recovery finishing very late.
+
+    The record is reaped, not merely skipped: a leaked entry would otherwise
+    sit in the per-port dict for the life of the process. Only ``armed_at``
+    is aged here -- a combination production never reaches, since
+    ``armed_at`` is always the earlier of the two fields -- because
+    ``_reap_stale_withhold`` reads only ``armed_at``. The crash surfaces
+    afterward not because publication expiry independently fired
+    (``expires_at`` is untouched and still in the future), but because
+    reaping pops the record outright, so ``_active_withholds`` -- which
+    filters only on ``expires_at`` -- never has an entry for this port left
+    to truncate on.
+    """
+    mgr = manager_with_crashed_node()
+    task = await restart_task_in_backoff(mgr)
+    task.cancel()
+    await settle()
+    mgr._appium_restart_tasks.pop(PORT, None)
+    mgr._withheld_restart_by_port[PORT].armed_at -= WITHHOLD_OWNERSHIP_MAX_SEC + 1
+
+    async def fake_spawn(*_args: object, **_kwargs: object) -> FakeProcess:
+        return FakeProcess(RESPAWNED_PID)
+
+    async def ready(_port: int, _proc: object) -> bool:
+        return True
+
+    with (
+        patch.object(mgr, "_start_appium_server", side_effect=fake_spawn),
+        patch.object(mgr, "_wait_for_readiness", new=ready),
+    ):
+        await mgr.start(connection_target=TARGET, port=PORT, **PACK_START_KWARGS)
+    await settle()
+
+    assert mgr._withheld_restart_by_port == {}, "the ancient record was neither adopted nor reaped"
+    with patch.object(mgr, "_node_has_active_session", return_value=False):
+        snapshot = await mgr.process_snapshot()
+    assert kinds(snapshot) == ["crash_detected"], (
+        f"an unrelated start recorded a restart_succeeded for a crash it never resolved: {kinds(snapshot)}"
+    )
