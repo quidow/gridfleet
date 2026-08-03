@@ -239,6 +239,10 @@ async def test_adoption_does_not_charge_the_attempt_twice(stub_port_probe: None)
         await asyncio.wait_for(mgr.start(connection_target=TARGET, port=PORT, **PACK_START_KWARGS), timeout=2)
     await settle()
 
+    # Self-guarding: without this, the test below passes vacuously if adoption
+    # regresses entirely -- it would pin "if adoption happens, charge once,"
+    # not "adoption happened."
+    assert mgr._withheld_restart_by_port == {}
     assert len(mgr._appium_restart_attempts[PORT]) == 1, "one restart was charged as two attempts"
 
 

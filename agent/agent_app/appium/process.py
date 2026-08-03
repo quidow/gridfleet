@@ -1570,6 +1570,10 @@ class AppiumProcessManager:
         Expired records are filtered, not popped. Discharge still needs to find
         them -- expiry bounds how long a crash stays unpublished, not who owns
         finishing the restart.
+
+        Also writes ``record.expiry_logged`` on first crossing the deadline --
+        a read that mutates, but idempotently and synchronously, so it cannot
+        race a concurrent read of the same field.
         """
         now = asyncio.get_running_loop().time()
         active: dict[int, _WithheldRestart] = {}

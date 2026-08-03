@@ -164,8 +164,8 @@ async def test_the_restart_tasks_own_start_does_not_adopt_its_own_withhold(
     The auto-restart task reaches ``start()`` through its own call chain, where
     ``_cancel_task`` is self-cancel-exempt: nothing was handed over, and the
     task resolves its own withhold on the way out. If ``start()`` adopted on the
-    withhold alone -- without requiring that a foreign task was really cancelled
-    -- it would emit a second ``restart_succeeded`` and charge the attempt twice.
+    withhold alone -- without requiring that no live task owns it -- it would
+    emit a second ``restart_succeeded`` and charge the attempt twice.
     """
     mgr = manager_with_crashed_node()
 
