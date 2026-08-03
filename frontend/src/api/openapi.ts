@@ -4372,6 +4372,8 @@ export interface components {
             platform_id: string;
             /** Platform Label */
             platform_label?: string | null;
+            /** Released At */
+            released_at?: string | null;
         };
         /** RunCooldownEscalatedResponse */
         RunCooldownEscalatedResponse: {
