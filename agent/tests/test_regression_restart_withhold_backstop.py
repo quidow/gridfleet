@@ -41,6 +41,15 @@ pytestmark = pytest.mark.asyncio
 async def test_arming_applies_the_backstop_constant() -> None:
     """Pins the constant to the arming site, so the two cannot drift apart —
     every other test here reaches expiry by moving ``expires_at`` directly."""
+    # Deliberate pin on a derived design value, not a restatement of the code:
+    # 60 = 1s backoff + one 5s convergence retry + 30s READINESS_TIMEOUT
+    # (~36s) plus headroom, chosen to cap the host-wide event mute at
+    # roughly six 10s status pushes (see the constant's definition comment).
+    # The linkage assertion below moves in lockstep with the constant and so
+    # cannot catch a drift in the constant's *value* on its own -- this one
+    # can, and changing it is meant to force re-reading that derivation.
+    assert FIRST_RESTART_WITHHOLD_MAX_SEC == 60
+
     mgr = manager_with_crashed_node()
     await restart_task_in_backoff(mgr)
 
