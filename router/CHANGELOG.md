@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.2](https://github.com/quidow/gridfleet/compare/gridfleet-router-v0.5.1...gridfleet-router-v0.5.2) (2026-08-03)
+
+
+### Bug Fixes
+
+* **agent:** close torn-read window in restart-coalescing snapshot ([8e27974](https://github.com/quidow/gridfleet/commit/8e2797467e6fa532dae4aa03267dd94779438441))
+* pair withheld restart observations, bound their lifetime, correlate probes by device ([4590c7a](https://github.com/quidow/gridfleet/commit/4590c7a9f76c019bbf102c721a5731ea3c7f7eef))
+* **router:** bound stale route reconciliation ([0a85629](https://github.com/quidow/gridfleet/commit/0a85629d5b353e19a3cff46637cc0db04b74dbf3))
+
 ## [0.5.1](https://github.com/quidow/gridfleet/compare/gridfleet-router-v0.5.0...gridfleet-router-v0.5.1) (2026-08-02)
 
 
