@@ -1034,64 +1034,150 @@ async def test_process_snapshot_truncates_events_at_earliest_withheld_sequence_a
     await manager.shutdown()
 
 
-async def test_process_snapshot_reads_coalescing_state_atomically() -> None:
-    """Regression for the torn-read fix: process_snapshot must snapshot
-    ``_first_restart_observation_ports`` and ``_withheld_restart_sequence_by_port``
-    together, before its first await, not at two points separated by one.
+async def test_process_snapshot_coalesces_crash_that_enters_during_session_enumeration() -> None:
+    """Coalescing covers the whole first in-progress attempt, including one
+    that begins while the snapshot is already in flight.
 
-    Reproduced by pausing ``process_snapshot`` mid-flight -- inside its own
-    await while building the withheld port's coalesced node -- and mutating
-    the withhold state from that yield point in a concurrently running task.
-    This drives the real interleaving rather than asserting on statement
-    order: against the torn-read ordering, the mutation lands after
-    ``coalesced_ports`` was already read but before ``withheld_sequences``
-    was, so the second read observes the release and the port's own
-    crash_detected event is emitted immediately. Atomically reading both
-    beforehand keeps ``truncate_at`` pinned to the pre-mutation value, so the
-    event stays withheld one more push (harmless, per the fix's contract).
+    This replaces the earlier start-of-snapshot policy, which read the
+    coalescing state before its awaits and therefore published a crash that
+    entered withholding mid-snapshot. Reproduced by pausing
+    ``process_snapshot`` inside its session enumeration and crashing the port
+    from that yield point: the published view must show the retained,
+    coalesced node and withhold the crash event, not expose an intermediate
+    node-down edge (S04c).
     """
     manager = AppiumProcessManager()
     port = 4723
-    manager._info[port] = AppiumProcessInfo(port=port, pid=9001, connection_target="dev", platform_id="android")
+    proc = FakeProcess(pid=9001)
+    manager._appium_procs[port] = cast("asyncio.subprocess.Process", proc)
+    manager._info[port] = AppiumProcessInfo(
+        port=port,
+        pid=9001,
+        connection_target="dev",
+        platform_id="android",
+    )
+    enumeration_started = asyncio.Event()
+    resume_enumeration = asyncio.Event()
 
-    sequence = manager._record_restart_event(
+    async def paused_enumeration(current_port: int) -> bool:
+        assert current_port == port
+        enumeration_started.set()
+        await resume_enumeration.wait()
+        return False
+
+    with patch.object(manager, "_node_has_active_session", side_effect=paused_enumeration):
+        snapshot_task = asyncio.create_task(manager.process_snapshot())
+        await enumeration_started.wait()
+        proc.returncode = 1
+        sequence = manager._record_restart_event(
+            process="appium",
+            kind="crash_detected",
+            port=port,
+            pid=9001,
+            attempt=1,
+            delay_sec=1,
+            exit_code=1,
+            will_retry=True,
+        )
+        manager._first_restart_observation_ports.add(port)
+        manager._withheld_restart_sequence_by_port[port] = sequence
+        resume_enumeration.set()
+        snapshot = await snapshot_task
+
+    assert snapshot["recent_restart_events"] == []
+    assert snapshot["running_nodes"] == [
+        {
+            "port": port,
+            "pid": 9001,
+            "connection_target": "dev",
+            "platform_id": "android",
+            "started_at": manager._info[port].started_at.isoformat(),
+            "observation_coalesced": True,
+        }
+    ]
+    await manager.shutdown()
+
+
+async def test_process_snapshot_publishes_final_view_when_restart_completes_during_enumeration() -> None:
+    """The mirror case: a restart that resolves mid-snapshot publishes the
+    final view, not a stale one.
+
+    The second live port supplies the await while the withheld port is dead.
+    Resuming after the release, the snapshot must carry the restarted pid,
+    drop ``observation_coalesced``, and emit the whole deferred tail -- so the
+    structural process state, the withhold state, and the event ring are all
+    read at one point rather than straddling the enumeration.
+    """
+    manager = AppiumProcessManager()
+    restarted_port = 4723
+    probe_port = 4724
+    manager._info[restarted_port] = AppiumProcessInfo(
+        port=restarted_port,
+        pid=9001,
+        connection_target="restarted",
+        platform_id="android",
+    )
+    probe_proc = FakeProcess(pid=9100)
+    manager._appium_procs[probe_port] = cast("asyncio.subprocess.Process", probe_proc)
+    manager._info[probe_port] = AppiumProcessInfo(
+        port=probe_port,
+        pid=9100,
+        connection_target="probe",
+        platform_id="android",
+    )
+    crash_sequence = manager._record_restart_event(
         process="appium",
         kind="crash_detected",
-        port=port,
+        port=restarted_port,
         pid=9001,
         attempt=1,
         delay_sec=1,
         exit_code=1,
         will_retry=True,
     )
-    manager._first_restart_observation_ports.add(port)
-    manager._withheld_restart_sequence_by_port[port] = sequence
+    manager._first_restart_observation_ports.add(restarted_port)
+    manager._withheld_restart_sequence_by_port[restarted_port] = crash_sequence
+    enumeration_started = asyncio.Event()
+    resume_enumeration = asyncio.Event()
 
-    real_running_node_snapshot = manager._running_node_snapshot
-    entered_snapshot_for_port = asyncio.Event()
-    release_port = asyncio.Event()
+    async def paused_enumeration(current_port: int) -> bool:
+        assert current_port == probe_port
+        enumeration_started.set()
+        await resume_enumeration.wait()
+        return False
 
-    async def paused_running_node_snapshot(info: AppiumProcessInfo) -> dict[str, Any]:
-        if info.port == port:
-            entered_snapshot_for_port.set()
-            await release_port.wait()
-        return await real_running_node_snapshot(info)
-
-    with patch.object(manager, "_running_node_snapshot", side_effect=paused_running_node_snapshot):
+    with patch.object(manager, "_node_has_active_session", side_effect=paused_enumeration):
         snapshot_task = asyncio.create_task(manager.process_snapshot())
-        await entered_snapshot_for_port.wait()
-
-        # process_snapshot is now suspended fetching the withheld port's own
-        # coalesced node -- the window the torn-read ordering left exposed.
-        # Release the port here, exactly as a concurrent restart success
-        # would, then let process_snapshot resume.
-        manager._release_first_restart_observation(port)
-        release_port.set()
+        await enumeration_started.wait()
+        restarted_proc = FakeProcess(pid=9002)
+        manager._appium_procs[restarted_port] = cast("asyncio.subprocess.Process", restarted_proc)
+        manager._info[restarted_port] = AppiumProcessInfo(
+            port=restarted_port,
+            pid=9002,
+            connection_target="restarted",
+            platform_id="android",
+        )
+        manager._record_restart_event(
+            process="appium",
+            kind="restart_succeeded",
+            port=restarted_port,
+            pid=9002,
+            attempt=1,
+            delay_sec=1,
+            exit_code=1,
+            will_retry=False,
+        )
+        manager._release_first_restart_observation(restarted_port)
+        resume_enumeration.set()
         snapshot = await snapshot_task
 
-    assert snapshot["running_nodes"][0]["port"] == port
-    assert snapshot["running_nodes"][0]["observation_coalesced"] is True
-    assert snapshot["recent_restart_events"] == []
+    restarted = next(node for node in snapshot["running_nodes"] if node["port"] == restarted_port)
+    assert restarted["pid"] == 9002
+    assert "observation_coalesced" not in restarted
+    assert [event["kind"] for event in snapshot["recent_restart_events"]] == [
+        "crash_detected",
+        "restart_succeeded",
+    ]
     await manager.shutdown()
 
 

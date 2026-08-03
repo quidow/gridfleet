@@ -559,7 +559,16 @@ class AppiumProcessManager:
 
     def _release_first_restart_observation(self, port: int) -> None:
         self._first_restart_observation_ports.discard(port)
-        self._withheld_restart_sequence_by_port.pop(port, None)
+        sequence = self._withheld_restart_sequence_by_port.pop(port, None)
+        if sequence is not None:
+            # The release boundary is otherwise silent on all three exit paths
+            # from the first attempt; this is what makes it timestampable in a
+            # log bundle without adding a product endpoint or payload field.
+            logger.info(
+                "Released first Appium restart observation for port=%d sequence=%d",
+                port,
+                sequence,
+            )
 
     def record_start_failure(self, *, port: int, connection_target: str, kind: str, detail: str) -> None:
         """Record a failed `start()` attempt for the next `/agent/health` payload.
@@ -1197,36 +1206,64 @@ class AppiumProcessManager:
         return running
 
     async def process_snapshot(self) -> dict[str, Any]:
-        # Snapshot both halves of the coalescing state before the first await
-        # below -- _running_node_snapshot's HTTP round trip per node can take
-        # seconds against an unreachable Appium. Reading the two halves at
-        # different points let a port crash and enter withholding in between:
-        # its event got truncated (the later read saw it) but it had no
-        # retained node in running_nodes (the earlier read missed it) -- the
-        # port silently vanished from the push with nothing to explain why,
-        # the exact S04c symptom this coalescing exists to prevent. Reading
-        # both together, before either await point, means a port that
-        # releases mid-snapshot just holds its retention one push longer
-        # (harmless), and one that starts withholding mid-snapshot is simply
-        # not coalesced this cycle (also harmless -- it is published, not
-        # hidden).
+        # Observation-atomic assembly. Every await lives in the session
+        # enumeration below -- an HTTP round trip per running node that can
+        # take seconds against an unreachable Appium. Everything the published
+        # view is derived from (the process table via list_running, the
+        # first-restart port set, the withheld-sequence map, and the event
+        # ring) is then read contiguously *after* that, with no await in
+        # between, so the event loop cannot interleave a crash or a restart
+        # completion across those fields and produce a self-contradictory
+        # view. Reading any of them before the enumeration instead let a port
+        # crash and enter withholding in the window: its event was truncated
+        # (a later read saw the withhold) but it had no retained node in
+        # running_nodes (an earlier read missed it) -- the port silently
+        # vanished from the push with nothing to explain why, the exact S04c
+        # symptom this coalescing exists to prevent.
+        #
+        # Consequences of assembling last, both required by S04c:
+        # - A crash that enters withholding while this snapshot is in flight
+        #   is coalesced by this snapshot. Coalescing covers the whole first
+        #   in-progress attempt, not just attempts that predate the request.
+        # - A restart that completes while this snapshot is in flight
+        #   publishes the final view: the fresh pid, uncoalesced, with the
+        #   deferred events released.
+        # Atomicity here comes from the absence of await, not from a lock;
+        # do not add one, and never hold one across Appium HTTP I/O.
+        active_sessions: dict[tuple[int, int], bool | None] = {}
+        for info in self.list_running():
+            key = (info.port, info.pid)
+            active_sessions[key] = await self._node_has_active_session(info.port)
+
         first_restart_observation_ports = set(self._first_restart_observation_ports)
         withheld_sequences = set(self._withheld_restart_sequence_by_port.values())
         truncate_at = min(withheld_sequences) if withheld_sequences else None
+        running_infos = self.list_running()
+        running_nodes: list[dict[str, Any]] = []
+        for info in running_infos:
+            payload = self._running_node_payload(info)
+            # Keyed by (port, pid): a process replaced during the enumeration
+            # has no sample of its own, so the key is omitted and the drain
+            # gate reads it as "unknown" -- the safe blocking default. Never
+            # carry a dead predecessor's session answer onto its successor.
+            active = active_sessions.get((info.port, info.pid))
+            if active is not None:
+                payload["has_active_session"] = active
+            running_nodes.append(payload)
 
-        running_nodes = [await self._running_node_snapshot(info) for info in self.list_running()]
         running_ports = {node["port"] for node in running_nodes}
         # Retain a dead node for a port whose first restart attempt is still
         # withheld, so the coalesced observation shows the crashed process
-        # instead of the port silently disappearing from the snapshot.
-        coalesced_ports = first_restart_observation_ports - running_ports
-        for port in coalesced_ports:
-            info = self._info.get(port)
-            if info is None:
+        # instead of the port silently disappearing from the snapshot. No
+        # session enumeration for these: the process is gone, so the key is
+        # omitted and the drain gate keeps its safe blocking default.
+        for port in first_restart_observation_ports - running_ports:
+            coalesced_info = self._info.get(port)
+            if coalesced_info is None:
                 continue
-            coalesced_node = await self._running_node_snapshot(info)
-            coalesced_node["observation_coalesced"] = True
-            running_nodes.append(coalesced_node)
+            payload = self._running_node_payload(coalesced_info)
+            payload["observation_coalesced"] = True
+            running_nodes.append(payload)
         # The backend dedupes restart events against a single host-wide sequence
         # cursor (highest sequence seen), not a per-port one. Dropping only the
         # withheld sequence numbers would still let a *later*, already-released
@@ -1268,7 +1305,12 @@ class AppiumProcessManager:
             "start_failures": [failure.to_payload() for failure in self._start_failures],
         }
 
-    async def _running_node_snapshot(self, info: AppiumProcessInfo) -> dict[str, Any]:
+    def _running_node_payload(self, info: AppiumProcessInfo) -> dict[str, Any]:
+        """The structural half of a running-node observation -- no network I/O.
+
+        Synchronous by contract: process_snapshot assembles its published view
+        from this without yielding to the event loop.
+        """
         payload: dict[str, Any] = {
             "port": info.port,
             "pid": info.pid,
@@ -1282,6 +1324,10 @@ class AppiumProcessManager:
         if spec is not None and spec.pack_release is not None:
             # The release this node was started from drives backend pack rollouts.
             payload["pack_release"] = spec.pack_release
+        return payload
+
+    async def _running_node_snapshot(self, info: AppiumProcessInfo) -> dict[str, Any]:
+        payload = self._running_node_payload(info)
         # Re-emit has_active_session for the agent self-update drain gate (harness C1).
         # The grid relay that used to track sessions is gone, so the only authoritative
         # source is Appium itself: query localhost GET /appium/sessions per running node.
