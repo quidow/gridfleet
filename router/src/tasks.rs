@@ -27,8 +27,8 @@ const ROUTE_RECONCILE_CADENCE_SECS: u64 = 1;
 /// session-end staleness while preserving generation-protected data-plane
 /// inserts). The immediate first `interval` tick is consumed before the loop
 /// so the first rebuild happens after one full period — the data plane
-/// already rebuilds lazily on cache miss, and this keeps e2e route-fetch
-/// counts deterministic (no surprise startup fetch).
+/// already rebuilds lazily on cache miss, so there is nothing to gain from a
+/// startup fetch.
 pub fn spawn_route_reconcile(routes: Arc<RouteMap>, backend: Arc<BackendClient>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(ROUTE_RECONCILE_CADENCE_SECS));
