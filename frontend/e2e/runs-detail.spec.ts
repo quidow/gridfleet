@@ -16,6 +16,7 @@ const ACTIVE_DEVICE = {
   exclusion_reason: null,
   excluded_at: null,
   excluded_until: null,
+  released_at: null,
   cooldown_remaining_sec: null,
   cooldown_count: 0,
   cooldown_escalated: false,
@@ -30,6 +31,15 @@ const ESCALATED_DEVICE = {
   cooldown_remaining_sec: null,
   cooldown_count: 3,
   cooldown_escalated: true,
+};
+
+const LONG_EXCLUSION_REASON =
+  'CI preparation failed: Appium could not create a session after device recovery and three retries';
+
+const RELEASED_EXCLUSION_DEVICE = {
+  ...ACTIVE_DEVICE,
+  released_at: new Date(Date.UTC(2026, 3, 10, 10, 7, 0)).toISOString(),
+  exclusion_reason: LONG_EXCLUSION_REASON,
 };
 
 const MOCK_RUN = {
@@ -54,6 +64,12 @@ const MOCK_RUN_ESCALATED = {
   ...MOCK_RUN,
   reserved_devices: [ESCALATED_DEVICE],
   devices: [ESCALATED_DEVICE],
+};
+
+const MOCK_RUN_RELEASED_EXCLUSION = {
+  ...MOCK_RUN,
+  reserved_devices: [RELEASED_EXCLUSION_DEVICE],
+  devices: [RELEASED_EXCLUSION_DEVICE],
 };
 
 const MOCK_SESSION = {
@@ -190,5 +206,28 @@ test.describe('RunDetail sessions panel', () => {
     await expect(page.getByText(/Escalated to maintenance/)).toBeVisible();
     // Cooldown count column shows the count (span with exact class)
     await expect(page.locator('span.text-text-2', { hasText: '3' }).first()).toBeVisible();
+  });
+
+  test('shows a compact excluded status for an individually released device', async ({ page }) => {
+    await mockEventsApi(page);
+    await mockEmptySettingsApi(page);
+    await page.route(`**/api/runs/${RUN_ID}`, async (route) => {
+      if (route.request().method() !== 'GET') {
+        await route.fallback();
+        return;
+      }
+      await fulfillJson(route, MOCK_RUN_RELEASED_EXCLUSION);
+    });
+    await page.route((url) => new URL(url).pathname === '/api/sessions', async (route) => {
+      await fulfillJson(route, { items: [], total: 0, limit: 50, offset: 0, next_cursor: null, prev_cursor: null });
+    });
+
+    await page.goto(`/runs/${RUN_ID}`);
+    const deviceRow = page.getByRole('row').filter({ hasText: 'android-abc' });
+    await expect(deviceRow.getByText('Excluded', { exact: true })).toBeVisible();
+    const reason = deviceRow.getByText(LONG_EXCLUSION_REASON);
+    await expect(reason).toHaveClass(/line-clamp-2/);
+    await expect(reason).toHaveAttribute('title', LONG_EXCLUSION_REASON);
+    await expect(deviceRow.getByText('Active', { exact: true })).toHaveCount(0);
   });
 });

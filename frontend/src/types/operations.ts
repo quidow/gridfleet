@@ -57,6 +57,7 @@ export type ReservedDeviceInfo = Omit<
   | 'exclusion_reason'
   | 'host_ip'
   | 'platform_label'
+  | 'released_at'
 > & {
   connection_target: string | null;
   cooldown_remaining_sec: number | null;
@@ -65,6 +66,7 @@ export type ReservedDeviceInfo = Omit<
   exclusion_reason: string | null;
   host_ip: string | null;
   platform_label: string | null;
+  released_at: string | null;
 };
 export type SessionCounts = Schemas['SessionCounts'];
 export type RunRead = Omit<

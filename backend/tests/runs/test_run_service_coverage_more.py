@@ -39,6 +39,7 @@ from tests.helpers import create_device, create_reserved_run, select_devices_for
 from tests.helpers import test_event_bus as event_bus
 
 if TYPE_CHECKING:
+    from httpx2 import AsyncClient
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from app.devices.locking import LockedDevice
@@ -1295,6 +1296,7 @@ async def test_release_device_from_run_no_excluded_flag_and_full_intent_revoke(
 
 @pytest.mark.db
 async def test_reserved_device_info_exposes_released_at(
+    client: AsyncClient,
     db_session: AsyncSession,
     db_host: Host,
 ) -> None:
@@ -1305,7 +1307,7 @@ async def test_reserved_device_info_exposes_released_at(
         identity_value="run-dto-released-001",
         operational_state=DeviceOperationalState.available,
     )
-    await create_reserved_run(db_session, name="dto-released-run", devices=[device], state=RunState.active)
+    run = await create_reserved_run(db_session, name="dto-released-run", devices=[device], state=RunState.active)
     locked = await device_locking.lock_device_handle(db_session, device.id)
     await RunReservationService().release_locked(
         db_session, locked, reason="CI preparation failed", publisher=event_bus
@@ -1319,6 +1321,10 @@ async def test_reserved_device_info_exposes_released_at(
     assert info["released_at"] is not None  # released device is distinguishable
     assert info["excluded"] is False  # not a restorable exclusion (depends on Task 1)
     assert info["exclusion_reason"] == "CI preparation failed"
+
+    response = await client.get(f"/api/runs/{run.id}")
+    assert response.status_code == 200, response.text
+    assert response.json()["devices"][0]["released_at"] == entry.released_at.isoformat()
 
 
 @pytest.mark.db
