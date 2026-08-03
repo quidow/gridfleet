@@ -12,6 +12,20 @@ All notable changes to the GridFleet operator dashboard (React + TypeScript + Vi
 
 - Run frontend nginx container as non-root user.
 
+## [0.7.1](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.7.0...gridfleet-frontend-v0.7.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **backend:** expose released run reservations ([f458941](https://github.com/quidow/gridfleet/commit/f458941a1dae7654f5ef50b4e67db983efbf62ad))
+* **frontend:** hide empty row action menus ([3742a4e](https://github.com/quidow/gridfleet/commit/3742a4e32a8183ab7dffb50e571fd0e9d1f8ae16))
+* **frontend:** hide excluded devices from active runs ([edd2bc1](https://github.com/quidow/gridfleet/commit/edd2bc169ac85975d0b2cf7e28c78597dc967efb))
+* **frontend:** label excluded run devices ([4b1b903](https://github.com/quidow/gridfleet/commit/4b1b903761a96e34fedf6abaf4fa268c19a63a86))
+* **frontend:** label row action headers ([906339d](https://github.com/quidow/gridfleet/commit/906339d55b1b6c6b0b14f4763edb942465623887))
+* **frontend:** move run actions into row menu ([5c10eef](https://github.com/quidow/gridfleet/commit/5c10eefcafdf2f62bb63ce1ceeac547a1faab88e))
+* **frontend:** move run actions into row menu ([6002baf](https://github.com/quidow/gridfleet/commit/6002baf0ee65943cbdb52527cdf0a94780d645b5))
+* **frontend:** show honest excluded run devices ([3dcbe50](https://github.com/quidow/gridfleet/commit/3dcbe50d68f682c6cff46817eff8e4afb3eac299))
+
 ## [0.7.0](https://github.com/quidow/gridfleet/compare/gridfleet-frontend-v0.6.1...gridfleet-frontend-v0.7.0) (2026-08-02)
 
 
