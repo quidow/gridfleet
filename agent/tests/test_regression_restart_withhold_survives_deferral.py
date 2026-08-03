@@ -21,6 +21,7 @@ from unittest.mock import patch
 
 import pytest
 
+from agent_app.appium.exceptions import StartDeferredError
 from agent_app.pack.adapter_registry import AdapterRegistry
 from agent_app.pack.manifest import DesiredPack, DesiredPlatform
 from agent_app.pack.runtime_types import AppiumInstallable
@@ -47,6 +48,7 @@ pytestmark = pytest.mark.asyncio
 
 PACK_ID = "appium-uiautomator2"
 RELEASE = "2026.07.1"
+NEW_RELEASE = "2026.07.2"
 
 
 class _Adapter:
@@ -67,10 +69,10 @@ def _wire_packs(mgr: AppiumProcessManager, *, desired_ids: list[str]) -> None:
     mgr.set_desired_packs_provider(lambda: [_desired(pack_id) for pack_id in desired_ids])
 
 
-def _desired(pack_id: str) -> DesiredPack:
+def _desired(pack_id: str, *, release: str = RELEASE) -> DesiredPack:
     return DesiredPack(
         id=pack_id,
-        release=RELEASE,
+        release=release,
         appium_server=AppiumInstallable(
             source="npm", package="appium", version="==3.3.1", recommended=None, known_bad=[]
         ),
@@ -150,6 +152,68 @@ async def test_a_later_start_adopts_the_withhold_no_task_owns(stub_port_probe: N
     assert kinds(snapshot) == ["crash_detected", "restart_succeeded"], (
         f"the deferred events were not released as a resolved pair: {kinds(snapshot)}"
     )
+
+
+class _FlippingPreSessionAdapter:
+    """Flips the desired release out from under the start it is serving.
+
+    ``pre_session`` runs before the start lock is taken, so mutating the
+    desired-packs provider here lands exactly between the pre-lock resolve and
+    the locked revalidation -- the same race a pack-loop reconcile produces in
+    production.
+    """
+
+    def __init__(self, mgr: AppiumProcessManager) -> None:
+        self._mgr = mgr
+
+    async def pre_session(self, spec: object) -> dict[str, object]:
+        self._mgr.set_desired_packs_provider(lambda: [_desired(PACK_ID, release=NEW_RELEASE)])
+        return {}
+
+
+async def test_start_deferred_at_locked_revalidation_keeps_an_adopted_withhold(stub_port_probe: None) -> None:
+    """The LOCKED revalidation's ``StartDeferredError`` must not discharge a
+    withhold this same ``start()`` adopted.
+
+    Setup mirrors ``test_a_later_start_adopts_the_withhold_no_task_owns``: a
+    withhold armed and handed off by a deferred auto-restart attempt, with no
+    live task left owning it. The difference is what happens next -- instead
+    of a clean respawn, this adopting ``start()`` itself defers, at the locked
+    revalidation specifically (the pre-lock resolve raises before
+    ``_cancel_task`` runs, so nothing is adopted yet at that point). Releasing
+    the withhold anyway publishes a bare ``crash_detected`` with no successor,
+    which is exactly the false-offline payload this whole mechanism exists to
+    suppress.
+    """
+    mgr = manager_with_crashed_node()
+    _wire_packs(mgr, desired_ids=[])  # pack absent -> the auto-restart task's own start() defers
+
+    task = await restart_task_in_backoff(mgr)
+    with patch("agent_app.appium.process.asyncio.sleep", new=_instant):
+        await asyncio.wait_for(task, timeout=2)
+    assert set(mgr._withheld_restart_by_port) == {PORT}, "setup: withhold must still be armed"
+    assert PORT not in mgr._appium_restart_tasks, "setup: no task may own the withhold"
+
+    # Converge the pack list so a direct start() adopts the withhold, but
+    # register both releases so the locked revalidation resolves cleanly
+    # (rather than raising from inside _resolve_pack_worker) and the explicit
+    # release-mismatch check is what fires.
+    registry = AdapterRegistry()
+    flipping_handle = FakeWorkerHandle(_FlippingPreSessionAdapter(mgr), pack_id=PACK_ID, release=RELEASE)
+    new_release_handle = FakeWorkerHandle(_Adapter(), pack_id=PACK_ID, release=NEW_RELEASE)
+    registry.set(PACK_ID, RELEASE, flipping_handle)  # type: ignore[arg-type]
+    registry.set(PACK_ID, NEW_RELEASE, new_release_handle)  # type: ignore[arg-type]
+    mgr.set_adapter_registry(registry)
+    mgr.set_desired_packs_provider(lambda: [_desired(PACK_ID)])
+
+    with pytest.raises(StartDeferredError):
+        await asyncio.wait_for(mgr.start(connection_target=TARGET, port=PORT, **PACK_START_KWARGS), timeout=2)
+
+    assert set(mgr._withheld_restart_by_port) == {PORT}, (
+        "the locked-revalidation deferral discharged an adopted withhold with no resolving event recorded"
+    )
+    snapshot = await mgr.process_snapshot()
+    assert kinds(snapshot) == [], f"a node-down observation escaped a locked-revalidation deferral: {kinds(snapshot)}"
 
 
 async def test_adoption_does_not_charge_the_attempt_twice(stub_port_probe: None) -> None:

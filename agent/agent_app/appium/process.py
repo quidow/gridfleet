@@ -1144,6 +1144,7 @@ class AppiumProcessManager:
             # charge the attempt twice.
             adopted_withhold = self._appium_restart_tasks.get(port) is None and port in self._withheld_restart_by_port
             adopted_respawn: AppiumProcessInfo | None = None
+            deferred = False
             try:
                 if port in self._appium_procs and self._appium_procs[port].returncode is None:
                     raise AlreadyRunningError(f"Appium already running on port {port}")
@@ -1217,8 +1218,18 @@ class AppiumProcessManager:
                     self._stop_pending_ports.add(port)
                 adopted_respawn = info
                 return info
+            except StartDeferredError:
+                # Revalidation found a swapped release, not a dead port: the
+                # retry this raise hands off to is the same kind of successor
+                # as the auto-restart task's own deferral branch. Discharging
+                # anyway would release the adopted withhold with no resolving
+                # event recorded -- publishing a bare crash_detected. Retaining
+                # here is bounded by FIRST_RESTART_WITHHOLD_MAX_SEC, the same
+                # wall-clock backstop that covers every other retained exit.
+                deferred = True
+                raise
             finally:
-                if adopted_withhold:
+                if adopted_withhold and not deferred:
                     self._discharge_adopted_restart(port, adopted_respawn)
 
     async def reconfigure(
