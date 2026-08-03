@@ -1328,16 +1328,18 @@ async def test_auto_restart_defers_when_driver_pack_not_loaded_yet() -> None:
     start_mock.assert_awaited()
     # The port is NOT dropped — the convergence loop still owns its desired state.
     assert 4723 in manager._launch_specs
-    # No restart event recorded: a deferral is not a restart attempt/failure.
+    # The crash's first-attempt observation stays withheld: the deferred
+    # branch hands it off to the convergence loop's retry rather than
+    # releasing it, so nothing is emitted yet and the dead node reports
+    # coalesced instead of vanishing from the snapshot.
     snapshot = await manager.process_snapshot()
-    assert [event["kind"] for event in snapshot["recent_restart_events"] if event["process"] == "appium"] == [
-        "crash_detected"
-    ]
+    assert [event["kind"] for event in snapshot["recent_restart_events"] if event["process"] == "appium"] == []
     # Auto-restart backoff is not advanced for a transient deferral.
     assert 4723 not in manager._appium_restart_backoff_steps
-    assert snapshot["recent_restart_events"][0]["kind"] == "crash_detected"
-    assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
-    assert manager._withheld_restart_by_port == {}
+    coalesced = [node for node in snapshot["running_nodes"] if node["port"] == 4723]
+    assert len(coalesced) == 1
+    assert coalesced[0]["observation_coalesced"] is True
+    assert set(manager._withheld_restart_by_port) == {4723}
 
 
 async def test_auto_restart_aborts_when_target_already_served_by_another_node() -> None:

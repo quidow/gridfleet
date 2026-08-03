@@ -91,7 +91,6 @@ async def test_expiry_is_logged_once(caplog: pytest.LogCaptureFixture) -> None:
     assert len(expiries) == 1, f"expected exactly one expiry log line, got {len(expiries)}"
 
 
-@pytest.mark.xfail(reason="start() adoption widening lands in Task 3", strict=True)
 async def test_expiry_is_not_disownership(stub_port_probe: None) -> None:
     """Expiry bounds publication, not ownership. A deferral that clears after
     the deadline must still pair its crash with a resolving event rather than

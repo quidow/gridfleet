@@ -359,6 +359,7 @@ class _WithheldRestart:
 
     sequence: int
     expires_at: float
+    attempt_charged: bool = False
     expiry_logged: bool = False
 
 
@@ -502,25 +503,24 @@ class AppiumProcessManager:
             except Exception as exc:  # maintenance must never kill the loop
                 logger.warning("appium log maintenance pass failed: %s", sanitize_log_value(exc))
 
-    def _cancel_task(self, tasks: dict[int, asyncio.Task[None]], port: int) -> bool:
+    def _cancel_task(self, tasks: dict[int, asyncio.Task[None]], port: int) -> None:
         """Cancel *port*'s task in *tasks*.
 
-        Returns True only when a *foreign*, still-running task was actually
-        cancelled — the caller has then interrupted work someone else owned and
-        may have to adopt that work's obligations. False covers the self-cancel
-        exemption (a task re-entering through its own call chain) and an
-        already-finished task, neither of which hands anything over.
+        Pops the entry, except under the self-cancel exemption (a task
+        re-entering through its own call chain), where it is put back. Callers
+        tell "nobody owns this port's work" apart from "I am the owner" by
+        looking the port up again afterwards.
         """
         task = tasks.pop(port, None)
         if task is None:
-            return False
+            return
 
         current = asyncio.current_task()
         if current is not None and task is current:
             tasks[port] = task
-            return False
+            return
 
-        return task.cancel()
+        task.cancel()
 
     def _register_port_task(
         self,
@@ -618,6 +618,7 @@ class AppiumProcessManager:
         Synchronous by construction — a ``process_snapshot`` cannot interleave
         between recording the resolving event and lifting the withhold.
         """
+        record = self._withheld_restart_by_port.get(port)
         try:
             if respawned is not None:
                 # The respawn the cancelled attempt would have performed did
@@ -636,13 +637,17 @@ class AppiumProcessManager:
                     exit_code=None,
                     will_retry=False,
                 )
-                # Charge the adopted attempt to this port's restart history.
-                # Nobody else does — the cancelled task never got past its
-                # backoff — and without it an Appium that dies on every start
-                # would re-enter attempt 1 forever, coalescing each crash and
-                # never surfacing the flap or reaching exhaustion.
-                history = self._trim_restart_attempts(self._appium_restart_attempts, port)
-                history.append(asyncio.get_running_loop().time())
+                if record is None or not record.attempt_charged:
+                    # Charge the adopted attempt to this port's restart history.
+                    # Nobody else does when the cancel landed in the backoff --
+                    # and without it an Appium that dies on every start would
+                    # re-enter attempt 1 forever, coalescing each crash and never
+                    # surfacing the flap or reaching exhaustion. When the arming
+                    # task already charged it (it reached start() before being
+                    # cancelled, or it deferred), charging again would count one
+                    # restart as two.
+                    history = self._trim_restart_attempts(self._appium_restart_attempts, port)
+                    history.append(asyncio.get_running_loop().time())
         finally:
             # Unskippable, and deliberately not merely last: the two failure
             # modes are wildly asymmetric. A resolving event that never got
@@ -740,7 +745,10 @@ class AppiumProcessManager:
                     sequence=sequence,
                     expires_at=asyncio.get_running_loop().time() + FIRST_RESTART_WITHHOLD_MAX_SEC,
                 )
-            superseded = False
+            # Set by any exit that hands the withhold to another actor rather
+            # than abandoning it: the cancel that a superseding start() issues,
+            # and the deferral whose successor is the convergence loop's retry.
+            retain_withhold = False
             try:
                 if not can_retry:
                     logger.error(
@@ -785,6 +793,13 @@ class AppiumProcessManager:
                 history = self._trim_restart_attempts(self._appium_restart_attempts, port)
                 attempt_number = len(history) + 1
                 history.append(asyncio.get_running_loop().time())
+                withheld = self._withheld_restart_by_port.get(port)
+                if withheld is not None:
+                    # This attempt is on the books *before* start() runs, so
+                    # whoever adopts this withhold must not charge it again.
+                    # Without the flag every deferral-then-recovery counts as
+                    # two attempts toward AUTO_RESTART_MAX_ATTEMPTS.
+                    withheld.attempt_charged = True
                 try:
                     restarted = await self._restart_from_launch_spec(port)
                 except PortOccupiedError:
@@ -829,6 +844,12 @@ class AppiumProcessManager:
                         port,
                         exc,
                     )
+                    # Recovery was handed off, not abandoned: the convergence
+                    # loop's retry is the successor, and it adopts this withhold
+                    # because no live task owns it. Releasing here would publish
+                    # a crash the agent is about to fix. The wall-clock backstop
+                    # covers the case where no retry ever succeeds.
+                    retain_withhold = True
                     return
                 except Exception:
                     self._advance_restart_backoff(self._appium_restart_backoff_steps, port)
@@ -871,10 +892,14 @@ class AppiumProcessManager:
                 # ``_forget_port``) release the withhold *before* cancelling, so
                 # by the time one of those reaches this clause there is nothing
                 # left to leak.
-                superseded = True
+                #
+                # The deferred branch sets the same flag for the same reason:
+                # a named successor exists, so this attempt is not the one that
+                # gets to publish the crash.
+                retain_withhold = True
                 raise
             finally:
-                if is_first_attempt and not superseded:
+                if is_first_attempt and not retain_withhold:
                     self._release_first_restart_observation(port)
 
     async def _restart_from_launch_spec(self, port: int) -> AppiumProcessInfo:
@@ -1089,14 +1114,17 @@ class AppiumProcessManager:
             # ``_start_appium_server``, which runs holding this lock, so a task
             # cancelled here has either not spawned yet or has already
             # registered what it spawned — never a live child nothing tracks.
-            superseded_restart = self._cancel_task(self._appium_restart_tasks, port)
-            # A restart task cancelled mid-first-attempt still owns a withheld
-            # crash observation, and its ``CancelledError`` deliberately leaves
-            # that withhold in place — this start is what supersedes it, so this
-            # start owns discharging it. Adopting keeps the crash coalesced
-            # across the handoff (the whole point of the withhold) instead of
-            # publishing a crash the host is in the middle of recovering from.
-            adopted_withhold = superseded_restart and port in self._withheld_restart_by_port
+            self._cancel_task(self._appium_restart_tasks, port)
+            # ``_cancel_task`` pops the port's entry and puts it back only under
+            # the self-cancel exemption, so an absent entry means no live task
+            # owns this port's restart -- either this start just cancelled one,
+            # or one returned on its own, which is exactly how the
+            # ``StartDeferredError`` branch hands off. A present entry means
+            # this start *is* the restart task re-entering through its own call
+            # chain; that task releases its own withhold in its own ``finally``,
+            # and adopting here would emit a second ``restart_succeeded`` and
+            # charge the attempt twice.
+            adopted_withhold = self._appium_restart_tasks.get(port) is None and port in self._withheld_restart_by_port
             adopted_respawn: AppiumProcessInfo | None = None
             try:
                 if port in self._appium_procs and self._appium_procs[port].returncode is None:
