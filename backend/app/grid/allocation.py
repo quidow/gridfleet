@@ -46,7 +46,7 @@ from app.devices.services.group_membership import (
 )
 from app.devices.services.intent import IntentService
 from app.devices.services.readiness import assess_device_with_pack, assess_devices_async
-from app.devices.services.state import is_available_sql
+from app.devices.services.state import is_available_ignoring_live_session_sql, is_available_sql
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import (
     LEGACY_APPIUM_GRIDFLEET_PREFIX,
@@ -72,7 +72,7 @@ from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import AsyncIterator, Mapping
 
     from sqlalchemy.sql.elements import ColumnElement
 
@@ -238,6 +238,31 @@ class _EligibleRow:
     device: Device
     reservation_run_id: uuid.UUID | None
     static_group_keys: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class _Match:
+    """One (device, candidate) pair that matched, with the stereotype the match
+    was decided against — the FIFO veto needs that same surface."""
+
+    row: _EligibleRow
+    candidate: dict[str, Any]
+    stereotype: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _MatchPass:
+    """The read half of one matching pass: the eligible batch and the three
+    derived structures the match loop and the claim path consume.
+
+    ``pack_catalog`` is carried so ``_claim`` can re-assess readiness and
+    re-evaluate membership against the locked row without buying another read.
+    """
+
+    rows: list[_EligibleRow]
+    membership: GroupMembershipIndex
+    template_cache: StereotypeTemplateCache
+    pack_catalog: dict[str, PackView]
 
 
 def _static_group_keys_subquery(group_keys: Collection[str]) -> ColumnElement[object]:
@@ -693,61 +718,39 @@ class AllocationService:
         # statement (read 3). The pack-template batch (read 4) folds the per-
         # device pack/platform lookups into one SELECT so the read count is
         # constant at fleet scale.
-        eligible_rows = await self._eligible_devices_with_facts(
+        pass_ = await self._match_pass(
             db,
+            definitions=definitions,
             group_keys=loaded_group_keys,
             exclude_device_ids=exclude_device_ids,
+            include_busy=False,
         )
-        templates, facts_by_device_id, pack_catalog = await self._eligible_facts(db, eligible_rows)
-        eligible_rows = _ready_rows(eligible_rows, facts_by_device_id)
-        membership = evaluate_group_memberships(
-            groups=groups,
-            devices=[row.device for row in eligible_rows],
-            facts_by_device_id=facts_by_device_id,
-            member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
-        )
-        # Pre-populate the template cache so device_match_surface finds every
-        # needed template without issuing an extra per-key read.
-        template_cache: StereotypeTemplateCache = dict(templates)
-        stereotype_cache: dict[uuid.UUID, dict[str, Any]] = {}
-        for row in eligible_rows:
-            device = row.device
-            stereotype = stereotype_cache.get(device.id)
-            if stereotype is None:
-                matching_keys = _matching_group_keys_for_device(membership, device.id, group_keys)
-                stereotype = await self._stereotype_provider(
-                    db,
-                    device,
-                    template_cache=template_cache,
-                    matching_group_keys=matching_keys,
-                )
-                stereotype_cache[device.id] = stereotype
-            reservation_run_id = row.reservation_run_id
-            for candidate in candidates:
-                if not (
-                    candidate_matches_stereotype(candidate, stereotype)
-                    and _ticket_passes_reservation(ticket.run_id, reservation_run_id)
-                ):
-                    continue
-                # FIFO veto, reservation-aware: only count older waiters that could
-                # actually take THIS device — i.e. whose ticket clears the same
-                # reservation gate and whose candidate matches the stereotype.
-                if self._older_waiter_blocks(older_candidate_sets, stereotype, reservation_run_id):
-                    continue
-                result = await self._claim(
-                    db,
-                    ticket=ticket,
-                    row=row,
-                    candidate=candidate,
-                    run_id=ticket.run_id,
-                    exclude_device_ids=exclude_device_ids,
-                    groups=groups,
-                    member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
-                    pack_catalog=pack_catalog,
-                )
-                if result is not None:
-                    GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="allocated").inc()
-                    return result
+        async for match in self._iter_matches(
+            db,
+            pass_,
+            candidates=candidates,
+            advertised_group_keys=group_keys,
+            ticket_run_id=ticket.run_id,
+        ):
+            # FIFO veto, reservation-aware: only count older waiters that could
+            # actually take THIS device — i.e. whose ticket clears the same
+            # reservation gate and whose candidate matches the stereotype.
+            if self._older_waiter_blocks(older_candidate_sets, match.stereotype, match.row.reservation_run_id):
+                continue
+            result = await self._claim(
+                db,
+                ticket=ticket,
+                row=match.row,
+                candidate=match.candidate,
+                run_id=ticket.run_id,
+                exclude_device_ids=exclude_device_ids,
+                groups=groups,
+                member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
+                pack_catalog=pass_.pack_catalog,
+            )
+            if result is not None:
+                GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="allocated").inc()
+                return result
         return None
 
     async def prepare_interrupted_session(
@@ -805,6 +808,7 @@ class AllocationService:
         *,
         group_keys: Collection[str],
         exclude_device_ids: set[uuid.UUID] | None = None,
+        include_busy: bool = False,
     ) -> list[_EligibleRow]:
         """One read: every eligible ``Device`` (joined to its AppiumNode + Host)
         plus the reservation-gating owner run id and the per-device static group
@@ -822,11 +826,12 @@ class AllocationService:
                 reservation_subq.label("reservation_run_id"),
             )
             .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
-            .where(is_available_sql(now=now))
+            .where(is_available_ignoring_live_session_sql(now=now) if include_busy else is_available_sql(now=now))
             .where(node_viable_predicate(now=now, restart_window_sec=self._restart_window_sec()))
             .where(node_accepting_new_sessions_predicate())
-            .where(~live_session_exists())
         )
+        if not include_busy:
+            stmt = stmt.where(~live_session_exists())
         if exclude_device_ids:
             stmt = stmt.where(~Device.id.in_(exclude_device_ids))
         rows: list[_EligibleRow] = []
@@ -839,7 +844,8 @@ class AllocationService:
                     static_group_keys=key_set,
                 )
             )
-        GRID_ELIGIBLE_DEVICES.set(len(rows))
+        if not include_busy:
+            GRID_ELIGIBLE_DEVICES.set(len(rows))
         return rows
 
     async def _eligible_facts(
@@ -888,6 +894,79 @@ class AllocationService:
             templates.setdefault(pair, None)
         readiness = await assess_devices_async(db, [row.device for row in rows], packs=pack_catalog)
         return templates, _facts_from_eligible_rows(rows, readiness), pack_catalog
+
+    async def _match_pass(
+        self,
+        db: DbSession,
+        *,
+        definitions: GroupDefinitionBatch,
+        group_keys: Collection[str],
+        exclude_device_ids: set[uuid.UUID] | None,
+        include_busy: bool,
+    ) -> _MatchPass:
+        """The read half of one matching pass: eligible batch, facts, readiness
+        gate, membership index, stereotype template cache.
+
+        ``include_busy`` relaxes exactly one conjunct — the live-session
+        exclusion — so the preemption path considers devices this request could
+        claim if the session holding them were gone. Every other gate (readiness,
+        node viability, maintenance, exclusion, reservation projection) is the
+        same on both passes, which is what keeps a preemption victim and an
+        allocation candidate the same kind of device.
+        """
+        rows = await self._eligible_devices_with_facts(
+            db,
+            group_keys=group_keys,
+            exclude_device_ids=exclude_device_ids,
+            include_busy=include_busy,
+        )
+        templates, facts_by_device_id, pack_catalog = await self._eligible_facts(db, rows)
+        rows = _ready_rows(rows, facts_by_device_id)
+        membership = evaluate_group_memberships(
+            groups=definitions.groups,
+            devices=[row.device for row in rows],
+            facts_by_device_id=facts_by_device_id,
+            member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
+        )
+        return _MatchPass(
+            rows=rows,
+            membership=membership,
+            template_cache=dict(templates),
+            pack_catalog=pack_catalog,
+        )
+
+    async def _iter_matches(
+        self,
+        db: DbSession,
+        pass_: _MatchPass,
+        *,
+        candidates: list[dict[str, Any]],
+        advertised_group_keys: Collection[str],
+        ticket_run_id: uuid.UUID | None,
+    ) -> AsyncIterator[_Match]:
+        """Yield every (device, candidate) pair that matches, in the device x
+        candidate order the claim loop has always walked.
+
+        Deliberately a generator: a caller that claims on the first yield never
+        renders a stereotype for the devices behind it, which is exactly what the
+        inline loop did before this extraction. Materialising a list here would
+        change the work a successful claim performs.
+        """
+        stereotype_cache: dict[uuid.UUID, dict[str, Any]] = {}
+        for row in pass_.rows:
+            device = row.device
+            stereotype = stereotype_cache.get(device.id)
+            if stereotype is None:
+                matching_keys = _matching_group_keys_for_device(pass_.membership, device.id, advertised_group_keys)
+                stereotype = await self._stereotype_provider(
+                    db, device, template_cache=pass_.template_cache, matching_group_keys=matching_keys
+                )
+                stereotype_cache[device.id] = stereotype
+            for candidate in candidates:
+                if candidate_matches_stereotype(candidate, stereotype) and _ticket_passes_reservation(
+                    ticket_run_id, row.reservation_run_id
+                ):
+                    yield _Match(row=row, candidate=candidate, stereotype=stereotype)
 
     async def _older_waiter_candidate_sets(
         self, db: DbSession, ticket: GridSessionQueueTicket
