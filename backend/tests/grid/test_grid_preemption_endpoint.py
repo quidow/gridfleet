@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -13,8 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.appium_nodes.models import AppiumNode
 from app.devices.services.health import DeviceHealthService
 from app.devices.services.intent import IntentService
+from app.grid import allocation as allocation_module
 from app.grid import appium_direct, router_internal, session_create
-from app.grid.allocation import PREEMPTED_ERROR_TYPE, AllocationResult, AllocationService
+from app.grid.allocation import (
+    GRID_ALLOCATION_OUTCOME_TOTAL,
+    PREEMPTED_ERROR_TYPE,
+    AllocationResult,
+    AllocationService,
+)
 from app.grid.schemas_internal import CreateSessionRequest
 from app.grid.services_container import GridServices
 from app.hosts.models import Host
@@ -274,3 +281,138 @@ async def test_unreachable_appium_still_frees_the_device(
     evicted = (await db_session.execute(select(Session).where(Session.id == session_pk))).scalar_one()
     assert evicted.status == SessionStatus.error
     assert evicted.error_type == PREEMPTED_ERROR_TYPE
+
+
+@pytest.mark.db
+async def test_expired_poll_budget_does_not_preempt(
+    services: GridServices,
+    busy_device: tuple[Device, uuid.UUID],
+    db_session: AsyncSession,
+    no_appium_delete: list[tuple[str, str]],
+) -> None:
+    settings_service._cache[PREEMPT_KEY] = True
+    _, session_pk = busy_device
+
+    response = await router_internal.create_session(
+        CreateSessionRequest(body=_body(platformName="Android")),
+        services,
+        create_budget_ms=0,
+    )
+
+    assert getattr(response, "status", None) == "queued"
+    assert no_appium_delete == []
+    survivor = (await db_session.execute(select(Session).where(Session.id == session_pk))).scalar_one()
+    assert survivor.status == SessionStatus.running
+
+
+@pytest.mark.db
+async def test_preemption_delete_is_bounded_by_the_poll_budget(
+    services: GridServices,
+    busy_device: tuple[Device, uuid.UUID],
+    stub_create: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_service._cache[PREEMPT_KEY] = True
+    seen_timeouts: list[float] = []
+
+    async def record_timeout(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        del target, session_id
+        seen_timeouts.append(timeout)
+        return True
+
+    monkeypatch.setattr(appium_direct, "terminate_session", record_timeout)
+
+    await router_internal.create_session(
+        CreateSessionRequest(body=_body(platformName="Android")),
+        services,
+        create_budget_ms=100,
+    )
+
+    assert len(seen_timeouts) == 1
+    assert 0 < seen_timeouts[0] <= 0.1
+
+
+@pytest.mark.db
+async def test_request_retries_preemption_after_a_no_victim_pass(
+    services: GridServices,
+    db_session: AsyncSession,
+    stub_create: None,
+    no_appium_delete: list[tuple[str, str]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_service._cache[PREEMPT_KEY] = True
+    await seed_test_packs(db_session)
+    _, device, _ = await seed_host_and_running_node(db_session, identity=f"pre-late-{uuid.uuid4().hex[:8]}")
+    pending = Session(session_id=f"alloc-{uuid.uuid4()}", device_id=device.id, status=SessionStatus.pending)
+    db_session.add(pending)
+    await db_session.commit()
+    real_sleep = asyncio.sleep
+    promoted = False
+
+    async def promote_before_retry(delay: float) -> None:
+        nonlocal promoted
+        if not promoted:
+            promoted = True
+            async with services.session_factory.begin() as db:
+                await services.allocation.promote_to_running(
+                    db,
+                    allocation_id=pending.id,
+                    appium_session_id=f"appium-{uuid.uuid4().hex}",
+                )
+        await real_sleep(min(delay, 0.001))
+
+    monkeypatch.setattr(router_internal.asyncio, "sleep", promote_before_retry)
+
+    response = await router_internal.create_session(CreateSessionRequest(body=_body(platformName="Android")), services)
+
+    assert getattr(response, "status", None) == "created"
+    assert len(no_appium_delete) == 1
+
+
+@pytest.mark.db
+async def test_preemption_metric_ignores_a_finalize_noop(
+    services: GridServices,
+    busy_device: tuple[Device, uuid.UUID],
+    stub_create: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_service._cache[PREEMPT_KEY] = True
+
+    async def close_while_terminating(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        del target, timeout
+        async with services.session_factory.begin() as db:
+            await services.allocation.mark_ended(db, appium_session_id=session_id)
+        return True
+
+    monkeypatch.setattr(appium_direct, "terminate_session", close_while_terminating)
+    counter = GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="preempted")
+    before = counter._value.get()
+
+    response = await router_internal.create_session(CreateSessionRequest(body=_body(platformName="Android")), services)
+
+    assert getattr(response, "status", None) == "created"
+    assert counter._value.get() == before
+
+
+@pytest.mark.db
+async def test_slow_preemption_does_not_expire_its_live_ticket(
+    services: GridServices,
+    busy_device: tuple[Device, uuid.UUID],
+    stub_create: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_service._cache[PREEMPT_KEY] = True
+    monkeypatch.setattr(allocation_module, "RETRY_INTERVAL_SEC", 0.01)
+
+    async def slow_terminate(target: str, session_id: str, *, timeout: float = 10.0) -> bool:
+        del target, session_id, timeout
+        await asyncio.sleep(0.11)
+        async with services.session_factory.begin() as db:
+            await services.allocation.reap_expired(db)
+        return True
+
+    monkeypatch.setattr(appium_direct, "terminate_session", slow_terminate)
+
+    response = await router_internal.create_session(CreateSessionRequest(body=_body(platformName="Android")), services)
+
+    assert getattr(response, "status", None) == "created"

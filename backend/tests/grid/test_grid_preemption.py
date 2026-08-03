@@ -8,9 +8,10 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 
 from app.core.timeutil import now_utc
+from app.devices import locking as device_locking
 from app.devices.models import DeviceGroup, DeviceGroupMembership, DeviceReservation, GroupType
 from app.devices.services.intent import IntentService
 from app.grid.allocation import PREEMPTED_ERROR_TYPE, AllocationService
@@ -24,10 +25,11 @@ from tests.helpers import test_event_bus as event_bus
 from tests.packs.factories import seed_test_packs
 
 if TYPE_CHECKING:
-    from collections.abc import Collection
+    from collections.abc import Collection, Sequence
     from datetime import datetime
 
     from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.sql.elements import ColumnElement
 
     from app.devices.models import Device
 
@@ -189,6 +191,96 @@ async def test_group_selector_limits_the_victim_pool(db_session: AsyncSession, p
 
     assert victim is not None
     assert victim.device_id == member.id
+
+
+@pytest.mark.db
+async def test_available_dynamic_group_does_not_admit_a_busy_victim(db_session: AsyncSession, packs: None) -> None:
+    _, device, _ = await seed_host_and_running_node(db_session, identity=f"pre-status-{uuid.uuid4().hex[:8]}")
+    group = DeviceGroup(
+        key=f"pre-available-{uuid.uuid4().hex[:8]}",
+        name="available devices",
+        group_type=GroupType.dynamic,
+        filters={"status": "available"},
+    )
+    db_session.add_all([group, _running(device.id)])
+    await db_session.flush()
+    ticket = await _ticket(db_session, platformName="Android", **{f"gridfleet:group:{group.key}": True})
+    await db_session.commit()
+
+    assert await _service().prepare_preemption(db_session, ticket_id=ticket.id) is None
+
+
+@pytest.mark.db
+async def test_prepare_preemption_rechecks_static_membership_under_lock(db_session: AsyncSession, packs: None) -> None:
+    _, device, _ = await seed_host_and_running_node(db_session, identity=f"pre-group-race-{uuid.uuid4().hex[:8]}")
+    group = DeviceGroup(
+        key=f"pre-race-{uuid.uuid4().hex[:8]}",
+        name="race group",
+        group_type=GroupType.static,
+    )
+    db_session.add(group)
+    await db_session.flush()
+    membership = DeviceGroupMembership(group_id=group.id, device_id=device.id)
+    db_session.add_all([membership, _running(device.id)])
+    ticket = await _ticket(db_session, platformName="Android", **{f"gridfleet:group:{group.key}": True})
+    await db_session.commit()
+
+    async def remove_membership_after_match(
+        db: AsyncSession,
+        matched_device: Device,
+        *,
+        template_cache: object | None = None,
+        matching_group_keys: Collection[str] = (),
+    ) -> dict[str, Any]:
+        del template_cache
+        await db.execute(delete(DeviceGroupMembership).where(DeviceGroupMembership.id == membership.id))
+        surface: dict[str, Any] = {"platformName": "Android", "gridfleet:deviceId": str(matched_device.id)}
+        surface.update({f"gridfleet:group:{key}": True for key in matching_group_keys})
+        return surface
+
+    service = AllocationService(
+        intent_factory=IntentService,
+        publisher=event_bus,
+        stereotype_provider=remove_membership_after_match,
+        settings=FakeSettingsReader({}),
+    )
+
+    assert await service.prepare_preemption(db_session, ticket_id=ticket.id) is None
+
+
+@pytest.mark.db
+async def test_prepare_preemption_does_not_switch_to_a_replacement_session(
+    db_session: AsyncSession,
+    packs: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, device, _ = await seed_host_and_running_node(db_session, identity=f"pre-replace-{uuid.uuid4().hex[:8]}")
+    original = _running(device.id, last_activity_at=now_utc() - timedelta(hours=2))
+    db_session.add(original)
+    ticket = await _ticket(db_session, platformName="Android")
+    await db_session.commit()
+    real_lock = device_locking.lock_device_handle
+
+    async def replace_session_before_lock_read(
+        db: AsyncSession,
+        device_id: uuid.UUID,
+        *,
+        load_sessions: bool = False,
+        predicates: Sequence[ColumnElement[bool]] = (),
+    ) -> device_locking.LockedDevice:
+        locked = await real_lock(db, device_id, load_sessions=load_sessions, predicates=predicates)
+        await db.execute(
+            update(Session)
+            .where(Session.id == original.id, Session.device_id == device_id)
+            .values(status=SessionStatus.passed, ended_at=now_utc())
+        )
+        db.add(_running(device_id, last_activity_at=now_utc()))
+        await db.flush()
+        return locked
+
+    monkeypatch.setattr(device_locking, "lock_device_handle", replace_session_before_lock_read)
+
+    assert await _service().prepare_preemption(db_session, ticket_id=ticket.id) is None
 
 
 @pytest.mark.db

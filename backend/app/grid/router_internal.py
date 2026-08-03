@@ -145,7 +145,7 @@ async def _finalize_preemption(
     services: GridServicesDep,
     allocation: AllocationService,
     victim: PreemptionTarget,
-) -> None:
+) -> bool:
     """Close a preempted session row under its device lock.
 
     Runs whether or not the remote DELETE succeeded, exactly as the
@@ -156,7 +156,7 @@ async def _finalize_preemption(
     ``begin()`` owner and effect entry point by exact set equality, and this
     helper opens no transaction and calls no effect name.
     """
-    await retry_on_serialization_failure(
+    return await retry_on_serialization_failure(
         services.session_factory,
         lambda db: allocation.finalize_preemption(db, session_pk=victim.session_pk, device_id=victim.device_id),
         caller="grid_preemption",
@@ -248,6 +248,11 @@ async def create_session(  # noqa: PLR0912, PLR0915 - long-poll loop; the preemp
                     return CreateSessionResponse(status="create_error", message=outcome.message or None)
                 continue
             return _response_for_outcome(outcome, result)
+        now = time.monotonic()
+        if now >= poll_deadline:
+            GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="queued").inc()
+            GRID_ALLOCATE_QUEUE_WAIT_SECONDS.labels(outcome="queued").observe(time.monotonic() - started)
+            return CreateSessionResponse(status="queued", ticket=ticket_id)
         if not preempted_once and services.settings.get_bool("grid.preempt_running_sessions"):
             # One victim per request: the bound that stops two flag-on clients from
             # evicting each other in a loop. A ticket the router re-polls arrives as
@@ -265,15 +270,21 @@ async def create_session(  # noqa: PLR0912, PLR0915 - long-poll loop; the preemp
             # three separate transactions for the same reason
             # ``_finalize_interrupted_create`` splits them: the remote Appium
             # DELETE must not run under an open transaction.
-            preempted_once = True
             async with services.session_factory.begin() as db:
                 victim = await allocation.prepare_preemption(db, ticket_id=ticket_id, exclude_device_ids=excluded)
             if victim is not None:
-                if victim.target is not None:
-                    await appium_direct.terminate_session(victim.target, victim.appium_session_id)
-                await _finalize_preemption(services, allocation, victim)
-                GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="preempted").inc()
-                continue
+                remaining = poll_deadline - time.monotonic()
+                if remaining > 0:
+                    preempted_once = True
+                    if victim.target is not None:
+                        await appium_direct.terminate_session(
+                            victim.target,
+                            victim.appium_session_id,
+                            timeout=min(10.0, remaining),
+                        )
+                    if await _finalize_preemption(services, allocation, victim):
+                        GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="preempted").inc()
+                    continue
         now = time.monotonic()
         if now >= poll_deadline:
             GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="queued").inc()
