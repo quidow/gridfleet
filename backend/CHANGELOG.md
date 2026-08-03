@@ -14,6 +14,14 @@ All notable changes to the GridFleet backend (FastAPI manager, control plane) ar
 - Bracket-wrap IPv6 addresses in agent terminal URLs so `ws://[::1]:5100/...` is valid.
 - Close drain-transition race by committing draining state before `try_complete_drain`, preventing concurrent `assert_runnable` from starting new work during a drain.
 
+## [0.8.1](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.8.0...gridfleet-backend-v0.8.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **backend:** expose released run reservations ([f458941](https://github.com/quidow/gridfleet/commit/f458941a1dae7654f5ef50b4e67db983efbf62ad))
+* **frontend:** show honest excluded run devices ([3dcbe50](https://github.com/quidow/gridfleet/commit/3dcbe50d68f682c6cff46817eff8e4afb3eac299))
+
 ## [0.8.0](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.7.1...gridfleet-backend-v0.8.0) (2026-08-03)
 
 
