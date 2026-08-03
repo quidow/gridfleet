@@ -3,7 +3,7 @@ import { test, expect } from './helpers/fixtures';
 const RUNS = Array.from({ length: 55 }, (_, index) => ({
   id: `run-${index + 1}`,
   name: index === 0 ? 'z-run' : index === 1 ? 'a-run' : `run-${String(index + 1).padStart(3, '0')}`,
-  state: 'preparing',
+  state: index === 1 ? 'completed' : 'preparing',
   requirements: [{ pack_id: 'appium-uiautomator2', platform_id: 'android_mobile', count: 1 }],
   ttl_minutes: 60,
   heartbeat_timeout_sec: 120,
@@ -107,5 +107,21 @@ test.describe('Runs page', () => {
     await page.getByRole('button', { name: 'Back to newest' }).click();
     await expect(page).not.toHaveURL(/cursor=/);
     await expect(page.getByText('Newest results first')).toBeVisible();
+  });
+
+  test('uses a row menu for active run actions', async ({ page }) => {
+    await page.goto('/runs');
+
+    const activeRow = page.getByRole('row').filter({ has: page.getByRole('link', { name: 'z-run' }) });
+    await expect(activeRow.getByRole('button', { name: 'View' })).toHaveCount(0);
+    await activeRow.getByRole('button', { name: 'Actions for z-run' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Cancel' })).toBeVisible();
+    await expect(page.getByRole('menuitem', { name: 'Force Release' })).toBeVisible();
+
+    await page.getByRole('menuitem', { name: 'Cancel' }).click();
+    await expect(page.getByRole('heading', { name: 'Cancel Run?' })).toBeVisible();
+
+    const terminalRow = page.getByRole('row').filter({ has: page.getByRole('link', { name: 'a-run' }) });
+    await expect(terminalRow.getByRole('button', { name: 'Actions for a-run' })).toHaveCount(0);
   });
 });
