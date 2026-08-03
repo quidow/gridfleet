@@ -223,3 +223,24 @@ async def test_shutdown_stops_every_port_with_its_own_reason(caplog: pytest.LogC
     stops = [record.getMessage() for record in caplog.records if "Stopping Appium node" in record.getMessage()]
     assert len(stops) == 1, f"expected one stop line, got {stops}"
     assert "reason=shutdown" in stops[0]
+
+
+async def test_shutdown_discharges_a_withhold_it_cannot_stop() -> None:
+    """``shutdown()`` cancels restart tasks directly rather than through
+    ``_forget_port``. Its ``stop()`` sweep covers every port it knows about, so
+    a withhold whose port is in neither map is the gap. Nothing is pushed after
+    a shutdown, so this is structural: no path may cancel a restart task
+    without discharging the withhold that task owned."""
+    mgr = manager_with_crashed_node()
+    restart_task = await restart_task_in_backoff(mgr)
+
+    # A port the stop sweep cannot reach: bookkeeping already dropped, withhold
+    # and task still live.
+    mgr._appium_procs.pop(PORT)
+    mgr._launch_specs.pop(PORT)
+
+    await asyncio.wait_for(mgr.shutdown(), timeout=2)
+    await settle()
+
+    assert restart_task.cancelled()
+    assert mgr._withheld_restart_by_port == {}, "shutdown cancelled a restart task and left its withhold armed"

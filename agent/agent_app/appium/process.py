@@ -1560,6 +1560,13 @@ class AppiumProcessManager:
         for port in ports:
             with contextlib.suppress(Exception):
                 await self.stop(port, reason="shutdown")
+        # The stop sweep releases every withhold whose port it still tracks,
+        # via _forget_port. This covers the remainder: the cancel below is the
+        # one place a restart task dies without a discharge on its path.
+        # Immaterial in practice -- nothing is pushed after a shutdown -- but
+        # the invariant is cheaper to hold than to re-argue.
+        for port in list(self._withheld_restart_by_port):
+            self._release_first_restart_observation(port)
         for task_map in (self._appium_restart_tasks, self._appium_watch_tasks):
             for task in task_map.values():
                 task.cancel()
