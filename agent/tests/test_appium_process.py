@@ -1102,15 +1102,25 @@ async def test_process_snapshot_publishes_final_view_when_restart_completes_duri
     """The mirror case: a restart that resolves mid-snapshot publishes the
     final view, not a stale one.
 
-    The second live port supplies the await while the withheld port is dead.
-    Resuming after the release, the snapshot must carry the restarted pid,
-    drop ``observation_coalesced``, and emit the whole deferred tail -- so the
-    structural process state, the withhold state, and the event ring are all
-    read at one point rather than straddling the enumeration.
+    The second live port supplies the await while the first port crashes and
+    restarts. Resuming after the release, the snapshot must carry the
+    restarted pid, drop ``observation_coalesced``, and emit the whole deferred
+    tail -- so the structural process state, the withhold state, and the event
+    ring are all read at one point rather than straddling the enumeration.
+
+    It also pins the ``(port, pid)`` match gate on the active-session sample.
+    The pre-restart process (pid 9001) is enumerated and answers ``False``, so
+    a gate keyed on port alone would hand that answer to its successor (pid
+    9002) -- ``has_active_session: False`` is drain-PERMITTING, and asserting
+    it away is the whole point of keying the sample by pid. The probe node,
+    whose pid is unchanged, must still receive its own answer, so the
+    omission cannot be satisfied by never attaching at all.
     """
     manager = AppiumProcessManager()
     restarted_port = 4723
     probe_port = 4724
+    crashed_proc = FakeProcess(pid=9001)
+    manager._appium_procs[restarted_port] = cast("asyncio.subprocess.Process", crashed_proc)
     manager._info[restarted_port] = AppiumProcessInfo(
         port=restarted_port,
         pid=9001,
@@ -1141,6 +1151,10 @@ async def test_process_snapshot_publishes_final_view_when_restart_completes_duri
     resume_enumeration = asyncio.Event()
 
     async def paused_enumeration(current_port: int) -> bool:
+        if current_port == restarted_port:
+            # The doomed pid answers before it dies -- the sample the pid gate
+            # must not let leak onto its replacement.
+            return False
         assert current_port == probe_port
         enumeration_started.set()
         await resume_enumeration.wait()
@@ -1149,6 +1163,7 @@ async def test_process_snapshot_publishes_final_view_when_restart_completes_duri
     with patch.object(manager, "_node_has_active_session", side_effect=paused_enumeration):
         snapshot_task = asyncio.create_task(manager.process_snapshot())
         await enumeration_started.wait()
+        crashed_proc.set_exit(1)
         restarted_proc = FakeProcess(pid=9002)
         manager._appium_procs[restarted_port] = cast("asyncio.subprocess.Process", restarted_proc)
         manager._info[restarted_port] = AppiumProcessInfo(
@@ -1174,6 +1189,12 @@ async def test_process_snapshot_publishes_final_view_when_restart_completes_duri
     restarted = next(node for node in snapshot["running_nodes"] if node["port"] == restarted_port)
     assert restarted["pid"] == 9002
     assert "observation_coalesced" not in restarted
+    # The replaced process has no sample of its own: omit the key so the drain
+    # gate reads "unknown" and blocks, rather than inheriting the dead pid's
+    # drain-permitting False.
+    assert "has_active_session" not in restarted
+    probe = next(node for node in snapshot["running_nodes"] if node["port"] == probe_port)
+    assert probe["has_active_session"] is False
     assert [event["kind"] for event in snapshot["recent_restart_events"]] == [
         "crash_detected",
         "restart_succeeded",
