@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { Play } from 'lucide-react';
+import { CircleX, Play, TriangleAlert } from 'lucide-react';
 import { useRuns, useCancelRun, useForceReleaseRun } from '../hooks/useRuns';
 import { useCursorQueryState } from '../hooks/useCursorQueryState';
 import { StatusBadge } from '../components/StatusBadge';
@@ -15,8 +15,6 @@ import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime, formatDuration } from '../utils/dateFormatting';
 import { RunProgressBar } from '../components/runs/RunProgressBar';
 import { RunsSummaryRow } from '../components/runs/RunsSummaryRow';
-import { RunActionButtons } from '../components/runs/RunActionButtons';
-import { Button } from '../components/ui/Button';
 import { PageHeader } from '../components/ui/PageHeader';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { Select } from '../components/ui/Select';
@@ -132,26 +130,6 @@ function RunsTableSection() {
       sortKey: 'duration',
       render: (run) => <span className="text-sm text-text-3">{formatDuration(run.created_at, run.completed_at)}</span>,
     },
-    {
-      key: 'actions',
-      header: 'Actions',
-      render: (run) => {
-        const isActive = ACTIVE_RUN_STATES.has(run.state);
-        return (
-          <div className="flex items-center gap-2">
-            <Link to={`/runs/${run.id}`}>
-              <Button variant="ghost" size="sm">View</Button>
-            </Link>
-            {isActive && (
-              <RunActionButtons
-                onCancel={() => setCancelTarget(run.id)}
-                onForceRelease={() => setForceReleaseTarget(run.id)}
-              />
-            )}
-          </div>
-        );
-      },
-    },
   ];
 
   return (
@@ -206,6 +184,26 @@ function RunsTableSection() {
           columns={columns}
           rows={runRows}
           rowKey={(run) => run.id}
+          rowActions={(run) =>
+            ACTIVE_RUN_STATES.has(run.state)
+              ? [
+                  {
+                    key: 'cancel',
+                    label: 'Cancel',
+                    icon: <CircleX size={15} />,
+                    onSelect: () => setCancelTarget(run.id),
+                  },
+                  {
+                    key: 'force-release',
+                    label: 'Force Release',
+                    icon: <TriangleAlert size={15} />,
+                    onSelect: () => setForceReleaseTarget(run.id),
+                    tone: 'danger',
+                  },
+                ]
+              : []
+          }
+          rowActionsLabel={(run) => `Actions for ${run.name}`}
           loading={isLoading}
           emptyState={
             <EmptyState
