@@ -208,3 +208,18 @@ async def test_an_operator_stop_during_backoff_records_its_reason(caplog: pytest
     stops = [record.getMessage() for record in caplog.records if "Stopping Appium node" in record.getMessage()]
     assert len(stops) == 1, f"expected one stop line, got {stops}"
     assert "reason=needs_restart" in stops[0]
+
+
+async def test_shutdown_stops_every_port_with_its_own_reason(caplog: pytest.LogCaptureFixture) -> None:
+    """``shutdown()`` drains every managed port through the same ``stop()``
+    path; the reason it passes must say "shutdown", not silently default,
+    or a fleet-wide teardown reads identically to an individual operator
+    stop in the forensic trail."""
+    mgr = manager_with_crashed_node()
+
+    with caplog.at_level(logging.INFO, logger="agent_app.appium.process"):
+        await asyncio.wait_for(mgr.shutdown(), timeout=2)
+
+    stops = [record.getMessage() for record in caplog.records if "Stopping Appium node" in record.getMessage()]
+    assert len(stops) == 1, f"expected one stop line, got {stops}"
+    assert "reason=shutdown" in stops[0]
