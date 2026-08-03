@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -54,6 +55,16 @@ async def _stereotype_stub(
 
 @pytest.fixture(autouse=True)
 def fast_long_poll(monkeypatch: pytest.MonkeyPatch) -> None:
+    clock = SimpleNamespace(now=0.0)
+
+    def monotonic() -> float:
+        return clock.now
+
+    async def sleep(delay: float) -> None:
+        clock.now += delay
+
+    monkeypatch.setattr(router_internal, "time", SimpleNamespace(monotonic=monotonic))
+    monkeypatch.setattr(router_internal, "asyncio", SimpleNamespace(sleep=sleep))
     monkeypatch.setattr(router_internal, "LONG_POLL_SEC", 0.2)
     monkeypatch.setattr(router_internal, "RETRY_INTERVAL_SEC", 0.02)
 
