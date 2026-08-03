@@ -64,7 +64,7 @@ function DeviceStateRow({
 }
 
 function RunGroup({ run, deviceById }: { run: RunRead; deviceById: Map<string, DeviceRead> }) {
-  const reserved = run.reserved_devices ?? [];
+  const reserved = (run.reserved_devices ?? []).filter((device) => !device.excluded && !device.released_at);
   const startedAt = run.started_at ?? run.created_at;
   return (
     <li className="py-3 first:pt-0 last:pb-0">

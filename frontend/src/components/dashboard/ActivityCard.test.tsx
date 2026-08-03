@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { describe, expect, it, vi } from 'vitest';
-import type { DeviceRead } from '../../types';
+import type { DeviceRead, ReservedDeviceInfo, RunRead } from '../../types';
 import { ActivityCard } from './ActivityCard';
 
 const mockRuns = vi.fn<() => { data: unknown; status: string }>(() => ({ data: [], status: 'success' }));
@@ -53,6 +53,33 @@ function makeDevice(overrides: Partial<DeviceRead> = {}): DeviceRead {
     },
     created_at: '2026-04-16T12:00:00Z',
     updated_at: '2026-04-16T12:00:00Z',
+    ...overrides,
+  };
+}
+
+function makeReservedDevice(overrides: Partial<ReservedDeviceInfo> = {}): ReservedDeviceInfo {
+  return {
+    device_id: 'd1',
+    identity_value: 'serial-001',
+    name: 'Pixel 8',
+    connection_target: 'serial-001',
+    pack_id: 'appium-uiautomator2',
+    platform_id: 'android_mobile',
+    platform_label: null,
+    os_version: '14',
+    host_ip: '10.0.0.1',
+    device_type: 'real_device',
+    connection_type: 'usb',
+    manufacturer: 'Google',
+    model: 'Pixel 8',
+    excluded: false,
+    exclusion_reason: null,
+    excluded_at: null,
+    excluded_until: null,
+    released_at: null,
+    cooldown_remaining_sec: null,
+    cooldown_count: 0,
+    cooldown_escalated: false,
     ...overrides,
   };
 }
@@ -112,5 +139,40 @@ describe('ActivityCard', () => {
     renderCard();
     expect(screen.getByRole('heading', { name: /Active runs · none/ })).toBeInTheDocument();
     expect(screen.getByText('Apple TV').closest('a')!.getAttribute('href')).toBe('/devices/d2');
+  });
+
+  it('omits excluded and released devices from an active run', () => {
+    const run: RunRead = {
+      id: 'run-1',
+      name: 'Nightly',
+      state: 'active',
+      requirements: [],
+      ttl_minutes: 60,
+      heartbeat_timeout_sec: 120,
+      reserved_devices: [
+        makeReservedDevice({ device_id: 'active-device', name: 'Active Pixel' }),
+        makeReservedDevice({ device_id: 'excluded-device', name: 'Excluded Pixel', excluded: true }),
+        makeReservedDevice({
+          device_id: 'released-device',
+          name: 'Released Pixel',
+          released_at: '2026-08-04T10:00:00Z',
+        }),
+      ],
+      error: null,
+      created_at: '2026-08-04T09:00:00Z',
+      started_at: '2026-08-04T09:00:00Z',
+      completed_at: null,
+      created_by: null,
+      last_heartbeat: '2026-08-04T09:01:00Z',
+      session_counts: { passed: 0, failed: 0, error: 0, running: 0, total: 0 },
+    };
+    mockRuns.mockReturnValueOnce({ data: { items: [run] }, status: 'success' });
+
+    renderCard();
+
+    expect(screen.getByText('Nightly').closest('li')).toHaveTextContent('1 device');
+    expect(screen.getByText('Active Pixel')).toBeInTheDocument();
+    expect(screen.queryByText('Excluded Pixel')).toBeNull();
+    expect(screen.queryByText('Released Pixel')).toBeNull();
   });
 });
