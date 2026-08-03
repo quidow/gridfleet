@@ -474,17 +474,25 @@ class AppiumProcessManager:
             except Exception as exc:  # maintenance must never kill the loop
                 logger.warning("appium log maintenance pass failed: %s", sanitize_log_value(exc))
 
-    def _cancel_task(self, tasks: dict[int, asyncio.Task[None]], port: int) -> None:
+    def _cancel_task(self, tasks: dict[int, asyncio.Task[None]], port: int) -> bool:
+        """Cancel *port*'s task in *tasks*.
+
+        Returns True only when a *foreign*, still-running task was actually
+        cancelled — the caller has then interrupted work someone else owned and
+        may have to adopt that work's obligations. False covers the self-cancel
+        exemption (a task re-entering through its own call chain) and an
+        already-finished task, neither of which hands anything over.
+        """
         task = tasks.pop(port, None)
         if task is None:
-            return
+            return False
 
         current = asyncio.current_task()
         if current is not None and task is current:
             tasks[port] = task
-            return
+            return False
 
-        task.cancel()
+        return task.cancel()
 
     def _register_port_task(
         self,
@@ -570,6 +578,47 @@ class AppiumProcessManager:
                 sequence,
             )
 
+    def _discharge_adopted_restart(self, port: int, respawned: AppiumProcessInfo | None) -> None:
+        """Settle a first-restart withhold this ``start()`` took over.
+
+        Called from the adopting start's ``finally``, so it runs on *every*
+        exit — success, any exception, or a cancel of the start itself. That
+        unconditional bound is what keeps the withhold from leaking: the emitted
+        restart-event stream is truncated at the lowest withheld sequence and
+        that cursor is host-wide, so a withhold nobody discharges would suppress
+        restart events for every port on this host, not just this one.
+
+        Synchronous by construction — a ``process_snapshot`` cannot interleave
+        between recording the resolving event and lifting the withhold.
+        """
+        if respawned is not None:
+            # The respawn the cancelled attempt would have performed did happen,
+            # in this task instead. Pair the withheld crash with its resolving
+            # event before lifting the withhold: released alone, a
+            # ``crash_detected`` with ``will_retry=true`` and no successor is
+            # what the backend folds to health_running=False /
+            # health_state="restarting", i.e. a false offline.
+            self._record_restart_event(
+                process="appium",
+                kind="restart_succeeded",
+                port=port,
+                pid=respawned.pid,
+                attempt=1,  # only ever the first attempt is withheld
+                delay_sec=None,
+                exit_code=None,
+                will_retry=False,
+            )
+            # Charge the adopted attempt to this port's restart history. Nobody
+            # else does — the cancelled task never got past its backoff — and
+            # without it an Appium that dies on every start would re-enter
+            # attempt 1 forever, coalescing each crash and never surfacing the
+            # flap or reaching exhaustion.
+            history = self._trim_restart_attempts(self._appium_restart_attempts, port)
+            history.append(asyncio.get_running_loop().time())
+        # Nothing respawned: the port is down with no attempt in flight, so the
+        # crash must become visible rather than stay coalesced.
+        self._release_first_restart_observation(port)
+
     def record_start_failure(self, *, port: int, connection_target: str, kind: str, detail: str) -> None:
         """Record a failed `start()` attempt for the next `/agent/health` payload.
 
@@ -643,13 +692,14 @@ class AppiumProcessManager:
             )
             # Coalesce only the first, in-progress, retryable attempt: later
             # attempts (and every terminal/ambiguous failure) stay immediately
-            # observable. Released below on every exit from this attempt --
-            # non-success return, continuing to attempt two, after recording
-            # restart_succeeded, or cancellation -- via the finally block.
+            # observable. Released below on every *terminal* exit from this
+            # attempt -- non-success return, continuing to attempt two, or
+            # after recording restart_succeeded -- via the finally block.
             is_first_attempt = next_attempt == 1 and can_retry
             if is_first_attempt:
                 self._first_restart_observation_ports.add(port)
                 self._withheld_restart_sequence_by_port[port] = sequence
+            superseded = False
             try:
                 if not can_retry:
                     logger.error(
@@ -764,8 +814,26 @@ class AppiumProcessManager:
                     restarted.pid,
                 )
                 return
+            except asyncio.CancelledError:
+                # A concurrent ``start()`` for this port cancelled this attempt
+                # (process.py's cancel site, under the start lock) because it is
+                # taking the respawn over. Recovery was handed off, not
+                # abandoned, so the withheld first-attempt observation must
+                # survive the handoff -- releasing it here publishes a bare
+                # ``crash_detected`` with ``will_retry=true`` and no successor,
+                # which the backend folds to health_running=False /
+                # health_state="restarting" and the device projects as offline
+                # even though the port comes straight back up. The ``start()``
+                # that cancelled us adopts the withhold and resolves it.
+                #
+                # Cancels that really do abandon recovery (``stop()`` and
+                # ``_forget_port``) release the withhold *before* cancelling, so
+                # by the time one of those reaches this clause there is nothing
+                # left to leak.
+                superseded = True
+                raise
             finally:
-                if is_first_attempt:
+                if is_first_attempt and not superseded:
                     self._release_first_restart_observation(port)
 
     async def _restart_from_launch_spec(self, port: int) -> AppiumProcessInfo:
@@ -980,76 +1048,91 @@ class AppiumProcessManager:
             # ``_start_appium_server``, which runs holding this lock, so a task
             # cancelled here has either not spawned yet or has already
             # registered what it spawned — never a live child nothing tracks.
-            self._cancel_task(self._appium_restart_tasks, port)
-            if port in self._appium_procs and self._appium_procs[port].returncode is None:
-                raise AlreadyRunningError(f"Appium already running on port {port}")
-            duplicate = self._running_info_for_target(
-                connection_target=resolved_connection_target,
-                platform_id=platform_id,
-                exclude_port=port,
-            )
-            if duplicate is not None:
-                raise AlreadyRunningError(
-                    f"Appium already running for target {resolved_connection_target!r} on port {duplicate.port}"
-                )
-
-            if self._adapter_registry is not None:
-                # Revalidate under the lock: a pack-loop reconcile may have
-                # published a different release while this start awaited
-                # resolve, pre_session, or the lock. The resolved target and
-                # merged caps belong to the snapshot resolved above;
-                # spawning them onto a swapped runtime would persist a mixed
-                # node. Defer so the retry re-derives everything against the
-                # new release.
-                revalidated_release, revalidated_worker = self._resolve_pack_worker(
-                    self._adapter_registry, pack_id, requested_release=pack_release
-                )
-                if revalidated_release != pack_worker_release or (revalidated_worker is None) != (pack_worker is None):
-                    raise StartDeferredError(f"driver-pack release for {pack_id!r} changed during start")
-
-            self._launch_specs[port] = spec
-            self._intentional_stop_ports.discard(port)
-            # Honor the operator's stop_pending intent across restarts: when
-            # the caller asks for a stop-pending lifecycle (e.g. auto-restart
-            # carrying spec.stop_pending forward, or a fresh start that should
-            # stop after the next session), keep the port in
-            # `_stop_pending_ports`. Otherwise clear any stale intent left by a
-            # prior lifecycle.
-            if spec.stop_pending:
-                self._stop_pending_ports.add(port)
-            else:
-                self._stop_pending_ports.discard(port)
-            appium_proc = await self._start_appium_server(
-                spec, clear_logs_on_failure=port not in self._info, pack_worker=pack_worker
-            )
-            started_at = datetime.now(UTC)
-
-            info = self._info.get(port)
-            if info is None:
-                info = AppiumProcessInfo(
-                    port=port,
-                    pid=appium_proc.pid,
+            superseded_restart = self._cancel_task(self._appium_restart_tasks, port)
+            # A restart task cancelled mid-first-attempt still owns a withheld
+            # crash observation, and its ``CancelledError`` deliberately leaves
+            # that withhold in place — this start is what supersedes it, so this
+            # start owns discharging it. Adopting keeps the crash coalesced
+            # across the handoff (the whole point of the withhold) instead of
+            # publishing a crash the host is in the middle of recovering from.
+            adopted_withhold = superseded_restart and port in self._first_restart_observation_ports
+            adopted_respawn: AppiumProcessInfo | None = None
+            try:
+                if port in self._appium_procs and self._appium_procs[port].returncode is None:
+                    raise AlreadyRunningError(f"Appium already running on port {port}")
+                duplicate = self._running_info_for_target(
                     connection_target=resolved_connection_target,
                     platform_id=platform_id,
-                    started_at=started_at,
-                    device_id=device_id,
+                    exclude_port=port,
                 )
-                self._info[port] = info
-            else:
-                info.pid = appium_proc.pid
-                info.connection_target = resolved_connection_target
-                info.platform_id = platform_id
-                info.started_at = started_at
-                # A caller omitting device_id must not silently null an existing ID.
-                if device_id is not None:
-                    info.device_id = device_id
-            if spec.stop_pending:
-                # Carry the stop-pending flag so ``_auto_restart_appium``
-                # refuses to resurrect this Appium process if it exits. The
-                # actual stop is owned by the backend's appium reconciler
-                # via ``AppiumNode.desired_state``.
-                self._stop_pending_ports.add(port)
-            return info
+                if duplicate is not None:
+                    raise AlreadyRunningError(
+                        f"Appium already running for target {resolved_connection_target!r} on port {duplicate.port}"
+                    )
+
+                if self._adapter_registry is not None:
+                    # Revalidate under the lock: a pack-loop reconcile may have
+                    # published a different release while this start awaited
+                    # resolve, pre_session, or the lock. The resolved target and
+                    # merged caps belong to the snapshot resolved above;
+                    # spawning them onto a swapped runtime would persist a mixed
+                    # node. Defer so the retry re-derives everything against the
+                    # new release.
+                    revalidated_release, revalidated_worker = self._resolve_pack_worker(
+                        self._adapter_registry, pack_id, requested_release=pack_release
+                    )
+                    if revalidated_release != pack_worker_release or (revalidated_worker is None) != (
+                        pack_worker is None
+                    ):
+                        raise StartDeferredError(f"driver-pack release for {pack_id!r} changed during start")
+
+                self._launch_specs[port] = spec
+                self._intentional_stop_ports.discard(port)
+                # Honor the operator's stop_pending intent across restarts: when
+                # the caller asks for a stop-pending lifecycle (e.g. auto-restart
+                # carrying spec.stop_pending forward, or a fresh start that should
+                # stop after the next session), keep the port in
+                # `_stop_pending_ports`. Otherwise clear any stale intent left by a
+                # prior lifecycle.
+                if spec.stop_pending:
+                    self._stop_pending_ports.add(port)
+                else:
+                    self._stop_pending_ports.discard(port)
+                appium_proc = await self._start_appium_server(
+                    spec, clear_logs_on_failure=port not in self._info, pack_worker=pack_worker
+                )
+                started_at = datetime.now(UTC)
+
+                info = self._info.get(port)
+                if info is None:
+                    info = AppiumProcessInfo(
+                        port=port,
+                        pid=appium_proc.pid,
+                        connection_target=resolved_connection_target,
+                        platform_id=platform_id,
+                        started_at=started_at,
+                        device_id=device_id,
+                    )
+                    self._info[port] = info
+                else:
+                    info.pid = appium_proc.pid
+                    info.connection_target = resolved_connection_target
+                    info.platform_id = platform_id
+                    info.started_at = started_at
+                    # A caller omitting device_id must not silently null an existing ID.
+                    if device_id is not None:
+                        info.device_id = device_id
+                if spec.stop_pending:
+                    # Carry the stop-pending flag so ``_auto_restart_appium``
+                    # refuses to resurrect this Appium process if it exits. The
+                    # actual stop is owned by the backend's appium reconciler
+                    # via ``AppiumNode.desired_state``.
+                    self._stop_pending_ports.add(port)
+                adopted_respawn = info
+                return info
+            finally:
+                if adopted_withhold:
+                    self._discharge_adopted_restart(port, adopted_respawn)
 
     async def reconfigure(
         self,
@@ -1082,6 +1165,12 @@ class AppiumProcessManager:
 
     def _forget_port(self, port: int) -> asyncio.subprocess.Process | None:
         """Cancel per-port tasks and drop all bookkeeping; returns the popped process."""
+        # Abandonment, not a handoff: ownership of this port is going away, so
+        # nothing will finish the in-flight restart. Lift the withhold *before*
+        # cancelling — the cancelled task deliberately keeps it, on the
+        # assumption that whoever cancelled it is taking the respawn over, and
+        # here nobody is.
+        self._release_first_restart_observation(port)
         self._cancel_task(self._appium_restart_tasks, port)
         self._cancel_task(self._appium_watch_tasks, port)
         proc = self._appium_procs.pop(port, None)
