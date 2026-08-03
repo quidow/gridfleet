@@ -2,6 +2,30 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.40.3](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.40.2...gridfleet-agent-v0.40.3) (2026-08-03)
+
+
+### Bug Fixes
+
+* **agent:** bound how long a restart withhold stays adoptable ([427dfa2](https://github.com/quidow/gridfleet/commit/427dfa2d727527b635a9a94ae5bcbcb14de61702))
+* **agent:** bound the first-restart withhold with a wall-clock backstop ([69cd67e](https://github.com/quidow/gridfleet/commit/69cd67e4dcdc24ace2b360e169f54f53b36d38e9))
+* **agent:** close torn-read window in restart-coalescing snapshot ([8e27974](https://github.com/quidow/gridfleet/commit/8e2797467e6fa532dae4aa03267dd94779438441))
+* **agent:** coalesce first appium restart observation ([9064b73](https://github.com/quidow/gridfleet/commit/9064b73fe8bc9275ec084e5c558c27f6a2493df8))
+* **agent:** correlate probes by device identity ([688d51c](https://github.com/quidow/gridfleet/commit/688d51c9bd0ea291aaab4dde55870fcf016766a0))
+* **agent:** discharge withholds before shutdown cancels restart tasks ([4d0fed6](https://github.com/quidow/gridfleet/commit/4d0fed6582333e14a45c3a4064a0502aa025a108))
+* **agent:** keep restart coalescing across a deferred start ([42a4424](https://github.com/quidow/gridfleet/commit/42a4424ed3cb0f6a8aebaf6b862a1934f406de33))
+* **agent:** keep restart coalescing across a superseding start ([e61cf90](https://github.com/quidow/gridfleet/commit/e61cf90bf91fa4a92f8f1ff6567160ddd41e47d4))
+* **agent:** make restart snapshots observation-atomic ([9f496df](https://github.com/quidow/gridfleet/commit/9f496dffa1bad06727e227b4fd0cbe95ad4eb121))
+* **agent:** make the adopted-withhold release unskippable ([45cd422](https://github.com/quidow/gridfleet/commit/45cd42255dcd414b92a39ced4931f27b26cb1cbf))
+* **agent:** retain an adopted restart withhold on a locked-revalidation defer ([a3fc8ce](https://github.com/quidow/gridfleet/commit/a3fc8cea1f9763cb845d9e07e1fd640c379acade))
+* **agent:** truncate withheld restart events by host-wide cursor ([8ccc056](https://github.com/quidow/gridfleet/commit/8ccc0567048ce37ee157e8be1c278f5ff752a7ce))
+* pair withheld restart observations, bound their lifetime, correlate probes by device ([4590c7a](https://github.com/quidow/gridfleet/commit/4590c7a9f76c019bbf102c721a5731ea3c7f7eef))
+
+
+### Dependencies
+
+* **deps:** bump ruff in /agent in the python-dependencies group ([#945](https://github.com/quidow/gridfleet/issues/945)) ([6ff0d56](https://github.com/quidow/gridfleet/commit/6ff0d56b4d32cf557586f813518d48db01b742dd))
+
 ## [0.40.2](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.40.1...gridfleet-agent-v0.40.2) (2026-08-02)
 
 
