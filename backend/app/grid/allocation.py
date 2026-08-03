@@ -34,7 +34,11 @@ from app.devices.models import (
     DeviceOperationalState,
     GroupType,
 )
-from app.devices.services.claims import live_session_exists
+from app.devices.services.claims import (
+    live_session_exists,
+    masking_live_session_exists,
+    masking_live_session_predicate,
+)
 from app.devices.services.group_membership import (
     DeviceGroupFacts,
     GroupDefinitionBatch,
@@ -46,7 +50,7 @@ from app.devices.services.group_membership import (
 )
 from app.devices.services.intent import IntentService
 from app.devices.services.readiness import assess_device_with_pack, assess_devices_async
-from app.devices.services.state import is_available_sql
+from app.devices.services.state import is_available_ignoring_live_session_sql, is_available_sql
 from app.grid.constants import RETRY_INTERVAL_SEC
 from app.grid.matching import (
     LEGACY_APPIUM_GRIDFLEET_PREFIX,
@@ -72,7 +76,7 @@ from app.sessions.live_session_predicate import live_session_predicate
 from app.sessions.models import Session, SessionStatus
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import AsyncIterator, Mapping
 
     from sqlalchemy.sql.elements import ColumnElement
 
@@ -88,7 +92,7 @@ _RESTART_WINDOW_FALLBACK_SEC = 120
 GRID_ALLOCATION_OUTCOME_TOTAL = Counter(
     "gridfleet_grid_allocation_outcome",
     "Allocation attempt outcomes for new-session requests.",
-    labelnames=("outcome",),  # allocated | queued | invalid | expired | claim_expired
+    labelnames=("outcome",),  # allocated | queued | invalid | expired | claim_expired | preempted
 )
 GRID_QUEUE_DEPTH = Gauge(
     "gridfleet_grid_queue_depth",
@@ -132,9 +136,13 @@ class AllocationNotPendingError(Exception):
 # waiter until ``grid.queue_timeout_sec``. ``try_allocate`` stamps
 # ``last_polled_at`` on every poll; a waiting ticket not re-polled within this
 # many poll intervals is treated as dead — both ignored by the FIFO veto and
-# expired by the reaper. 10 intervals (~10s at the 1s router poll) is comfortably
-# longer than a single slow poll but far shorter than the 300s queue timeout.
-TICKET_STALE_POLL_INTERVALS = 10
+# expired by the reaper. 20 intervals (~20s at the 1s router poll) covers the
+# preemption path's 10s Appium DELETE plus DB work while staying far below the
+# 300s queue timeout.
+TICKET_STALE_POLL_INTERVALS = 20
+
+PREEMPTED_ERROR_TYPE = "preempted"
+PREEMPTED_ERROR_MESSAGE = "preempted by a new session request"
 
 
 def _ticket_liveness_cutoff(now: datetime) -> datetime:
@@ -215,6 +223,23 @@ class InterruptedSessionEffect:
     target: str
 
 
+@dataclass(frozen=True, slots=True)
+class PreemptionTarget:
+    """Immutable values describing the session a new request is taking a device from.
+
+    Same discipline as ``InterruptedSessionEffect``: produced inside one
+    transaction and consumed after it closes, so the Appium terminate and the
+    terminalization carry no ORM object or open transaction across the boundary.
+    ``target`` is optional — a device whose node target cannot be resolved still
+    gets its row terminalized, exactly as the operator-kill path does.
+    """
+
+    session_pk: uuid.UUID
+    device_id: uuid.UUID
+    appium_session_id: str
+    target: str | None
+
+
 class RunNotActiveError(Exception):
     """A run-bound allocate names a run that is missing or already terminal."""
 
@@ -238,6 +263,32 @@ class _EligibleRow:
     device: Device
     reservation_run_id: uuid.UUID | None
     static_group_keys: frozenset[str]
+    operational_state: DeviceOperationalState = DeviceOperationalState.available
+
+
+@dataclass(frozen=True, slots=True)
+class _Match:
+    """One (device, candidate) pair that matched, with the stereotype the match
+    was decided against — the FIFO veto needs that same surface."""
+
+    row: _EligibleRow
+    candidate: dict[str, Any]
+    stereotype: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _MatchPass:
+    """The read half of one matching pass: the eligible batch and the three
+    derived structures the match loop and the claim path consume.
+
+    ``pack_catalog`` is carried so ``_claim`` can re-assess readiness and
+    re-evaluate membership against the locked row without buying another read.
+    """
+
+    rows: list[_EligibleRow]
+    membership: GroupMembershipIndex
+    template_cache: StereotypeTemplateCache
+    pack_catalog: dict[str, PackView]
 
 
 def _static_group_keys_subquery(group_keys: Collection[str]) -> ColumnElement[object]:
@@ -285,10 +336,10 @@ def _facts_from_eligible_rows(
     column, a projected reservation owner, a projected static key set, or a
     pre-assessed readiness verdict from the caller's pack catalog.
 
-    ``operational_state`` is ``available`` by construction, not by assumption:
-    ``is_available_sql`` is exactly the ``else_`` branch of
-    ``operational_state_sql``, so every row that cleared the eligibility gate is
-    genuinely available. ``readiness_state`` is *not* similarly implied —
+    ``operational_state`` comes from the eligible query. Strict allocation rows
+    are available by construction; the relaxed preemption pass also includes
+    busy rows and must preserve that fact for status-filtered dynamic groups.
+    ``readiness_state`` is *not* similarly implied —
     ``_ready_sql`` uses ``verified_at`` as a stand-in and its own comment notes
     the pack-manifest setup-fields axis is not SQL-expressible — so it must be
     derived per device (``app.devices.services.readiness``, the same logic
@@ -299,7 +350,7 @@ def _facts_from_eligible_rows(
         device = row.device
         readiness = readiness_by_device_id.get(device.id)
         facts[device.id] = build_device_group_facts(
-            operational_state=DeviceOperationalState.available,
+            operational_state=row.operational_state,
             is_reserved=row.reservation_run_id is not None,
             readiness_state=readiness.readiness_state if readiness is not None else "setup_required",
             static_group_keys=row.static_group_keys,
@@ -693,61 +744,39 @@ class AllocationService:
         # statement (read 3). The pack-template batch (read 4) folds the per-
         # device pack/platform lookups into one SELECT so the read count is
         # constant at fleet scale.
-        eligible_rows = await self._eligible_devices_with_facts(
+        pass_ = await self._match_pass(
             db,
+            definitions=definitions,
             group_keys=loaded_group_keys,
             exclude_device_ids=exclude_device_ids,
+            include_busy=False,
         )
-        templates, facts_by_device_id, pack_catalog = await self._eligible_facts(db, eligible_rows)
-        eligible_rows = _ready_rows(eligible_rows, facts_by_device_id)
-        membership = evaluate_group_memberships(
-            groups=groups,
-            devices=[row.device for row in eligible_rows],
-            facts_by_device_id=facts_by_device_id,
-            member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
-        )
-        # Pre-populate the template cache so device_match_surface finds every
-        # needed template without issuing an extra per-key read.
-        template_cache: StereotypeTemplateCache = dict(templates)
-        stereotype_cache: dict[uuid.UUID, dict[str, Any]] = {}
-        for row in eligible_rows:
-            device = row.device
-            stereotype = stereotype_cache.get(device.id)
-            if stereotype is None:
-                matching_keys = _matching_group_keys_for_device(membership, device.id, group_keys)
-                stereotype = await self._stereotype_provider(
-                    db,
-                    device,
-                    template_cache=template_cache,
-                    matching_group_keys=matching_keys,
-                )
-                stereotype_cache[device.id] = stereotype
-            reservation_run_id = row.reservation_run_id
-            for candidate in candidates:
-                if not (
-                    candidate_matches_stereotype(candidate, stereotype)
-                    and _ticket_passes_reservation(ticket.run_id, reservation_run_id)
-                ):
-                    continue
-                # FIFO veto, reservation-aware: only count older waiters that could
-                # actually take THIS device — i.e. whose ticket clears the same
-                # reservation gate and whose candidate matches the stereotype.
-                if self._older_waiter_blocks(older_candidate_sets, stereotype, reservation_run_id):
-                    continue
-                result = await self._claim(
-                    db,
-                    ticket=ticket,
-                    row=row,
-                    candidate=candidate,
-                    run_id=ticket.run_id,
-                    exclude_device_ids=exclude_device_ids,
-                    groups=groups,
-                    member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
-                    pack_catalog=pack_catalog,
-                )
-                if result is not None:
-                    GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="allocated").inc()
-                    return result
+        async for match in self._iter_matches(
+            db,
+            pass_,
+            candidates=candidates,
+            advertised_group_keys=group_keys,
+            ticket_run_id=ticket.run_id,
+        ):
+            # FIFO veto, reservation-aware: only count older waiters that could
+            # actually take THIS device — i.e. whose ticket clears the same
+            # reservation gate and whose candidate matches the stereotype.
+            if self._older_waiter_blocks(older_candidate_sets, match.stereotype, match.row.reservation_run_id):
+                continue
+            result = await self._claim(
+                db,
+                ticket=ticket,
+                row=match.row,
+                candidate=match.candidate,
+                run_id=ticket.run_id,
+                exclude_device_ids=exclude_device_ids,
+                groups=groups,
+                member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
+                pack_catalog=pass_.pack_catalog,
+            )
+            if result is not None:
+                GRID_ALLOCATION_OUTCOME_TOTAL.labels(outcome="allocated").inc()
+                return result
         return None
 
     async def prepare_interrupted_session(
@@ -788,6 +817,192 @@ class AllocationService:
         target = resolve_router_target(row)
         return None if target is None else InterruptedSessionEffect(row.id, row.session_id, target)
 
+    async def prepare_preemption(
+        self,
+        db: DbSession,
+        *,
+        ticket_id: uuid.UUID,
+        exclude_device_ids: set[uuid.UUID] | None = None,
+    ) -> PreemptionTarget | None:
+        """Resolve the session a waiting ticket may take a device from.
+
+        Runs the same matching pipeline ``try_allocate`` runs, with exactly one
+        conjunct relaxed (``include_busy``), so a victim is by construction a
+        device this ticket could claim if the session on it were gone —
+        stereotype, group membership and the reservation gate all still apply.
+
+        Read-only with respect to ticket status: ``try_allocate`` validated and,
+        on failure, already cancelled this same body earlier in the attempt, so a
+        merge error here is unreachable and is declined rather than raised. A
+        best-effort path must not invent a new failure mode.
+        """
+        ticket = await db.get(GridSessionQueueTicket, ticket_id)
+        if ticket is None or ticket.status != GridQueueStatus.waiting:
+            return None
+        try:
+            candidates = merge_candidates(ticket.requested_body)
+            group_keys = requested_group_keys(candidates)
+        except CapabilityMergeError:
+            return None
+        definitions = (
+            await self._load_group_definitions(db, group_keys)
+            if group_keys
+            else GroupDefinitionBatch(groups=(), member_of_keys_by_dynamic_group_id={})
+        )
+        loaded_group_keys = {group.key for group in definitions.groups}
+        if set(group_keys) - loaded_group_keys:
+            return None
+        pass_ = await self._match_pass(
+            db,
+            definitions=definitions,
+            group_keys=loaded_group_keys,
+            exclude_device_ids=exclude_device_ids,
+            include_busy=True,
+        )
+        matches_by_device_id: dict[uuid.UUID, _Match] = {}
+        async for match in self._iter_matches(
+            db,
+            pass_,
+            candidates=candidates,
+            advertised_group_keys=group_keys,
+            ticket_run_id=ticket.run_id,
+        ):
+            matches_by_device_id.setdefault(match.row.device.id, match)
+        if not matches_by_device_id:
+            return None
+        victim = await self._lock_stalest_victim(
+            db,
+            matches_by_device_id=matches_by_device_id,
+            exclude_device_ids=exclude_device_ids,
+            definitions=definitions,
+            pass_=pass_,
+        )
+        if victim is not None:
+            ticket.last_polled_at = now_utc()
+        return victim
+
+    async def _lock_stalest_victim(  # noqa: PLR0911 - each failed lock-time gate declines the victim
+        self,
+        db: DbSession,
+        *,
+        matches_by_device_id: Mapping[uuid.UUID, _Match],
+        exclude_device_ids: set[uuid.UUID] | None,
+        definitions: GroupDefinitionBatch,
+        pass_: _MatchPass,
+    ) -> PreemptionTarget | None:
+        """Pick the stalest running session across the matching devices, lock its
+        device, and re-check the exact match under that lock.
+
+        ``COALESCE(last_activity_at, started_at)`` puts the session that has gone
+        longest without a client command first — the orphan this setting exists
+        for. A session that has never issued a command sorts by its claim time, so
+        a create still in flight is not mistaken for a stale one.
+
+        Only ``running`` rows are eligible: a ``pending`` row is another request's
+        in-flight claim, and killing it would race its creator.
+
+        The re-read is keyed by session id, not merely device id, so a session
+        created after the selected victim closes cannot be substituted and killed.
+        """
+        staleness = func.coalesce(Session.last_activity_at, Session.started_at).asc()
+        victim = (
+            await db.execute(
+                select(Session.id, Session.device_id)
+                .where(
+                    Session.device_id.in_(matches_by_device_id),
+                    masking_live_session_predicate(),
+                    Session.status == SessionStatus.running,
+                )
+                .order_by(staleness)
+                .limit(1)
+            )
+        ).one_or_none()
+        if victim is None:
+            return None
+        victim_session_pk, victim_device_id = victim
+        match = matches_by_device_id[victim_device_id]
+        predicates = self._claim_lock_predicates(
+            reservation_run_id=match.row.reservation_run_id,
+            exclude_device_ids=exclude_device_ids,
+            now=now_utc(),
+            include_busy=True,
+        )
+        try:
+            locked = await device_locking.lock_device_handle(db, victim_device_id, predicates=predicates)
+        except NoResultFound:
+            return None
+        # Fresh snapshot under the row lock: only the exact session selected above
+        # may be preempted. A replacement session is another client's new work.
+        row = await db.scalar(
+            select(Session)
+            .options(
+                selectinload(Session.device).selectinload(Device.appium_node),
+                selectinload(Session.device).selectinload(Device.host),
+            )
+            .where(
+                Session.id == victim_session_pk,
+                Session.device_id == victim_device_id,
+                masking_live_session_predicate(),
+                Session.status == SessionStatus.running,
+            )
+        )
+        if row is None:
+            return None
+        readiness = assess_device_with_pack(locked.device, pass_.pack_catalog.get(locked.device.pack_id))
+        if readiness.readiness_state != "verified":
+            return None
+        candidate_group_keys = requested_group_keys([match.candidate])
+        if not await self._locked_membership_holds(
+            db,
+            row=_EligibleRow(
+                device=locked.device,
+                reservation_run_id=match.row.reservation_run_id,
+                static_group_keys=frozenset(),
+                operational_state=DeviceOperationalState.busy,
+            ),
+            groups=definitions.groups,
+            member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
+            candidate_group_keys=candidate_group_keys,
+            pack_catalog=pass_.pack_catalog,
+        ):
+            return None
+        stereotype = await self._stereotype_provider(
+            db,
+            locked.device,
+            template_cache=pass_.template_cache,
+            matching_group_keys=candidate_group_keys,
+        )
+        if not candidate_matches_stereotype(match.candidate, stereotype):
+            return None
+        return PreemptionTarget(
+            session_pk=row.id,
+            device_id=victim_device_id,
+            appium_session_id=row.session_id,
+            target=resolve_router_target(row),
+        )
+
+    async def finalize_preemption(self, db: DbSession, *, session_pk: uuid.UUID, device_id: uuid.UUID) -> bool:
+        """Terminalize the preempted row under its device row lock.
+
+        Runs whether or not the remote DELETE succeeded, exactly as the
+        operator-kill path does: the row must leave the live set so the device
+        frees, and the ``session_sync`` orphan sweep kills any still-alive Appium
+        session on its next tick. Returns False when a concurrent closer won.
+        """
+        try:
+            locked = await device_locking.lock_device_handle(db, device_id)
+        except NoResultFound:
+            return False
+        return await session_service.close_running_session_locked(
+            db,
+            locked,
+            session_pk=session_pk,
+            publisher=self._publisher,
+            status_override=SessionStatus.error,
+            error_type=PREEMPTED_ERROR_TYPE,
+            error_message=PREEMPTED_ERROR_MESSAGE,
+        )
+
     async def _load_group_definitions(self, db: DbSession, group_keys: Collection[str]) -> GroupDefinitionBatch:
         """One read: the requested groups, the static groups their
         ``device_group_member_of`` rows reference, and the per-source key map the
@@ -805,12 +1020,18 @@ class AllocationService:
         *,
         group_keys: Collection[str],
         exclude_device_ids: set[uuid.UUID] | None = None,
+        include_busy: bool = False,
     ) -> list[_EligibleRow]:
         """One read: every eligible ``Device`` (joined to its AppiumNode + Host)
         plus the reservation-gating owner run id and the per-device static group
         keys for the direct/member_of keys, projected in the same SQL statement.
         The pure membership evaluator consumes these facts without issuing any
         further reads.
+
+        ``include_busy`` drops only the live-session exclusion from the
+        availability predicate, and when true the ``GRID_ELIGIBLE_DEVICES`` gauge
+        write is skipped (the gauge is documented as "available, node-viable, no
+        live session" and a relaxed pass must not redefine it).
         """
         now = now_utc()
         reservation_subq = reservation_gating_owner_sql(now=now)
@@ -820,26 +1041,32 @@ class AllocationService:
                 Device,
                 static_keys_subq.label("static_group_keys"),
                 reservation_subq.label("reservation_run_id"),
+                masking_live_session_exists().label("has_masking_live_session"),
             )
             .outerjoin(AppiumNode, AppiumNode.device_id == Device.id)
-            .where(is_available_sql(now=now))
+            .where(is_available_ignoring_live_session_sql(now=now) if include_busy else is_available_sql(now=now))
             .where(node_viable_predicate(now=now, restart_window_sec=self._restart_window_sec()))
             .where(node_accepting_new_sessions_predicate())
-            .where(~live_session_exists())
         )
+        if not include_busy:
+            stmt = stmt.where(~live_session_exists())
         if exclude_device_ids:
             stmt = stmt.where(~Device.id.in_(exclude_device_ids))
         rows: list[_EligibleRow] = []
-        for device, static_keys, reservation_run_id in (await db.execute(stmt)).all():
+        for device, static_keys, reservation_run_id, has_masking_live_session in (await db.execute(stmt)).all():
             key_set = frozenset() if static_keys is None else frozenset(str(k) for k in static_keys)
             rows.append(
                 _EligibleRow(
                     device=device,
                     reservation_run_id=reservation_run_id,
                     static_group_keys=key_set,
+                    operational_state=(
+                        DeviceOperationalState.busy if has_masking_live_session else DeviceOperationalState.available
+                    ),
                 )
             )
-        GRID_ELIGIBLE_DEVICES.set(len(rows))
+        if not include_busy:
+            GRID_ELIGIBLE_DEVICES.set(len(rows))
         return rows
 
     async def _eligible_facts(
@@ -888,6 +1115,79 @@ class AllocationService:
             templates.setdefault(pair, None)
         readiness = await assess_devices_async(db, [row.device for row in rows], packs=pack_catalog)
         return templates, _facts_from_eligible_rows(rows, readiness), pack_catalog
+
+    async def _match_pass(
+        self,
+        db: DbSession,
+        *,
+        definitions: GroupDefinitionBatch,
+        group_keys: Collection[str],
+        exclude_device_ids: set[uuid.UUID] | None,
+        include_busy: bool,
+    ) -> _MatchPass:
+        """The read half of one matching pass: eligible batch, facts, readiness
+        gate, membership index, stereotype template cache.
+
+        ``include_busy`` relaxes exactly one conjunct — the live-session
+        exclusion — so the preemption path considers devices this request could
+        claim if the session holding them were gone. Every other gate (readiness,
+        node viability, maintenance, exclusion, reservation projection) is the
+        same on both passes, which is what keeps a preemption victim and an
+        allocation candidate the same kind of device.
+        """
+        rows = await self._eligible_devices_with_facts(
+            db,
+            group_keys=group_keys,
+            exclude_device_ids=exclude_device_ids,
+            include_busy=include_busy,
+        )
+        templates, facts_by_device_id, pack_catalog = await self._eligible_facts(db, rows)
+        rows = _ready_rows(rows, facts_by_device_id)
+        membership = evaluate_group_memberships(
+            groups=definitions.groups,
+            devices=[row.device for row in rows],
+            facts_by_device_id=facts_by_device_id,
+            member_of_keys_by_dynamic_group_id=definitions.member_of_keys_by_dynamic_group_id,
+        )
+        return _MatchPass(
+            rows=rows,
+            membership=membership,
+            template_cache=dict(templates),
+            pack_catalog=pack_catalog,
+        )
+
+    async def _iter_matches(
+        self,
+        db: DbSession,
+        pass_: _MatchPass,
+        *,
+        candidates: list[dict[str, Any]],
+        advertised_group_keys: Collection[str],
+        ticket_run_id: uuid.UUID | None,
+    ) -> AsyncIterator[_Match]:
+        """Yield every (device, candidate) pair that matches, in the device x
+        candidate order the claim loop has always walked.
+
+        Deliberately a generator: a caller that claims on the first yield never
+        renders a stereotype for the devices behind it, which is exactly what the
+        inline loop did before this extraction. Materialising a list here would
+        change the work a successful claim performs.
+        """
+        stereotype_cache: dict[uuid.UUID, dict[str, Any]] = {}
+        for row in pass_.rows:
+            device = row.device
+            stereotype = stereotype_cache.get(device.id)
+            if stereotype is None:
+                matching_keys = _matching_group_keys_for_device(pass_.membership, device.id, advertised_group_keys)
+                stereotype = await self._stereotype_provider(
+                    db, device, template_cache=pass_.template_cache, matching_group_keys=matching_keys
+                )
+                stereotype_cache[device.id] = stereotype
+            for candidate in candidates:
+                if candidate_matches_stereotype(candidate, stereotype) and _ticket_passes_reservation(
+                    ticket_run_id, row.reservation_run_id
+                ):
+                    yield _Match(row=row, candidate=candidate, stereotype=stereotype)
 
     async def _older_waiter_candidate_sets(
         self, db: DbSession, ticket: GridSessionQueueTicket
@@ -962,6 +1262,7 @@ class AllocationService:
         reservation_run_id: uuid.UUID | None,
         exclude_device_ids: set[uuid.UUID] | None,
         now: datetime,
+        include_busy: bool = False,
     ) -> list[Any]:
         """SQL predicates appended to the joined ``SELECT ... FOR UPDATE OF devices``
         so the SQL-expressible half of the lock-time recheck is folded into the
@@ -969,8 +1270,9 @@ class AllocationService:
         one of those rechecks (state, node viability/acceptance, exclusion,
         reservation owner).
 
-        ``is_available_sql`` here is the same approximation the eligible query
-        uses — ``verified_at`` stands in for the pack-manifest setup-fields axis
+        The availability predicate matches the caller's initial pass; preemption
+        drops only the live-session exclusion. ``verified_at`` stands in for the
+        pack-manifest setup-fields axis
         of ``is_ready_for_use``, which is not SQL-expressible. ``_claim`` closes
         that gap after the lock by re-running ``assess_device_with_pack`` on the
         locked row against the poll's already-loaded pack catalog, so no device
@@ -987,7 +1289,7 @@ class AllocationService:
         before the session INSERT (see ``test_concurrent_allocation_single_winner``).
         """
         predicates: list[Any] = [
-            is_available_sql(now=now),
+            is_available_ignoring_live_session_sql(now=now) if include_busy else is_available_sql(now=now),
             node_viable_predicate(now=now, restart_window_sec=self._restart_window_sec()),
             node_accepting_new_sessions_predicate(),
         ]
@@ -1015,11 +1317,10 @@ class AllocationService:
         self,
         db: DbSession,
         *,
-        locked_device: Device,
+        row: _EligibleRow,
         groups: Sequence[DeviceGroup],
         member_of_keys_by_dynamic_group_id: Mapping[uuid.UUID, frozenset[str]],
         candidate_group_keys: Collection[str],
-        reservation_run_id: uuid.UUID | None,
         pack_catalog: dict[str, PackView],
     ) -> bool:
         """Re-evaluate the candidate's requested group keys against the locked row.
@@ -1036,11 +1337,13 @@ class AllocationService:
         """
         if not candidate_group_keys:
             return True
+        locked_device = row.device
         static_keys = await load_static_group_keys_by_device_id(db, [locked_device.id])
         row = _EligibleRow(
             device=locked_device,
-            reservation_run_id=reservation_run_id,
+            reservation_run_id=row.reservation_run_id,
             static_group_keys=static_keys.get(locked_device.id, frozenset()),
+            operational_state=row.operational_state,
         )
         readiness = {locked_device.id: assess_device_with_pack(locked_device, pack_catalog.get(locked_device.pack_id))}
         membership = evaluate_group_memberships(
@@ -1095,11 +1398,14 @@ class AllocationService:
         # lives in a separate table the device-row lock does not serialize.
         if not await self._locked_membership_holds(
             db,
-            locked_device=locked.device,
+            row=_EligibleRow(
+                device=locked.device,
+                reservation_run_id=reservation_run_id,
+                static_group_keys=frozenset(),
+            ),
             groups=groups,
             member_of_keys_by_dynamic_group_id=member_of_keys_by_dynamic_group_id,
             candidate_group_keys=requested_group_keys([candidate]),
-            reservation_run_id=reservation_run_id,
             pack_catalog=pack_catalog,
         ):
             return None

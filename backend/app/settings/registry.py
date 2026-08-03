@@ -268,6 +268,19 @@ _DEFINITIONS: list[SettingDefinition] = [
         max_value=600,
     ),
     SettingDefinition(
+        key="grid.preempt_running_sessions",
+        category="grid",
+        setting_type="bool",
+        default=False,
+        description=(
+            "When no matching device is free, a new-session request terminates the stalest running session on a "
+            "device it could otherwise claim and takes that device, instead of waiting for the session to end. "
+            "Requests still queue normally when no matching device exists at all. Intended for local automation "
+            "development, where a test stopped mid-run leaves an orphan session pinning its device until the idle "
+            "timeout. Off by default: on a shared fleet this lets any client terminate a colleague's session."
+        ),
+    ),
+    SettingDefinition(
         key="appium.port_range_start",
         category="grid",
         setting_type="int",

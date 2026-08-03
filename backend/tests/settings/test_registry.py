@@ -159,3 +159,11 @@ def test_run_failure_escalation_setting_is_registered() -> None:
     assert definition.category == "general"
     assert definition.setting_type == "bool"
     assert definition.default is True
+
+
+def test_preempt_running_sessions_is_registered_and_defaults_off() -> None:
+    definition = SETTINGS_REGISTRY["grid.preempt_running_sessions"]
+
+    assert definition.category == "grid"
+    assert definition.setting_type == "bool"
+    assert definition.default is False

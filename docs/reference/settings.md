@@ -7,7 +7,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | Category | Display name | Shipped keys |
 | --- | --- | --- |
 | `general` | General | 15 |
-| `grid` | Appium & Allocation | 9 |
+| `grid` | Appium & Allocation | 10 |
 | `agent` | Agent | 3 |
 | `reservations` | Reservations | 3 |
 | `retention` | Data Retention | 9 |
@@ -37,6 +37,7 @@ This page documents the shipped settings registry. Each setting has a persisted 
 | `grid.session_idle_timeout_ceiling_sec` | `grid` | `int` | `7200` | `60..86400` | Hard ceiling on how far a client's `appium:newCommandTimeout` may extend the idle reap window. `newCommandTimeout=0` ("never idle-kill") clamps here, preserving the zombie-session guarantee. Clients can extend the idle window, never shorten it |
 | `grid.session_first_command_grace_sec` | `grid` | `int` | `180` | `30..3600` | How long a running session whose client never issued a command (NULL `last_activity_at`) may live before the observation sweep terminates it. Measured from the allocation claim (`started_at`), so Appium session-create time eats into the grace. Bounds abandoned-client zombie sessions well below the full idle timeout |
 | `grid.claim_window_sec` | `grid` | `int` | `120` | `30..600` | How long an allocated (pending) session may remain unconfirmed before it is failed. Must exceed worst-case Appium session-creation time, or in-flight creates get reaped mid-create. The reaper adds a fixed +60s confirm grace on top of this window to absorb router confirm retries. The floor is 30s: the router's create-timeout cap engages only above 10s, so a smaller window lets the orphan sweep race a real in-creation session |
+| `grid.preempt_running_sessions` | `grid` | `bool` | `false` | boolean | When no matching device is free, a new-session request terminates the stalest running session on a device it could otherwise claim and takes that device, instead of waiting for the session to end. Requests still queue normally when no matching device exists at all. Intended for local automation development, where a test stopped mid-run leaves an orphan session pinning its device until the idle timeout. Off by default: on a shared fleet this lets any client terminate a colleague's session |
 | `appium.port_range_start` | `grid` | `int` | `4723` | `1024..65535` | Start of the port range the backend assigns managed Appium nodes from. Each agent only binds ports inside its own `AGENT_APPIUM_PORT_RANGE_*` env; keep this range within every host's env range |
 | `appium.port_range_end` | `grid` | `int` | `4823` | `1024..65535` | End of the port range the backend assigns managed Appium nodes from. Each agent only binds ports inside its own `AGENT_APPIUM_PORT_RANGE_*` env; keep this range within every host's env range |
 | `appium.startup_timeout_sec` | `grid` | `int` | `30` | `5..120` | Node startup readiness timeout |

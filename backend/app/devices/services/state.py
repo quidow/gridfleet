@@ -275,14 +275,33 @@ def is_offline_sql(*, now: datetime) -> ColumnElement[bool]:
     )
 
 
-def is_available_sql(*, now: datetime) -> ColumnElement[bool]:
+def _available_apart_from_live_session_sql(*, now: datetime) -> ColumnElement[bool]:
+    """Every availability conjunct except the live-session exclusion.
+
+    Factored so the strict predicate and its preemption-facing twin below cannot
+    drift: a new availability axis added here reaches both.
+    """
     return and_(
-        ~masking_live_session_exists(),
         ~verification_lease_exists(now=now),
         ~maintenance_sql(),
         ~stop_in_flight_sql(),
         _ready_sql(),
     )
+
+
+def is_available_sql(*, now: datetime) -> ColumnElement[bool]:
+    return and_(~masking_live_session_exists(), _available_apart_from_live_session_sql(now=now))
+
+
+def is_available_ignoring_live_session_sql(*, now: datetime) -> ColumnElement[bool]:
+    """``is_available_sql`` minus the live-session exclusion: devices that would be
+    available if the session currently holding them were gone.
+
+    The preemption path (``grid.preempt_running_sessions``) selects victims with
+    this, so a device withdrawn for any *other* reason — verifying, in
+    maintenance, node stop in flight, unverified — is never a preemption target.
+    """
+    return _available_apart_from_live_session_sql(now=now)
 
 
 def operational_state_sql(*, now: datetime) -> ColumnElement[str]:
