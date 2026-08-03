@@ -591,33 +591,45 @@ class AppiumProcessManager:
         Synchronous by construction — a ``process_snapshot`` cannot interleave
         between recording the resolving event and lifting the withhold.
         """
-        if respawned is not None:
-            # The respawn the cancelled attempt would have performed did happen,
-            # in this task instead. Pair the withheld crash with its resolving
-            # event before lifting the withhold: released alone, a
-            # ``crash_detected`` with ``will_retry=true`` and no successor is
-            # what the backend folds to health_running=False /
-            # health_state="restarting", i.e. a false offline.
-            self._record_restart_event(
-                process="appium",
-                kind="restart_succeeded",
-                port=port,
-                pid=respawned.pid,
-                attempt=1,  # only ever the first attempt is withheld
-                delay_sec=None,
-                exit_code=None,
-                will_retry=False,
-            )
-            # Charge the adopted attempt to this port's restart history. Nobody
-            # else does — the cancelled task never got past its backoff — and
-            # without it an Appium that dies on every start would re-enter
-            # attempt 1 forever, coalescing each crash and never surfacing the
-            # flap or reaching exhaustion.
-            history = self._trim_restart_attempts(self._appium_restart_attempts, port)
-            history.append(asyncio.get_running_loop().time())
-        # Nothing respawned: the port is down with no attempt in flight, so the
-        # crash must become visible rather than stay coalesced.
-        self._release_first_restart_observation(port)
+        try:
+            if respawned is not None:
+                # The respawn the cancelled attempt would have performed did
+                # happen, in this task instead. Pair the withheld crash with its
+                # resolving event before lifting the withhold: released alone, a
+                # ``crash_detected`` with ``will_retry=true`` and no successor is
+                # what the backend folds to health_running=False /
+                # health_state="restarting", i.e. a false offline.
+                self._record_restart_event(
+                    process="appium",
+                    kind="restart_succeeded",
+                    port=port,
+                    pid=respawned.pid,
+                    attempt=1,  # only ever the first attempt is withheld
+                    delay_sec=None,
+                    exit_code=None,
+                    will_retry=False,
+                )
+                # Charge the adopted attempt to this port's restart history.
+                # Nobody else does — the cancelled task never got past its
+                # backoff — and without it an Appium that dies on every start
+                # would re-enter attempt 1 forever, coalescing each crash and
+                # never surfacing the flap or reaching exhaustion.
+                history = self._trim_restart_attempts(self._appium_restart_attempts, port)
+                history.append(asyncio.get_running_loop().time())
+        finally:
+            # Unskippable, and deliberately not merely last: the two failure
+            # modes are wildly asymmetric. A resolving event that never got
+            # recorded costs one port a false offline until the next push; a
+            # withhold that never got released strands the host-wide
+            # ``truncate_at`` cursor on a sequence nothing will ever clear and
+            # mutes restart events for *every* port on this host, forever.
+            # Neither call above realistically raises, and the ordering is
+            # invisible to other tasks because this helper never awaits — so
+            # the guard is free and the pairing above stays honest.
+            #
+            # Nothing respawned: the port is down with no attempt in flight, so
+            # the crash must become visible rather than stay coalesced.
+            self._release_first_restart_observation(port)
 
     def record_start_failure(self, *, port: int, connection_target: str, kind: str, detail: str) -> None:
         """Record a failed `start()` attempt for the next `/agent/health` payload.

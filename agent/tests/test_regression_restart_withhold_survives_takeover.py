@@ -235,6 +235,83 @@ async def test_failed_takeover_start_releases_and_leaves_the_crash_auditable() -
     assert snapshot["running_nodes"] == [], "a dead port must not be retained once the withhold is discharged"
 
 
+async def test_the_restart_tasks_own_start_does_not_adopt_its_own_withhold(
+    stub_port_probe: None,
+) -> None:
+    """``start()`` adopts only what it actually superseded.
+
+    The auto-restart task reaches ``start()`` through its own call chain, where
+    ``_cancel_task`` is self-cancel-exempt: nothing was handed over, and the
+    task resolves its own withhold on the way out. If ``start()`` adopted on the
+    withhold alone -- without requiring that a foreign task was really cancelled
+    -- it would emit a second ``restart_succeeded`` and charge the attempt twice.
+    """
+    mgr = _manager_with_crashed_node()
+
+    original_sleep = asyncio.sleep
+
+    async def instant_backoff(_delay: float) -> None:
+        await original_sleep(0)
+
+    async def fake_spawn(*_args: object, **_kwargs: object) -> _FakeProcess:
+        return _FakeProcess(RESPAWNED_PID)
+
+    async def ready(_port: int, _proc: object) -> bool:
+        return True
+
+    with (
+        pytest.MonkeyPatch.context() as mp,
+        patch("agent_app.appium.process.resolve_appium_invocation_for_pack", return_value=_STUB_INVOCATION),
+        patch("agent_app.appium.process.build_env", return_value={"PATH": "/usr/bin"}),
+        patch.object(mgr, "_wait_for_readiness", new=ready),
+        patch("agent_app.appium.process.asyncio.create_subprocess_exec", side_effect=fake_spawn),
+    ):
+        mp.setattr(asyncio, "sleep", instant_backoff)
+        # Registered exactly as production does, so ``_cancel_task``'s identity
+        # check really sees the running task as the current one.
+        task = asyncio.create_task(mgr._auto_restart_appium(PORT, 1))
+        mgr._register_port_task(mgr._appium_restart_tasks, PORT, task)
+        await asyncio.wait_for(task, timeout=2)
+
+    assert mgr._first_restart_observation_ports == set()
+    with patch.object(mgr, "_node_has_active_session", return_value=False):
+        snapshot = await mgr.process_snapshot()
+    assert _kinds(snapshot) == ["crash_detected", "restart_succeeded"], (
+        f"the restart task's own start() adopted a withhold it never superseded: {_kinds(snapshot)}"
+    )
+    assert len(mgr._appium_restart_attempts[PORT]) == 1, "the attempt was charged twice for one restart"
+
+
+async def test_discharge_releases_the_withhold_even_if_recording_the_pair_fails() -> None:
+    """The release must not sit behind bookkeeping that could raise.
+
+    A skipped release strands ``process_snapshot``'s host-wide ``truncate_at``
+    cursor and mutes restart events for every port on the host -- far worse than
+    the single false offline a missing resolving event costs.
+    """
+    mgr = _manager_with_crashed_node()
+    await _restart_task_in_backoff(mgr)
+
+    async def fake_spawn(*_args: object, **_kwargs: object) -> _FakeProcess:
+        return _FakeProcess(RESPAWNED_PID)
+
+    def exploding_record(**_kwargs: object) -> int:
+        raise RuntimeError("restart-event ring is wedged")
+
+    with (
+        patch.object(mgr, "_start_appium_server", side_effect=fake_spawn),
+        patch.object(mgr, "_record_restart_event", side_effect=exploding_record),
+        pytest.raises(RuntimeError),
+    ):
+        await asyncio.wait_for(mgr.start(connection_target=TARGET, port=PORT, **PACK_START_KWARGS), timeout=2)
+    await _settle()
+
+    assert mgr._first_restart_observation_ports == set(), (
+        "a raising resolving-event record stranded the host-wide truncation cursor"
+    )
+    assert mgr._withheld_restart_sequence_by_port == {}
+
+
 async def test_stop_during_backoff_releases_the_withhold_before_cancelling() -> None:
     """The abandonment half of the invariant: ``stop()`` cancels the same task
     but nothing takes the respawn over, so it must lift the withhold itself."""
