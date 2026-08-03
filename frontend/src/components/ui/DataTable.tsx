@@ -134,7 +134,9 @@ function DataTableInner<Row, SortKey extends string = string>({
           </th>
         ))}
         {hasRowActions && (
-          <th className={`w-10 ${cellPad}`} aria-label="Actions" />
+          <th className={`w-10 ${cellPad}`}>
+            <span className="sr-only">Actions</span>
+          </th>
         )}
       </tr>
     </thead>
