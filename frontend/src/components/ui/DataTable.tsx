@@ -220,6 +220,7 @@ function DataTableInner<Row, SortKey extends string = string>({
             const key = rowKey(row);
             const isSelected = selection?.selectedKeys.has(key);
             const expandedContent = renderExpandedRow?.(row) ?? null;
+            const actions = rowActions?.(row) ?? [];
             return (
               <Fragment key={key}>
                 <tr
@@ -268,7 +269,9 @@ function DataTableInner<Row, SortKey extends string = string>({
                       className={`${cellPad} text-right`}
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <RowActionsMenu label={rowActionsLabel?.(row) ?? 'Row actions'} items={rowActions(row)} />
+                      {actions.length > 0 ? (
+                        <RowActionsMenu label={rowActionsLabel?.(row) ?? 'Row actions'} items={actions} />
+                      ) : null}
                     </td>
                   )}
                 </tr>

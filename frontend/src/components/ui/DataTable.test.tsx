@@ -156,6 +156,23 @@ describe('DataTable', () => {
     expect(onRowClick).not.toHaveBeenCalled();
   });
 
+  it('does not render a row-action trigger for rows with no actions', () => {
+    render(
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.id}
+        rowActions={(row) =>
+          row.status === 'active'
+            ? [{ key: 'delete', label: 'Delete', icon: null, onSelect: vi.fn() }]
+            : []
+        }
+      />,
+    );
+
+    expect(screen.getAllByLabelText('Row actions')).toHaveLength(1);
+  });
+
   it('applies rowTestId to each rendered <tr>', () => {
     const rows = [
       { id: 'a', name: 'Alpha' },
