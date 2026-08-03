@@ -15,6 +15,7 @@ case where no successor ever arrives.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -175,3 +176,35 @@ async def test_adoption_does_not_charge_the_attempt_twice(stub_port_probe: None)
     await settle()
 
     assert len(mgr._appium_restart_attempts[PORT]) == 1, "one restart was charged as two attempts"
+
+
+async def test_a_deferred_exit_records_its_reason(caplog: pytest.LogCaptureFixture) -> None:
+    """Every exit from an auto-restart attempt names itself and says what
+    happened to the withhold, so a release is never again attributable only by
+    absence of evidence."""
+    mgr = manager_with_crashed_node()
+    _wire_packs(mgr, desired_ids=[])
+
+    with caplog.at_level(logging.INFO, logger="agent_app.appium.process"):
+        task = await restart_task_in_backoff(mgr)
+        with patch("agent_app.appium.process.asyncio.sleep", new=_instant):
+            await asyncio.wait_for(task, timeout=2)
+
+    ended = [record.getMessage() for record in caplog.records if "auto-restart attempt ended" in record.getMessage()]
+    assert len(ended) == 1, f"expected one exit-reason line, got {ended}"
+    assert "reason=deferred" in ended[0]
+    assert "withhold=retained" in ended[0]
+
+
+async def test_an_operator_stop_during_backoff_records_its_reason(caplog: pytest.LogCaptureFixture) -> None:
+    """``stop()`` is fully silent today, and it is the one alternative the
+    original diagnosis could only eliminate by reasoning about side effects."""
+    mgr = manager_with_crashed_node()
+    await restart_task_in_backoff(mgr)
+
+    with caplog.at_level(logging.INFO, logger="agent_app.appium.process"):
+        await asyncio.wait_for(mgr.stop(PORT, reason="needs_restart"), timeout=2)
+
+    stops = [record.getMessage() for record in caplog.records if "Stopping Appium node" in record.getMessage()]
+    assert len(stops) == 1, f"expected one stop line, got {stops}"
+    assert "reason=needs_restart" in stops[0]

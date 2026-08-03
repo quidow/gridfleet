@@ -749,6 +749,7 @@ class AppiumProcessManager:
             # than abandoning it: the cancel that a superseding start() issues,
             # and the deferral whose successor is the convergence loop's retry.
             retain_withhold = False
+            exit_reason = "unknown"
             try:
                 if not can_retry:
                     logger.error(
@@ -768,6 +769,7 @@ class AppiumProcessManager:
                         exit_code=last_exit_code,
                         will_retry=False,
                     )
+                    exit_reason = "exhausted"
                     return
 
                 logger.info(
@@ -780,14 +782,17 @@ class AppiumProcessManager:
                 assert delay_sec is not None
                 await asyncio.sleep(delay_sec)
                 if port in self._intentional_stop_ports:
+                    exit_reason = "stopped"
                     return
                 if port in self._stop_pending_ports:
                     # Operator queued a stop_pending lifecycle during the
                     # backoff window; honor it instead of resurrecting the
                     # process. The actual stop is owned by the backend's appium
                     # reconciler via AppiumNode.desired_state.
+                    exit_reason = "stop_pending"
                     return
                 if port not in self._launch_specs:
+                    exit_reason = "spec_dropped"
                     return
 
                 history = self._trim_restart_attempts(self._appium_restart_attempts, port)
@@ -818,6 +823,7 @@ class AppiumProcessManager:
                         info.connection_target if info is not None else "unknown",
                         port,
                     )
+                    exit_reason = "port_conflict"
                     await self._drop_failed_managed_port(port)
                     return
                 except AlreadyRunningError:
@@ -831,6 +837,7 @@ class AppiumProcessManager:
                         port,
                         info.connection_target if info is not None else "unknown",
                     )
+                    exit_reason = "already_running"
                     await self._drop_failed_managed_port(port)
                     return
                 except StartDeferredError as exc:
@@ -850,11 +857,13 @@ class AppiumProcessManager:
                     # a crash the agent is about to fix. The wall-clock backstop
                     # covers the case where no retry ever succeeds.
                     retain_withhold = True
+                    exit_reason = "deferred"
                     return
                 except Exception:
                     self._advance_restart_backoff(self._appium_restart_backoff_steps, port)
                     logger.exception("Appium auto-restart failed for port %d on attempt %d", port, attempt_number)
                     last_exit_code = None
+                    exit_reason = "retrying"
                     continue
 
                 self._appium_restart_backoff_steps.pop(port, None)
@@ -875,6 +884,7 @@ class AppiumProcessManager:
                     attempt_number,
                     restarted.pid,
                 )
+                exit_reason = "succeeded"
                 return
             except asyncio.CancelledError:
                 # A concurrent ``start()`` for this port cancelled this attempt
@@ -897,10 +907,18 @@ class AppiumProcessManager:
                 # a named successor exists, so this attempt is not the one that
                 # gets to publish the crash.
                 retain_withhold = True
+                exit_reason = "superseded"
                 raise
             finally:
                 if is_first_attempt and not retain_withhold:
                     self._release_first_restart_observation(port)
+                logger.info(
+                    "Appium auto-restart attempt ended for port=%d attempt=%d reason=%s withhold=%s",
+                    port,
+                    next_attempt,
+                    exit_reason,
+                    "retained" if retain_withhold else ("released" if is_first_attempt else "none"),
+                )
 
     async def _restart_from_launch_spec(self, port: int) -> AppiumProcessInfo:
         spec = self._launch_specs.get(port)
@@ -1323,7 +1341,12 @@ class AppiumProcessManager:
             with contextlib.suppress(httpx.HTTPError):
                 await client.delete(origin.join(f"/session/{session_id}"), timeout=STOP_SESSION_DELETE_TIMEOUT)
 
-    async def stop(self, port: int) -> None:
+    async def stop(self, port: int, *, reason: str = "unspecified") -> None:
+        # Logged before the lock so the *intent* is timestamped even when a
+        # concurrent start holds it: this path was fully silent, and its
+        # silence is what forced the original diagnosis to eliminate it by
+        # reasoning about side effects instead of evidence.
+        logger.info("Stopping Appium node port=%d reason=%s", port, reason)
         async with self._start_lock:
             self._intentional_stop_ports.add(port)
             spec = self._launch_specs.get(port)
@@ -1536,7 +1559,7 @@ class AppiumProcessManager:
         ports = sorted(set(self._appium_procs) | set(self._launch_specs))
         for port in ports:
             with contextlib.suppress(Exception):
-                await self.stop(port)
+                await self.stop(port, reason="shutdown")
         for task_map in (self._appium_restart_tasks, self._appium_watch_tasks):
             for task in task_map.values():
                 task.cancel()

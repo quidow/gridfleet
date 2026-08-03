@@ -62,7 +62,7 @@ class NodeStateLoop:
 
         for port in sorted(set(running_by_port) - desired_ports):
             try:
-                await self.manager.stop(port)
+                await self.manager.stop(port, reason="orphan")
                 self._notify()
             except Exception:
                 logger.exception("failed to stop orphan Appium process on port %d", port)
@@ -71,7 +71,7 @@ class NodeStateLoop:
         local = running_by_port.get(spec.port)
         if spec.desired_state == "stopped":
             if local is not None:
-                await self.manager.stop(spec.port)
+                await self.manager.stop(spec.port, reason="desired_stopped")
                 running_by_port.pop(spec.port, None)
                 self._notify()
             return
@@ -144,7 +144,7 @@ class NodeStateLoop:
                     launch.pack_release,
                 )
         if local is not None and needs_restart:
-            await self.manager.stop(spec.port)
+            await self.manager.stop(spec.port, reason="needs_restart")
             running_by_port.pop(spec.port, None)
             local = None
 

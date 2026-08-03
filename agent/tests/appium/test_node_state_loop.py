@@ -72,7 +72,7 @@ class _Manager:
             {"port": port, "connection_target": connection_target, "kind": kind, "detail": detail}
         )
 
-    async def stop(self, port: int) -> None:
+    async def stop(self, port: int, *, reason: str = "unspecified") -> None:
         self.stopped.append(port)
         self.running = [info for info in self.running if info.port != port]
         self._launch_specs.pop(port, None)
