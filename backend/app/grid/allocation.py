@@ -34,7 +34,7 @@ from app.devices.models import (
     DeviceOperationalState,
     GroupType,
 )
-from app.devices.services.claims import live_session_exists
+from app.devices.services.claims import live_session_exists, masking_live_session_predicate
 from app.devices.services.group_membership import (
     DeviceGroupFacts,
     GroupDefinitionBatch,
@@ -136,6 +136,9 @@ class AllocationNotPendingError(Exception):
 # longer than a single slow poll but far shorter than the 300s queue timeout.
 TICKET_STALE_POLL_INTERVALS = 10
 
+PREEMPTED_ERROR_TYPE = "preempted"
+PREEMPTED_ERROR_MESSAGE = "preempted by a new session request"
+
 
 def _ticket_liveness_cutoff(now: datetime) -> datetime:
     """Waiting tickets last polled before this instant are considered dead clients."""
@@ -213,6 +216,23 @@ class InterruptedSessionEffect:
     session_pk: uuid.UUID
     appium_session_id: str
     target: str
+
+
+@dataclass(frozen=True, slots=True)
+class PreemptionTarget:
+    """Immutable values describing the session a new request is taking a device from.
+
+    Same discipline as ``InterruptedSessionEffect``: produced inside one
+    transaction and consumed after it closes, so the Appium terminate and the
+    terminalization carry no ORM object or open transaction across the boundary.
+    ``target`` is optional — a device whose node target cannot be resolved still
+    gets its row terminalized, exactly as the operator-kill path does.
+    """
+
+    session_pk: uuid.UUID
+    device_id: uuid.UUID
+    appium_session_id: str
+    target: str | None
 
 
 class RunNotActiveError(Exception):
@@ -790,6 +810,140 @@ class AllocationService:
             return None
         target = resolve_router_target(row)
         return None if target is None else InterruptedSessionEffect(row.id, row.session_id, target)
+
+    async def prepare_preemption(
+        self,
+        db: DbSession,
+        *,
+        ticket_id: uuid.UUID,
+        exclude_device_ids: set[uuid.UUID] | None = None,
+    ) -> PreemptionTarget | None:
+        """Resolve the session a waiting ticket may take a device from.
+
+        Runs the same matching pipeline ``try_allocate`` runs, with exactly one
+        conjunct relaxed (``include_busy``), so a victim is by construction a
+        device this ticket could claim if the session on it were gone —
+        stereotype, group membership and the reservation gate all still apply.
+
+        Read-only with respect to ticket status: ``try_allocate`` validated and,
+        on failure, already cancelled this same body earlier in the attempt, so a
+        merge error here is unreachable and is declined rather than raised. A
+        best-effort path must not invent a new failure mode.
+        """
+        ticket = await db.get(GridSessionQueueTicket, ticket_id)
+        if ticket is None or ticket.status != GridQueueStatus.waiting:
+            return None
+        try:
+            candidates = merge_candidates(ticket.requested_body)
+            group_keys = requested_group_keys(candidates)
+        except CapabilityMergeError:
+            return None
+        definitions = (
+            await self._load_group_definitions(db, group_keys)
+            if group_keys
+            else GroupDefinitionBatch(groups=(), member_of_keys_by_dynamic_group_id={})
+        )
+        loaded_group_keys = {group.key for group in definitions.groups}
+        if set(group_keys) - loaded_group_keys:
+            return None
+        pass_ = await self._match_pass(
+            db,
+            definitions=definitions,
+            group_keys=loaded_group_keys,
+            exclude_device_ids=exclude_device_ids,
+            include_busy=True,
+        )
+        device_ids = {
+            match.row.device.id
+            async for match in self._iter_matches(
+                db,
+                pass_,
+                candidates=candidates,
+                advertised_group_keys=group_keys,
+                ticket_run_id=ticket.run_id,
+            )
+        }
+        if not device_ids:
+            return None
+        return await self._lock_stalest_victim(db, device_ids)
+
+    async def _lock_stalest_victim(self, db: DbSession, device_ids: set[uuid.UUID]) -> PreemptionTarget | None:
+        """Pick the stalest running session across *device_ids*, lock its device,
+        and re-read the row under that lock.
+
+        ``COALESCE(last_activity_at, started_at)`` puts the session that has gone
+        longest without a client command first — the orphan this setting exists
+        for. A session that has never issued a command sorts by its claim time, so
+        a create still in flight is not mistaken for a stale one.
+
+        Only ``running`` rows are eligible: a ``pending`` row is another request's
+        in-flight claim, and killing it would race its creator.
+        """
+        staleness = func.coalesce(Session.last_activity_at, Session.started_at).asc()
+        victim_device_id = (
+            await db.execute(
+                select(Session.device_id)
+                .where(
+                    Session.device_id.in_(device_ids),
+                    masking_live_session_predicate(),
+                    Session.status == SessionStatus.running,
+                )
+                .order_by(staleness)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if victim_device_id is None:
+            return None
+        try:
+            await device_locking.lock_device_handle(db, victim_device_id)
+        except NoResultFound:
+            return None
+        # Fresh snapshot under the row lock: a session that ended while we waited
+        # for the lock is now visible and yields no victim.
+        row = await db.scalar(
+            select(Session)
+            .options(
+                selectinload(Session.device).selectinload(Device.appium_node),
+                selectinload(Session.device).selectinload(Device.host),
+            )
+            .where(
+                Session.device_id == victim_device_id,
+                masking_live_session_predicate(),
+                Session.status == SessionStatus.running,
+            )
+            .order_by(staleness)
+            .limit(1)
+        )
+        if row is None:
+            return None
+        return PreemptionTarget(
+            session_pk=row.id,
+            device_id=victim_device_id,
+            appium_session_id=row.session_id,
+            target=resolve_router_target(row),
+        )
+
+    async def finalize_preemption(self, db: DbSession, *, session_pk: uuid.UUID, device_id: uuid.UUID) -> bool:
+        """Terminalize the preempted row under its device row lock.
+
+        Runs whether or not the remote DELETE succeeded, exactly as the
+        operator-kill path does: the row must leave the live set so the device
+        frees, and the ``session_sync`` orphan sweep kills any still-alive Appium
+        session on its next tick. Returns False when a concurrent closer won.
+        """
+        try:
+            locked = await device_locking.lock_device_handle(db, device_id)
+        except NoResultFound:
+            return False
+        return await session_service.close_running_session_locked(
+            db,
+            locked,
+            session_pk=session_pk,
+            publisher=self._publisher,
+            status_override=SessionStatus.error,
+            error_type=PREEMPTED_ERROR_TYPE,
+            error_message=PREEMPTED_ERROR_MESSAGE,
+        )
 
     async def _load_group_definitions(self, db: DbSession, group_keys: Collection[str]) -> GroupDefinitionBatch:
         """One read: the requested groups, the static groups their
