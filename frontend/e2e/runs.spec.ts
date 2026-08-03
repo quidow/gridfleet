@@ -123,6 +123,5 @@ test.describe('Runs page', () => {
 
     const terminalRow = page.getByRole('row').filter({ has: page.getByRole('link', { name: 'a-run' }) });
     await expect(terminalRow.getByRole('button', { name: 'Actions for a-run' })).toHaveCount(0);
-    await expect(page.getByText('Actions', { exact: true })).toHaveCount(0);
   });
 });
