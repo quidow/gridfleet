@@ -14,6 +14,24 @@ All notable changes to the GridFleet backend (FastAPI manager, control plane) ar
 - Bracket-wrap IPv6 addresses in agent terminal URLs so `ws://[::1]:5100/...` is valid.
 - Close drain-transition race by committing draining state before `try_complete_drain`, preventing concurrent `assert_runnable` from starting new work during a drain.
 
+## [0.8.0](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.7.1...gridfleet-backend-v0.8.0) (2026-08-03)
+
+
+### Features
+
+* **backend:** add grid.preempt_running_sessions setting ([639203c](https://github.com/quidow/gridfleet/commit/639203cf7c5f0a960873a789266bb28891016f2f))
+* **backend:** add session preemption to the allocation service ([7bf6196](https://github.com/quidow/gridfleet/commit/7bf6196806bb1406e81bb3ff33d6171714db8bb3))
+* **backend:** preempt a running session when the queue is bypassed ([556ef05](https://github.com/quidow/gridfleet/commit/556ef054006ef4892fe8f9a5d8d4e324d7e30f34))
+* **backend:** session preemption — take a matching device by killing the session holding it ([ea58ed5](https://github.com/quidow/gridfleet/commit/ea58ed552b3a29b7f90afa89e7de8967365e79a1))
+
+
+### Bug Fixes
+
+* **backend:** harden session preemption safety ([4361639](https://github.com/quidow/gridfleet/commit/4361639b90d1f0a8116dc219dcff9e428ea872a9))
+* **backend:** recheck sessions before orphan deletion ([1fafd61](https://github.com/quidow/gridfleet/commit/1fafd612c75c0e3567255273ad8a2818d203631b))
+* **backend:** recheck sessions before orphan deletion ([7331e41](https://github.com/quidow/gridfleet/commit/7331e411a97897a892602b70c550d03c6452124b))
+* **backend:** tighten preemption docstrings and endpoint test runtime ([e597ba3](https://github.com/quidow/gridfleet/commit/e597ba344cd44d914e172849580d765c2344cb08))
+
 ## [0.7.1](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.7.0...gridfleet-backend-v0.7.1) (2026-08-03)
 
 
