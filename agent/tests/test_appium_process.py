@@ -1034,6 +1034,67 @@ async def test_process_snapshot_truncates_events_at_earliest_withheld_sequence_a
     await manager.shutdown()
 
 
+async def test_process_snapshot_reads_coalescing_state_atomically() -> None:
+    """Regression for the torn-read fix: process_snapshot must snapshot
+    ``_first_restart_observation_ports`` and ``_withheld_restart_sequence_by_port``
+    together, before its first await, not at two points separated by one.
+
+    Reproduced by pausing ``process_snapshot`` mid-flight -- inside its own
+    await while building the withheld port's coalesced node -- and mutating
+    the withhold state from that yield point in a concurrently running task.
+    This drives the real interleaving rather than asserting on statement
+    order: against the torn-read ordering, the mutation lands after
+    ``coalesced_ports`` was already read but before ``withheld_sequences``
+    was, so the second read observes the release and the port's own
+    crash_detected event is emitted immediately. Atomically reading both
+    beforehand keeps ``truncate_at`` pinned to the pre-mutation value, so the
+    event stays withheld one more push (harmless, per the fix's contract).
+    """
+    manager = AppiumProcessManager()
+    port = 4723
+    manager._info[port] = AppiumProcessInfo(port=port, pid=9001, connection_target="dev", platform_id="android")
+
+    sequence = manager._record_restart_event(
+        process="appium",
+        kind="crash_detected",
+        port=port,
+        pid=9001,
+        attempt=1,
+        delay_sec=1,
+        exit_code=1,
+        will_retry=True,
+    )
+    manager._first_restart_observation_ports.add(port)
+    manager._withheld_restart_sequence_by_port[port] = sequence
+
+    real_running_node_snapshot = manager._running_node_snapshot
+    entered_snapshot_for_port = asyncio.Event()
+    release_port = asyncio.Event()
+
+    async def paused_running_node_snapshot(info: AppiumProcessInfo) -> dict[str, Any]:
+        if info.port == port:
+            entered_snapshot_for_port.set()
+            await release_port.wait()
+        return await real_running_node_snapshot(info)
+
+    with patch.object(manager, "_running_node_snapshot", side_effect=paused_running_node_snapshot):
+        snapshot_task = asyncio.create_task(manager.process_snapshot())
+        await entered_snapshot_for_port.wait()
+
+        # process_snapshot is now suspended fetching the withheld port's own
+        # coalesced node -- the window the torn-read ordering left exposed.
+        # Release the port here, exactly as a concurrent restart success
+        # would, then let process_snapshot resume.
+        manager._release_first_restart_observation(port)
+        release_port.set()
+        snapshot = await snapshot_task
+
+    assert snapshot["running_nodes"][0]["port"] == port
+    assert snapshot["running_nodes"][0]["observation_coalesced"] is True
+    assert snapshot["recent_restart_events"] == []
+    await manager.shutdown()
+
+
 async def test_auto_restart_cap_stops_retrying_after_threshold() -> None:
     manager = AppiumProcessManager()
     current_time = asyncio.get_running_loop().time()

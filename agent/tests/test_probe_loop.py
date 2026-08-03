@@ -268,7 +268,6 @@ async def test_device_health_section_limits_probe_concurrency() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
 async def test_live_session_joins_by_device_id_after_host_resolution() -> None:
     roster = _Roster()
     roster.devices = [{**roster.devices[0], "device_id": "d1", "connection_target": "stable-avd-name"}]

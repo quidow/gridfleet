@@ -150,6 +150,10 @@ class NodeStateLoop:
 
         if local is None:
             try:
+                # device_id is passed explicitly because AppiumStartRequest has no
+                # such field today; if it ever gains one, _launch_kwargs(launch)
+                # would also yield device_id and this call would raise TypeError
+                # ("got multiple values for keyword argument 'device_id'").
                 started = await self.manager.start(
                     device_id=str(spec.device_id),
                     **self._launch_kwargs(launch),

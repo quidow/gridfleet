@@ -14,12 +14,13 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "test-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 prometheus = { version = "0.14", default-features = false }
 log = "0.4"
 env_logger = "0.11"
 
 [dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
 ureq = "3"
 tiny_http = "0.12"
 ring = "0.17"

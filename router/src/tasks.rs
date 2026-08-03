@@ -125,6 +125,14 @@ mod tests {
     ///   that thread run and the response arrive. Under load (the full test
     ///   binary running concurrently with others) that can take a moment, so
     ///   this polls instead of trusting a single fixed delay.
+    ///
+    /// The `yield_now()` inside the polling loop below is load-bearing, not
+    /// cosmetic: it is what keeps the runtime non-idle on every iteration,
+    /// which is the only reason tokio's paused-clock auto-advance (which
+    /// fires when the runtime has nothing left to poll) never kicks in and
+    /// jumps `reqwest`'s internal timers out from under the in-flight
+    /// request. Removing it breaks this test in a way that is bafflingly
+    /// hard to trace back to this line.
     async fn advance_one_tick(done: impl Fn() -> bool) {
         tokio::task::yield_now().await;
         tokio::time::advance(Duration::from_secs(1)).await;

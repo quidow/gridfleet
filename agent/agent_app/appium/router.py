@@ -39,6 +39,12 @@ async def refresh_node_state(request: Request) -> dict[str, bool]:
     summary="Process info for a managed Appium port",
 )
 async def appium_status(port: int, mgr: AppiumMgrDep) -> dict[str, Any]:
+    # Third observation channel alongside the status push and process_snapshot's
+    # coalescing (agent_app/appium/process.py): this one is deliberately NOT
+    # coalesced and reports running: false during a withheld first-restart
+    # attempt. Safe only because it's an operator-facing on-demand endpoint that
+    # writes no durable fact -- a future caller that persists this response would
+    # need the same coalescing process_snapshot does.
     return await mgr.status(port)
 
 

@@ -1031,7 +1031,9 @@ class AppiumProcessManager:
                 info.connection_target = resolved_connection_target
                 info.platform_id = platform_id
                 info.started_at = started_at
-                info.device_id = device_id
+                # A caller omitting device_id must not silently null an existing ID.
+                if device_id is not None:
+                    info.device_id = device_id
             if spec.stop_pending:
                 # Carry the stop-pending flag so ``_auto_restart_appium``
                 # refuses to resurrect this Appium process if it exits. The
@@ -1195,12 +1197,29 @@ class AppiumProcessManager:
         return running
 
     async def process_snapshot(self) -> dict[str, Any]:
+        # Snapshot both halves of the coalescing state before the first await
+        # below -- _running_node_snapshot's HTTP round trip per node can take
+        # seconds against an unreachable Appium. Reading the two halves at
+        # different points let a port crash and enter withholding in between:
+        # its event got truncated (the later read saw it) but it had no
+        # retained node in running_nodes (the earlier read missed it) -- the
+        # port silently vanished from the push with nothing to explain why,
+        # the exact S04c symptom this coalescing exists to prevent. Reading
+        # both together, before either await point, means a port that
+        # releases mid-snapshot just holds its retention one push longer
+        # (harmless), and one that starts withholding mid-snapshot is simply
+        # not coalesced this cycle (also harmless -- it is published, not
+        # hidden).
+        first_restart_observation_ports = set(self._first_restart_observation_ports)
+        withheld_sequences = set(self._withheld_restart_sequence_by_port.values())
+        truncate_at = min(withheld_sequences) if withheld_sequences else None
+
         running_nodes = [await self._running_node_snapshot(info) for info in self.list_running()]
         running_ports = {node["port"] for node in running_nodes}
         # Retain a dead node for a port whose first restart attempt is still
         # withheld, so the coalesced observation shows the crashed process
         # instead of the port silently disappearing from the snapshot.
-        coalesced_ports = set(self._first_restart_observation_ports) - running_ports
+        coalesced_ports = first_restart_observation_ports - running_ports
         for port in coalesced_ports:
             info = self._info.get(port)
             if info is None:
@@ -1217,8 +1236,27 @@ class AppiumProcessManager:
         # instead: nothing at or after the earliest still-withheld sequence is
         # ever sent, so the cursor never advances past it and the whole
         # deferred tail releases atomically once that sequence is released.
-        withheld_sequences = set(self._withheld_restart_sequence_by_port.values())
-        truncate_at = min(withheld_sequences) if withheld_sequences else None
+        #
+        # Cost: this couples an unrelated port's events to whichever port is
+        # still mid-attempt -- while port A's first attempt is in flight, port
+        # B's crash_detected, and even a terminal restart_exhausted, are
+        # withheld too, atomically, until A resolves. Nothing is dropped, only
+        # deferred, but the ceiling is not the "~1s backoff" the retry loop
+        # suggests: _restart_from_launch_spec -> start() waits on
+        # self._start_lock (unbounded in principle -- a concurrent start doing
+        # a pack runtime install holds it) and then _wait_for_readiness
+        # (READINESS_TIMEOUT = 30s), so the realistic worst case is tens of
+        # seconds and the theoretical worst case is unbounded. There is also a
+        # silent cliff: _recent_restart_events is a maxlen=MAX_RESTART_EVENTS
+        # (200) ring, so a withhold long enough to accumulate 200 events would
+        # evict the withheld crash itself while truncate_at still blocks on
+        # its (now-evicted) sequence number.
+        #
+        # GET /agent/appium/{port}/status (router.py appium_status) reads
+        # manager.status() directly and is a third, deliberately uncoalesced
+        # observation channel -- it reports running: false during the
+        # withhold window. That's safe today only because it is an
+        # operator-facing on-demand endpoint that writes no durable fact.
         emitted_events = [
             event.to_payload()
             for event in self._recent_restart_events
