@@ -5,8 +5,10 @@ import { useSessions } from '../hooks/useSessions';
 import { useGridQueue } from '../hooks/useGridQueue';
 import { StatusBadge } from '../components/StatusBadge';
 import { LoadingSpinner } from '../components/LoadingSpinner';
+import { Badge } from '../components/ui/Badge';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { DataTable } from '../components/ui/DataTable';
+import { DefinitionList } from '../components/ui/DefinitionList';
 import { PageHeader } from '../components/ui/PageHeader';
 import { SectionErrorBoundary } from '../components/ErrorBoundary';
 import { Card } from '../components/ui/Card';
@@ -14,10 +16,9 @@ import { RunActionButtons } from '../components/runs/RunActionButtons';
 import type { DataTableColumn } from '../components/ui/DataTable';
 import { buildSessionColumns } from '../components/sessions/sessionColumns';
 import { QueuedRequestsCard } from '../components/sessions/QueuedRequestsCard';
-import type { RunState, SessionDetail, SessionSortKey } from '../types';
+import type { ReservedDeviceInfo, RunState, SessionDetail, SessionSortKey } from '../types';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { formatDateTime, formatDuration } from '../utils/dateFormatting';
-import { DefinitionList } from '../components/ui/DefinitionList';
 import { resolvePlatformLabel } from '../lib/labels';
 import { ACTIVE_RUN_STATES } from '../lib/runStates';
 
@@ -28,24 +29,7 @@ function formatDate(dateStr: string | null): string {
   return formatDateTime(dateStr);
 }
 
-type ReservedDevice = {
-  device_id: string;
-  identity_value: string;
-  name?: string | null;
-  connection_target: string | null;
-  pack_id: string;
-  platform_id: string;
-  platform_label: string | null;
-  os_version: string;
-  host_ip: string | null;
-  excluded: boolean;
-  exclusion_reason: string | null;
-  excluded_until: string | null;
-  cooldown_count: number;
-  cooldown_escalated: boolean;
-};
-
-const DEVICE_COLUMNS: DataTableColumn<ReservedDevice>[] = [
+const DEVICE_COLUMNS: DataTableColumn<ReservedDeviceInfo>[] = [
   {
     key: 'device',
     header: 'Device',
@@ -84,19 +68,24 @@ const DEVICE_COLUMNS: DataTableColumn<ReservedDevice>[] = [
     key: 'reservation',
     header: 'Reservation',
     render: (d) => {
-      if (d.cooldown_escalated) {
-        return (
-          <span className="text-sm text-warning-foreground">
-            Escalated to maintenance ({d.exclusion_reason ?? 'cooldown threshold'})
-          </span>
-        );
-      }
-      if (d.excluded) {
-        return (
-          <span className="text-sm text-warning-foreground">{d.exclusion_reason ?? 'Excluded'}</span>
-        );
-      }
-      return <span className="text-sm text-text-3">Active</span>;
+      const status = d.cooldown_escalated
+        ? 'Escalated to maintenance'
+        : d.excluded || Boolean(d.released_at && d.exclusion_reason)
+          ? 'Excluded'
+          : null;
+      if (!status) return <span className="text-sm text-text-3">Active</span>;
+
+      const reason = d.exclusion_reason ?? (d.cooldown_escalated ? 'cooldown threshold' : null);
+      return (
+        <div className="max-w-xs">
+          <Badge tone="warning">{status}</Badge>
+          {reason ? (
+            <p className="mt-1 line-clamp-2 text-sm text-text-2" title={reason}>
+              {reason}
+            </p>
+          ) : null}
+        </div>
+      );
     },
   },
 ];
@@ -230,7 +219,7 @@ export function RunDetail() {
             Reserved Devices ({run.devices?.length ?? 0})
           </h2>
         </div>
-        <DataTable<ReservedDevice>
+        <DataTable<ReservedDeviceInfo>
           columns={DEVICE_COLUMNS}
           rows={run.devices ?? []}
           rowKey={(d) => d.device_id}
