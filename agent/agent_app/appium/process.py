@@ -89,6 +89,22 @@ MAX_RESTART_EVENTS = 200
 # mode is "the deferral condition never clears", which no attempt counter
 # observes.
 FIRST_RESTART_WITHHOLD_MAX_SEC = 60
+# Separate, longer ceiling on how long an armed withhold record may still be
+# ADOPTED by a later start() -- distinct from FIRST_RESTART_WITHHOLD_MAX_SEC,
+# which bounds only PUBLICATION and is deliberately not a disownership
+# deadline (a same-episode recovery finishing late must still find its record
+# and pair the crash with a resolving event). Past this ceiling nothing ties
+# whichever start() next touches the port to the crash that armed the record,
+# so adopting it would misattribute a stranger's respawn -- most concretely
+# when the backend has since handed the port to a different device:
+# candidate_ports() frees a port the instant its owning device row is
+# deleted, with no liveness check against the agent. Reused rather than
+# invented from taste: AUTO_RESTART_WINDOW_SEC is the code's own existing
+# answer to "how long is the same flapping episode still the same episode" --
+# past it, _trim_restart_attempts has already rolled the attempt this crash
+# contributed off the port's own restart history, so nothing internal still
+# ties a start() this late to the original crash either.
+WITHHOLD_OWNERSHIP_MAX_SEC = AUTO_RESTART_WINDOW_SEC
 APPIUM_DRIVER_CAPABILITY_DROP_KEYS = {
     "appium:connection_type",
     "appium:device_type",
@@ -355,10 +371,17 @@ class _WithheldRestart:
     suppressing publication, but it is *not* discarded: ownership and
     publication are separate concerns, so a recovery that completes late still
     finds its record and pairs the crash with a resolving event.
+
+    ``armed_at`` bounds the other concern, ownership: past
+    ``WITHHOLD_OWNERSHIP_MAX_SEC`` from arming, ``start()`` stops treating this
+    record as adoptable and reaps it instead, so an unrelated start on this
+    port (most concretely one for a different device, once the backend has
+    recycled the port) cannot misattribute its own respawn to this crash.
     """
 
     sequence: int
     expires_at: float
+    armed_at: float
     attempt_charged: bool = False
     expiry_logged: bool = False
 
@@ -605,6 +628,40 @@ class AppiumProcessManager:
                 record.sequence,
             )
 
+    def _reap_stale_withhold(self, port: int) -> None:
+        """Drop an armed-but-abandoned withhold once it is too old to adopt.
+
+        Only called from ``start()``, after ``_cancel_task`` has already run
+        for *port*. A present ``_appium_restart_tasks`` entry at that point
+        means either a live task genuinely still owns the record (nothing to
+        reap; it will resolve its own withhold) or this start is the owning
+        task re-entering through its own call chain (same reasoning) -- either
+        way, leave it alone.
+
+        An absent entry past ``WITHHOLD_OWNERSHIP_MAX_SEC`` from arming means
+        nobody is coming back for this record: pop it outright rather than
+        leave it adoptable. The crash it recorded has already published on
+        its own by then -- ``WITHHOLD_OWNERSHIP_MAX_SEC`` is longer than
+        ``FIRST_RESTART_WITHHOLD_MAX_SEC``, and publication expiry does not
+        require ownership to have lapsed -- so there is no resolving event
+        left to protect by keeping it, only a misattribution risk to close.
+        """
+        if port in self._appium_restart_tasks:
+            return
+        record = self._withheld_restart_by_port.get(port)
+        if record is None:
+            return
+        now = asyncio.get_running_loop().time()
+        if now - record.armed_at > WITHHOLD_OWNERSHIP_MAX_SEC:
+            self._withheld_restart_by_port.pop(port, None)
+            logger.warning(
+                "Reaped ancient first Appium restart withhold for port=%d sequence=%d armed %.0fs ago; "
+                "no longer adoptable",
+                port,
+                record.sequence,
+                now - record.armed_at,
+            )
+
     def _discharge_adopted_restart(self, port: int, respawned: AppiumProcessInfo | None) -> None:
         """Settle a first-restart withhold this ``start()`` took over.
 
@@ -741,9 +798,11 @@ class AppiumProcessManager:
             # after recording restart_succeeded -- via the finally block.
             is_first_attempt = next_attempt == 1 and can_retry
             if is_first_attempt:
+                armed_at = asyncio.get_running_loop().time()
                 self._withheld_restart_by_port[port] = _WithheldRestart(
                     sequence=sequence,
-                    expires_at=asyncio.get_running_loop().time() + FIRST_RESTART_WITHHOLD_MAX_SEC,
+                    expires_at=armed_at + FIRST_RESTART_WITHHOLD_MAX_SEC,
+                    armed_at=armed_at,
                 )
             # Set by any exit that hands the withhold to another actor rather
             # than abandoning it: the cancel that a superseding start() issues,
@@ -1142,6 +1201,11 @@ class AppiumProcessManager:
             # chain; that task releases its own withhold in its own ``finally``,
             # and adopting here would emit a second ``restart_succeeded`` and
             # charge the attempt twice.
+            #
+            # An armed-but-abandoned record past its ownership ceiling is
+            # reaped first so it is never a candidate for adoption below --
+            # see ``_reap_stale_withhold``.
+            self._reap_stale_withhold(port)
             adopted_withhold = self._appium_restart_tasks.get(port) is None and port in self._withheld_restart_by_port
             adopted_respawn: AppiumProcessInfo | None = None
             deferred = False

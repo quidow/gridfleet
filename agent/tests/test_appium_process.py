@@ -1079,6 +1079,7 @@ async def test_process_snapshot_coalesces_crash_that_enters_during_session_enume
         manager._withheld_restart_by_port[port] = _WithheldRestart(
             sequence=sequence,
             expires_at=asyncio.get_running_loop().time() + FIRST_RESTART_WITHHOLD_MAX_SEC,
+            armed_at=asyncio.get_running_loop().time(),
         )
         resume_enumeration.set()
         snapshot = await snapshot_task
@@ -1147,6 +1148,7 @@ async def test_process_snapshot_publishes_final_view_when_restart_completes_duri
     manager._withheld_restart_by_port[restarted_port] = _WithheldRestart(
         sequence=crash_sequence,
         expires_at=asyncio.get_running_loop().time() + FIRST_RESTART_WITHHOLD_MAX_SEC,
+        armed_at=asyncio.get_running_loop().time(),
     )
     enumeration_started = asyncio.Event()
     resume_enumeration = asyncio.Event()

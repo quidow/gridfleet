@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from agent_app.appium.process import FIRST_RESTART_WITHHOLD_MAX_SEC
+from agent_app.appium.process import FIRST_RESTART_WITHHOLD_MAX_SEC, WITHHOLD_OWNERSHIP_MAX_SEC
 from tests.withhold_helpers import (
     PACK_START_KWARGS,
     PORT,
@@ -120,4 +120,52 @@ async def test_expiry_is_not_disownership(stub_port_probe: None) -> None:
         snapshot = await mgr.process_snapshot()
     assert kinds(snapshot) == ["crash_detected", "restart_succeeded"], (
         f"an expired withhold was treated as disowned, so the crash never got its pair: {kinds(snapshot)}"
+    )
+
+
+async def test_an_ancient_abandoned_withhold_is_not_adopted_by_an_unrelated_start(
+    stub_port_probe: None,
+) -> None:
+    """Ownership is a separate, longer bound than publication expiry.
+
+    Nothing ties a start() arriving after ``WITHHOLD_OWNERSHIP_MAX_SEC`` to the
+    crash that armed the record -- adopting it anyway would record a
+    ``restart_succeeded`` paired with a crash that belongs to whichever actor
+    is now on this port, not the one that originally crashed. That matters
+    most once the port has been handed to a different device:
+    ``candidate_ports()`` frees a port the instant its owning device row is
+    deleted, with no liveness check against the agent, so an unrelated
+    device's first ``start()`` on a recycled port is a real path here, not
+    only a same-device recovery finishing very late.
+
+    The record is reaped, not merely skipped: a leaked entry would otherwise
+    sit in the per-port dict for the life of the process. Reaping does not
+    resurrect the truncation it already stopped causing at publication expiry
+    -- the original crash still surfaces, just without a spurious pair.
+    """
+    mgr = manager_with_crashed_node()
+    task = await restart_task_in_backoff(mgr)
+    task.cancel()
+    await settle()
+    mgr._appium_restart_tasks.pop(PORT, None)
+    mgr._withheld_restart_by_port[PORT].armed_at -= WITHHOLD_OWNERSHIP_MAX_SEC + 1
+
+    async def fake_spawn(*_args: object, **_kwargs: object) -> FakeProcess:
+        return FakeProcess(RESPAWNED_PID)
+
+    async def ready(_port: int, _proc: object) -> bool:
+        return True
+
+    with (
+        patch.object(mgr, "_start_appium_server", side_effect=fake_spawn),
+        patch.object(mgr, "_wait_for_readiness", new=ready),
+    ):
+        await mgr.start(connection_target=TARGET, port=PORT, **PACK_START_KWARGS)
+    await settle()
+
+    assert mgr._withheld_restart_by_port == {}, "the ancient record was neither adopted nor reaped"
+    with patch.object(mgr, "_node_has_active_session", return_value=False):
+        snapshot = await mgr.process_snapshot()
+    assert kinds(snapshot) == ["crash_detected"], (
+        f"an unrelated start recorded a restart_succeeded for a crash it never resolved: {kinds(snapshot)}"
     )
