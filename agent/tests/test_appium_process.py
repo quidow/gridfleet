@@ -31,6 +31,7 @@ from agent_app.appium.process import (
     AppiumProcessInfo,
     AppiumProcessManager,
     _find_java,
+    _WithheldRestart,
     build_env,
     sanitize_appium_driver_capabilities,
 )
@@ -914,7 +915,7 @@ async def test_first_restart_attempt_is_coalesced_while_in_progress() -> None:
         # Wait until the watcher has observed the exit, recorded the crash, and
         # is now blocked on the real one-second backoff (stood in for by the Event).
         for _ in range(200):
-            if 4723 in manager._first_restart_observation_ports:
+            if 4723 in manager._withheld_restart_by_port:
                 break
             await real_sleep(0)
 
@@ -982,13 +983,13 @@ async def test_process_snapshot_truncates_events_at_earliest_withheld_sequence_a
 
         proc_a_crashed.set_exit(1)
         for _ in range(200):
-            if port_a in manager._first_restart_observation_ports:
+            if port_a in manager._withheld_restart_by_port:
                 break
             await real_sleep(0)
 
         proc_b_crashed.set_exit(1)
         for _ in range(200):
-            if port_b in manager._first_restart_observation_ports:
+            if port_b in manager._withheld_restart_by_port:
                 break
             await real_sleep(0)
 
@@ -1074,8 +1075,7 @@ async def test_process_snapshot_coalesces_crash_that_enters_during_session_enume
             exit_code=1,
             will_retry=True,
         )
-        manager._first_restart_observation_ports.add(port)
-        manager._withheld_restart_sequence_by_port[port] = sequence
+        manager._withheld_restart_by_port[port] = _WithheldRestart(sequence=sequence)
         resume_enumeration.set()
         snapshot = await snapshot_task
 
@@ -1140,8 +1140,7 @@ async def test_process_snapshot_publishes_final_view_when_restart_completes_duri
         exit_code=1,
         will_retry=True,
     )
-    manager._first_restart_observation_ports.add(restarted_port)
-    manager._withheld_restart_sequence_by_port[restarted_port] = crash_sequence
+    manager._withheld_restart_by_port[restarted_port] = _WithheldRestart(sequence=crash_sequence)
     enumeration_started = asyncio.Event()
     resume_enumeration = asyncio.Event()
 
@@ -1229,8 +1228,7 @@ async def test_auto_restart_cap_stops_retrying_after_threshold() -> None:
     assert snapshot["recent_restart_events"][0]["will_retry"] is False
     # An exhausted-retry crash (attempt 6, not attempt 1) is never coalesced.
     assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
-    assert manager._withheld_restart_sequence_by_port == {}
-    assert manager._first_restart_observation_ports == set()
+    assert manager._withheld_restart_by_port == {}
 
 
 async def test_auto_restart_drops_managed_state_when_port_is_taken_by_unmanaged_listener() -> None:
@@ -1332,8 +1330,7 @@ async def test_auto_restart_defers_when_driver_pack_not_loaded_yet() -> None:
     assert 4723 not in manager._appium_restart_backoff_steps
     assert snapshot["recent_restart_events"][0]["kind"] == "crash_detected"
     assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
-    assert manager._withheld_restart_sequence_by_port == {}
-    assert manager._first_restart_observation_ports == set()
+    assert manager._withheld_restart_by_port == {}
 
 
 async def test_auto_restart_aborts_when_target_already_served_by_another_node() -> None:
@@ -2627,8 +2624,7 @@ async def test_auto_restart_records_port_conflict_and_drops() -> None:
     assert 4723 not in manager._info
     assert snapshot["recent_restart_events"][0]["kind"] == "crash_detected"
     assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
-    assert manager._withheld_restart_sequence_by_port == {}
-    assert manager._first_restart_observation_ports == set()
+    assert manager._withheld_restart_by_port == {}
 
 
 async def test_auto_restart_advances_backoff_on_generic_failure() -> None:
@@ -2678,8 +2674,7 @@ async def test_auto_restart_advances_backoff_on_generic_failure() -> None:
     snapshot = await manager.process_snapshot()
     assert snapshot["recent_restart_events"][0]["kind"] == "crash_detected"
     assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
-    assert manager._withheld_restart_sequence_by_port == {}
-    assert manager._first_restart_observation_ports == set()
+    assert manager._withheld_restart_by_port == {}
 
 
 async def test_restart_from_launch_spec_raises_when_spec_missing() -> None:

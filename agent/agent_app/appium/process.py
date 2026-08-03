@@ -333,6 +333,19 @@ class AppiumRestartEvent:
         return payload
 
 
+@dataclass
+class _WithheldRestart:
+    """A first-restart observation held back from the status push.
+
+    One record per port. ``sequence`` is the withheld ``crash_detected``
+    event; ``process_snapshot`` truncates the emitted stream at the lowest
+    such sequence across the host, so a record nobody discharges mutes
+    restart events for every port, not just this one.
+    """
+
+    sequence: int
+
+
 class AppiumProcessManager:
     """Manages Appium server processes on this host."""
 
@@ -355,8 +368,7 @@ class AppiumProcessManager:
         # and the down running-node observation) until it resolves, so a crash
         # the agent recovers from within the first backoff never makes a device
         # visibly leave `available`. Never populated for attempt 2+.
-        self._first_restart_observation_ports: set[int] = set()
-        self._withheld_restart_sequence_by_port: dict[int, int] = {}
+        self._withheld_restart_by_port: dict[int, _WithheldRestart] = {}
         self._start_failures: collections.deque[AppiumStartFailure] = collections.deque(maxlen=MAX_RESTART_EVENTS)
         self._intentional_stop_ports: set[int] = set()
         self._runtime_registry: RuntimeRegistry | None = None
@@ -566,16 +578,15 @@ class AppiumProcessManager:
         return sequence
 
     def _release_first_restart_observation(self, port: int) -> None:
-        self._first_restart_observation_ports.discard(port)
-        sequence = self._withheld_restart_sequence_by_port.pop(port, None)
-        if sequence is not None:
+        record = self._withheld_restart_by_port.pop(port, None)
+        if record is not None:
             # The release boundary is otherwise silent on all three exit paths
             # from the first attempt; this is what makes it timestampable in a
             # log bundle without adding a product endpoint or payload field.
             logger.info(
                 "Released first Appium restart observation for port=%d sequence=%d",
                 port,
-                sequence,
+                record.sequence,
             )
 
     def _discharge_adopted_restart(self, port: int, respawned: AppiumProcessInfo | None) -> None:
@@ -709,8 +720,7 @@ class AppiumProcessManager:
             # after recording restart_succeeded -- via the finally block.
             is_first_attempt = next_attempt == 1 and can_retry
             if is_first_attempt:
-                self._first_restart_observation_ports.add(port)
-                self._withheld_restart_sequence_by_port[port] = sequence
+                self._withheld_restart_by_port[port] = _WithheldRestart(sequence=sequence)
             superseded = False
             try:
                 if not can_retry:
@@ -1067,7 +1077,7 @@ class AppiumProcessManager:
             # start owns discharging it. Adopting keeps the crash coalesced
             # across the handoff (the whole point of the withhold) instead of
             # publishing a crash the host is in the middle of recovering from.
-            adopted_withhold = superseded_restart and port in self._first_restart_observation_ports
+            adopted_withhold = superseded_restart and port in self._withheld_restart_by_port
             adopted_respawn: AppiumProcessInfo | None = None
             try:
                 if port in self._appium_procs and self._appium_procs[port].returncode is None:
@@ -1336,9 +1346,11 @@ class AppiumProcessManager:
             key = (info.port, info.pid)
             active_sessions[key] = await self._node_has_active_session(info.port)
 
-        first_restart_observation_ports = set(self._first_restart_observation_ports)
-        withheld_sequences = set(self._withheld_restart_sequence_by_port.values())
-        truncate_at = min(withheld_sequences) if withheld_sequences else None
+        first_restart_observation_ports = set(self._withheld_restart_by_port)
+        truncate_at = min(
+            (record.sequence for record in self._withheld_restart_by_port.values()),
+            default=None,
+        )
         running_infos = self.list_running()
         running_nodes: list[dict[str, Any]] = []
         for info in running_infos:

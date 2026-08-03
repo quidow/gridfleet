@@ -79,5 +79,4 @@ async def test_auto_restart_returns_when_stop_pending_queued_during_backoff() ->
     snapshot = await mgr.process_snapshot()
     assert snapshot["recent_restart_events"][0]["kind"] == "crash_detected"
     assert all(not node.get("observation_coalesced") for node in snapshot["running_nodes"])
-    assert mgr._withheld_restart_sequence_by_port == {}
-    assert mgr._first_restart_observation_ports == set()
+    assert mgr._withheld_restart_by_port == {}
