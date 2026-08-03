@@ -197,7 +197,12 @@ async def test_flag_on_with_no_match_queues_without_killing(
 async def test_flag_on_kills_at_most_one_session_per_request(
     services: GridServices, db_session: AsyncSession, no_appium_delete: list[tuple[str, str]]
 ) -> None:
-    """Two busy matching devices, allocation stubbed to keep failing: exactly one dies."""
+    """Two busy matching devices: exactly one terminate_session call.
+
+    Nothing is stubbed — after the preemption frees a device, the real
+    create_and_promote runs against the seeded node and fails on the closed
+    loopback port, which is what keeps allocation failing for the request.
+    """
     settings_service._cache[PREEMPT_KEY] = True
     await seed_test_packs(db_session)
     for suffix in ("a", "b"):
@@ -205,6 +210,12 @@ async def test_flag_on_kills_at_most_one_session_per_request(
         db_session.add(
             Session(session_id=f"appium-{uuid.uuid4().hex}", device_id=device.id, status=SessionStatus.running)
         )
+        # Point the real create at a closed loopback port so it fails instantly
+        # (connection-refused) instead of timing out on an RFC1918 address.
+        host = (await db_session.execute(select(Host).where(Host.id == device.host_id))).scalar_one()
+        host.ip = "127.0.0.1"
+        node = (await db_session.execute(select(AppiumNode).where(AppiumNode.device_id == device.id))).scalar_one()
+        node.port = 1
     await db_session.commit()
 
     await router_internal.create_session(CreateSessionRequest(body=_body(platformName="Android")), services)

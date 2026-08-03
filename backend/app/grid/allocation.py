@@ -878,6 +878,11 @@ class AllocationService:
 
         Only ``running`` rows are eligible: a ``pending`` row is another request's
         in-flight claim, and killing it would race its creator.
+
+        If the globally-stalest session is concurrently closed between the two
+        statements, the re-read can select a just-created session on the locked
+        device over an older one on another candidate device. That is inherent to
+        this design (plan-mandated) and harmless, not a bug.
         """
         staleness = func.coalesce(Session.last_activity_at, Session.started_at).asc()
         victim_device_id = (
@@ -969,6 +974,11 @@ class AllocationService:
         keys for the direct/member_of keys, projected in the same SQL statement.
         The pure membership evaluator consumes these facts without issuing any
         further reads.
+
+        ``include_busy`` drops only the live-session exclusion from the
+        availability predicate, and when true the ``GRID_ELIGIBLE_DEVICES`` gauge
+        write is skipped (the gauge is documented as "available, node-viable, no
+        live session" and a relaxed pass must not redefine it).
         """
         now = now_utc()
         reservation_subq = reservation_gating_owner_sql(now=now)
