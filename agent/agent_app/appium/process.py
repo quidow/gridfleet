@@ -1326,21 +1326,6 @@ class AppiumProcessManager:
             payload["pack_release"] = spec.pack_release
         return payload
 
-    async def _running_node_snapshot(self, info: AppiumProcessInfo) -> dict[str, Any]:
-        payload = self._running_node_payload(info)
-        # Re-emit has_active_session for the agent self-update drain gate (harness C1).
-        # The grid relay that used to track sessions is gone, so the only authoritative
-        # source is Appium itself: query localhost GET /appium/sessions per running node.
-        # An enumeration failure (Appium down, or the node lacks session_discovery) omits
-        # the key, which update.py counts as "unknown" => a drain blocker — the safe
-        # default (never kill an in-flight session on uncertainty). The backend now
-        # force-injects session_discovery into every started node (harness C10), so the
-        # enumeration is reliable for grid packs and the omit case no longer wedges.
-        active = await self._node_has_active_session(info.port)
-        if active is not None:
-            payload["has_active_session"] = active
-        return payload
-
     async def _node_has_active_session(self, port: int) -> bool | None:
         """Whether the localhost Appium on *port* reports any live W3C session.
 

@@ -355,7 +355,7 @@ async def test_process_snapshot_reports_device_id() -> None:
     assert snapshot["running_nodes"][0]["device_id"] == "device-uuid"
 
 
-async def test_running_node_snapshot_reports_pack_release() -> None:
+def test_running_node_payload_reports_pack_release() -> None:
     """The backend needs the release a node was started from for rollouts."""
     manager = AppiumProcessManager()
     manager._launch_specs[4770] = AppiumLaunchSpec(
@@ -371,15 +371,10 @@ async def test_running_node_snapshot_reports_pack_release() -> None:
     )
     info = AppiumProcessInfo(port=4770, pid=111, connection_target="00008030-000455193E38402E", platform_id="ios")
 
-    with patch.object(manager, "_node_has_active_session", new_callable=AsyncMock, return_value=False):
-        snapshot = await manager._running_node_snapshot(info)
-
-    assert snapshot["pack_release"] == "2026.07.2"
+    assert manager._running_node_payload(info)["pack_release"] == "2026.07.2"
 
     manager._launch_specs.pop(4770)
-    with patch.object(manager, "_node_has_active_session", new_callable=AsyncMock, return_value=False):
-        snapshot = await manager._running_node_snapshot(info)
-    assert "pack_release" not in snapshot
+    assert "pack_release" not in manager._running_node_payload(info)
 
 
 async def test_process_snapshot_reports_spawn_time() -> None:
