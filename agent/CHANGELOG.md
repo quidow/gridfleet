@@ -2,6 +2,19 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.41.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.40.3...gridfleet-agent-v0.41.0) (2026-08-04)
+
+
+### Features
+
+* **agent:** support local source installation ([f053a5f](https://github.com/quidow/gridfleet/commit/f053a5fe9115ee0614ca358439af963b4a9f9202))
+* **agent:** support local source installation ([#964](https://github.com/quidow/gridfleet/issues/964)) ([67854e9](https://github.com/quidow/gridfleet/commit/67854e98e5c80e488b9c9525e96c040d22d50d2e))
+
+
+### Dependencies
+
+* **deps:** bump websockets in /agent in the python-dependencies group ([#961](https://github.com/quidow/gridfleet/issues/961)) ([6618c21](https://github.com/quidow/gridfleet/commit/6618c21e05a5364bf98170561811f9f7a5ae77b1))
+
 ## [0.40.3](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.40.2...gridfleet-agent-v0.40.3) (2026-08-03)
 
 
