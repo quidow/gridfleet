@@ -6,11 +6,28 @@ set -eu
 # agent directory, installs gridfleet-agent into it, then runs
 # `gridfleet-agent install` from that venv.
 
+SOURCE_DIR=""
+# ponytail: keep the bootstrap-only option first to stay array-free under /bin/sh; add full parsing if more wrapper options arrive.
+if [ "${1:-}" = "--source" ]; then
+    if [ "$#" -lt 2 ]; then
+        echo "ERROR: --source requires a directory." >&2
+        exit 2
+    fi
+    if [ ! -d "$2" ]; then
+        echo "ERROR: agent source directory does not exist: $2" >&2
+        exit 2
+    fi
+    SOURCE_DIR="$(CDPATH= cd -- "$2" && pwd -P)"
+    shift 2
+fi
+
 VERSION="${VERSION:-latest}"
 PACKAGE_SPEC="gridfleet-agent"
-
 if [ "$VERSION" != "latest" ] && [ -n "$VERSION" ]; then
     PACKAGE_SPEC="gridfleet-agent==$VERSION"
+fi
+if [ -n "$SOURCE_DIR" ]; then
+    PACKAGE_SPEC="$SOURCE_DIR"
 fi
 
 if [ "$(id -u)" -eq 0 ]; then
@@ -71,7 +88,12 @@ if [ ! -x "$AGENT_DIR/venv/bin/python" ]; then
     uv venv --python 3.14 "$AGENT_DIR/venv"
 fi
 echo "Installing $PACKAGE_SPEC into $AGENT_DIR/venv..."
-uv pip install --python "$AGENT_DIR/venv/bin/python" --upgrade "$PACKAGE_SPEC"
+if [ -n "$SOURCE_DIR" ]; then
+    uv pip install --python "$AGENT_DIR/venv/bin/python" --upgrade \
+        --reinstall-package gridfleet-agent "$PACKAGE_SPEC"
+else
+    uv pip install --python "$AGENT_DIR/venv/bin/python" --upgrade "$PACKAGE_SPEC"
+fi
 
 # 3. Stop existing user-scope service if we're about to start it again.
 if [ "$STOP_EXISTING_SERVICE" -eq 1 ]; then

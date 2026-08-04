@@ -31,6 +31,15 @@ curl -LsSf https://raw.githubusercontent.com/quidow/gridfleet/main/scripts/insta
     | VERSION=0.10.0 sh -s -- --start --manager-url http://manager.example.com:8000
 ```
 
+From a local checkout, run this from the repository root:
+
+```bash
+bash scripts/install-agent.sh --source ./agent \
+    --manager-url http://manager.example.com:8000
+```
+
+Source mode creates the same dedicated venv and service as the PyPI path. If the agent is already installed, it reinstalls the checkout even when the version is unchanged, then restarts the service.
+
 The script refuses to run as root. The service runs as the operator that invoked the script.
 
 ## Prerequisites

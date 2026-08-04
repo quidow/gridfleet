@@ -46,6 +46,16 @@ uv run uvicorn agent_app.main:app --reload --port 5100
 ```
 The agent has no DB. `test_no_driver_imports.py` enforces that the agent core stays driver-agnostic.
 
+#### Agent source install/update
+
+When installing or updating a host agent from this checkout, use the repository installer from the repository root:
+
+```bash
+bash scripts/install-agent.sh --source ./agent --manager-url http://MANAGER_IP:8000
+```
+
+Do not reconstruct the venv install or service restart manually. The script creates or updates the dedicated user-scope venv, reinstalls same-version source builds, provisions the service, and restarts it.
+
 ### Frontend (`cd frontend`)
 ```bash
 npm ci

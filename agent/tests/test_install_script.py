@@ -37,7 +37,7 @@ def test_bootstrap_wrapper_refuses_root() -> None:
     assert "do not run this installer as root" in script
 
 
-def test_bootstrap_wrapper_runs_under_sh(tmp_path: Path) -> None:
+def test_bootstrap_wrapper_installs_source_under_sh(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "commands.log"
@@ -56,9 +56,19 @@ def test_bootstrap_wrapper_runs_under_sh(tmp_path: Path) -> None:
     )
     _write_executable(bin_dir / "uname", "#!/usr/bin/env bash\necho Linux\n")
     _write_executable(bin_dir / "id", '#!/usr/bin/env bash\n[ "$1" = "-u" ] && echo 1000\n')
+    source_dir = tmp_path / "checkout" / "agent"
+    source_dir.mkdir(parents=True)
 
     result = subprocess.run(
-        ["sh", str(script_path), "--dry-run", "--manager-url", "https://manager.example.com"],
+        [
+            "sh",
+            str(script_path),
+            "--source",
+            str(source_dir),
+            "--dry-run",
+            "--manager-url",
+            "https://manager.example.com",
+        ],
         check=False,
         capture_output=True,
         text=True,
@@ -68,8 +78,7 @@ def test_bootstrap_wrapper_runs_under_sh(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     commands = log.read_text()
     assert "uv venv --python 3.14" in commands
-    assert "uv pip install --python" in commands
-    assert "--upgrade" in commands
+    assert f"--upgrade --reinstall-package gridfleet-agent {source_dir}" in commands
     assert "gridfleet-agent install --dry-run --manager-url https://manager.example.com" in commands
 
 
