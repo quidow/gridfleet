@@ -7,7 +7,8 @@ from agent_app.appium import log_files
 from agent_app.appium.log_files import (
     appium_log_dir,
     appium_log_path,
-    open_log_file,
+    open_spawn_log_file,
+    spawn_log_path,
     sweep_log_dir,
     tail_lines,
     truncate_if_oversized,
@@ -25,12 +26,12 @@ def test_log_path_lives_under_runtime_root(tmp_path: Path) -> None:
     assert appium_log_path(4723) == tmp_path / "appium-logs" / "appium-4723.log"
 
 
-def test_open_log_file_creates_dir_and_appends() -> None:
-    with open_log_file(4723) as fh:
+def test_open_spawn_log_file_creates_dir_and_appends() -> None:
+    with open_spawn_log_file(4723, "test") as fh:
         fh.write(b"first\n")
-    with open_log_file(4723) as fh:
+    with open_spawn_log_file(4723, "test") as fh:
         fh.write(b"second\n")
-    assert appium_log_path(4723).read_text() == "first\nsecond\n"
+    assert spawn_log_path(4723, "test").read_text() == "first\nsecond\n"
 
 
 def test_tail_lines_missing_file_returns_empty() -> None:
@@ -81,16 +82,16 @@ def test_truncate_preserves_child_append_offset(monkeypatch: pytest.MonkeyPatch)
     """The child's O_APPEND fd must keep appending at the new EOF after copy-truncate."""
     monkeypatch.setattr(log_files, "MAX_LOG_BYTES", 50)
     monkeypatch.setattr(log_files, "TAIL_READ_BYTES", 10)
-    child_fh = open_log_file(4723)  # same flags as the spawned process gets
+    child_fh = open_spawn_log_file(4723, "child")  # same flags as the spawned process gets
     try:
         child_fh.write(b"x" * 100)
         child_fh.flush()
-        assert truncate_if_oversized(appium_log_path(4723)) is True
+        assert truncate_if_oversized(spawn_log_path(4723, "child")) is True
         child_fh.write(b"AFTER")
         child_fh.flush()
     finally:
         child_fh.close()
-    data = appium_log_path(4723).read_bytes()
+    data = spawn_log_path(4723, "child").read_bytes()
     assert data == b"x" * 10 + b"AFTER"
 
 
@@ -128,7 +129,7 @@ def test_sweep_noop_without_dir() -> None:
 
 async def test_subprocess_output_lands_in_file() -> None:
     """End-to-end fd redirect: a real child writes stdout+stderr into the log file with zero reader tasks."""
-    log_file = open_log_file(4723)
+    log_file = open_spawn_log_file(4723, "test")
     try:
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
@@ -140,7 +141,7 @@ async def test_subprocess_output_lands_in_file() -> None:
         await proc.wait()
     finally:
         log_file.close()
-    lines = tail_lines(appium_log_path(4723), 100)
+    lines = tail_lines(spawn_log_path(4723, "test"), 100)
     assert "out line" in lines
     assert "err line" in lines
 

@@ -28,12 +28,6 @@ def appium_log_path(port: int) -> Path:
     return appium_log_dir() / f"appium-{port}.log"
 
 
-def open_log_file(port: int) -> BinaryIO:
-    """Open the per-port log file for appending, creating the directory if needed."""
-    appium_log_dir().mkdir(parents=True, exist_ok=True)
-    return appium_log_path(port).open("ab")
-
-
 LOG_FILES_PER_PORT = 2
 
 
