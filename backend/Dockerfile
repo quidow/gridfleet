@@ -17,13 +17,10 @@ COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --no-dev --frozen
 
 COPY backend/ .
-COPY driver-packs/ /driver-packs/
 
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \
     && mkdir -p /var/lib/gridfleet/driver-packs \
-    && chown -R appuser:appuser /app /driver-packs /var/lib/gridfleet
-
-ENV GRIDFLEET_DRIVER_PACK_CURATED_DIR=/driver-packs/curated
+    && chown -R appuser:appuser /app /var/lib/gridfleet
 
 USER appuser
 
