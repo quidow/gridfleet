@@ -116,7 +116,7 @@ wheels = [
 
 [[package]]
 name = "gridfleet-agent"
-version = "0.40.3"
+version = "0.41.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
