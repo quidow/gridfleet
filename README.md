@@ -70,6 +70,46 @@ cd docker
 docker compose down
 ```
 
+## Install a host agent
+
+The Docker Compose stack runs the manager, dashboard, and WebDriver router.
+Install the agent separately on each Linux or macOS device host after checking
+the [host requirements](docs/guides/host-requirements.md).
+
+Install a published version from the repository root:
+
+```bash
+VERSION=0.40.3 bash scripts/install-agent.sh --manager-url http://MANAGER_IP:8000
+```
+
+Install or update from the current checkout instead:
+
+```bash
+bash scripts/install-agent.sh --source ./agent --manager-url http://MANAGER_IP:8000
+```
+
+Run the installer as the operator who will own the service, not as root. It
+creates or updates the dedicated user-scoped venv, provisions the systemd user
+service or macOS LaunchAgent, and starts it. Verify the installation on the
+device host:
+
+```bash
+gridfleet-agent status
+curl -s http://localhost:5100/agent/health | python -m json.tool
+```
+
+New hosts remain pending until approved unless `agent.auto_accept_hosts` is
+enabled. On headless Linux, enable user lingering so the service survives
+logout and reboot:
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+See the [agent guide](agent/README.md) for credentials, configuration, updates,
+logs, and uninstall commands, and
+[host onboarding](docs/guides/host-onboarding.md) for the full enrollment flow.
+
 ## Driver pack tarballs
 
 GridFleet does not check in generated `.tar.gz` driver-pack artifacts. Build
@@ -151,12 +191,6 @@ Frontend:
 cd frontend
 npm ci
 npm run dev
-```
-
-Host agents can be bootstrapped from the published Python package:
-
-```bash
-VERSION=0.3.0 bash scripts/install-agent.sh --manager-url http://MANAGER_IP:8000
 ```
 
 ## Validation
