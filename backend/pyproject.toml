@@ -11,14 +11,14 @@ dependencies = [
     "sqlalchemy[asyncio]==2.0.51",
     "asyncpg==0.31.0",
     "pydantic-settings==2.14.2",
-    "alembic==1.18.5",
+    "alembic==1.19.0",
     "greenlet==3.5.4",
     "httpx2==2.9.1",
-    "sse-starlette==3.4.6",
+    "sse-starlette==3.4.8",
     "prometheus-client==0.26.0",
     "structlog==26.1.0",
     "pyyaml==6.0.3",
-    "packaging>=26.2",
+    "packaging>=26.3",
     "python-multipart>=0.0.32",
     "PyJWT>=2.10,<3",
 ]
@@ -37,7 +37,7 @@ dev = [
     "pytest-xdist>=3.6.0",
     "mypy>=2.3.0",
     "ruff>=0.16.1",
-    "datamodel-code-generator==0.72.0",
+    "datamodel-code-generator==0.72.2",
 ]
 
 [tool.pytest.ini_options]
