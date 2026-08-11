@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     "fastapi==0.141.1",
     "uvicorn[standard]==0.52.1",
-    "pydantic-settings==2.14.2",
+    "pydantic-settings==2.15.0",
     "httpx2==2.9.1",
     # httpcore probes for sniffio on its hot path with a bare `import sniffio`
     # fallback; without the package installed the import FAILS on every call,
