@@ -13,7 +13,7 @@ dependencies = [
     "pydantic-settings==2.15.0",
     "alembic==1.19.1",
     "greenlet==3.5.4",
-    "httpx2==2.9.1",
+    "httpx2==2.10.0",
     "sse-starlette==3.4.8",
     "prometheus-client==0.26.0",
     "structlog==26.1.0",
