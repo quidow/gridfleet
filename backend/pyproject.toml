@@ -7,8 +7,8 @@ authors = [{ name = "GridFleet contributors" }]
 requires-python = ">=3.14"
 dependencies = [
     "fastapi==0.141.1",
-    "uvicorn[standard]==0.52.1",
-    "sqlalchemy[asyncio]==2.0.51",
+    "uvicorn[standard]==0.52.3",
+    "sqlalchemy[asyncio]==2.0.52",
     "asyncpg==0.31.0",
     "pydantic-settings==2.15.0",
     "alembic==1.19.1",
@@ -36,8 +36,8 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "pytest-xdist>=3.6.0",
     "mypy>=2.3.0",
-    "ruff>=0.16.2",
-    "datamodel-code-generator==0.72.3",
+    "ruff>=0.16.3",
+    "datamodel-code-generator==0.72.4",
 ]
 
 [tool.pytest.ini_options]
