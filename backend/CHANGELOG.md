@@ -14,6 +14,22 @@ All notable changes to the GridFleet backend (FastAPI manager, control plane) ar
 - Bracket-wrap IPv6 addresses in agent terminal URLs so `ws://[::1]:5100/...` is valid.
 - Close drain-transition race by committing draining state before `try_complete_drain`, preventing concurrent `assert_runnable` from starting new work during a drain.
 
+## [0.8.2](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.8.1...gridfleet-backend-v0.8.2) (2026-08-22)
+
+
+### Dependencies
+
+* **deps:** bump alembic in /backend in the python-dependencies group ([#985](https://github.com/quidow/gridfleet/issues/985)) ([23cf587](https://github.com/quidow/gridfleet/commit/23cf58777fec29f2e525b0e79528fbf2237dcfc8))
+* **deps:** bump datamodel-code-generator ([#1002](https://github.com/quidow/gridfleet/issues/1002)) ([86590db](https://github.com/quidow/gridfleet/commit/86590dbe953cab9d167c5312d5d999319b39988e))
+* **deps:** bump datamodel-code-generator ([#972](https://github.com/quidow/gridfleet/issues/972)) ([975ba0a](https://github.com/quidow/gridfleet/commit/975ba0ad68cc6a47aff582833e3c915897e2d0bf))
+* **deps:** bump httpx2 in /backend in the python-dependencies group ([#991](https://github.com/quidow/gridfleet/issues/991)) ([dc30416](https://github.com/quidow/gridfleet/commit/dc304164654ae0afca1faa74381e816fc926ac63))
+* **deps:** bump the python-dependencies group ([#1000](https://github.com/quidow/gridfleet/issues/1000)) ([489d28b](https://github.com/quidow/gridfleet/commit/489d28b6a9ba692b106639139e378c4d1b245502))
+* **deps:** bump the python-dependencies group ([#979](https://github.com/quidow/gridfleet/issues/979)) ([4004e1c](https://github.com/quidow/gridfleet/commit/4004e1c5c370e92407e73b29f59e1f756dac2a94))
+* **deps:** bump the python-dependencies group ([#984](https://github.com/quidow/gridfleet/issues/984)) ([9abcbc7](https://github.com/quidow/gridfleet/commit/9abcbc7571bea5d233ffe5e1ca6c126f8dc808ea))
+* **deps:** bump the python-dependencies group ([#993](https://github.com/quidow/gridfleet/issues/993)) ([0fe65e3](https://github.com/quidow/gridfleet/commit/0fe65e307e4254e755220815d4a14d4ef25a33c3))
+* **deps:** bump the python-dependencies group ([#997](https://github.com/quidow/gridfleet/issues/997)) ([a620798](https://github.com/quidow/gridfleet/commit/a620798bece66fc98851621270c19923fac4092c))
+* **deps:** bump uvicorn[standard] ([#967](https://github.com/quidow/gridfleet/issues/967)) ([443c083](https://github.com/quidow/gridfleet/commit/443c08382566c0775e93457dbb92616c57d036ff))
+
 ## [0.8.1](https://github.com/quidow/gridfleet/compare/gridfleet-backend-v0.8.0...gridfleet-backend-v0.8.1) (2026-08-03)
 
 
