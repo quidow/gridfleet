@@ -2,6 +2,18 @@
 
 All notable changes to the GridFleet host agent (`gridfleet-agent` on PyPI) are documented here.
 
+## [0.41.1](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.41.0...gridfleet-agent-v0.41.1) (2026-08-22)
+
+
+### Dependencies
+
+* **deps:** bump httpx2 in /agent in the python-dependencies group ([#990](https://github.com/quidow/gridfleet/issues/990)) ([5cb7a56](https://github.com/quidow/gridfleet/commit/5cb7a56ef7dce69192e00f4c13b159430df1ae02))
+* **deps:** bump mypy in /agent in the python-dependencies group ([#999](https://github.com/quidow/gridfleet/issues/999)) ([80f21b6](https://github.com/quidow/gridfleet/commit/80f21b68833389291311c371780839ce34068ad1))
+* **deps:** bump packaging in /agent in the python-dependencies group ([#976](https://github.com/quidow/gridfleet/issues/976)) ([351f405](https://github.com/quidow/gridfleet/commit/351f4051998549bf283d0d330aaf93b8e6d3bec3))
+* **deps:** bump the python-dependencies group in /agent with 2 updates ([#982](https://github.com/quidow/gridfleet/issues/982)) ([1ae6571](https://github.com/quidow/gridfleet/commit/1ae6571a190e30d22143eed52d877a27672f6b90))
+* **deps:** bump the python-dependencies group in /agent with 2 updates ([#996](https://github.com/quidow/gridfleet/issues/996)) ([c8f9df6](https://github.com/quidow/gridfleet/commit/c8f9df658e8b994044d63446b936e3fc4c6151bb))
+* **deps:** bump uvicorn[standard] ([#966](https://github.com/quidow/gridfleet/issues/966)) ([82a288a](https://github.com/quidow/gridfleet/commit/82a288a9774a14d78fc174e7cb3cc70db25cc323))
+
 ## [0.41.0](https://github.com/quidow/gridfleet/compare/gridfleet-agent-v0.40.3...gridfleet-agent-v0.41.0) (2026-08-04)
 
 
