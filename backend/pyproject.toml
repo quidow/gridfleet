@@ -7,13 +7,13 @@ authors = [{ name = "GridFleet contributors" }]
 requires-python = ">=3.14"
 dependencies = [
     "fastapi==0.141.1",
-    "uvicorn[standard]==0.52.3",
+    "uvicorn[standard]==0.52.4",
     "sqlalchemy[asyncio]==2.0.52",
     "asyncpg==0.31.0",
     "pydantic-settings==2.15.0",
     "alembic==1.19.1",
     "greenlet==3.5.5",
-    "httpx2==2.10.0",
+    "httpx2==2.12.0",
     "sse-starlette==3.4.8",
     "prometheus-client==0.26.0",
     "structlog==26.1.0",
