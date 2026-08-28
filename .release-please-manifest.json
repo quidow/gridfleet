@@ -3,5 +3,5 @@
   "agent": "0.41.0",
   "frontend": "0.7.1",
   "router": "0.5.2",
-  "testkit": "0.16.2"
+  "testkit": "0.16.3"
 }
