@@ -2,6 +2,13 @@
 
 All notable changes to the GridFleet testkit (`gridfleet-testkit` on PyPI) are documented here.
 
+## [0.16.4](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.16.3...gridfleet-testkit-v0.16.4) (2026-09-05)
+
+
+### Dependencies
+
+* **deps:** bump ruff in /testkit in the python-dependencies group ([#1014](https://github.com/quidow/gridfleet/issues/1014)) ([e8432f5](https://github.com/quidow/gridfleet/commit/e8432f52f4c828e51ac81318f3d945ee1aab08d5))
+
 ## [0.16.3](https://github.com/quidow/gridfleet/compare/gridfleet-testkit-v0.16.2...gridfleet-testkit-v0.16.3) (2026-08-28)
 
 
