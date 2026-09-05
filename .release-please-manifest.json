@@ -1,5 +1,5 @@
 {
-  "backend": "0.8.2",
+  "backend": "0.8.3",
   "agent": "0.41.1",
   "frontend": "0.7.1",
   "router": "0.5.2",
